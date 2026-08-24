@@ -24,6 +24,7 @@ type harness struct {
 	fake     *linear.Fake
 	rec      *Reconciler
 	evidence *evidence.Evidence
+	root     string // the evidence store's repository root
 	events   chan Event
 	alive    map[string]bool // run ID → the recorded process is "alive"
 
@@ -33,9 +34,11 @@ type harness struct {
 
 func newHarness(t *testing.T, lanes int, execute ExecuteFunc) *harness {
 	t.Helper()
+	root := t.TempDir()
 	h := &harness{
 		fake:     linear.NewFake(),
-		evidence: evidence.New(t.TempDir()),
+		evidence: evidence.New(root),
+		root:     root,
 		events:   make(chan Event, 64),
 		alive:    map[string]bool{},
 	}
@@ -85,11 +88,18 @@ func testRepo() *config.RepoConfig {
 // EventError seen along the way (unless errors are what is wanted).
 func (h *harness) waitEvents(t *testing.T, want EventType, n int) []Event {
 	t.Helper()
+	return waitEventsOn(t, h.events, want, n)
+}
+
+// waitEventsOn is waitEvents against any event channel, for tests that run
+// more than one reconciler.
+func waitEventsOn(t *testing.T, events <-chan Event, want EventType, n int) []Event {
+	t.Helper()
 	deadline := time.After(5 * time.Second)
 	var got []Event
 	for len(got) < n {
 		select {
-		case ev := <-h.events:
+		case ev := <-events:
 			if ev.Type == EventError && want != EventError {
 				t.Fatalf("unexpected error event: %v", ev.Err)
 			}
@@ -105,10 +115,15 @@ func (h *harness) waitEvents(t *testing.T, want EventType, n int) []Event {
 
 // drainEvents returns every event already emitted, without waiting.
 func (h *harness) drainEvents() []Event {
+	return drainEventsOn(h.events)
+}
+
+// drainEventsOn is drainEvents against any event channel.
+func drainEventsOn(events <-chan Event) []Event {
 	var got []Event
 	for {
 		select {
-		case ev := <-h.events:
+		case ev := <-events:
 			got = append(got, ev)
 		default:
 			return got
