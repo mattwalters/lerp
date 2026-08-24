@@ -259,13 +259,13 @@ func TestLoadGlobalMissingFile(t *testing.T) {
 	}
 }
 
-func TestLoadCovenant(t *testing.T) {
+func TestLoadRepoConfig(t *testing.T) {
 	path := writeFile(t, "lerp.toml", `
 teams = ["LERP", "OPS"]
 provision = "git worktree add {{workdir}}"
 dispose = "git worktree remove {{workdir}}"
 `)
-	c, err := LoadCovenant(path)
+	c, err := LoadRepoConfig(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,7 +277,7 @@ dispose = "git worktree remove {{workdir}}"
 	}
 }
 
-func TestLoadCovenantErrors(t *testing.T) {
+func TestLoadRepoConfigErrors(t *testing.T) {
 	tests := []struct {
 		name    string
 		toml    string
@@ -353,7 +353,7 @@ provision = "p"
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			path := writeFile(t, "lerp.toml", tt.toml)
-			_, err := LoadCovenant(path)
+			_, err := LoadRepoConfig(path)
 			if err == nil {
 				t.Fatal("want error, got nil")
 			}

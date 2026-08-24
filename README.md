@@ -13,9 +13,9 @@ proposing changes.
 ## Configuration
 
 Lerp reads two files. The **global config** is yours as an operator —
-it defines how agents run everywhere. The **covenant** belongs to each
-repo — it declares which Linear teams the repo serves and how to build
-a workspace.
+it defines how agents run everywhere. The **repo config** (`lerp.toml`)
+belongs to each repo — it declares which Linear teams the repo serves
+and how to build a workspace.
 
 Durable state lives in Linear, never in these files or anywhere else
 on disk. Both files are strictly parsed: an unknown key is an error,
@@ -76,7 +76,7 @@ Notes:
   by runner execution (LERP-5) and will be documented here when it
   lands.
 
-### Covenant (per repo)
+### Repo config
 
 Location: `lerp.toml` at the repo root, checked in.
 
@@ -94,7 +94,7 @@ dispose = "scripts/lerp-dispose"
 ```
 
 Every ticket must resolve to exactly one working directory: team →
-repo is a function. A single covenant can only vouch for its own repo,
+repo is a function. A single repo config can only vouch for its own repo,
 so the cross-repo half of that rule ("no two repos claim the same
 team") is verified by the loop at startup, which refuses to run if it
 doesn't hold.

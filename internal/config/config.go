@@ -11,9 +11,9 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-// CovenantFile is the name of the per-repo covenant, found at the
+// RepoConfigFile is the name of the per-repo config file, found at the
 // repo root.
-const CovenantFile = "lerp.toml"
+const RepoConfigFile = "lerp.toml"
 
 // defaultLanes is the lane count used when the global config does not
 // set one.
@@ -49,16 +49,16 @@ type Queue struct {
 	OnFailure string `toml:"on_failure"`
 }
 
-// Covenant is the per-repo config: the Linear teams this repo serves
+// RepoConfig is the per-repo config: the Linear teams this repo serves
 // and the commands that provision and dispose lane workspaces
 // (SCOPE invariants 2 and 9).
 //
-// A covenant names the teams one repo serves. The other half of SCOPE
+// A repo config names the teams one repo serves. The other half of SCOPE
 // invariant 2 — that no two repos claim the same team — cannot be
-// checked here: loading a single covenant sees a single repo. The
+// checked here: loading a single repo config sees a single repo. The
 // loop verifies the full team → repo function at startup and refuses
 // to run if it doesn't hold.
-type Covenant struct {
+type RepoConfig struct {
 	Teams     []string `toml:"teams"`
 	Provision string   `toml:"provision"`
 	Dispose   string   `toml:"dispose"`
@@ -130,10 +130,10 @@ func (g *Global) validate(path string) error {
 	return nil
 }
 
-// LoadCovenant reads and validates the per-repo covenant at path
-// (conventionally CovenantFile at the repo root).
-func LoadCovenant(path string) (*Covenant, error) {
-	var c Covenant
+// LoadRepoConfig reads and validates the per-repo config file at path
+// (conventionally RepoConfigFile at the repo root).
+func LoadRepoConfig(path string) (*RepoConfig, error) {
+	var c RepoConfig
 	md, err := toml.DecodeFile(path, &c)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
@@ -147,7 +147,7 @@ func LoadCovenant(path string) (*Covenant, error) {
 	return &c, nil
 }
 
-func (c *Covenant) validate(path string) error {
+func (c *RepoConfig) validate(path string) error {
 	if len(c.Teams) == 0 {
 		return fmt.Errorf("%s: teams must list at least one Linear team key", path)
 	}
