@@ -187,6 +187,35 @@ func TestFakeComments(t *testing.T) {
 	}
 }
 
+// What CommentOnIssue writes, GetIssueDetail reads back — the fake\'s half
+// of the pane\'s promise that a parked ticket shows the verdict that parked
+// it.
+func TestFakeIssueDetail(t *testing.T) {
+	f := newTestFake()
+	ctx := context.Background()
+	f.SetDescription("iss-1", "the body")
+	if err := f.CommentOnIssue(ctx, "iss-1", "the verdict"); err != nil {
+		t.Fatalf("CommentOnIssue: %v", err)
+	}
+	detail, err := f.GetIssueDetail(ctx, "iss-1")
+	if err != nil {
+		t.Fatalf("GetIssueDetail: %v", err)
+	}
+	if detail.Body != "the body" {
+		t.Errorf("body = %q, want %q", detail.Body, "the body")
+	}
+	if len(detail.Comments) != 1 {
+		t.Fatalf("comments = %+v, want one", detail.Comments)
+	}
+	c := detail.Comments[0]
+	if c.Body != "the verdict" || c.Author != "fake-viewer" || c.CreatedAt.IsZero() {
+		t.Errorf("comment = %+v, want the verdict from fake-viewer with a time", c)
+	}
+	if _, err := f.GetIssueDetail(ctx, "nope"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("GetIssueDetail(nope) = %v, want ErrNotFound", err)
+	}
+}
+
 func TestFakeNotFound(t *testing.T) {
 	f := NewFake()
 	ctx := context.Background()

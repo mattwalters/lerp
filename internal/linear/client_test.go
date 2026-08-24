@@ -244,6 +244,68 @@ func TestGetIssueNullIssue(t *testing.T) {
 	}
 }
 
+// The needs-you pane's read: the body the operator judges from, and the
+// stage-boundary artifacts lerp itself wrote on the ticket.
+func TestGetIssueDetail(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		req := decodeRequest(t, r)
+		if req.Variables["id"] != "iss-1" {
+			t.Errorf("id = %v, want iss-1", req.Variables["id"])
+		}
+		if strings.Contains(req.Query, "inverseRelations") {
+			t.Errorf("detail query carries the list query's relations: %q", req.Query)
+		}
+		writeData(t, w, `{"issue":{
+			"description":"the body",
+			"comments":{"nodes":[
+				{"body":"verdict","createdAt":"2026-08-24T12:00:00.000Z","user":{"displayName":"Matt"}},
+				{"body":"plan","createdAt":"2026-08-24T09:00:00.000Z","user":null,"botActor":{"name":"lerp"}}
+			]}
+		}}`)
+	})
+	detail, err := c.GetIssueDetail(context.Background(), "iss-1")
+	if err != nil {
+		t.Fatalf("GetIssueDetail: %v", err)
+	}
+	if detail.Body != "the body" {
+		t.Errorf("body = %q, want %q", detail.Body, "the body")
+	}
+	// Oldest first, whatever order the connection came back in — and an
+	// agent posting as a bot actor still has a name on its comment.
+	want := []Comment{
+		{Author: "lerp", Body: "plan", CreatedAt: time.Date(2026, 8, 24, 9, 0, 0, 0, time.UTC)},
+		{Author: "Matt", Body: "verdict", CreatedAt: time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)},
+	}
+	if !reflect.DeepEqual(detail.Comments, want) {
+		t.Errorf("comments = %+v, want %+v", detail.Comments, want)
+	}
+}
+
+// A comment with neither a user nor a bot actor still renders: the pane
+// needs a byline, not an identity.
+func TestGetIssueDetailUnknownAuthor(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		writeData(t, w, `{"issue":{"description":"","comments":{"nodes":[{"body":"orphan"}]}}}`)
+	})
+	detail, err := c.GetIssueDetail(context.Background(), "iss-1")
+	if err != nil {
+		t.Fatalf("GetIssueDetail: %v", err)
+	}
+	if len(detail.Comments) != 1 || detail.Comments[0].Author != "unknown" {
+		t.Errorf("comments = %+v, want one authored \"unknown\"", detail.Comments)
+	}
+}
+
+func TestGetIssueDetailNullIssue(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		writeData(t, w, `{"issue":null}`)
+	})
+	_, err := c.GetIssueDetail(context.Background(), "iss-nope")
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("err = %v, want ErrNotFound", err)
+	}
+}
+
 func TestMoveIssue(t *testing.T) {
 	var moved gqlRequest
 	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {

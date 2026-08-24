@@ -17,6 +17,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/mattwalters/lerp/internal/linear"
 	"github.com/mattwalters/lerp/internal/loop"
 )
 
@@ -33,10 +34,20 @@ type Promoter interface {
 	Promote(ctx context.Context, ticketID, status string) error
 }
 
+// Reader is the needs-you pane's one read beyond the pass: the body and
+// comments of the ticket the operator selected. It is Reconciler.IssueDetail
+// in production. Read-only, one ticket at a time — SCOPE's "not a Linear
+// client" bullet fences the rest, and `o` is the answer to everything it
+// leaves out.
+type Reader interface {
+	IssueDetail(ctx context.Context, ticketID string) (linear.IssueDetail, error)
+}
+
 // Options wires the shell to the loop.
 type Options struct {
 	Ticker   Ticker
 	Promoter Promoter
+	Reader   Reader
 	Statuses []string      // promote targets: configured queue statuses, plus the pipeline's exits
 	Interval time.Duration // tick cadence; loop.DefaultInterval when zero
 	Lanes    int           // N, for the fixed lane rows
@@ -49,6 +60,8 @@ func (o Options) validate() error {
 		return fmt.Errorf("tui: ticker is required")
 	case o.Promoter == nil:
 		return fmt.Errorf("tui: promoter is required")
+	case o.Reader == nil:
+		return fmt.Errorf("tui: reader is required")
 	case o.Lanes < 1:
 		return fmt.Errorf("tui: lanes must be at least 1")
 	case o.Events == nil:
@@ -105,6 +118,10 @@ const (
 	// pollEvery is the redraw-and-tail cadence, independent of the loop's
 	// ticks; it is also the animation clock for the heartbeat frames.
 	pollEvery = 250 * time.Millisecond
+	// detailDebounce is how long a needs-you selection must hold still
+	// before its ticket is read. Trailing, so walking the list fires one
+	// fetch — for the row the operator stopped on — instead of one per row.
+	detailDebounce = 250 * time.Millisecond
 	// narrowWidth is where the side-by-side layout gives up and the panels
 	// stack above the main pane instead. One threshold, no second layout.
 	narrowWidth = 100
@@ -126,7 +143,34 @@ type (
 		status string
 		err    error
 	}
+	// detailDueMsg is the debounce firing for a ticket; detailMsg is the
+	// read coming back.
+	detailDueMsg struct{ ticketID string }
+	detailMsg    struct {
+		ticketID string
+		detail   linear.IssueDetail
+		err      error
+	}
 )
+
+// detailState is how far the pane has got with one ticket's body and
+// comments.
+type detailState int
+
+const (
+	detailLoading detailState = iota
+	detailReady
+	detailFailed
+)
+
+// ticketDetail is one ticket as the pane holds it: already cleaned, because
+// the fetch sanitizes on the way in.
+type ticketDetail struct {
+	state    detailState
+	body     string
+	comments []linear.Comment
+	err      string
+}
 
 // nextRef addresses one ticket in the queue snapshot: queue index, ticket
 // index. The up-next selection walks these, skipping header rows.
@@ -157,6 +201,15 @@ type model struct {
 	attention     []loop.AttentionItem
 	attentionSeen bool
 	attnSel       int // index into attention; the promote target
+
+	// details is what the Reader has returned, keyed by ticket ID and kept
+	// for the process's lifetime: a stale body is a view of Linear, not
+	// state (invariant 1), so there is no eviction and no refresh key —
+	// moving off the ticket and back is the refresh. detailWant is the
+	// ticket the pane currently wants: the debounce's target, and what a
+	// late reply is checked against.
+	details    map[string]*ticketDetail
+	detailWant string
 
 	// promoting is the promote picker's open/closed state; promoteSel is its
 	// selected index into o.Statuses. Opened by "p" on a selected needs-you
@@ -194,7 +247,8 @@ func newModel(ctx context.Context, o Options) model {
 	h := help.New()
 	h.ShowAll = true
 	m := model{o: o, ctx: ctx, focus: panelLanes, lanes: make(map[int]*lane),
-		vp: viewport.New(0, 0), follow: true, keys: newKeymap(), help: h,
+		details: make(map[string]*ticketDetail),
+		vp:      viewport.New(0, 0), follow: true, keys: newKeymap(), help: h,
 		inFlight: true, // Init starts the first pass immediately
 		passes:   &sync.WaitGroup{}}
 	for n := 1; n <= o.Lanes; n++ {
@@ -262,7 +316,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Tick(m.o.Interval, func(time.Time) tea.Msg { return tickMsg{} })
 	case eventMsg:
 		m.apply(msg.ev)
-		return m, m.waitEvent()
+		// A pass may reorder the list under the cursor, so the pane re-targets
+		// on data as well as on keys.
+		return m, tea.Batch(m.waitEvent(), m.wantDetail())
 	case pollMsg:
 		// The poll is also the clock: elapsed times and the heartbeat
 		// re-render even when the log is quiet.
@@ -273,6 +329,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, poll()
 	case openErrMsg:
 		m.lastErr = clean(msg.err.Error())
+		return m, nil
+	case detailDueMsg:
+		return m, m.fetchDetail(msg.ticketID)
+	case detailMsg:
+		m.applyDetail(msg)
 		return m, nil
 	case promotedMsg:
 		if msg.err != nil {
@@ -338,8 +399,64 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Open):
 		return m, openURL(m.selectedURL())
 	}
+	cmd := m.wantDetail()
 	m.layout()
-	return m, nil
+	return m, cmd
+}
+
+// wantDetail points the pane at the current needs-you selection. It only
+// schedules: the read waits for the selection to settle, so holding j down
+// a fifteen-row list schedules fifteen ticks and fires one fetch.
+func (m *model) wantDetail() tea.Cmd {
+	if m.focus != panelAttention {
+		return nil
+	}
+	it := m.selectedAttention()
+	if it == nil || it.TicketID == "" || it.TicketID == m.detailWant {
+		return nil
+	}
+	m.detailWant = it.TicketID
+	id := it.TicketID
+	return tea.Tick(detailDebounce, func(time.Time) tea.Msg { return detailDueMsg{ticketID: id} })
+}
+
+// fetchDetail issues the read, unless the selection moved on while the
+// debounce ran or the pane already has the ticket. Like doPromote it runs
+// off the render loop, so a slow Linear call never blocks a frame. A failed
+// entry is retried when the pane comes back to it; a loaded one never is.
+func (m *model) fetchDetail(ticketID string) tea.Cmd {
+	if ticketID != m.detailWant {
+		return nil
+	}
+	if d := m.details[ticketID]; d != nil && d.state != detailFailed {
+		return nil
+	}
+	m.details[ticketID] = &ticketDetail{state: detailLoading}
+	m.refreshMain()
+	m.layout()
+	return func() tea.Msg {
+		detail, err := m.o.Reader.IssueDetail(m.ctx, ticketID)
+		return detailMsg{ticketID: ticketID, detail: detail, err: err}
+	}
+}
+
+// applyDetail folds one read into the cache. It is where this text stops
+// being untrusted, exactly as apply is for events: cleaned once, on the way
+// in.
+func (m *model) applyDetail(msg detailMsg) {
+	d := &ticketDetail{state: detailReady}
+	if msg.err != nil {
+		d.state = detailFailed
+		d.err = clean(msg.err.Error())
+	} else {
+		detail := cleanDetail(msg.detail)
+		d.body, d.comments = detail.Body, detail.Comments
+	}
+	m.details[msg.ticketID] = d
+	if m.focus == panelAttention {
+		m.refreshMain()
+	}
+	m.layout()
 }
 
 // handlePromoteKey drives the promote picker: choose a target status for the
@@ -590,16 +707,20 @@ func (m *model) refreshMain() {
 		m.refreshLog()
 		return
 	}
-	m.vp.SetContent(m.detail())
+	// The viewport's width is the pane's inner width, and it follows the
+	// terminal's alone — so wrapping against it here can never disagree with
+	// the width geometry measured the same content at.
+	m.vp.SetContent(m.detail(m.vp.Width))
 }
 
 // detail is the read-only lens the main pane shows for the two panels that
-// are not the log — and the measure geometry fits the pane's box to.
-func (m *model) detail() string {
+// are not the log — and the measure geometry fits the pane's box to. width
+// is the pane's inner width, which the needs-you lens wraps prose to.
+func (m *model) detail(width int) string {
 	if m.focus == panelNext {
 		return m.nextDetail()
 	}
-	return m.attentionDetail()
+	return m.attentionDetail(width)
 }
 
 func (m *model) refreshLog() {
@@ -700,13 +821,13 @@ func (m *model) geometry() geometry {
 	if g.wide {
 		// The main pane has the other column to itself, so it fits its own
 		// content and never competes with the stack.
-		g.mainH = min(g.bodyH, m.mainWant(g.bodyH))
+		g.mainH = min(g.bodyH, m.mainWant(g.bodyH, g.mainW-2))
 		h := fitPanels(want, floor, g.bodyH, int(m.focus))
 		g.attnH, g.lanesH, g.nextH = h[0], h[1], h[2]
 		return g
 	}
 	// Stacked, the main pane is one more claimant on the same body.
-	h := fitPanels(append(want, m.mainWant(g.bodyH)), append(floor, mainFloor), g.bodyH, int(m.focus))
+	h := fitPanels(append(want, m.mainWant(g.bodyH, g.mainW-2)), append(floor, mainFloor), g.bodyH, int(m.focus))
 	g.attnH, g.lanesH, g.nextH, g.mainH = h[0], h[1], h[2], h[3]
 	return g
 }
@@ -745,11 +866,11 @@ func (m *model) panelEmpty(p panel) bool {
 // mainWant is the main pane's height by the same rule. The detail lenses ask
 // for the lines they draw; the log tail, the promote picker and the help
 // overlay ask for the whole body, because what they hold scrolls.
-func (m *model) mainWant(bodyH int) int {
+func (m *model) mainWant(bodyH, width int) int {
 	if m.promoting || m.helpOn || m.focus == panelLanes {
 		return bodyH
 	}
-	return strings.Count(m.detail(), "\n") + 3
+	return strings.Count(m.detail(width), "\n") + 3
 }
 
 // fitPanels turns wants into heights summing to avail: grant every want when
@@ -1151,10 +1272,11 @@ func (m model) mainTitle() string {
 	}
 }
 
-// attentionDetail is the main pane's lens on the selected needs-you item —
-// everything the loop knows, plus Linear's URL. Promote is the one action
-// here; everything else about the item happens in Linear.
-func (m model) attentionDetail() string {
+// attentionDetail is the main pane's lens on the selected needs-you item:
+// everything the loop knows, Linear's URL, and then the ticket itself (see
+// ticketLines). Promote is the one action here; everything else about the
+// item happens in Linear.
+func (m model) attentionDetail(width int) string {
 	if !m.attentionSeen {
 		return styleFaint.Render("reading the board…")
 	}
@@ -1163,7 +1285,10 @@ func (m model) attentionDetail() string {
 			styleFaint.Render("(shows "+loop.AttentionDefinition+")")
 	}
 	it := m.selectedAttention()
-	return strings.Join([]string{
+	// These lines come from the pass and always render first, whatever the
+	// read of the ticket itself is doing: a failed fetch must never cost the
+	// operator the pane that works today.
+	lines := []string{
 		styleTicket.Render(it.Ticket) + " " + it.Title,
 		"",
 		styleFaint.Render("group   ") + string(it.Group),
@@ -1172,7 +1297,71 @@ func (m model) attentionDetail() string {
 		styleFaint.Render("linear  ") + it.URL,
 		"",
 		styleFaint.Render("p promotes it into a queue · o opens it in Linear"),
-	}, "\n")
+	}
+	return strings.Join(append(lines, m.ticketLines(it.TicketID, width)...), "\n")
+}
+
+// ticketLines is the ticket itself, below the pass's own lines: the body,
+// then the comments oldest first — so lerp's last stage-boundary artifact,
+// the verdict that parked the ticket, is where the eye lands. Read-only and
+// flat: nothing here is selectable, no thread is followed, no other ticket
+// is reachable from it. Markdown is rendered as the plain text it is; `o` is
+// the answer to anything that wants more.
+func (m model) ticketLines(ticketID string, width int) []string {
+	d := m.details[ticketID]
+	switch {
+	case d == nil:
+		return nil
+	case d.state == detailLoading:
+		return []string{"", styleFaint.Render("reading the ticket…")}
+	case d.state == detailFailed:
+		return []string{"", styleFaint.Render("couldn't read the ticket: " + d.err), styleFaint.Render("o opens it in Linear")}
+	}
+	lines := []string{""}
+	if body := strings.TrimSpace(d.body); body != "" {
+		lines = append(lines, wrapText(body, width)...)
+	} else {
+		lines = append(lines, styleFaint.Render("(no description)"))
+	}
+	if len(d.comments) == 0 {
+		return append(lines, "", styleFaint.Render("(no comments)"))
+	}
+	for _, c := range d.comments {
+		lines = append(lines, "", styleFaint.Render(commentHead(c)))
+		lines = append(lines, wrapText(strings.TrimSpace(c.Body), width)...)
+	}
+	return lines
+}
+
+// commentHead is one comment's byline: who wrote it and how long ago.
+func commentHead(c linear.Comment) string {
+	if c.CreatedAt.IsZero() {
+		return c.Author
+	}
+	return c.Author + " · " + age(c.CreatedAt)
+}
+
+// age renders a comment's age in one unit. Reading a thread, the scale that
+// matters is "minutes or days", never seconds.
+func age(t time.Time) string {
+	d := time.Since(t)
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+	}
+}
+
+// wrapText word-wraps prose to the pane's inner width. panelBox truncates
+// its rows instead of wrapping — right for a one-line list row, wrong for a
+// ticket body, where it would throw away everything past the first line.
+func wrapText(s string, width int) []string {
+	return strings.Split(ansi.Wrap(s, max(8, width), "-"), "\n")
 }
 
 // nextDetail is the lens on the selected up-next ticket: where it sits in

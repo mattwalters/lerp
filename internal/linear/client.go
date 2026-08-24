@@ -37,6 +37,23 @@ type Issue struct {
 	Priority int
 }
 
+// IssueDetail is one ticket as the needs-you pane reads it: the body the
+// operator has to judge, and the comments on it — which, by SCOPE.md
+// invariant 7, are lerp's own stage-boundary artifacts (the plan, the
+// review verdict, the escalation note that parked the ticket).
+type IssueDetail struct {
+	Body     string
+	Comments []Comment // oldest first
+}
+
+// Comment is one comment on an issue. Author is a display name, never an
+// identity lerp acts on.
+type Comment struct {
+	Author    string
+	Body      string
+	CreatedAt time.Time
+}
+
 // Client is the operation surface lerp needs from Linear — exactly these,
 // nothing more (SCOPE.md invariant 8). The loop is written against this
 // interface and tested against Fake.
@@ -56,6 +73,11 @@ type Client interface {
 	// regular passes never call it.
 	TeamStates(ctx context.Context, teamKey string) ([]string, error)
 	GetIssue(ctx context.Context, issueID string) (Issue, error)
+	// GetIssueDetail reads one issue's body and its comments — the read
+	// SCOPE.md's "not a Linear client" bullet licenses for the needs-you
+	// pane. Read-only, and only for the ticket the operator selected; no
+	// pass calls it, the TUI issues it on selection.
+	GetIssueDetail(ctx context.Context, issueID string) (IssueDetail, error)
 	MoveIssue(ctx context.Context, issueID, statusName string) error
 	AssignIssue(ctx context.Context, issueID, userID string) error
 	UnassignIssue(ctx context.Context, issueID string) error

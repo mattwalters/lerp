@@ -1,12 +1,14 @@
 package tui
 
 import (
+	"regexp"
 	"slices"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/mattwalters/lerp/internal/linear"
 	"github.com/mattwalters/lerp/internal/loop"
 )
 
@@ -37,6 +39,64 @@ func clean(s string) string {
 		}
 	}
 	return b.String()
+}
+
+// cleanText is clean's counterpart for the prose the needs-you pane reads
+// out of Linear: a ticket body and the comments on it, which are many lines
+// by design, so newlines survive. Nothing else does — unlike cleanLog there
+// is no SGR exemption, because a ticket body has no legitimate reason to
+// paint the operator's terminal.
+func cleanText(s string) string {
+	// A CRLF body would otherwise leave a trailing space on every line.
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range ansi.Strip(s) {
+		switch {
+		case r == '\n':
+			b.WriteRune(r)
+		case r == '\t' || r == '\v' || r == '\f' || r == '\r':
+			// Rows the layout budgeted for stay budgeted for: the whitespace
+			// that would move the cursor becomes a plain space.
+			b.WriteRune(' ')
+		case control(r) || r == utf8.RuneError:
+			// Dropped: C0, DEL, the 8-bit C1 introducers, and the bytes of
+			// a broken UTF-8 sequence.
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// issueTag matches the inline issue reference Linear puts in body text:
+// <issue id="…" href="…">LERP-22</issue>. Only a closed tag matches, so a
+// truncated one is left as the visible text it is rather than swallowing
+// the rest of the body.
+var issueTag = regexp.MustCompile(`<issue\b[^>]*>([^<]*)</issue>`)
+
+// reduceIssueTags rewrites those references to the identifier they name.
+// Rendered raw they are unreadable, and the pane deliberately has no
+// markdown renderer to do it. It runs after cleanText, so the pattern only
+// ever sees text that is already inert.
+func reduceIssueTags(s string) string {
+	return issueTag.ReplaceAllString(s, "$1")
+}
+
+// cleanDetail returns d with every Linear-sourced string made inert. The
+// detail fetch calls it on the way in, the same rule cleanEvent follows:
+// model state is safe before it is stored, so no view has to remember.
+func cleanDetail(d linear.IssueDetail) linear.IssueDetail {
+	out := linear.IssueDetail{Body: reduceIssueTags(cleanText(d.Body))}
+	out.Comments = make([]linear.Comment, len(d.Comments))
+	for i, c := range d.Comments {
+		out.Comments[i] = linear.Comment{
+			Author:    clean(c.Author),
+			Body:      reduceIssueTags(cleanText(c.Body)),
+			CreatedAt: c.CreatedAt,
+		}
+	}
+	return out
 }
 
 // cleanLog is clean's counterpart for the log pane, where the bytes come

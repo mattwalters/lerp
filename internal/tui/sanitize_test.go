@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mattwalters/lerp/internal/linear"
 	"github.com/mattwalters/lerp/internal/loop"
 )
 
@@ -39,6 +40,87 @@ func TestCleanDefusesEscapeSequences(t *testing.T) {
 				t.Fatalf("clean(%q) = %q, want %q", tc.in, got, tc.want)
 			}
 		})
+	}
+}
+
+// A ticket body is many lines and no color: cleanText keeps the newlines
+// clean drops, and drops the paint cleanLog keeps.
+func TestCleanTextKeepsRowsAndNothingElse(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"newlines survive", "one\ntwo\nthree", "one\ntwo\nthree"},
+		{"crlf collapses", "one\r\ntwo", "one\ntwo"},
+		{"bare carriage return", "innocent\rEVIL", "innocent EVIL"},
+		{"tab", "a\tb", "a b"},
+		// Unlike the log pane, Linear text never gets to paint.
+		{"sgr goes", "\x1b[31mred\x1b[0m", "red"},
+		{"osc title", "\x1b]0;pwned\x07LERP-1", "LERP-1"},
+		{"osc clipboard", "\x1b]52;c;cGF5bG9hZA==\x1b\\LERP-1", "LERP-1"},
+		{"erase screen", "\x1b[2Jwipe", "wipe"},
+		{"eight-bit csi", "\x9b2Jwipe", "wipe"},
+		{"delete", "del\x7fete", "delete"},
+		{"broken utf-8", "bad\xffbytes", "badbytes"},
+		{"markdown passes through", "## Plan\n\n- one — 日本語", "## Plan\n\n- one — 日本語"},
+		{"empty", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := cleanText(tc.in); got != tc.want {
+				t.Fatalf("cleanText(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// Linear writes inline issue references as tags. Rendered raw they are
+// unreadable, and the pane has no markdown renderer to do better.
+func TestReduceIssueTags(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"one tag", `blocked by <issue id="u-1" href="https://x/LERP-36">LERP-36</issue>.`,
+			"blocked by LERP-36."},
+		{"several tags", `<issue id="a" href="h">LERP-1</issue> and <issue id="b" href="h">LERP-2</issue>`,
+			"LERP-1 and LERP-2"},
+		{"attribute order", `<issue href="h" id="a">LERP-3</issue>`, "LERP-3"},
+		// An unclosed tag is left as the text it is; swallowing the rest of
+		// the body would be worse than showing the tag.
+		{"unclosed tag", `<issue id="a">LERP-4 and the rest of the body`,
+			`<issue id="a">LERP-4 and the rest of the body`},
+		{"no tags", "plain body", "plain body"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := reduceIssueTags(tc.in); got != tc.want {
+				t.Fatalf("reduceIssueTags(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// cleanDetail is the fetch\'s boundary, as cleanEvent is the pass\'s: what it
+// stores is inert, whichever field the payload hid in.
+func TestCleanDetailMakesTheWholeTicketInert(t *testing.T) {
+	got := cleanDetail(linear.IssueDetail{
+		Body: "body\x1b]0;pwned\x07 <issue id=\"a\" href=\"h\">LERP-9</issue>",
+		Comments: []linear.Comment{{
+			Author: "agent\rEVIL",
+			Body:   "verdict\x1b[2J\nsecond line",
+		}},
+	})
+	if strings.ContainsRune(got.Body, '\x1b') || !strings.Contains(got.Body, "LERP-9") ||
+		strings.Contains(got.Body, "<issue") {
+		t.Errorf("body = %q, want it inert with the tag reduced", got.Body)
+	}
+	c := got.Comments[0]
+	if c.Author != "agent EVIL" {
+		t.Errorf("author = %q, want the control byte gone", c.Author)
+	}
+	if strings.ContainsRune(c.Body, '\x1b') || !strings.Contains(c.Body, "\nsecond line") {
+		t.Errorf("comment body = %q, want it inert with its rows kept", c.Body)
 	}
 }
 
