@@ -345,6 +345,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // handlePromoteKey drives the promote picker: choose a target status for the
 // needs-you panel's selected ticket, or back out without touching Linear.
 func (m model) handlePromoteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
 	switch msg.String() {
 	case "esc", "q", "ctrl+c":
 		m.promoting = false
@@ -359,12 +360,14 @@ func (m model) handlePromoteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		it := m.selectedAttention()
 		m.promoting = false
-		if it == nil {
-			return m, nil
+		if it != nil {
+			cmd = m.doPromote(it.TicketID, it.Ticket, m.o.Statuses[m.promoteSel])
 		}
-		return m, m.doPromote(it.TicketID, it.Ticket, m.o.Statuses[m.promoteSel])
 	}
-	return m, nil
+	// Closing the picker hands the main pane back to a lens of a different
+	// height; re-fit before the next frame draws into the old one.
+	m.layout()
+	return m, cmd
 }
 
 // doPromote calls the one write the TUI is allowed (SCOPE's promote
@@ -579,14 +582,20 @@ func (m *model) retarget() {
 // Scroll position is the caller's concern — focus and selection changes jump
 // to the top; a data refresh keeps the operator's place.
 func (m *model) refreshMain() {
-	switch m.focus {
-	case panelLanes:
+	if m.focus == panelLanes {
 		m.refreshLog()
-	case panelAttention:
-		m.vp.SetContent(m.attentionDetail())
-	case panelNext:
-		m.vp.SetContent(m.nextDetail())
+		return
 	}
+	m.vp.SetContent(m.detail())
+}
+
+// detail is the read-only lens the main pane shows for the two panels that
+// are not the log — and the measure geometry fits the pane's box to.
+func (m *model) detail() string {
+	if m.focus == panelNext {
+		return m.nextDetail()
+	}
+	return m.attentionDetail()
 }
 
 func (m *model) refreshLog() {
@@ -634,11 +643,15 @@ func (m *model) selectedAttention() *loop.AttentionItem {
 	return &m.attention[clampIndex(m.attnSel, len(m.attention))]
 }
 
-// geometry is the screen's arithmetic: side panels sized to the rows they
-// will render, the main pane taking whatever is left, one narrow fallback
-// that stacks everything. Heights include borders, and the stack is clamped
-// to bodyH so the status bar always stays on screen — panelBox and
-// windowRows absorb the overflow inside each panel.
+// geometry is the screen's arithmetic. One rule: every panel asks for the
+// rows it will render, and the panel with focus absorbs whatever is left
+// over — so the panel being worked in is the one that grows, and moving
+// focus moves the space without an expand key to press. A panel with
+// nothing to show asks for a single line, its title row, and takes its body
+// back the moment it has something to say or the operator focuses it. When
+// the wants exceed the body, the unfocused panels are squeezed to a floor
+// before the focused one gives anything up. Heights include borders, and
+// the stack always fits bodyH so the status bar stays on screen.
 type geometry struct {
 	wide                 bool
 	sideW, mainW         int
@@ -647,37 +660,136 @@ type geometry struct {
 	mainH                int
 }
 
+const (
+	// panelFloor is the smallest a panel is squeezed to: a border, one row,
+	// a border. mainFloor is the same for the main pane in the stacked
+	// layout, where it shares the body with the three panels. collapsedH is
+	// what a panel with nothing to show costs.
+	panelFloor = 3
+	mainFloor  = 5
+	collapsedH = 1
+)
+
 func (m *model) geometry() geometry {
 	g := geometry{bodyH: max(4, m.height-1)}
 	g.wide = m.width >= narrowWidth
 
-	// Panels size to the rows they will render — the same rows the panels
-	// draw, so the counts can never drift — capped so no panel crowds out
-	// the others, then clamped so the whole stack fits bodyH. Each clamp
-	// leaves the panels below it their minimum height; View's too-small
-	// guard keeps the arithmetic non-negative.
+	// Wants come from the same row builders the panels draw with, so the
+	// counts can never drift from what lands on screen. The panel constants
+	// are the stack's order, so a panel doubles as its index.
 	attnRows, _ := m.attentionRows()
 	nextRows, _ := m.nextListRows()
-	g.attnH = min(len(attnRows), 8) + 2
-	g.lanesH = len(m.order) + 2
+	want := []int{
+		m.panelWant(panelAttention, len(attnRows)),
+		m.panelWant(panelLanes, len(m.order)),
+		m.panelWant(panelNext, len(nextRows)),
+	}
+	floor := []int{panelFloor, panelFloor, panelFloor}
 
 	if g.wide {
 		g.sideW = max(28, m.width/3)
 		g.mainW = m.width - g.sideW
-		g.mainH = g.bodyH
-		g.attnH = min(g.attnH, g.bodyH-3-4)
-		g.lanesH = min(g.lanesH, g.bodyH-g.attnH-4)
-		g.nextH = g.bodyH - g.attnH - g.lanesH
+		// The main pane has the other column to itself, so it fits its own
+		// content and never competes with the stack.
+		g.mainH = min(g.bodyH, m.mainWant(g.bodyH))
+		h := fitPanels(want, floor, g.bodyH, int(m.focus))
+		g.attnH, g.lanesH, g.nextH = h[0], h[1], h[2]
 		return g
 	}
-	g.sideW = m.width
-	g.mainW = m.width
-	g.nextH = min(len(nextRows), 6) + 2
-	g.attnH = min(g.attnH, g.bodyH-3-3-5)
-	g.lanesH = min(g.lanesH, g.bodyH-g.attnH-3-5)
-	g.nextH = min(g.nextH, g.bodyH-g.attnH-g.lanesH-5)
-	g.mainH = g.bodyH - g.attnH - g.lanesH - g.nextH
+	// Stacked, the main pane is one more claimant on the same body.
+	g.sideW, g.mainW = m.width, m.width
+	h := fitPanels(append(want, m.mainWant(g.bodyH)), append(floor, mainFloor), g.bodyH, int(m.focus))
+	g.attnH, g.lanesH, g.nextH, g.mainH = h[0], h[1], h[2], h[3]
 	return g
+}
+
+// panelWant is one panel's height in the stack: the rows it will render
+// plus its borders, or a single title row when it has nothing to show. The
+// focused panel is never collapsed — focus is how the operator opens an
+// empty panel back up to select in it.
+func (m *model) panelWant(p panel, rows int) int {
+	if m.focus != p && m.panelEmpty(p) {
+		return collapsedH
+	}
+	return rows + 2
+}
+
+// panelEmpty is the content test behind the collapse: nothing waits on the
+// operator, no lane is busy, no queue holds a ticket. Not knowing yet is not
+// empty — a panel no pass has reported on keeps its body and says so.
+func (m *model) panelEmpty(p panel) bool {
+	switch p {
+	case panelAttention:
+		return m.attentionSeen && len(m.attention) == 0
+	case panelLanes:
+		for _, ln := range m.lanes {
+			if ln.state != laneIdle {
+				return false
+			}
+		}
+		return true
+	case panelNext:
+		return m.queues != nil && len(m.nextRefs()) == 0
+	}
+	return false
+}
+
+// mainWant is the main pane's height by the same rule. The detail lenses ask
+// for the lines they draw; the log tail, the promote picker and the help
+// overlay ask for the whole body, because what they hold scrolls.
+func (m *model) mainWant(bodyH int) int {
+	if m.promoting || m.helpOn || m.focus == panelLanes {
+		return bodyH
+	}
+	return strings.Count(m.detail(), "\n") + 3
+}
+
+// fitPanels turns wants into heights summing to avail: grant every want when
+// they fit and hand the slack to focused, otherwise take rows from the
+// tallest panel still above its floor, sparing focused until the others have
+// nothing left to give. A panel asking for less than its floor keeps its
+// want as the floor, so a collapsed panel is never padded back out.
+func fitPanels(want, floors []int, avail, focused int) []int {
+	h := slices.Clone(want)
+	floor := make([]int, len(h))
+	total := 0
+	for i, v := range h {
+		floor[i] = min(v, floors[i])
+		total += v
+	}
+	if total <= avail {
+		h[focused] += avail - total
+		return h
+	}
+	over := squeeze(h, floor, total-avail, focused)
+	over = squeeze(h, floor, over, -1)
+	// Under every floor at once means a window smaller than View's guard
+	// allows. Keep the arithmetic honest anyway: panels shrink to nothing
+	// rather than push the status bar off screen.
+	squeeze(h, make([]int, len(h)), over, -1)
+	return h
+}
+
+// squeeze takes rows one at a time from the tallest panel above its floor,
+// skipping the panel at keep, and reports what it could not take.
+func squeeze(h, floor []int, need, keep int) int {
+	for need > 0 {
+		tallest := -1
+		for i := range h {
+			if i == keep || h[i] <= floor[i] {
+				continue
+			}
+			if tallest < 0 || h[i] > h[tallest] {
+				tallest = i
+			}
+		}
+		if tallest < 0 {
+			return need
+		}
+		h[tallest]--
+		need--
+	}
+	return 0
 }
 
 // layout sizes the main pane's viewport from the geometry.
@@ -689,18 +801,26 @@ func (m *model) layout() {
 	m.vp.Width = max(0, g.mainW-2)
 	m.vp.Height = max(1, g.mainH-2)
 	m.help.Width = m.vp.Width
+	// A pane that just changed height holds a scroll position measured
+	// against the old one: re-pin a followed log to the bottom, and clamp
+	// anything else back inside the new box.
+	if m.focus == panelLanes && m.follow {
+		m.vp.GotoBottom()
+		return
+	}
+	m.vp.SetYOffset(m.vp.YOffset)
 }
 
 func (m model) View() string {
 	if !m.ready {
 		return "starting lerp…\n"
 	}
-	// geometry's clamps need room for every panel's minimum height (the
-	// stacked narrow layout needs the most); below that, say so rather than
-	// render a screen taller than the terminal.
-	minH := 11
+	// Below every panel's floor plus the status bar — plus the main pane's
+	// floor when the layout stacks — geometry can only produce a screen
+	// taller than the terminal. Say so instead of rendering one.
+	minH := 3*panelFloor + 1
 	if m.width < narrowWidth {
-		minH = 15
+		minH += mainFloor
 	}
 	if m.width < 24 || m.height < minH {
 		return "lerp — window too small\n"
@@ -774,6 +894,12 @@ func (m model) attentionPanel(w, h int) string {
 	if len(m.attention) > 0 {
 		extra = styleAttention.Render(fmt.Sprintf(" ● %d", len(m.attention)))
 	}
+	if h <= collapsedH {
+		if m.panelEmpty(panelAttention) {
+			extra += styleFaint.Render(" — nothing needs you")
+		}
+		return panelLine(panelTitle(1, "needs you", focused, extra), w)
+	}
 	rows, sel := m.attentionRows()
 	if focused && sel >= 0 {
 		rows = windowRows(rows, sel, h-2)
@@ -797,6 +923,12 @@ func (m model) busyLanes() int {
 func (m model) lanesPanel(w, h int) string {
 	focused := m.focus == panelLanes
 	extra := styleFaint.Render(fmt.Sprintf(" · %d/%d busy", m.busyLanes(), m.o.Lanes))
+	if h <= collapsedH {
+		if m.panelEmpty(panelLanes) {
+			extra += styleFaint.Render(" — all lanes idle")
+		}
+		return panelLine(panelTitle(2, "running", focused, extra), w)
+	}
 	rows := make([]string, 0, len(m.order))
 	for _, n := range m.order {
 		rows = append(rows, m.laneRow(n, w-2))
@@ -896,6 +1028,13 @@ func (m *model) nextListRows() ([]string, int) {
 
 func (m model) nextPanel(w, h int) string {
 	focused := m.focus == panelNext
+	if h <= collapsedH {
+		extra := ""
+		if m.panelEmpty(panelNext) {
+			extra = styleFaint.Render(" — all queues empty")
+		}
+		return panelLine(panelTitle(3, "up next", focused, extra), w)
+	}
 	rows, sel := m.nextListRows()
 	if focused && sel >= 0 {
 		rows = windowRows(rows, sel, h-2)

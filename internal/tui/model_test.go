@@ -466,22 +466,199 @@ func TestStatusBarAndHelp(t *testing.T) {
 	}
 }
 
-// No rendered line may overflow the terminal, wide layout or stacked — the
-// long explanatory empty states included.
+// fillBoard puts n items in needs-you and n tickets in one queue, so every
+// panel has more rows than a small window can hold.
+func fillBoard(t *testing.T, m model, n int) model {
+	t.Helper()
+	items := make([]loop.AttentionItem, n)
+	tickets := make([]loop.QueueTicket, n)
+	for i := range items {
+		items[i] = loop.AttentionItem{Group: loop.ToRoute, Ticket: fmt.Sprintf("LERP-%d", i+1),
+			Title: "something waits", Status: "Backlog", Reason: "no queue serves it"}
+		tickets[i] = loop.QueueTicket{ID: fmt.Sprintf("t%d", i),
+			Identifier: fmt.Sprintf("QUEUED-%d", i+1), Title: "work", Eligible: true}
+	}
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: items}})
+	return update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: tickets},
+	}}})
+}
+
+// Every panel asks for the rows it will render and the focused one absorbs
+// the slack: with 15 items waiting, idle lanes and empty queues, needs-you
+// gets the whole column and renders all 15. Moving focus moves the space —
+// there is no expand key, only focus.
+func TestFocusedPanelTakesTheSlack(t *testing.T) {
+	m, _, _ := newTestModel(t, 3)
+	resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = resized.(model)
+	items := make([]loop.AttentionItem, 15)
+	for i := range items {
+		items[i] = loop.AttentionItem{Group: loop.ToRoute, Ticket: fmt.Sprintf("LERP-%d", i+1),
+			Title: "something waits", Status: "Backlog"}
+	}
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: items}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Team: "LERP", Name: "plan", Status: "Planning"},
+		{Team: "LERP", Name: "implement", Status: "Todo"},
+		{Team: "LERP", Name: "review", Status: "In Review"},
+	}}})
+
+	m = update(t, m, keyMsg("1"))
+	g := m.geometry()
+	if got := g.attnH + g.lanesH + g.nextH; got != g.bodyH {
+		t.Fatalf("stack is %d lines in a %d-line body", got, g.bodyH)
+	}
+	if g.lanesH != collapsedH || g.nextH != collapsedH {
+		t.Fatalf("idle lanes and empty queues reserved a body: lanes %d, next %d", g.lanesH, g.nextH)
+	}
+	view := m.View()
+	for i := 1; i <= 15; i++ {
+		if !strings.Contains(view, fmt.Sprintf("LERP-%d ", i)) {
+			t.Fatalf("needs-you dropped LERP-%d with a column to spare:\n%s", i, view)
+		}
+	}
+	if strings.Contains(view, "more") {
+		t.Fatalf("needs-you cut its list with room left over:\n%s", view)
+	}
+
+	// Focus moves, and the slack moves with it: needs-you falls back to the
+	// rows it renders, up-next takes what is left.
+	m = update(t, m, keyMsg("3"))
+	rows, _ := m.attentionRows()
+	g2 := m.geometry()
+	if g2.attnH != len(rows)+2 {
+		t.Fatalf("unfocused needs-you is %d lines for %d rows", g2.attnH, len(rows))
+	}
+	if g2.nextH <= g.nextH || g2.nextH != g.bodyH-g2.attnH-g2.lanesH {
+		t.Fatalf("up-next did not take the slack on focus: %d lines", g2.nextH)
+	}
+}
+
+// A panel with nothing to show costs one line — its own title row — and
+// takes its body back the moment the operator focuses it. Content drives
+// this; no toggle, and the selection still works.
+func TestEmptyPanelsCostOneLine(t *testing.T) {
+	m, _, _ := newTestModel(t, 3)
+	resized, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 30})
+	m = resized.(model)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Team: "LERP", Name: "plan", Status: "Planning"},
+	}}})
+
+	m = update(t, m, keyMsg("1"))
+	view := m.View()
+	for _, want := range []string{
+		"[2] running · 0/3 busy — all lanes idle",
+		"[3] up next — all queues empty",
+	} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("collapsed panel is missing %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "○ idle") {
+		t.Fatalf("collapsed lanes panel still reserved a body:\n%s", view)
+	}
+
+	// Focusing a collapsed panel opens it: the lane rows are back, and with
+	// them the selection.
+	m = update(t, m, keyMsg("2"))
+	view = m.View()
+	if strings.Contains(view, "all lanes idle") {
+		t.Fatalf("focused lanes panel stayed collapsed:\n%s", view)
+	}
+	if !strings.Contains(view, "○ idle") {
+		t.Fatalf("focused lanes panel does not show its lanes:\n%s", view)
+	}
+	m = update(t, m, keyMsg("down"))
+	if m.selected != 2 {
+		t.Fatalf("selection in a reopened panel = lane %d, want 2", m.selected)
+	}
+}
+
+// When the three panels want more than the body between them, the unfocused
+// ones are squeezed to the floor before the panel being worked in gives up a
+// row — and the stack still fits, so the status bar stays on screen.
+func TestOverflowSqueezesTheUnfocusedPanelsFirst(t *testing.T) {
+	m, _, _ := newTestModel(t, 6)
+	resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
+	m = resized.(model)
+	m = fillBoard(t, m, 40)
+	// A busy lane keeps the running panel from collapsing, so all three
+	// panels are asking for a body.
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		TicketID: "id-42", Ticket: "LERP-42", Queue: "implement", LogPath: "/dev/null"}})
+
+	m = update(t, m, keyMsg("1"))
+	g := m.geometry()
+	if got := g.attnH + g.lanesH + g.nextH; got != g.bodyH {
+		t.Fatalf("overflowing stack is %d lines in a %d-line body", got, g.bodyH)
+	}
+	if g.lanesH != panelFloor || g.nextH != panelFloor {
+		t.Fatalf("unfocused panels are not at the floor: lanes %d, next %d", g.lanesH, g.nextH)
+	}
+	if want := g.bodyH - 2*panelFloor; g.attnH != want {
+		t.Fatalf("focused needs-you is %d lines, want %d", g.attnH, want)
+	}
+	if lines := strings.Count(m.View(), "\n") + 1; lines > 24 {
+		t.Fatalf("view is %d lines tall in a 24-line window", lines)
+	}
+
+	// The squeeze follows focus, like the slack does.
+	m = update(t, m, keyMsg("3"))
+	g = m.geometry()
+	if g.attnH != panelFloor || g.nextH != g.bodyH-2*panelFloor {
+		t.Fatalf("focus did not move the squeeze: needs-you %d, up-next %d", g.attnH, g.nextH)
+	}
+}
+
+// The too-small guard is geometry's own arithmetic: at the smallest window
+// each layout admits, the stack still fits the terminal, and one line less
+// is refused rather than drawn over the status bar.
+func TestSmallestWindowTheGuardAdmits(t *testing.T) {
+	for _, tc := range []struct{ w, h int }{
+		{120, 3*panelFloor + 1},
+		{70, 3*panelFloor + mainFloor + 1},
+	} {
+		m, _, _ := newTestModel(t, 3)
+		resized, _ := m.Update(tea.WindowSizeMsg{Width: tc.w, Height: tc.h})
+		m = fillBoard(t, resized.(model), 20)
+		view := m.View()
+		if strings.Contains(view, "too small") {
+			t.Fatalf("width %d: the guard refuses the height it admits", tc.w)
+		}
+		if lines := strings.Count(view, "\n") + 1; lines > tc.h {
+			t.Fatalf("width %d: view is %d lines tall in a %d-line window:\n%s",
+				tc.w, lines, tc.h, view)
+		}
+		resized, _ = m.Update(tea.WindowSizeMsg{Width: tc.w, Height: tc.h - 1})
+		if view := resized.(model).View(); !strings.Contains(view, "too small") {
+			t.Fatalf("width %d: a window below the floors rendered anyway:\n%s", tc.w, view)
+		}
+	}
+}
+
+// No rendered line may overflow the terminal, wide layout or stacked, from
+// whichever panel has focus — the long explanatory empty states included.
 func TestViewFitsTheWindow(t *testing.T) {
 	for _, width := range []int{120, 100, 80, 60} {
-		m, _, _ := newTestModel(t, 3)
-		resized, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: 30})
-		m = resized.(model)
-		m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
-			TicketID: "id-42", Ticket: "LERP-42", Queue: "implement", LogPath: "/dev/null"}})
-		m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention}})
-		m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
-			{Team: "LERP", Name: "review", Status: "A Status With A Very Long Name"},
-		}}})
-		for i, line := range strings.Split(m.View(), "\n") {
-			if got := lipgloss.Width(line); got > width {
-				t.Fatalf("width %d: line %d is %d cells wide:\n%s", width, i, got, line)
+		for _, focus := range []string{"1", "2", "3"} {
+			m, _, _ := newTestModel(t, 3)
+			resized, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: 30})
+			m = resized.(model)
+			m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+				TicketID: "id-42", Ticket: "LERP-42", Queue: "implement", LogPath: "/dev/null"}})
+			m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention}})
+			m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+				{Team: "LERP", Name: "review", Status: "A Status With A Very Long Name"},
+			}}})
+			m = update(t, m, keyMsg(focus))
+			for i, line := range strings.Split(m.View(), "\n") {
+				if got := lipgloss.Width(line); got > width {
+					t.Fatalf("width %d, panel %s: line %d is %d cells wide:\n%s",
+						width, focus, i, got, line)
+				}
 			}
 		}
 	}
