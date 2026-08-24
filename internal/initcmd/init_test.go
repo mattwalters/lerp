@@ -112,6 +112,7 @@ func TestInitCreatesConfigAndStates(t *testing.T) {
 		{Name: "Implementing", Type: "started"},
 		{Name: "In Review", Type: "started"},
 		{Name: "Needs Attention", Type: "started"},
+		{Name: "Plan Review", Type: "started"},
 		{Name: "Planning", Type: "started"},
 	}
 	if !reflect.DeepEqual(b.states, want) {
@@ -126,6 +127,17 @@ func TestInitCreatesConfigAndStates(t *testing.T) {
 	}
 	if !strings.Contains(c.Runners["claude"].Command, "bypassPermissions") {
 		t.Errorf("accepted grant missing from %q", c.Runners["claude"].Command)
+	}
+	// A fresh adopter gets the gated pipeline: the plan lands in a status
+	// init created and no queue serves, so it waits for a human promote.
+	gate := c.Queues["plan"].OnSuccess
+	if gate != "Plan Review" {
+		t.Errorf("plan.on_success = %q, want Plan Review", gate)
+	}
+	for name, q := range c.Queues {
+		if q.Status == gate {
+			t.Errorf("queue %q watches %q, so nothing waits for the operator", name, gate)
+		}
 	}
 }
 
@@ -143,10 +155,10 @@ func TestInitFastPathConversation(t *testing.T) {
 		"team LERP has: Backlog, Todo, In Progress, Done, Canceled",
 		"Include a planning stage? [Y/n]",
 		"Include an agent review stage? [Y/n]",
-		"the pipeline references: Planning, Implementing, Agent Review, In Review, Needs Attention",
-		"Create these 5 statuses on team LERP? [Y]es / [c]ustomize",
+		"the pipeline references: Planning, Plan Review, Implementing, Agent Review, In Review, Needs Attention",
+		"Create these 6 statuses on team LERP? [Y]es / [c]ustomize",
 		"Include --permission-mode bypassPermissions? [y/N]",
-		"creating on team LERP: Agent Review, Implementing, In Review, Needs Attention, Planning",
+		"creating on team LERP: Agent Review, Implementing, In Review, Needs Attention, Plan Review, Planning",
 	}
 	rest := transcript
 	for _, wanted := range inOrder {
@@ -158,7 +170,7 @@ func TestInitFastPathConversation(t *testing.T) {
 	}
 	// The board question comes after init has said what it will do — the
 	// grant question is the last one, so it must follow the stage questions.
-	if strings.Index(transcript, "bypassPermissions?") < strings.Index(transcript, "Create these 5 statuses") {
+	if strings.Index(transcript, "bypassPermissions?") < strings.Index(transcript, "Create these 6 statuses") {
 		t.Error("bypass question asked before the board plan")
 	}
 	// Nothing on the fresh board matched, so nothing reads "using existing".
@@ -173,10 +185,10 @@ func TestInitCustomizeMapsOntoExistingStatuses(t *testing.T) {
 	dir := t.TempDir()
 	existing := []string{"Backlog", "Todo", "In Progress", "In Review", "Done"}
 	var out bytes.Buffer
-	// plan yes, review yes, customize; plan → create, implement → 2) Todo,
-	// review → create, exit → default (In Review already exists), failures →
-	// create; decline the grant.
-	answers := strings.NewReader("\n\nc\nc\n2\nc\n\nc\nn\n")
+	// plan yes, review yes, customize; plan → create, plan review → create,
+	// implement → 2) Todo, review → create, exit → default (In Review already
+	// exists), failures → create; decline the grant.
+	answers := strings.NewReader("\n\nc\nc\nc\n2\nc\n\nc\nn\n")
 	b := &fakeBoard{existing: existing}
 	if _, err := Init(context.Background(), b, &out, answers, dir, "LERP", ""); err != nil {
 		t.Fatal(err)
@@ -188,8 +200,8 @@ func TestInitCustomizeMapsOntoExistingStatuses(t *testing.T) {
 	if got := c.Queues["implement"].Status; got != "Todo" {
 		t.Errorf("implement.status = %q, want Todo", got)
 	}
-	if got := c.Queues["plan"].OnSuccess; got != "Todo" {
-		t.Errorf("plan.on_success = %q, want Todo (follows the implement mapping)", got)
+	if got := c.Queues["plan"].OnSuccess; got != "Plan Review" {
+		t.Errorf("plan.on_success = %q, want the approval gate Plan Review", got)
 	}
 	if got := c.Queues["review"].OnSuccess; got != "In Review" {
 		t.Errorf("review.on_success = %q, want In Review", got)
@@ -198,6 +210,7 @@ func TestInitCustomizeMapsOntoExistingStatuses(t *testing.T) {
 		{Name: "Agent Review", Type: "started"},
 		{Name: "In Review", Type: "started"},
 		{Name: "Needs Attention", Type: "started"},
+		{Name: "Plan Review", Type: "started"},
 		{Name: "Planning", Type: "started"},
 		{Name: "Todo", Type: "started"},
 	}
@@ -208,10 +221,12 @@ func TestInitCustomizeMapsOntoExistingStatuses(t *testing.T) {
 	for _, wanted := range []string{
 		`implement runs in:  1) Backlog  2) Todo `,
 		`c) create "Implementing"`,
+		`plans wait for approval in:  1) Backlog  2) Todo `,
+		`c) create "Plan Review"`,
 		// The stock exit already exists, so its pick defaults to that status
 		// and offers nothing to create.
 		`finished work exits to:  1) Backlog  2) Todo  3) In Progress  4) In Review  5) Done  [4]`,
-		"creating on team LERP: Agent Review, Needs Attention, Planning  ·  using existing: In Review (review exit), Todo (implement)",
+		"creating on team LERP: Agent Review, Needs Attention, Plan Review, Planning  ·  using existing: In Review (review exit), Todo (implement)",
 	} {
 		if !strings.Contains(transcript, wanted) {
 			t.Errorf("transcript missing %q:\n%s", wanted, transcript)
@@ -321,7 +336,7 @@ func TestInitNonInteractiveStockAnswers(t *testing.T) {
 	if strings.Contains(out.String(), "?") {
 		t.Errorf("non-interactive init asked a question:\n%s", out.String())
 	}
-	if !strings.Contains(out.String(), "creating on team LERP: Agent Review, Implementing, In Review, Needs Attention, Planning") {
+	if !strings.Contains(out.String(), "creating on team LERP: Agent Review, Implementing, In Review, Needs Attention, Plan Review, Planning") {
 		t.Errorf("no loud created report:\n%s", out.String())
 	}
 }
@@ -412,8 +427,9 @@ func TestInitRejectsExistingConfigForOtherTeam(t *testing.T) {
 // loader before anything is written.
 func TestInitRejectsMappingTwoQueuesOntoOneStatus(t *testing.T) {
 	dir := t.TempDir()
-	// Customize: plan → 2) Todo, implement → 2) Todo, then defaults.
-	answers := strings.NewReader("\n\nc\n2\n2\nc\nc\nc\nn\n")
+	// Customize: plan → 2) Todo, plan review → create, implement → 2) Todo,
+	// then defaults.
+	answers := strings.NewReader("\n\nc\n2\nc\n2\nc\nc\nc\nn\n")
 	_, err := Init(context.Background(), &fakeBoard{existing: linearDefaults}, io.Discard, answers, dir, "LERP", "")
 	if err == nil || !strings.Contains(err.Error(), `both watch status "Todo"`) {
 		t.Fatalf("Init error = %v", err)

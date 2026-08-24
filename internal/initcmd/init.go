@@ -167,7 +167,10 @@ type slot struct {
 func pipelineSlots(s *config.Stock) []slot {
 	slots := []slot{}
 	if s.Plan {
-		slots = append(slots, slot{"plan runs in", config.StockPlanStatus, &s.PlanStatus})
+		slots = append(slots,
+			slot{"plan runs in", config.StockPlanStatus, &s.PlanStatus},
+			slot{"plans wait for approval in", config.StockPlanReviewStatus, &s.PlanReviewStatus},
+		)
 	}
 	slots = append(slots, slot{"implement runs in", config.StockImplementStatus, &s.ImplementStatus})
 	if s.Review {

@@ -468,8 +468,9 @@ func TestStockVariants(t *testing.T) {
 		"mapped onto an existing board": {
 			stock: Stock{
 				Teams: []string{"LERP"}, Plan: true, Review: true,
-				PlanStatus: "Spec", ImplementStatus: "Todo",
-				ExitStatus: "Ready to Merge", AttentionStatus: "Stuck",
+				PlanStatus: "Spec", PlanReviewStatus: "Spec Approval",
+				ImplementStatus: "Todo",
+				ExitStatus:      "Ready to Merge", AttentionStatus: "Stuck",
 			},
 			queues:           []string{"implement", "plan", "review"},
 			implementSuccess: StockReviewStatus,
@@ -504,8 +505,19 @@ func TestStockVariants(t *testing.T) {
 				if got := c.Queues["implement"].Status; got != tc.stock.ImplementStatus {
 					t.Errorf("implement.status = %q, want %q", got, tc.stock.ImplementStatus)
 				}
-				if got := c.Queues["plan"].OnSuccess; got != tc.stock.ImplementStatus {
-					t.Errorf("plan.on_success = %q, want %q", got, tc.stock.ImplementStatus)
+			}
+			// A finished plan lands on the approval gate, never straight in
+			// implement: the planning stage is worth running only if a human
+			// reads the plan, and an unserved status is what makes it wait.
+			if plan, ok := c.Queues["plan"]; ok {
+				gate := orStock(tc.stock.PlanReviewStatus, StockPlanReviewStatus)
+				if plan.OnSuccess != gate {
+					t.Errorf("plan.on_success = %q, want the approval gate %q", plan.OnSuccess, gate)
+				}
+				for name, q := range c.Queues {
+					if q.Status == gate {
+						t.Errorf("queue %q watches the approval gate %q: the plan never waits for a human", name, gate)
+					}
 				}
 			}
 		})
@@ -575,15 +587,20 @@ func TestExampleConfigIsUsable(t *testing.T) {
 		}
 	}
 
-	// The chain: planning hands off to implementing, which hands off to review,
-	// which hands off to a status no queue watches — a human.
+	// The chain: planning hands off to a status no queue watches — the
+	// approval gate, where a human reads the plan and promotes it — and from
+	// implementing on, to review, which hands off to a status no queue
+	// watches again.
 	plan, ok := byStatus["Planning"]
 	if !ok {
 		t.Fatal("no queue watches Planning")
 	}
-	implement, ok := byStatus[plan.OnSuccess]
+	if _, watched := byStatus[plan.OnSuccess]; watched {
+		t.Errorf("Planning hands off to %q, which a queue picks up: the plan is implemented before anyone reads it", plan.OnSuccess)
+	}
+	implement, ok := byStatus["Implementing"]
 	if !ok {
-		t.Fatalf("Planning hands off to %q, which no queue watches", plan.OnSuccess)
+		t.Fatal("no queue watches Implementing")
 	}
 	review, ok := byStatus[implement.OnSuccess]
 	if !ok {
