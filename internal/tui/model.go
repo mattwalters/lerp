@@ -1214,10 +1214,14 @@ type geometry struct {
 }
 
 const (
-	// panelFloor is the smallest a panel is drawn at: a border, one row, a
-	// border. mainFloor is the same for the main pane in the stacked
-	// layout, where it shares the body with the panels.
-	panelFloor = 3
+	// panelFloor is the smallest a panel is drawn at: a border, two rows, a
+	// border. Two, not one: with a single row windowRows has nothing to
+	// window (its own guard gives up under two lines) and panelBox spends
+	// that row on the "⋯ n more" marker, so a panel holding a list would
+	// render none of it — including the row the selection is on.
+	// mainFloor is the same for the main pane in the stacked layout, where
+	// it shares the body with the panels.
+	panelFloor = 4
 	mainFloor  = 5
 )
 
@@ -1237,13 +1241,20 @@ func (m *model) geometry() geometry {
 	workRows, _ := m.workListRows(g.sideW - 2)
 
 	// Wide, the panel stack has the side column to itself. Stacked, the
-	// main pane is one more claimant on the body: it fits its own content
-	// first, held off the panels' floors, and the stack splits what is left.
+	// main pane is one more claimant on the body, and the stack splits
+	// whatever it leaves.
 	stackH := g.bodyH
 	if g.wide {
 		g.mainH = min(g.bodyH, m.mainWant(g.bodyH, g.mainW-2))
 	} else {
-		g.mainH = fitH(m.mainWant(g.bodyH, g.mainW-2), mainFloor, g.bodyH-2*panelFloor)
+		// The main pane fits its own content here too, but never past the
+		// half of the body that keeps the board on screen. Half is also
+		// what keeps focus out of the arithmetic: the log lens wants the
+		// whole body and opens on focusing work, so an uncapped main pane
+		// would squeeze both panels to their floors on a keystroke — the
+		// old failure wearing the other layout's clothes.
+		g.mainH = fitH(m.mainWant(g.bodyH, g.mainW-2), mainFloor,
+			g.bodyH-max(2*panelFloor, g.bodyH/2))
 		stackH = g.bodyH - g.mainH
 	}
 	g.workH = workHeight(stackH, len(workRows)+2)

@@ -1037,9 +1037,6 @@ func TestQuietWorkPanelKeepsItsBox(t *testing.T) {
 
 	m = update(t, m, keyMsg("1"))
 	g := m.geometry()
-	if g.workH < panelFloor {
-		t.Fatalf("an empty unfocused work panel is %d lines, under the floor", g.workH)
-	}
 	view := m.View()
 	if !strings.Contains(view, "plan · Planning · LERP · empty") {
 		t.Fatalf("empty work panel does not show its queues:\n%s", view)
@@ -1069,13 +1066,17 @@ func TestWorkIsCappedAndScrollsUnderTheCap(t *testing.T) {
 	if got := g.attnH + g.workH; got != g.bodyH {
 		t.Fatalf("overflowing stack is %d lines in a %d-line body", got, g.bodyH)
 	}
-	if want := g.bodyH / 3; g.workH != want {
-		t.Fatalf("work is %d lines of a %d-line body, want its %d-line share",
-			g.workH, g.bodyH, want)
+	if rows, _ := m.workListRows(g.sideW - 2); g.workH >= len(rows)+2 {
+		t.Fatalf("work is %d lines for %d rows: the cap did not bite",
+			g.workH, len(rows))
 	}
-	if g.attnH < 2*g.bodyH/3 {
-		t.Fatalf("needs-you is %d lines of a %d-line body, under its two thirds",
-			g.attnH, g.bodyH)
+	if g.workH > (g.bodyH+2)/3 {
+		t.Fatalf("work is %d lines of a %d-line body, past its third",
+			g.workH, g.bodyH)
+	}
+	if g.attnH < 2*g.workH {
+		t.Fatalf("needs-you is %d lines against work's %d: not the larger panel",
+			g.attnH, g.workH)
 	}
 	if lines := strings.Count(m.View(), "\n") + 1; lines > 40 {
 		t.Fatalf("view is %d lines tall in a 40-line window", lines)
@@ -1096,6 +1097,80 @@ func TestWorkIsCappedAndScrollsUnderTheCap(t *testing.T) {
 	want := strings.TrimRight(ansi.Strip(rows[sel]), " ")
 	if !strings.Contains(ansi.Strip(m.View()), want) {
 		t.Fatalf("the selected row walked off the capped panel:\n%s", m.View())
+	}
+}
+
+// A panel at its floor is still a panel that can be read: at the smallest
+// window each layout admits, the focused work panel renders the row the
+// selection is on rather than spending its only line on "⋯ n more".
+func TestFlooredPanelStillShowsTheSelection(t *testing.T) {
+	for _, tc := range []struct{ w, h int }{
+		{120, 2*panelFloor + 1},
+		{70, 2*panelFloor + mainFloor + 1},
+	} {
+		m, _, _ := newTestModel(t, 3)
+		resized, _ := m.Update(tea.WindowSizeMsg{Width: tc.w, Height: tc.h})
+		m = fillBoard(t, resized.(model), 40)
+		m = update(t, m, keyMsg("2"))
+		for i := 0; i < 10; i++ {
+			m = update(t, m, keyMsg("down"))
+		}
+		g := m.geometry()
+		if g.workH < panelFloor {
+			t.Fatalf("%dx%d: work is %d lines, under the floor", tc.w, tc.h, g.workH)
+		}
+		rows, sel := m.workListRows(g.sideW - 2)
+		if sel < 0 {
+			t.Fatalf("%dx%d: work has no selection to show", tc.w, tc.h)
+		}
+		want := strings.TrimRight(ansi.Strip(rows[sel]), " ")
+		if !strings.Contains(ansi.Strip(m.View()), want) {
+			t.Fatalf("%dx%d: the selected row is not on screen:\n%s", tc.w, tc.h, m.View())
+		}
+	}
+}
+
+// Stacked, the main pane is one more claimant on the same body — but it
+// never takes so much that the panels fall to their floors, and opening the
+// log lens (which wants the whole body, and opens on focusing work) does
+// not resize the board under the operator.
+func TestStackedLayoutKeepsBothPanelsReadable(t *testing.T) {
+	m, _, _ := newTestModel(t, 3)
+	resized, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 40})
+	m = resized.(model)
+	m = fillBoard(t, m, 20)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		TicketID: "t0", Ticket: "QUEUED-1", Queue: "implement", LogPath: "/dev/null"}})
+
+	m = update(t, m, keyMsg("1"))
+	g := m.geometry()
+	if g.wide {
+		t.Fatal("80 columns is not the stacked layout")
+	}
+	if got := g.attnH + g.workH + g.mainH; got != g.bodyH {
+		t.Fatalf("stacked layout is %d lines in a %d-line body", got, g.bodyH)
+	}
+
+	// Focus work: the selected row is running, so the main pane asks for
+	// the whole body to tail its log.
+	m = update(t, m, keyMsg("2"))
+	g2 := m.geometry()
+	if g2.attnH+g2.workH < g.bodyH/2 {
+		t.Fatalf("the log lens took the board: needs-you %d, work %d of %d lines",
+			g2.attnH, g2.workH, g2.bodyH)
+	}
+	if g2.attnH <= panelFloor || g2.workH <= panelFloor {
+		t.Fatalf("focusing work floored the panels: needs-you %d, work %d",
+			g2.attnH, g2.workH)
+	}
+	view := m.View()
+	if !strings.Contains(view, "QUEUED-2") {
+		t.Fatalf("work panel lost its list to the log lens:\n%s", view)
+	}
+	attn, _ := m.attentionRows(g2.sideW - 2)
+	first := strings.TrimRight(ansi.Strip(attn[0]), " ")
+	if !strings.Contains(ansi.Strip(view), first) {
+		t.Fatalf("needs-you lost its list to the log lens:\n%s", view)
 	}
 }
 
