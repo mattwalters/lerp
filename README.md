@@ -18,9 +18,10 @@ loop starts, adopts, or reaps agents until the two match — a crash is
 not an error case, it is drift, and the loop repairs drift.
 
 The whole ontology is five concepts — ticket, queue, runner, lane, the
-loop — and [SCOPE.md](SCOPE.md) is the fence around them: nine
-invariants and the litmus tests every change runs through. Read it
-before proposing anything.
+loop — where a lane is the concurrency unit: lerp runs at most N
+agents at once, one per lane. [SCOPE.md](SCOPE.md) is the fence around
+all five: nine invariants and the litmus tests every change runs
+through. Read it before proposing anything.
 
 ## Install
 
@@ -45,7 +46,11 @@ runs: gofmt, vet, build, test.
 
 Lerp speaks exactly one external API: Linear. Every command reads the
 API key from the `LINEAR_API_KEY` environment variable — create a
-personal API key in Linear's settings and export it.
+personal API key in Linear's settings and export it. Lerp itself needs
+nothing else beyond Git, but the stock pipeline shells out to `claude`
+([Claude Code](https://docs.claude.com/en/docs/claude-code)) as its
+runner and its implementing prompt opens PRs with `gh` — install both
+before step 4.
 
 **1. Wire the repo to a team.** From anywhere inside your Git
 repository:
@@ -54,48 +59,60 @@ repository:
 LINEAR_API_KEY=... lerp init --team LERP --team-name "Lerp"
 ```
 
-This creates the Linear team if it is missing, adds the statuses the
-stock pipeline names, and writes `lerp.toml` — the
+`--team` is the Linear team key — the ticket prefix, the LERP in
+LERP-42 — and `--team-name` is the display name used only if the team
+must be created. Check the key against Linear before you run: a key
+that matches no existing team exactly is not an error, it quietly
+creates a new team under that key.
+
+This creates the Linear team if it is missing, adds the statuses your
+config's queues name — the stock pipeline's, on a first run — and
+writes `lerp.toml` — the
 [stock planning → implementing → review pipeline](#stock-pipeline) —
 at the repository root, uncommitted, for you to review and check in.
 When it writes a new file, init asks one question: whether the stock
 Claude runner should include `--permission-mode bypassPermissions`.
 The default is no — saying yes is a real grant (see
 [Stock pipeline](#stock-pipeline)), and the diff you commit is where
-that decision gets reviewed.
+that decision gets reviewed. Declining has a cost too: a headless run
+then fails at the first tool the agent is not allowed to use, unless
+you curate an `--allowedTools` list — also under
+[Stock pipeline](#stock-pipeline).
 
-`lerp init` is safe to repeat: it creates only missing Linear structure
-and never replaces an existing `lerp.toml` — it verifies that the
-existing config serves the requested team instead.
+`lerp init` is safe to repeat: it creates only missing Linear
+structure and never replaces an existing `lerp.toml` — it verifies
+that the existing config serves the requested team, and ensures the
+statuses that config's queues name, instead.
 
-Statuses lerp creates are always in-progress (Linear's "started"
-category), and statuses that already exist are left exactly as you have
-them. That leaves one piece of setup only you can finish: where your
-pipeline ends. Linear counts a ticket as blocking its dependents
-(`blockedBy`) until its status carries a completed category — a fact
-about your process that init cannot infer, so it reports instead of
-guessing. For each `on_success` target no queue watches, init prints
-whether Linear categorises it as completed. If such a status genuinely
-means the work is done, set its category to Done in Linear; left
-in-progress, finished tickets there would block their dependents
-forever. If a human still acts on tickets there — the stock pipeline's
-"In Review", where you merge the PR and Linear's GitHub integration
-moves the ticket on — in-progress is exactly right, and marking it
-completed would release dependent tickets before the work had actually
-landed.
+Init may also print a report about where your pipeline ends — statuses
+Linear does not yet count as completing work. Act on what it prints;
+the reasoning is under
+[How it behaves](#how-it-behaves).
 
 **2. Give the agent what it needs.** Lerp hands the runner a prompt and
 the ticket identifier, nothing more. The stock prompts expect the agent
 to read the ticket and write stage artifacts itself, so Claude Code
-needs its Linear MCP server configured — and unattended runs need
-permissions you grant deliberately. Both are spelled out under
-[Stock pipeline](#stock-pipeline); read `lerp.toml` before you run it.
+needs Linear's MCP server. See
+[Linear's MCP documentation](https://linear.app/docs/mcp) for the
+authoritative endpoint; typically:
+
+```sh
+claude mcp add --transport http linear https://mcp.linear.app/mcp
+```
+
+Then start `claude` and run `/mcp` to complete the interactive OAuth
+flow — that is a one-time step only you can do, and it must happen
+before any unattended run can reach Linear. What the agent is
+permitted to do beyond reading tickets is the other half of setup,
+spelled out under [Stock pipeline](#stock-pipeline); read `lerp.toml`
+before you run it.
 
 **3. Bless a ticket.** Routing is done by placing a ticket: in Linear,
 move one into Planning (a big feature) or straight into Implementing (a
 small fix). A ticket is eligible for pickup when it sits in a queue's
-status, has no assignee, and is not blocked by an unfinished ticket.
-Blessing is a human act; lerp never invents work items of its own.
+status, has no assignee, and is not blocked by an unfinished ticket
+(Linear's `blockedBy`). Blessing is a human act; lerp never invents
+work items of its own.
 
 **4. Run it.**
 
@@ -110,8 +127,13 @@ queue's agent to exit, and applies the queue's move rule — `on_success`
 on a clean exit, `on_failure` otherwise, and only if the agent didn't
 move the ticket itself. The agent's full stream goes to a log file,
 whose path is printed when the run finishes; its workspace and log live
-under a temporary directory. Run `lerp once` again to carry the ticket
-through its next stage.
+under a temporary directory.
+
+A finished run leaves the ticket assigned to you. The assignment is
+the claim, and a claimed ticket is someone else's work as far as lerp
+is concerned — even when the someone is you. So to carry the ticket
+through its next stage: unassign it in Linear, then run `lerp once`
+again.
 
 ## Configuration
 
@@ -122,14 +144,14 @@ pipeline is a team artifact: keeping it in the repo means the
 permissions it grants are versioned and reviewed like code, and every
 developer runs the same pipeline against the same board.
 
-Durable state lives in Linear, never in this file or anywhere else
-on disk. The file is strictly parsed: an unknown key is an error,
-not a shrug.
+No durable state lives in this file or anywhere else on disk — Linear
+is the database (see the model above). The file is strictly parsed: an
+unknown key is an error, not a shrug.
 
 [lerp.example.toml](lerp.example.toml) is the stock planning →
-implementing → review pipeline, with prompts you can read and argue with.
-`lerp init --team KEY` writes it into the repo for you and never
-overwrites an existing file.
+implementing → review pipeline, with prompts you can read and argue
+with. `lerp init --team KEY` writes it into the repo for you (see
+[Getting started](#getting-started)).
 
 Read it before you run it. It may grant the agent broad permissions and it
 assumes your runner can reach Linear; both are explained in the file and
@@ -177,9 +199,8 @@ on_failure = "Human Review"
 
 The queue fields above are the complete set — status, prompt, runner,
 `on_success`, and optionally `on_failure`. There is deliberately no
-conditional, template, or DAG syntax: workflow topology exists only in
-where tickets sit and where `on_success` points. Branching is a human
-or an agent moving a ticket.
+conditional, template, or DAG syntax: topology lives on the board (see
+the model above), and branching is a human or an agent moving a ticket.
 
 Notes:
 
@@ -204,11 +225,11 @@ Notes:
   that ticket on a clean exit. Write `prompt = "Implement {{ticket}}
   ..."`, not `prompt = "Implement the ticket ..."`.
 
-Every ticket must resolve to exactly one working directory: team →
-repo is a function (SCOPE invariant 2). A single repo config can only
-vouch for its own repo, so the cross-repo half of that rule — no two
-repos claim the same team — is yours to keep when you copy a pipeline
-between repos.
+Every ticket must resolve to exactly one working directory: one repo
+may serve several teams, but two repos may never claim the same team.
+A single repo config can only vouch for its own repo, and today lerp
+does not verify the cross-repo half of that rule — keeping it is your
+job when you copy a pipeline between repos.
 
 ### Workspace commands
 
@@ -248,7 +269,8 @@ run it:
 - **The agent needs its own Linear access.** Lerp passes the ticket
   identifier and nothing else — never the ticket body — and every durable
   artifact (the plan comment, the review verdict) is written by the agent,
-  not by lerp. For Claude Code that means configuring its Linear MCP server.
+  not by lerp. For Claude Code that means the Linear MCP server from step 2
+  of [Getting started](#getting-started).
 - **The agent runs with permissions — if you say so.** An unattended agent
   that cannot run `git`, `gh`, or your tests just fails, so the stock runner
   wants `--permission-mode bypassPermissions`; `lerp init` asks before
@@ -261,45 +283,61 @@ run it:
 
 ## How it behaves
 
-**Where does state live?** Every durable fact — what work exists, what
-stage it is in, who claimed it, what was decided — lives in Linear.
-Locally there are exactly two things: `lerp.toml` (config, checked in)
-and `.lerp/` at the repo root, which holds evidence of running
-processes — one record per run under `.lerp/runs` (pid, log file,
-ticket, workspace path), workspaces under `.lerp/workspaces`, and the
-clone lock at `.lerp/lock`. Local state is evidence, never truth:
-losing all of it may cost compute, never correctness. `rm -rf
-.lerp/runs` under live agents means orphaned processes and re-run
-stages — never lost or corrupted tickets.
+**What ships today?** Three commands: `lerp version`, `lerp init`, and
+`lerp once`. The reconciling loop of the mental model — N lanes,
+adopting live runs, reaping dead ones, repairing drift — is the design
+[SCOPE.md](SCOPE.md) commits to and the codebase implements, but no
+shipped command drives it yet; it arrives with the TUI (LERP-11).
+Until then, `lerp once` is the only way to run a ticket.
+
+**Where does state live?** In Linear — that is the first sentence of
+the model, and [SCOPE.md](SCOPE.md) invariant 1 holds it. Locally the
+design keeps exactly two things: `lerp.toml` (config, checked in) and
+an evidence store, `.lerp/` at the repo root — one record per run
+under `.lerp/runs` (pid, log file, ticket, workspace path), workspaces
+under `.lerp/workspaces`, and an advisory lock at `.lerp/lock` that
+keeps it to one loop per clone. Local state is evidence, never truth:
+losing all of it may cost compute, never correctness. None of `.lerp/`
+is driven by a shipped command yet — today `lerp once` keeps its
+workspace and log under a temporary directory instead.
 
 **What happens on crash or kill?** Every queue run is safe to kill and
-restart from its beginning. Progress is checkpointed only at queue
-boundaries, as artifacts in Linear — a plan comment, a PR link, a
-review verdict — and never inside a run. A crash of an agent, of lerp,
-or of the laptop is drift, and the loop repairs drift: each pass reads
-the run evidence, adopts runs whose process is still alive, and reaps
-dead ones — the workspace is disposed and the dead run's claim
-released, but only when the board still looks exactly as the run left
-it. If the ticket has moved or changed hands since, a human, an agent,
-or an automation acted, and the loop leaves their work alone. The worst
-case is a re-run stage: duplicated compute, never a lost ticket. One
-caveat while the interface is young: `lerp once` keeps its workspace
-and log in a temporary directory rather than the evidence store, so if
-you kill it mid-run, unassign the ticket in Linear yourself to make it
-eligible again.
+restart from its beginning: progress is checkpointed only at queue
+boundaries, as artifacts in Linear — a plan comment, a PR link — so
+the worst case is a re-run stage, never a lost ticket
+([SCOPE.md](SCOPE.md) invariants 3 and 4 carry the full argument). One
+caveat while the interface is young: a `lerp once` killed mid-run
+leaves the ticket assigned, so unassign it in Linear yourself to make
+it eligible again.
 
-**Why isn't my ticket being picked up?** A ticket is eligible when it
-sits in a status some queue watches, has no assignee, and is not
-blocked by an unfinished ticket (Linear's `blockedBy`). The assignment
-is the claim: a ticket assigned to anyone — including you — is someone
-else's work as far as the loop is concerned.
+**Why isn't my ticket being picked up?** Check the three eligibility
+conditions from step 3 of [Getting started](#getting-started): a
+queue's status, no assignee, not blocked. The one that surprises
+people is the assignee — the assignment is the claim, so a ticket
+assigned to anyone, including you, is someone else's work as far as
+lerp is concerned. A finished `lerp once` leaves the ticket assigned
+to you on purpose (see step 4).
 
-**How does multiplayer work?** It is inherited from Linear, not built.
-Each developer runs their own lerp against their own clone; an advisory
-lock on `.lerp/lock` keeps it to one lerp per clone, and the claim
-protocol arbitrates across machines — assign to self, settle, read
-back; if the assignee is you, you won, otherwise walk away. The race
-window that remains resolves to duplicated compute, which safe-to-kill
-runs already tolerate. The board reads like a human team's board:
-"Sarah has LERP-42 in Implementing" is true whether Sarah or Sarah's
-agent is doing the work. No server, no scheduler, no work stealing.
+**Why does init tell me to set a status's category myself?** Statuses
+lerp creates are always in-progress (Linear's "started" category), and
+statuses that already exist are left exactly as you have them. That
+leaves one piece of setup only you can finish: where your pipeline
+ends. Linear counts a ticket as blocking its dependents (`blockedBy`)
+until its status carries a completed category — a fact about your
+process that init cannot infer, so it reports instead of guessing. For
+each `on_success` target no queue watches, init prints whether Linear
+categorises it as completed. If such a status genuinely means the work
+is done, set its category to Done in Linear; left in-progress,
+finished tickets there would block their dependents forever. If a
+human still acts on tickets there — the stock pipeline's "In Review",
+where you merge the PR and Linear's GitHub integration moves the
+ticket on — in-progress is exactly right, and marking it completed
+would release dependent tickets before the work had actually landed.
+
+**How does multiplayer work?** It is inherited from Linear, not built:
+each developer runs their own lerp against their own clone, and the
+claim protocol of [SCOPE.md](SCOPE.md) invariant 4 — assign to self,
+settle, read back — arbitrates across machines. The board reads like a
+human team's board: "Sarah has LERP-42 in Implementing" is true
+whether Sarah or Sarah's agent is doing the work. No server, no
+scheduler, no work stealing.

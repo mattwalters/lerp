@@ -35,9 +35,10 @@ var stockRepo string
 //
 // A repo config names the teams one repo serves. The other half of SCOPE
 // invariant 2 — that no two repos claim the same team — cannot be
-// checked here: loading a single repo config sees a single repo. The
-// loop verifies the full team → repo function at startup and refuses
-// to run if it doesn't hold.
+// checked here: loading a single repo config sees a single repo. No
+// startup verification of the full team → repo function exists yet
+// anywhere else either; for now the cross-repo half of the rule is the
+// operator's to keep.
 type RepoConfig struct {
 	Teams     []string          `toml:"teams"`
 	Provision string            `toml:"provision"`
