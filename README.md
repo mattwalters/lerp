@@ -351,13 +351,22 @@ rewriting them into a different shape needs no code change.
 | Backlog / Todo | you | promote a ticket into Planning, or into Implementing if it is small |
 | Planning | agent | posts a plan comment → Plan Review |
 | Plan Review | you | read the plan, then press `p` to promote: Implementing to build it, Planning to re-plan, Needs Attention to park it |
-| Implementing | agent | commits, pushes, opens a PR with `gh` → Agent Review |
+| Implementing | agent | reads its brief — newest review comment, else the plan comment, else the ticket — commits, pushes, opens a PR with `gh`, or adds to the ticket's existing one → Agent Review |
 | Agent Review | agent | posts a review verdict → In Review, or to Needs Attention with findings |
 | In Review | you | merge the PR; Linear's GitHub integration moves it to Done |
-| Needs Attention | you | where failed runs and review findings park; no queue watches it, so nothing retries it |
+| Needs Attention | you | where failed runs and review findings park; no queue watches it, so nothing retries it — promote back to Implementing to rework |
 
 Which ticket enters where is the only routing decision, and it is made by
 moving a ticket, not by configuration.
+
+A review that finds something is the same decision run backwards, and it
+closes a loop rather than ending the line. The verdict parks in Needs
+Attention; you read it and promote the ticket back to Implementing; the
+implement prompt takes the newest review comment as its brief, checks out the
+branch of the pull request that already exists, and adds commits to it — no
+second PR. Lerp itself remembers none of this: there is no "this is a re-run"
+flag anywhere, only a ticket in a queue status, with its comments and its
+pull request as the state.
 
 Two things the stock config assumes, both worth a deliberate look before you
 run it:
