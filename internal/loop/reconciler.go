@@ -329,7 +329,7 @@ const AttentionDefinition = "unclaimed tickets, and your claimed tickets, sittin
 // filtered by — leverage, priority, project, and what the pipeline says
 // about the status.
 //
-// The v0 definition of "needs you", in full: a ticket needs the operator
+// The v0 definition of the inbox, in full: a ticket needs the operator
 // when it sits in a status no queue serves, and is either unassigned —
 // nobody has put it on the board yet — or assigned to the operating user,
 // resting there deliberately or landed there by a failed run's on_failure
@@ -340,11 +340,12 @@ const AttentionDefinition = "unclaimed tickets, and your claimed tickets, sittin
 // From one Linear read that state is indistinguishable from a live run
 // under the same user on another machine, so v0 leaves it to the log line
 // conclude writes. This is a reading of the board plus a place to route
-// from, not a general notification feed; resist growing it further.
+// from, not a catch-all for anything that might want attention; resist
+// growing it further.
 //
 // A pass that could not list every team emits nothing: the failure is
 // reported and the subscriber keeps its last full list, because a partial
-// one could falsely read as "nothing needs you".
+// one could falsely read as "nothing to decide".
 func (r *Reconciler) attention(ctx context.Context) {
 	viewerID, err := r.o.Client.Viewer(ctx)
 	if err != nil {
