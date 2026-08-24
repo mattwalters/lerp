@@ -19,12 +19,40 @@ const RepoConfigFile = "lerp.toml"
 // operator accepts it at init. It is stripped verbatim when they decline.
 const bypassFlag = " --permission-mode bypassPermissions"
 
-// stockRepo is the first-run lerp.toml written by lerp init, rendered by
-// StockRepoConfig. Keep it in the config package so the binary, rather than a
-// source checkout, owns the template it installs.
+// stockRepo is the template for the first-run lerp.toml written by lerp
+// init, rendered by Stock.Render. Keep it in the config package so the
+// binary, rather than a source checkout, owns the template it installs.
 //
 //go:embed stock.toml
 var stockRepo string
+
+// Stock status names: what the pipeline maps onto when the operator does
+// not choose otherwise.
+const (
+	StockPlanStatus      = "Planning"
+	StockImplementStatus = "Implementing"
+	StockReviewStatus    = "Agent Review"
+	StockExitStatus      = "In Review"
+	StockAttentionStatus = "Needs Attention"
+)
+
+// Stock describes one rendering of the stock lerp.toml: which optional
+// queues it includes, the statuses the pipeline maps onto, and whether the
+// stock runner keeps its bypassPermissions grant. The implement queue is
+// always present. Empty status fields take the Stock* names; lerp init
+// fills them from the operator's answers.
+type Stock struct {
+	Teams  []string
+	Bypass bool
+	Plan   bool // include the plan queue
+	Review bool // include the review queue; declining wires implement straight to ExitStatus
+
+	PlanStatus      string
+	ImplementStatus string
+	ReviewStatus    string
+	ExitStatus      string // where clean runs leave the automated path
+	AttentionStatus string // where failures wait for a human
+}
 
 // RepoConfig is the whole configuration, one checked-in file per repo: the
 // Linear teams this repo serves, the commands that provision and dispose lane
@@ -86,20 +114,74 @@ func (q Queue) ExpandPrompt(ticket string) string {
 	).Replace(q.Prompt)
 }
 
-// StockRepoConfig renders the stock lerp.toml for the given teams. bypass
-// keeps the stock runner's `--permission-mode bypassPermissions` grant;
-// declining strips the flag, leaving a runner the operator must widen
-// deliberately before unattended runs can do real work.
+// StockRepoConfig renders the full stock pipeline under its stock status
+// names. bypass keeps the stock runner's `--permission-mode
+// bypassPermissions` grant; declining strips the flag, leaving a runner the
+// operator must widen deliberately before unattended runs can do real work.
 func StockRepoConfig(teams []string, bypass bool) string {
-	quoted := make([]string, len(teams))
-	for i, team := range teams {
+	return Stock{Teams: teams, Bypass: bypass, Plan: true, Review: true}.Render()
+}
+
+// Render assembles the stock lerp.toml text for these choices. Assembly is
+// textual, never parse-and-re-emit: the template's comments are part of the
+// product, and a TOML round-trip would strip them. Prompt bodies are
+// untouched — they reference {{status}}/{{on_success}}/{{on_failure}},
+// expanded at run time, so the prose follows whatever mapping is chosen
+// here.
+func (s Stock) Render() string {
+	quoted := make([]string, len(s.Teams))
+	for i, team := range s.Teams {
 		quoted[i] = fmt.Sprintf("%q", team)
 	}
-	rendered := strings.ReplaceAll(stockRepo, "{{teams}}", strings.Join(quoted, ", "))
-	if !bypass {
+	// With no review queue, implement's success is the pipeline exit.
+	implementSuccess := orStock(s.ReviewStatus, StockReviewStatus)
+	if !s.Review {
+		implementSuccess = orStock(s.ExitStatus, StockExitStatus)
+	}
+	rendered := renderSections(stockRepo, map[string]bool{"plan": s.Plan, "review": s.Review})
+	rendered = strings.NewReplacer(
+		"{{teams}}", strings.Join(quoted, ", "),
+		"{{plan_status}}", orStock(s.PlanStatus, StockPlanStatus),
+		"{{implement_status}}", orStock(s.ImplementStatus, StockImplementStatus),
+		"{{implement_success}}", implementSuccess,
+		"{{review_status}}", orStock(s.ReviewStatus, StockReviewStatus),
+		"{{exit_status}}", orStock(s.ExitStatus, StockExitStatus),
+		"{{attention_status}}", orStock(s.AttentionStatus, StockAttentionStatus),
+	).Replace(rendered)
+	if !s.Bypass {
 		rendered = strings.ReplaceAll(rendered, bypassFlag, "")
 	}
 	return rendered
+}
+
+// renderSections keeps or drops the template's optional sections. A line
+// `#{{name}}` opens section name, `#{{/name}}` closes it; marker lines are
+// always removed, and a section's lines survive only when include says so.
+// Sections do not nest.
+func renderSections(src string, include map[string]bool) string {
+	kept := []string{}
+	section := ""
+	for _, line := range strings.Split(src, "\n") {
+		if name, ok := strings.CutPrefix(line, "#{{"); ok && strings.HasSuffix(name, "}}") {
+			section = strings.TrimSuffix(name, "}}")
+			if strings.HasPrefix(section, "/") {
+				section = ""
+			}
+			continue
+		}
+		if section == "" || include[section] {
+			kept = append(kept, line)
+		}
+	}
+	return strings.Join(kept, "\n")
+}
+
+// orStock returns name, or the stock default when the caller left it empty.
+func orStock(name, stock string) string {
+	if name == "" {
+		return stock
+	}
+	return name
 }
 
 // LoadRepoConfig reads and validates the per-repo config file at path

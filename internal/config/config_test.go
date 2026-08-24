@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -418,6 +419,81 @@ func TestStockRepoConfigWithoutBypass(t *testing.T) {
 	}
 	if got := c.Runners["claude"].Command; !strings.Contains(got, "claude -p") {
 		t.Errorf("command = %q, want a claude invocation", got)
+	}
+}
+
+// Every shape the init conversation can choose must render to a config the
+// loader accepts, with no template plumbing left in the text.
+func TestStockVariants(t *testing.T) {
+	for name, tc := range map[string]struct {
+		stock            Stock
+		queues           []string
+		implementSuccess string
+	}{
+		"full": {
+			stock:            Stock{Teams: []string{"LERP"}, Plan: true, Review: true},
+			queues:           []string{"implement", "plan", "review"},
+			implementSuccess: StockReviewStatus,
+		},
+		"no review": {
+			stock:            Stock{Teams: []string{"LERP"}, Plan: true},
+			queues:           []string{"implement", "plan"},
+			implementSuccess: StockExitStatus,
+		},
+		"no planning": {
+			stock:            Stock{Teams: []string{"LERP"}, Review: true},
+			queues:           []string{"implement", "review"},
+			implementSuccess: StockReviewStatus,
+		},
+		"implement only": {
+			stock:            Stock{Teams: []string{"LERP"}},
+			queues:           []string{"implement"},
+			implementSuccess: StockExitStatus,
+		},
+		"mapped onto an existing board": {
+			stock: Stock{
+				Teams: []string{"LERP"}, Plan: true, Review: true,
+				PlanStatus: "Spec", ImplementStatus: "Todo",
+				ExitStatus: "Ready to Merge", AttentionStatus: "Stuck",
+			},
+			queues:           []string{"implement", "plan", "review"},
+			implementSuccess: StockReviewStatus,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rendered := tc.stock.Render()
+			for _, leftover := range []string{"#{{", "_status}}", "{{implement_success}}", "{{teams}}"} {
+				if strings.Contains(rendered, leftover) {
+					t.Errorf("rendered config leaks template plumbing %q", leftover)
+				}
+			}
+			if !strings.Contains(rendered, "# Check this file in") {
+				t.Error("rendered config lost its explanatory comments")
+			}
+			c, err := ParseRepoConfig(rendered, "stock")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var queues []string
+			for q := range c.Queues {
+				queues = append(queues, q)
+			}
+			sort.Strings(queues)
+			if !reflect.DeepEqual(queues, tc.queues) {
+				t.Errorf("queues = %v, want %v", queues, tc.queues)
+			}
+			if got := c.Queues["implement"].OnSuccess; got != tc.implementSuccess {
+				t.Errorf("implement.on_success = %q, want %q", got, tc.implementSuccess)
+			}
+			if tc.stock.ImplementStatus != "" {
+				if got := c.Queues["implement"].Status; got != tc.stock.ImplementStatus {
+					t.Errorf("implement.status = %q, want %q", got, tc.stock.ImplementStatus)
+				}
+				if got := c.Queues["plan"].OnSuccess; got != tc.stock.ImplementStatus {
+					t.Errorf("plan.on_success = %q, want %q", got, tc.stock.ImplementStatus)
+				}
+			}
+		})
 	}
 }
 
