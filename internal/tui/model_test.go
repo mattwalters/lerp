@@ -164,10 +164,10 @@ func keyMsg(s string) tea.KeyMsg {
 	}
 }
 
-func TestLanesShowTheRunLifecycle(t *testing.T) {
+func TestWorkPanelShowsTheRunLifecycle(t *testing.T) {
 	m, _, _ := newTestModel(t, 2)
 	view := m.View()
-	for _, want := range []string{"needs you", "running", "up next", "idle", "q quit"} {
+	for _, want := range []string{"needs you", "work", "q quit"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("initial view is missing %q:\n%s", want, view)
 		}
@@ -176,7 +176,7 @@ func TestLanesShowTheRunLifecycle(t *testing.T) {
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 		TicketID: "id-42", Ticket: "LERP-42", Queue: "implement", LogPath: "/dev/null"}})
 	view = m.View()
-	for _, want := range []string{"LERP-42", "implement", "1/2 busy"} {
+	for _, want := range []string{"LERP-42", "implement", "1/2 running"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view after start is missing %q:\n%s", want, view)
 		}
@@ -188,8 +188,11 @@ func TestLanesShowTheRunLifecycle(t *testing.T) {
 	if !strings.Contains(view, "LERP-42 exited 0") {
 		t.Fatalf("view after exit does not note the outcome:\n%s", view)
 	}
-	if !strings.Contains(view, "0/2 busy") {
-		t.Fatalf("view after exit still counts a busy lane:\n%s", view)
+	if !strings.Contains(view, "0/2 running") {
+		t.Fatalf("view after exit still counts a running ticket:\n%s", view)
+	}
+	if rows := m.workRows(); len(rows) != 0 {
+		t.Fatalf("finished run left %d rows behind: %+v", len(rows), rows)
 	}
 }
 
@@ -213,16 +216,15 @@ func TestExitedEventReportsASkippedHop(t *testing.T) {
 	}
 }
 
-func TestProvisioningLaneIsOccupied(t *testing.T) {
+func TestProvisioningTicketIsOccupied(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventProvisioning, RunID: "r1", Lane: 1,
 		TicketID: "id-9", Ticket: "LERP-9", Queue: "plan", StartedAt: time.Now()}})
 	view := m.View()
-	if !strings.Contains(view, "provisioning") || !strings.Contains(view, "LERP-9") {
-		t.Fatalf("provisioning lane not on the board:\n%s", view)
-	}
-	if strings.Contains(view, "idle") {
-		t.Fatalf("provisioning lane still reads idle:\n%s", view)
+	for _, want := range []string{"provisioning", "LERP-9", "1/1 running"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("provisioning ticket is missing %q from the panel:\n%s", want, view)
+		}
 	}
 }
 
@@ -244,27 +246,27 @@ func TestAdoptedRunOccupiesAndFreesItsRow(t *testing.T) {
 	if !strings.Contains(view, "adopted") {
 		t.Fatalf("adopted run not on the board:\n%s", view)
 	}
-	if len(m.order) != 3 {
-		t.Fatalf("board has %d rows, want 3 (two lanes + one adopted)", len(m.order))
+	if len(m.workRows()) != 1 {
+		t.Fatalf("panel has %d rows, want the one adopted run", len(m.workRows()))
 	}
 
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventReaped, RunID: "r9", Lane: 5,
 		TicketID: "abcdef1234567890", Queue: "review"}})
-	if len(m.order) != 2 {
-		t.Fatalf("reaped adopted lane still on the board: %d rows", len(m.order))
+	if len(m.workRows()) != 0 {
+		t.Fatalf("reaped adopted run still on the board: %d rows", len(m.workRows()))
 	}
 }
 
-// Focus moves between panels — every panel stays on screen; the main pane is
-// a lens on whichever one has focus.
+// Focus moves between the two panels — both stay on screen; the main pane
+// is a lens on what the focused one selects. There is no third panel, and
+// the key that used to open one is bound to nothing.
 func TestFocusSwitching(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
-	m = update(t, m, keyMsg("3"))
-	if m.focus != panelNext {
-		t.Fatalf("key 3 focused %v, want up next", m.focus)
+	if m.focus != panelWork {
+		t.Fatalf("lerp opens focused on %v, want work", m.focus)
 	}
 	if !strings.Contains(m.View(), "waiting for the first pass") {
-		t.Fatalf("empty up-next lens missing its state text:\n%s", m.View())
+		t.Fatalf("empty work lens missing its state text:\n%s", m.View())
 	}
 	m = update(t, m, keyMsg("1"))
 	if m.focus != panelAttention {
@@ -273,19 +275,26 @@ func TestFocusSwitching(t *testing.T) {
 	if !strings.Contains(m.View(), "reading the board") {
 		t.Fatalf("needs-you lens before the first pass missing its state text:\n%s", m.View())
 	}
+	m = update(t, m, keyMsg("3"))
+	if m.focus != panelAttention {
+		t.Fatalf("key 3 moved focus to %v; it is bound to nothing", m.focus)
+	}
+	m = update(t, m, keyMsg("2"))
+	if m.focus != panelWork {
+		t.Fatalf("key 2 focused %v, want work", m.focus)
+	}
 	m = update(t, m, keyMsg("tab"))
-	if m.focus != panelLanes {
-		t.Fatalf("tab from needs-you landed on %v, want running", m.focus)
+	if m.focus != panelAttention {
+		t.Fatalf("tab from work landed on %v, want needs you", m.focus)
 	}
 }
 
-// The up-next panel is the loop's own snapshot, verbatim: eligible tickets
-// in pickup order, blocked and claimed ones visibly gated, empty queues
-// named, the whole body replaced on every pass. The main pane details the
-// selected ticket, including why it will not run.
-func TestUpNextShowsWhatRunsNext(t *testing.T) {
+// The work panel is the loop's own snapshot, verbatim: eligible tickets in
+// pickup order, blocked and claimed ones visibly gated, empty queues named,
+// the whole body replaced on every pass. The main pane details the selected
+// ticket, including why it will not run.
+func TestWorkPanelShowsWhatRunsNext(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
-	m = update(t, m, keyMsg("3"))
 
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
 		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
@@ -298,14 +307,14 @@ func TestUpNextShowsWhatRunsNext(t *testing.T) {
 	}}})
 	view := m.View()
 	for _, want := range []string{
-		"implement", "Todo",
+		"implement · Todo · LERP · 3",
 		"LERP-1", "ship the thing",
-		"review", "In Review", "empty",
+		"review · In Review · LERP · empty",
 		"team LERP", "position 1 of 3", // the selected ticket's detail lens
 		"https://linear.app/acme/issue/LERP-1/ship",
 	} {
 		if !strings.Contains(view, want) {
-			t.Fatalf("up-next view is missing %q:\n%s", want, view)
+			t.Fatalf("work view is missing %q:\n%s", want, view)
 		}
 	}
 
@@ -334,11 +343,144 @@ func TestUpNextShowsWhatRunsNext(t *testing.T) {
 	}
 }
 
+// One panel, grouped by queue, with what is running at the top of its own
+// group in lane order — the same tickets the queue snapshot lists, not a
+// second picture of the machine's slots.
+func TestWorkPanelPutsRunningAtTheTopOfItsQueue(t *testing.T) {
+	m, _, _ := newTestModel(t, 3)
+	resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = resized.(model)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Team: "LERP", Name: "implement", Status: "Implementing", Tickets: []loop.QueueTicket{
+			{ID: "id-49", Identifier: "LERP-49", Title: "the log tail", Assigned: true},
+			{ID: "id-37", Identifier: "LERP-37", Title: "waits its turn", Eligible: true},
+			{ID: "id-51", Identifier: "LERP-51", Title: "also running", Assigned: true},
+		}},
+		{Team: "LERP", Name: "review", Status: "Agent Review"},
+	}}})
+	// Started out of order: the rows sort by lane, which is stable, not by
+	// the order the events arrived in.
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r2", Lane: 2,
+		TicketID: "id-51", Ticket: "LERP-51", Queue: "implement", LogPath: "/dev/null"}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		TicketID: "id-49", Ticket: "LERP-49", Queue: "implement", LogPath: "/dev/null"}})
+
+	var got []string
+	for _, r := range m.workRows() {
+		got = append(got, r.ticket)
+	}
+	if want := []string{"LERP-49", "LERP-51", "LERP-37"}; !slices.Equal(got, want) {
+		t.Fatalf("row order = %v, want %v", got, want)
+	}
+	if rows := m.workRows(); rows[0].lane != 1 || rows[1].lane != 2 || rows[2].lane != 0 {
+		t.Fatalf("rows do not carry their lanes: %d, %d, %d", rows[0].lane, rows[1].lane, rows[2].lane)
+	}
+	view := m.View()
+	for _, want := range []string{
+		"implement · Implementing · LERP · 3",
+		"review · Agent Review · LERP · empty",
+		"2/3 running",
+	} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("work panel is missing %q:\n%s", want, view)
+		}
+	}
+}
+
+// The lens is the selected row's, not the panel's: a running ticket shows
+// its live log, the ticket below it shows what gates it, and the tail keeps
+// running underneath the detour.
+func TestTheLensFollowsTheRowNotThePanel(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.log")
+	writeLog(t, path, []byte("agent at work\n"))
+
+	m, _, _ := newTestModel(t, 2)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
+			{ID: "id-1", Identifier: "LERP-1", Title: "running one", Assigned: true},
+			{ID: "id-2", Identifier: "LERP-2", Title: "waiting two", Eligible: true,
+				URL: "https://linear.app/acme/issue/LERP-2/two"},
+		}},
+	}}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		TicketID: "id-1", Ticket: "LERP-1", Queue: "implement", LogPath: path}})
+	if !strings.Contains(m.View(), "agent at work") {
+		t.Fatalf("the running row does not show its log:\n%s", m.View())
+	}
+
+	m = update(t, m, keyMsg("down"))
+	view := m.View()
+	if strings.Contains(view, "agent at work") {
+		t.Fatalf("a pending row still shows the running one's log:\n%s", view)
+	}
+	if !strings.Contains(view, "https://linear.app/acme/issue/LERP-2/two") {
+		t.Fatalf("the pending row's detail is missing:\n%s", view)
+	}
+
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("more from the agent\n"); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	m = update(t, m, pollMsg{})
+
+	m = update(t, m, keyMsg("up"))
+	if !strings.Contains(m.View(), "more from the agent") {
+		t.Fatalf("the tail did not survive the detour through a pending row:\n%s", m.View())
+	}
+	if !m.follow {
+		t.Error("a detour through a pending row broke log follow")
+	}
+}
+
+// An adopted run may sit on a lane above N — outside the capacity fraction,
+// but never off the panel. Its queue is not on the board, so it keeps a
+// group of its own, and it selects like any other row.
+func TestAdoptedRunAboveCapacityIsOnThePanel(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Team: "LERP", Name: "plan", Status: "Planning", Tickets: []loop.QueueTicket{
+			{ID: "id-1", Identifier: "LERP-1", Title: "one", Eligible: true}}},
+	}}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAdopted, RunID: "r9", Lane: 4,
+		TicketID: "abcdef1234567890", Queue: "review", LogPath: "/dev/null"}})
+	view := m.View()
+	for _, want := range []string{"adopted", "review · off the board", "0/1 running"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("adopted run above capacity is missing %q:\n%s", want, view)
+		}
+	}
+	m = update(t, m, keyMsg("down"))
+	if r := m.selectedWork(); r == nil || r.ticketID != "abcdef1234567890" {
+		t.Fatalf("the adopted run is not selectable: %+v", r)
+	}
+}
+
+// How the last run ended has one home: the status bar. The ticket's own row
+// has moved on by then — or gone — so the note goes where it outlives the
+// row, and it clears at the next pass like every other transient note.
+func TestExitOutcomeLandsOnTheStatusBar(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		TicketID: "id-42", Ticket: "LERP-42", Queue: "implement", LogPath: "/dev/null"}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventExited, RunID: "r1", Lane: 1,
+		TicketID: "id-42", Ticket: "LERP-42", Queue: "implement", ExitCode: 1}})
+	if !strings.Contains(m.View(), "! LERP-42 exited 1") {
+		t.Fatalf("a failed run's exit is not reported as one:\n%s", m.View())
+	}
+	m = update(t, m, tickMsg{})
+	if strings.Contains(m.View(), "exited 1") {
+		t.Fatalf("the outcome outlived the pass that superseded it:\n%s", m.View())
+	}
+}
+
 // A backlog deeper than the terminal is capped inside its panel, not allowed
 // to push the status bar off screen.
-func TestUpNextCapsToItsPanel(t *testing.T) {
+func TestWorkPanelCapsToItsPanel(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
-	m = update(t, m, keyMsg("3"))
 	tickets := make([]loop.QueueTicket, 60)
 	for i := range tickets {
 		tickets[i] = loop.QueueTicket{ID: fmt.Sprintf("t%d", i),
@@ -349,7 +491,7 @@ func TestUpNextCapsToItsPanel(t *testing.T) {
 	}}})
 	view := m.View()
 	if !strings.Contains(view, "more") {
-		t.Fatalf("overflowing up-next panel shows no cap line:\n%s", view)
+		t.Fatalf("overflowing work panel shows no cap line:\n%s", view)
 	}
 	if got := strings.Count(view, "\n"); got > 30 {
 		t.Fatalf("view is %d lines tall in a 30-line window", got)
@@ -781,7 +923,7 @@ func TestPromotePickerClosesWhenTheListEmpties(t *testing.T) {
 // main pane for the full keymap.
 func TestStatusBarAndHelp(t *testing.T) {
 	m, _, _ := newTestModel(t, 2)
-	if !strings.Contains(m.View(), "RUNNING") {
+	if !strings.Contains(m.View(), "WORK") {
 		t.Fatalf("status bar does not name the focused panel:\n%s", m.View())
 	}
 	if !strings.Contains(m.View(), "pass running") {
@@ -829,9 +971,9 @@ func fillBoard(t *testing.T, m model, n int) model {
 }
 
 // Every panel asks for the rows it will render and the focused one absorbs
-// the slack: with 15 items waiting, idle lanes and empty queues, needs-you
-// gets the whole column and renders all 15. Moving focus moves the space —
-// there is no expand key, only focus.
+// the slack: with 15 items waiting and every queue empty, needs-you gets the
+// whole column and renders all 15. Moving focus moves the space — there is
+// no expand key, only focus.
 func TestFocusedPanelTakesTheSlack(t *testing.T) {
 	m, _, _ := newTestModel(t, 3)
 	resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
@@ -850,11 +992,11 @@ func TestFocusedPanelTakesTheSlack(t *testing.T) {
 
 	m = update(t, m, keyMsg("1"))
 	g := m.geometry()
-	if got := g.attnH + g.lanesH + g.nextH; got != g.bodyH {
+	if got := g.attnH + g.workH; got != g.bodyH {
 		t.Fatalf("stack is %d lines in a %d-line body", got, g.bodyH)
 	}
-	if g.lanesH != collapsedH || g.nextH != collapsedH {
-		t.Fatalf("idle lanes and empty queues reserved a body: lanes %d, next %d", g.lanesH, g.nextH)
+	if g.workH != collapsedH {
+		t.Fatalf("an empty work panel reserved a body: %d lines", g.workH)
 	}
 	view := m.View()
 	for i := 1; i <= 15; i++ {
@@ -867,21 +1009,21 @@ func TestFocusedPanelTakesTheSlack(t *testing.T) {
 	}
 
 	// Focus moves, and the slack moves with it: needs-you falls back to the
-	// rows it renders, up-next takes what is left.
-	m = update(t, m, keyMsg("3"))
+	// rows it renders, work takes what is left.
+	m = update(t, m, keyMsg("2"))
 	g2 := m.geometry()
 	rows, _ := m.attentionRows(g2.sideW - 2)
 	if g2.attnH != len(rows)+2 {
 		t.Fatalf("unfocused needs-you is %d lines for %d rows", g2.attnH, len(rows))
 	}
-	if g2.nextH <= g.nextH || g2.nextH != g.bodyH-g2.attnH-g2.lanesH {
-		t.Fatalf("up-next did not take the slack on focus: %d lines", g2.nextH)
+	if g2.workH <= g.workH || g2.workH != g.bodyH-g2.attnH {
+		t.Fatalf("work did not take the slack on focus: %d lines", g2.workH)
 	}
 }
 
 // A panel with nothing to show costs one line — its own title row — and
 // takes its body back the moment the operator focuses it. Content drives
-// this; no toggle, and the selection still works.
+// this; no toggle.
 func TestEmptyPanelsCostOneLine(t *testing.T) {
 	m, _, _ := newTestModel(t, 3)
 	resized, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 30})
@@ -893,56 +1035,43 @@ func TestEmptyPanelsCostOneLine(t *testing.T) {
 
 	m = update(t, m, keyMsg("1"))
 	view := m.View()
-	for _, want := range []string{
-		"[2] running · 0/3 busy — all lanes idle",
-		"[3] up next — all queues empty",
-	} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("collapsed panel is missing %q:\n%s", want, view)
-		}
+	if want := "[2] work · 0/3 running — nothing queued"; !strings.Contains(view, want) {
+		t.Fatalf("collapsed panel is missing %q:\n%s", want, view)
 	}
-	if strings.Contains(view, "○ idle") {
-		t.Fatalf("collapsed lanes panel still reserved a body:\n%s", view)
+	if strings.Contains(view, "plan · Planning") {
+		t.Fatalf("collapsed work panel still reserved a body:\n%s", view)
 	}
 
-	// Focusing a collapsed panel opens it: the lane rows are back, and with
-	// them the selection.
+	// Focusing a collapsed panel opens it: the queue is back, empty and
+	// named, so the operator can see what would have to move to fill it.
 	m = update(t, m, keyMsg("2"))
 	view = m.View()
-	if strings.Contains(view, "all lanes idle") {
-		t.Fatalf("focused lanes panel stayed collapsed:\n%s", view)
+	if strings.Contains(view, "nothing queued") {
+		t.Fatalf("focused work panel stayed collapsed:\n%s", view)
 	}
-	if !strings.Contains(view, "○ idle") {
-		t.Fatalf("focused lanes panel does not show its lanes:\n%s", view)
-	}
-	m = update(t, m, keyMsg("down"))
-	if m.selected != 2 {
-		t.Fatalf("selection in a reopened panel = lane %d, want 2", m.selected)
+	if !strings.Contains(view, "plan · Planning · LERP · empty") {
+		t.Fatalf("focused work panel does not show its queues:\n%s", view)
 	}
 }
 
-// When the three panels want more than the body between them, the unfocused
-// ones are squeezed to the floor before the panel being worked in gives up a
+// When the two panels want more than the body between them, the unfocused
+// one is squeezed to the floor before the panel being worked in gives up a
 // row — and the stack still fits, so the status bar stays on screen.
-func TestOverflowSqueezesTheUnfocusedPanelsFirst(t *testing.T) {
+func TestOverflowSqueezesTheUnfocusedPanelFirst(t *testing.T) {
 	m, _, _ := newTestModel(t, 6)
 	resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
 	m = resized.(model)
 	m = fillBoard(t, m, 40)
-	// A busy lane keeps the running panel from collapsing, so all three
-	// panels are asking for a body.
-	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
-		TicketID: "id-42", Ticket: "LERP-42", Queue: "implement", LogPath: "/dev/null"}})
 
 	m = update(t, m, keyMsg("1"))
 	g := m.geometry()
-	if got := g.attnH + g.lanesH + g.nextH; got != g.bodyH {
+	if got := g.attnH + g.workH; got != g.bodyH {
 		t.Fatalf("overflowing stack is %d lines in a %d-line body", got, g.bodyH)
 	}
-	if g.lanesH != panelFloor || g.nextH != panelFloor {
-		t.Fatalf("unfocused panels are not at the floor: lanes %d, next %d", g.lanesH, g.nextH)
+	if g.workH != panelFloor {
+		t.Fatalf("the unfocused panel is not at the floor: %d lines", g.workH)
 	}
-	if want := g.bodyH - 2*panelFloor; g.attnH != want {
+	if want := g.bodyH - panelFloor; g.attnH != want {
 		t.Fatalf("focused needs-you is %d lines, want %d", g.attnH, want)
 	}
 	if lines := strings.Count(m.View(), "\n") + 1; lines > 24 {
@@ -950,10 +1079,10 @@ func TestOverflowSqueezesTheUnfocusedPanelsFirst(t *testing.T) {
 	}
 
 	// The squeeze follows focus, like the slack does.
-	m = update(t, m, keyMsg("3"))
+	m = update(t, m, keyMsg("2"))
 	g = m.geometry()
-	if g.attnH != panelFloor || g.nextH != g.bodyH-2*panelFloor {
-		t.Fatalf("focus did not move the squeeze: needs-you %d, up-next %d", g.attnH, g.nextH)
+	if g.attnH != panelFloor || g.workH != g.bodyH-panelFloor {
+		t.Fatalf("focus did not move the squeeze: needs-you %d, work %d", g.attnH, g.workH)
 	}
 }
 
@@ -962,8 +1091,8 @@ func TestOverflowSqueezesTheUnfocusedPanelsFirst(t *testing.T) {
 // is refused rather than drawn over the status bar.
 func TestSmallestWindowTheGuardAdmits(t *testing.T) {
 	for _, tc := range []struct{ w, h int }{
-		{120, 3*panelFloor + 1},
-		{70, 3*panelFloor + mainFloor + 1},
+		{120, 2*panelFloor + 1},
+		{70, 2*panelFloor + mainFloor + 1},
 	} {
 		m, _, _ := newTestModel(t, 3)
 		resized, _ := m.Update(tea.WindowSizeMsg{Width: tc.w, Height: tc.h})
@@ -987,7 +1116,7 @@ func TestSmallestWindowTheGuardAdmits(t *testing.T) {
 // whichever panel has focus — the long explanatory empty states included.
 func TestViewFitsTheWindow(t *testing.T) {
 	for _, width := range []int{120, 100, 80, 60} {
-		for _, focus := range []string{"1", "2", "3"} {
+		for _, focus := range []string{"1", "2"} {
 			m, _, _ := newTestModel(t, 3)
 			resized, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: 30})
 			m = resized.(model)
@@ -1072,7 +1201,7 @@ func TestEventSubscription(t *testing.T) {
 	}
 }
 
-func TestSelectingALaneTailsItsLog(t *testing.T) {
+func TestSelectingARunningTicketTailsItsLog(t *testing.T) {
 	dir := t.TempDir()
 	one := filepath.Join(dir, "one.log")
 	two := filepath.Join(dir, "two.log")
@@ -1081,17 +1210,17 @@ func TestSelectingALaneTailsItsLog(t *testing.T) {
 
 	m, _, _ := newTestModel(t, 2)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
-		Ticket: "LERP-1", Queue: "plan", LogPath: one}})
+		TicketID: "id-1", Ticket: "LERP-1", Queue: "plan", LogPath: one}})
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r2", Lane: 2,
-		Ticket: "LERP-2", Queue: "plan", LogPath: two}})
+		TicketID: "id-2", Ticket: "LERP-2", Queue: "plan", LogPath: two}})
 
 	if !strings.Contains(m.View(), "agent one says hello") {
-		t.Fatalf("selected lane 1's log is not tailed:\n%s", m.View())
+		t.Fatalf("the selected ticket's log is not tailed:\n%s", m.View())
 	}
 
 	m = update(t, m, keyMsg("down"))
 	if !strings.Contains(m.View(), "agent two says hello") {
-		t.Fatalf("selecting lane 2 did not switch the tail:\n%s", m.View())
+		t.Fatalf("selecting the second running ticket did not switch the tail:\n%s", m.View())
 	}
 
 	// Live tail: appended output arrives on the next poll.
@@ -1109,10 +1238,10 @@ func TestSelectingALaneTailsItsLog(t *testing.T) {
 	}
 }
 
-// A stream-json runner's lane reads as what the agent is doing, and `r`
+// A stream-json runner's log reads as what the agent is doing, and `r`
 // flips to the bytes it actually wrote — the escape hatch for a formatter
 // that got something wrong.
-func TestLaneLogRendersActivityAndTogglesToRaw(t *testing.T) {
+func TestRunLogRendersActivityAndTogglesToRaw(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "run.log")
 	writeLog(t, path, []byte(claudeStream))
 
@@ -1200,8 +1329,8 @@ func TestErrorsSurfaceOnTheStatusBar(t *testing.T) {
 		t.Fatalf("erroring pass cleared the status bar:\n%s", m.View())
 	}
 
-	// A clean pass supersedes the stale error; lane-level outcomes live on as
-	// lane notes, not here.
+	// A clean pass supersedes the stale error; how the last run ended is a
+	// transient note of its own, cleared the same way.
 	m = update(t, m, tickMsg{})
 	m = update(t, m, tickedMsg{})
 	if strings.Contains(m.View(), "still down") {
@@ -1209,39 +1338,78 @@ func TestErrorsSurfaceOnTheStatusBar(t *testing.T) {
 	}
 }
 
-// Selection is by lane number, not row position: rows appearing or vanishing
-// above the selected lane must not silently move the selection — and with it
-// the tail — to a different lane's log.
-func TestSelectionFollowsLaneAcrossReorders(t *testing.T) {
-	dir := t.TempDir()
-	seven := filepath.Join(dir, "seven.log")
-	writeLog(t, seven, []byte("lane seven speaking\n"))
+// Selection is by ticket, not row position: a row appearing above the
+// cursor, the ticket changing queue, or a run starting on it must not move
+// the selection — and with it the tail — onto a different ticket.
+func TestSelectionFollowsTheTicket(t *testing.T) {
+	plan := func(tickets ...loop.QueueTicket) loop.QueueSnapshot {
+		return loop.QueueSnapshot{Team: "LERP", Name: "plan", Status: "Planning", Tickets: tickets}
+	}
+	one := loop.QueueTicket{ID: "id-1", Identifier: "LERP-1", Title: "one", Eligible: true}
+	two := loop.QueueTicket{ID: "id-2", Identifier: "LERP-2", Title: "two", Eligible: true}
+	zero := loop.QueueTicket{ID: "id-0", Identifier: "LERP-0", Title: "zero", Eligible: true}
 
 	m, _, _ := newTestModel(t, 2)
-	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAdopted, RunID: "r7", Lane: 7,
-		TicketID: "t7", Queue: "review", LogPath: seven}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues,
+		Queues: []loop.QueueSnapshot{plan(one, two), {Team: "LERP", Name: "implement", Status: "Todo"}}}})
 	m = update(t, m, keyMsg("down"))
-	m = update(t, m, keyMsg("down"))
-	if m.selected != 7 {
-		t.Fatalf("selected lane = %d, want 7", m.selected)
+	if m.workSel != "id-2" {
+		t.Fatalf("selected ticket = %q, want id-2", m.workSel)
 	}
 
-	// A second adopted run slots in between the fixed lanes and lane 7.
-	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAdopted, RunID: "r5", Lane: 5,
-		TicketID: "t5", Queue: "review", LogPath: filepath.Join(dir, "five.log")}})
-	if m.selected != 7 {
-		t.Fatalf("selected lane after a row appeared above = %d, want still 7", m.selected)
-	}
-	if m.tail.path != seven {
-		t.Fatalf("tail retargeted to %q, want lane 7's log", m.tail.path)
+	// A pass that slots a row in above it and moves it to another queue.
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		plan(zero, one),
+		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
+			{ID: "id-2", Identifier: "LERP-2", Title: "two", Eligible: true}}},
+	}}})
+	if r := m.selectedWork(); m.workSel != "id-2" || r.queue != "implement" {
+		t.Fatalf("selection after the ticket changed queue = %q in %q, want id-2 in implement",
+			m.workSel, r.queue)
 	}
 
-	// Only the selected row itself vanishing moves the selection: it falls
-	// back to the nearest remaining row.
-	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventReaped, RunID: "r7", Lane: 7,
-		TicketID: "t7", Queue: "review"}})
-	if m.selected != 5 {
-		t.Fatalf("selected lane after its row vanished = %d, want the fallback 5", m.selected)
+	// A run starting on the selected ticket keeps it under the cursor — the
+	// row moves to the top of its group and the selection goes with it.
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r2", Lane: 1,
+		TicketID: "id-2", Ticket: "LERP-2", Queue: "implement", LogPath: "/dev/null"}})
+	if r := m.selectedWork(); m.workSel != "id-2" || r.lane != 1 {
+		t.Fatalf("selection after the run started = %q on lane %d, want id-2 running", m.workSel, r.lane)
+	}
+
+	// Only the ticket leaving the panel moves the cursor: it falls back to
+	// the nearest remaining row.
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventExited, RunID: "r2", Lane: 1,
+		TicketID: "id-2", Ticket: "LERP-2", Queue: "implement"}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		plan(zero, one), {Team: "LERP", Name: "implement", Status: "Todo"}}}})
+	if m.workSel != "id-1" {
+		t.Fatalf("selection after its ticket left the panel = %q, want the fallback id-1", m.workSel)
+	}
+}
+
+// Done-when: the word "lane" is nowhere an operator can see it. It stays the
+// internal noun and the evidence record's field; the screen says what is
+// running and how much capacity there is.
+func TestTheWordLaneIsOffTheOperatorsScreen(t *testing.T) {
+	for _, size := range []tea.WindowSizeMsg{
+		{Width: 120, Height: 40}, {Width: 100, Height: 30}, {Width: 70, Height: 30},
+	} {
+		m, _, _ := newTestModel(t, 2)
+		resized, _ := m.Update(size)
+		m = fillBoard(t, resized.(model), 6)
+		m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+			TicketID: "t0", Ticket: "QUEUED-1", Queue: "implement", LogPath: "/dev/null"}})
+		m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAdopted, RunID: "r9", Lane: 9,
+			TicketID: "adopted-one", Queue: "review", LogPath: "/dev/null"}})
+		for _, focus := range []string{"1", "2"} {
+			m = update(t, m, keyMsg(focus))
+			for _, view := range []string{m.View(), update(t, m, keyMsg("?")).View()} {
+				if strings.Contains(strings.ToLower(view), "lane") {
+					t.Fatalf("%dx%d, panel %s: the screen says lane:\n%s",
+						size.Width, size.Height, focus, view)
+				}
+			}
+		}
 	}
 }
 
@@ -1500,7 +1668,7 @@ func TestHostileTitlesRenderInert(t *testing.T) {
 		}}})
 	}
 
-	for _, focus := range []string{"1", "2", "3"} {
+	for _, focus := range []string{"1", "2"} {
 		hm := update(t, board(t, hostile), keyMsg(focus))
 		view := hm.View()
 		escapeFree(t, "panel "+focus, view)

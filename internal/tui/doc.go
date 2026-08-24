@@ -1,9 +1,9 @@
 // Package tui is the Bubble Tea interface: one screen with the
-// needs-you, running, and up-next panels beside a main pane that
-// follows focus, plus promote and eject. The TUI drives the loop;
+// needs-you and work panels beside a main pane that follows the
+// selected row, plus promote and eject. The TUI drives the loop;
 // there is no daemon.
 //
-// The lane pane reads a runner's log as agent activity — decoded at
+// A running ticket's row reads its log as agent activity — decoded at
 // render time by internal/logfmt, never on disk — with a raw toggle
 // for when the decoding is wrong, and plain text as the floor.
 //

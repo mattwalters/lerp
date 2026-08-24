@@ -137,8 +137,8 @@ the engine — no daemon. Work happens while lerp is open; a headless
 `lerp run` is the same loop without the chrome, if and when it earns
 its existence.
 
-Three panels on one screen, one per question an operator actually
-has, beside a main pane that details whichever panel has focus:
+Two panels on one screen, one per question an operator actually has,
+beside a main pane that details whichever row is selected:
 
 1. **Needs-you** — what waits on a human: unclaimed tickets, and the
    operator's own claimed tickets, sitting in a status no queue serves
@@ -156,12 +156,16 @@ has, beside a main pane that details whichever panel has focus:
    is never eligible, so keeping it would strand the ticket in a queue
    that could never pick it up. That release is invariant 4's protocol,
    not a second capability. This is the only write the TUI makes anywhere.
-2. **Running** — what is running now, which queue each lane's agent is
-   in, and its live log stream.
-3. **Up-next** — what runs next against the free lanes.
+2. **Work** — what the machine is doing with the board: one list,
+   grouped by queue, holding the tickets running in each queue and the
+   tickets waiting behind them. What is running and what runs next are
+   the same question about the same tickets; the separate question is
+   what needs a human. The main pane follows the selected row — a live
+   log for a running ticket, what gates it for a waiting one. It is
+   read-only: to change what runs next, move a ticket in Linear.
 
-One escape hatch: **eject**. Select a lane; lerp stops the agent,
-frees the lane, and hands you the vendor's own resume command
+One escape hatch: **eject**. Select a running ticket; lerp stops the
+agent, frees its lane, and hands you the vendor's own resume command
 (`claude --resume <session-id>`) so the headless run becomes your
 interactive session, full context intact. Finish the work yourself or
 toss the ticket back into a queue. Lerp does not implement

@@ -281,26 +281,29 @@ is open, and there is no daemon. Each pass reads the run evidence on
 disk, adopts live agents a previous lerp left behind, reaps dead ones —
 disposing the workspace and releasing the claim, when the board still
 looks exactly as the dead run left it — and starts eligible tickets
-into free lanes. `-lanes N` caps how many agents run at once (default
-3). The TUI needs a terminal: in a pipe or a script, `lerp` prints
+as capacity frees. `-concurrency N` caps how many agents run at once
+(default 3). The TUI needs a terminal: in a pipe or a script, `lerp` prints
 usage and exits 2 rather than quietly starting to claim tickets.
 
-The Running view shows one row per lane — ticket, queue, and runner
-state: provisioning, running, or adopted, each with the run's elapsed
-time (an adopted run shows its true age, not the moment it was
-adopted) — and a live tail of the selected lane's log, with
-scrollback that survives the run's exit. The tail reads as agent
-activity rather than as bytes: tool calls one line each, prose as
-prose, and thinking collapsed to a single line with its token count.
-A runner whose output lerp does not recognize is shown exactly as it
-was written, with no configuration, and `r` toggles any lane's pane
-back to the runner's raw output — the log on disk is untouched either
-way. The Up-next view shows what
-runs next: each configured queue with every ticket sitting in its
-status, in the loop's own pickup order, refreshed on every pass —
-eligible tickets run as lanes free up, and blocked or claimed ones are
-shown faint with the reason. It is read-only; to change what runs
-next, move tickets in Linear. The Needs-you view lists what waits on a
+The Work view is one list of what the machine is doing with the
+board, grouped by queue: every ticket sitting in each queue's status,
+in the loop's own pickup order, with the ones running now at the top
+of their own group. A running row carries its state — provisioning,
+running, or adopted — and the run's elapsed time (an adopted run shows
+its true age, not the moment it was adopted); a waiting row is shown
+faint with the reason it waits, blocked or claimed. The panel title
+and the status bar carry the capacity, `2/3 running`, which is what
+says whether anything can start. Selecting a running ticket shows a
+live tail of its log in the main pane, with scrollback that survives
+the run's exit; selecting a waiting one shows where it sits in pickup
+order and what gates it. The tail reads as agent activity rather than
+as bytes: tool calls one line each, prose as prose, and thinking
+collapsed to a single line with its token count. A runner whose output
+lerp does not recognize is shown exactly as it was written, with no
+configuration, and `r` toggles the pane back to the runner's raw
+output — the log on disk is untouched either way. The list is
+read-only; to change what runs next, move tickets in Linear. The
+Needs-you view lists what waits on a
 human: unclaimed tickets, and the operator's own claimed tickets,
 sitting in a status no queue serves. It is a table, one row per
 ticket, carrying the identifier, the leverage, the title, the real
@@ -326,8 +329,8 @@ ticket, and `o` opens the ticket in Linear for everything else. Select
 one and press `p` to promote it: pick a target from the configured
 queue statuses or a pipeline exit, and lerp moves it there. That
 MoveIssue is the only write any view makes; everything else about a
-ticket still happens in Linear. Keys: `1`/`2`/`3` choose a view and
-`tab` cycles. `↑`/`↓` pick a lane or a needs-you item, `s` sorts
+ticket still happens in Linear. Keys: `1`/`2` choose a panel and
+`tab` cycles. `↑`/`↓` pick a row, `s` sorts
 needs-you and `P` scopes it to a project, `o` opens the selected ticket
 in Linear, `pgup`/`pgdn` scroll the log or the ticket, `end` resumes
 following, `r` shows the raw log, `q` quits (or backs out of the
@@ -391,8 +394,8 @@ run it:
 **What ships today?** The TUI is the way to run the loop: bare `lerp`
 opens it, and the reconciling loop of the mental model — N lanes,
 adopting live runs, reaping dead ones, repairing drift — is real,
-running behavior while it is open (see [Running](#running)). All three
-views are built, and needs-you's promote is the TUI's one write
+running behavior while it is open (see [Running](#running)). Both
+panels are built, and needs-you's promote is the TUI's one write
 action. `lerp once` is the single-shot alternative: one ticket through
 its queue, no loop, no evidence store. Beyond those, `lerp version`
 and `lerp init` complete the surface.
