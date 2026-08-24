@@ -866,6 +866,51 @@ func TestSelectingALaneTailsItsLog(t *testing.T) {
 	}
 }
 
+// A stream-json runner's lane reads as what the agent is doing, and `r`
+// flips to the bytes it actually wrote — the escape hatch for a formatter
+// that got something wrong.
+func TestLaneLogRendersActivityAndTogglesToRaw(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.log")
+	writeLog(t, path, []byte(claudeStream))
+
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		Ticket: "LERP-1", Queue: "plan", LogPath: path}})
+
+	view := m.View()
+	if !strings.Contains(view, "⏺ Read model.go") {
+		t.Fatalf("the pane does not read as agent activity:\n%s", view)
+	}
+	if strings.Contains(view, `{"type"`) {
+		t.Fatalf("raw stream JSON is on screen:\n%s", view)
+	}
+
+	m = update(t, m, keyMsg("r"))
+	view = m.View()
+	if !strings.Contains(view, `{"type":"system"`) {
+		t.Fatalf("the raw toggle did not show the runner's own bytes:\n%s", view)
+	}
+	if !strings.Contains(view, "(raw)") {
+		t.Fatalf("the raw pane does not say so in its title:\n%s", view)
+	}
+
+	m = update(t, m, keyMsg("r"))
+	view = m.View()
+	if !strings.Contains(view, "⏺ Read model.go") || strings.Contains(view, `{"type"`) {
+		t.Fatalf("the raw toggle did not round-trip:\n%s", view)
+	}
+}
+
+// The ? overlay renders from the keymap, so a binding declared there is
+// documented for free — and a key nobody can discover may as well not exist.
+func TestRawToggleIsInTheHelpOverlay(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("?"))
+	if !strings.Contains(m.View(), "raw log") {
+		t.Fatalf("the raw toggle is missing from the help overlay:\n%s", m.View())
+	}
+}
+
 // The log keeps tailing while the operator looks elsewhere: appended output
 // gathered during a needs-you detour is on screen the moment the running
 // panel regains focus.

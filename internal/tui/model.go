@@ -220,6 +220,10 @@ type model struct {
 	vp     viewport.Model
 	tail   tail
 	follow bool
+	// rawLog flips the lane pane between the decoded view and the runner's
+	// own bytes. It is the same escape hatch as o and eject: when the
+	// formatter is wrong, the operator needs to see what it was wrong about.
+	rawLog bool
 
 	keys keymap
 	help help.Model
@@ -396,6 +400,9 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.focus == panelLanes {
 			m.follow = true
 		}
+	case key.Matches(msg, m.keys.Raw):
+		m.rawLog = !m.rawLog
+		m.refreshLog()
 	case key.Matches(msg, m.keys.Open):
 		return m, openURL(m.selectedURL())
 	}
@@ -723,11 +730,19 @@ func (m *model) detail(width int) string {
 	return m.attentionDetail(width)
 }
 
+// refreshLog points the pane at the selected lane's log: the decoded view of
+// what the agent is doing, or — with the raw toggle on — the bytes the runner
+// wrote. Nothing but the rendering differs between the two; the file on disk
+// and the scrollback are the same either way.
 func (m *model) refreshLog() {
 	if m.focus != panelLanes {
 		return
 	}
-	m.vp.SetContent(cleanLog(m.tail.content()))
+	if m.rawLog {
+		m.vp.SetContent(cleanLog(m.tail.content()))
+	} else {
+		m.vp.SetContent(m.tail.rendered(m.vp.Width))
+	}
 	if m.follow {
 		m.vp.GotoBottom()
 	}
@@ -1266,10 +1281,19 @@ func (m model) mainTitle() string {
 	case ln.logPath == "":
 		return "no log yet"
 	case ln.state == laneIdle:
-		return fmt.Sprintf("last log · lane %d", m.selected)
+		return fmt.Sprintf("last log%s · lane %d", m.rawSuffix(), m.selected)
 	default:
-		return fmt.Sprintf("log · %s · %s · lane %d", ln.name(), ln.queue, m.selected)
+		return fmt.Sprintf("log%s · %s · %s · lane %d", m.rawSuffix(), ln.name(), ln.queue, m.selected)
 	}
+}
+
+// rawSuffix marks the pane's title while the raw toggle is on, so a pane full
+// of stream JSON is never a mystery.
+func (m model) rawSuffix() string {
+	if m.rawLog {
+		return " (raw)"
+	}
+	return ""
 }
 
 // attentionDetail is the main pane's lens on the selected needs-you item:

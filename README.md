@@ -289,7 +289,13 @@ The Running view shows one row per lane — ticket, queue, and runner
 state: provisioning, running, or adopted, each with the run's elapsed
 time (an adopted run shows its true age, not the moment it was
 adopted) — and a live tail of the selected lane's log, with
-scrollback that survives the run's exit. The Up-next view shows what
+scrollback that survives the run's exit. The tail reads as agent
+activity rather than as bytes: tool calls one line each, prose as
+prose, and thinking collapsed to a single line with its token count.
+A runner whose output lerp does not recognize is shown exactly as it
+was written, with no configuration, and `r` toggles any lane's pane
+back to the runner's raw output — the log on disk is untouched either
+way. The Up-next view shows what
 runs next: each configured queue with every ticket sitting in its
 status, in the loop's own pickup order, refreshed on every pass —
 eligible tickets run as lanes free up, and blocked or claimed ones are
@@ -313,8 +319,8 @@ MoveIssue is the only write any view makes; everything else about a
 ticket still happens in Linear. Keys: `1`/`2`/`3` choose a view and
 `tab` cycles. `↑`/`↓` pick a lane or a needs-you item, `o` opens the
 selected ticket in Linear, `pgup`/`pgdn` scroll the log or the ticket,
-`end` resumes following, `q` quits (or backs out of the promote
-picker).
+`end` resumes following, `r` shows the raw log, `q` quits (or backs out
+of the promote picker).
 
 Quitting (`q` or `ctrl+c`) closes the screen, stops future passes, and
 waits briefly for a pass already in flight to settle. The agents are

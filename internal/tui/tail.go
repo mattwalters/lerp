@@ -26,7 +26,8 @@ type tail struct {
 	path   string
 	offset int64 // next byte to read; negative until the first read
 	buf    []byte
-	chunk  []byte // scratch for reads, reused across polls
+	chunk  []byte  // scratch for reads, reused across polls
+	view   logView // the same bytes, decoded as agent activity
 }
 
 func newTail(path string) tail {
@@ -52,9 +53,13 @@ func (t *tail) read() bool {
 	switch {
 	case t.offset < 0:
 		t.offset = max(0, size-tailScrollback)
+		if t.offset > 0 {
+			// Attaching to a log already being written lands mid-line.
+			t.view.skipLine()
+		}
 	case size < t.offset:
 		t.offset = 0
-		t.buf = t.buf[:0]
+		t.buf, t.view = t.buf[:0], logView{}
 	}
 	if size <= t.offset {
 		return false
@@ -74,6 +79,9 @@ func (t *tail) read() bool {
 	t.offset += int64(n)
 	t.buf = append(t.buf, t.chunk[:n]...)
 	t.trim()
+	// The decoder sees every byte the tail reads, once, as it arrives: it is
+	// the one thing here that cannot be rebuilt from the trimmed scrollback.
+	t.view.feed(t.chunk[:n])
 	return true
 }
 
@@ -91,6 +99,14 @@ func (t *tail) trim() {
 	t.buf = t.buf[:n]
 }
 
+// content is the raw scrollback, byte for byte as the runner wrote it — what
+// the raw toggle shows, and the floor everything else is measured against.
 func (t *tail) content() string {
 	return string(t.buf)
+}
+
+// rendered is the same log read as agent activity, laid out for a pane this
+// wide.
+func (t *tail) rendered(width int) string {
+	return t.view.render(width)
 }
