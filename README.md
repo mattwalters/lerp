@@ -156,6 +156,23 @@ Linear's GitHub integration moves the ticket on — in-progress is exactly
 right, and marking it completed would release dependent tickets before
 the work had actually landed.
 
+## Running
+
+```sh
+LINEAR_API_KEY=... lerp
+```
+
+`lerp` opens the TUI, and the TUI is the engine: the loop runs while it
+is open, and there is no daemon. Quitting stops the loop but leaves the
+agents working — they are their own processes, with run evidence on
+disk, and the next `lerp` adopts them. `-lanes N` caps how many agents
+run at once (default 3).
+
+The board shows one row per lane — ticket, queue, runner state — and a
+live tail of the selected lane's log. Keys: `1`/`2`/`3` choose a view
+(attention and queue are still to come), `tab` cycles, `↑`/`↓` pick a
+lane, `pgup`/`pgdn` scroll the log, `end` resumes following, `q` quits.
+
 ## Stock pipeline
 
 [lerp.example.toml](lerp.example.toml) ships one opinion. Lerp holds

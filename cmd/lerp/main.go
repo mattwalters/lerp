@@ -14,23 +14,42 @@ import (
 	"strings"
 
 	"github.com/mattwalters/lerp/internal/config"
+	"github.com/mattwalters/lerp/internal/evidence"
 	"github.com/mattwalters/lerp/internal/initcmd"
 	"github.com/mattwalters/lerp/internal/linear"
 	"github.com/mattwalters/lerp/internal/loop"
+	"github.com/mattwalters/lerp/internal/tui"
 	"github.com/mattwalters/lerp/internal/version"
 )
 
 const usage = `usage:
-  lerp                  print the version
+  lerp [-lanes N]       open the TUI; the loop runs while it is open
   lerp version          print the version
   lerp init --team KEY  create missing Linear structure and this repo's lerp.toml
   lerp once             run one eligible ticket through its queue
 `
 
+// defaultLanes is how many agents run at once unless -lanes says otherwise.
+// SCOPE keeps N small.
+const defaultLanes = 3
+
 func main() {
 	args := os.Args[1:]
-	if len(args) == 0 {
-		fmt.Printf("lerp %s\n", version.Version)
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		fs := flag.NewFlagSet("lerp", flag.ExitOnError)
+		lanes := fs.Int("lanes", defaultLanes, "how many agents may run at once")
+		fs.Parse(args)
+		if fs.NArg() != 0 {
+			fmt.Fprint(os.Stderr, usage)
+			os.Exit(2)
+		}
+		if *lanes < 1 {
+			fmt.Fprintln(os.Stderr, "lerp: -lanes must be at least 1")
+			os.Exit(2)
+		}
+		if err := openTUI(context.Background(), *lanes); err != nil {
+			fatal(fmt.Errorf("lerp: %w", err))
+		}
 		return
 	}
 	switch args[0] {
@@ -52,6 +71,68 @@ func main() {
 		fmt.Fprintf(os.Stderr, "lerp: unknown command %q\n\n%s", args[0], usage)
 		os.Exit(2)
 	}
+}
+
+// openTUI runs the reconciler under the Bubble Tea shell. The TUI is the
+// engine: it drives the loop's ticks and subscribes to its events; nothing
+// runs when it is closed, and no daemon exists (SCOPE, "The interface").
+func openTUI(ctx context.Context, lanes int) error {
+	apiKey := os.Getenv("LINEAR_API_KEY")
+	if apiKey == "" {
+		return errors.New("LINEAR_API_KEY is required")
+	}
+	repoDir, err := gitRoot()
+	if err != nil {
+		return err
+	}
+	repo, err := config.LoadRepoConfig(filepath.Join(repoDir, config.RepoConfigFile))
+	if err != nil {
+		return err
+	}
+
+	ev := evidence.New(repoDir)
+	lock, err := ev.AcquireLock()
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+
+	// The loop's diagnostic stream — provision, dispose, and runner output —
+	// is ephemeral process detail: a local file, overwritten each session,
+	// discarded without ceremony (SCOPE invariant 7). Agent output itself
+	// goes to each run's own log, which the board tails.
+	loopLog, err := os.OpenFile(filepath.Join(repoDir, ".lerp", "loop.log"),
+		os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return fmt.Errorf("open loop log: %w", err)
+	}
+	defer loopLog.Close()
+
+	// Buffered so the loop rarely waits on a render; the model always keeps a
+	// receive pending, so the channel drains for as long as the TUI is open.
+	events := make(chan loop.Event, 64)
+	rec, err := loop.NewReconciler(loop.ReconcilerOptions{
+		Client:   linear.New(apiKey, nil),
+		Repo:     repo,
+		RepoDir:  repoDir,
+		Evidence: ev,
+		Lanes:    lanes,
+		Events:   func(ev loop.Event) { events <- ev },
+		Log:      loopLog,
+	})
+	if err != nil {
+		return err
+	}
+
+	// ctx is never cancelled on quit: quitting closes the screen and stops
+	// the ticking, while the agents — their own process groups, with run
+	// evidence on disk — keep working. The next lerp adopts them.
+	return tui.Run(ctx, tui.Options{
+		Ticker:   rec,
+		Interval: loop.DefaultInterval,
+		Lanes:    lanes,
+		Events:   events,
+	})
 }
 
 // once is a temporary single-lane command for exercising the first vertical
