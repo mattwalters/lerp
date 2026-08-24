@@ -110,7 +110,7 @@ func Once(ctx context.Context, o OnceOptions) (bool, error) {
 
 	result, err := o.Execute(ctx, run.Invocation{
 		Runner:  o.Repo.Runners[queue.Runner],
-		Prompt:  queue.Prompt,
+		Queue:   queue,
 		Ticket:  issue.Identifier,
 		Workdir: workdir,
 		LogPath: logPath,

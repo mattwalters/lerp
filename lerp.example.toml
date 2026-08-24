@@ -55,7 +55,10 @@ resume = "claude --resume {{session}}"
 # Prompts are plain text: read them, argue with them, edit them. Each one
 # names its ticket with {{ticket}}, tells the agent where durable decisions
 # belong (Linear), and says how to escalate (move the ticket itself — lerp
-# will not overrule an agent that moved its own ticket).
+# will not overrule an agent that moved its own ticket). A prompt may also
+# reference its own queue's {{status}}, {{on_success}}, and {{on_failure}},
+# expanded at run time — so the prose follows the configured statuses
+# through any rename or remap.
 
 [queues.plan]
 status = "Planning"
@@ -71,7 +74,7 @@ post a plan as a Linear comment on {{ticket}}: what you will change, which
 files, and how you will know it worked.
 
 If the ticket is too vague to plan, or big enough that it should be several
-tickets, say so in a comment and move {{ticket}} to Needs Attention instead of
+tickets, say so in a comment and move {{ticket}} to {{on_failure}} instead of
 guessing.
 """
 
@@ -89,7 +92,7 @@ this repository uses as its check pass before you open it.
 
 The pull request is the artifact — do not paste diffs or transcripts into
 Linear. If the plan turns out to be wrong or missing, move {{ticket}} to
-Needs Attention and say why in a comment rather than inventing a new plan.
+{{on_failure}} and say why in a comment rather than inventing a new plan.
 """
 
 [queues.review]
@@ -106,9 +109,9 @@ a Linear comment: what you checked, and anything real you found. Concrete
 failure scenarios only — no style essays.
 
 Do not merge, and do not fix the code yourself. If it needs changes, move
-{{ticket}} back to Implementing with your findings in the comment; the next
-run will pick it up from there. A clean review leaves {{ticket}} for a human
-to merge.
+{{ticket}} to {{on_failure}} with your findings in the comment, so a human
+can send the work back through implementation. A clean review leaves
+{{ticket}} for a human to merge.
 """
 
 # On a clean review the ticket lands in "In Review" — a status no queue

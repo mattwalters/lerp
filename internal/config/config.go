@@ -70,6 +70,21 @@ type Queue struct {
 	OnFailure string `toml:"on_failure"`
 }
 
+// ExpandPrompt returns the queue's prompt with its placeholders filled in:
+// {{ticket}} from the given identifier, and {{status}}, {{on_success}}, and
+// {{on_failure}} from the queue's own fields, so prompt prose follows the
+// configured statuses instead of hardcoding names that a rename would orphan.
+// A prompt sees its own queue's pointers and the ticket, nothing else — no
+// other queue's fields, no conditionals, no templating language.
+func (q Queue) ExpandPrompt(ticket string) string {
+	return strings.NewReplacer(
+		"{{ticket}}", ticket,
+		"{{status}}", q.Status,
+		"{{on_success}}", q.OnSuccess,
+		"{{on_failure}}", q.OnFailure,
+	).Replace(q.Prompt)
+}
+
 // StockRepoConfig renders the stock lerp.toml for the given teams. bypass
 // keeps the stock runner's `--permission-mode bypassPermissions` grant;
 // declining strips the flag, leaving a runner the operator must widen
@@ -156,6 +171,14 @@ func (c *RepoConfig) validate(path string) error {
 		}
 		if _, ok := c.Runners[q.Runner]; !ok {
 			return fmt.Errorf("%s: queue %q: runner %q is not defined under [runners]", path, name, q.Runner)
+		}
+		// Of the placeholders ExpandPrompt fills, on_failure is the only one
+		// whose field may be absent — status and on_success are required
+		// above, and the ticket is always supplied. A prompt that references
+		// it anyway would expand to an empty string at run time, sending
+		// agents to a nameless status; fail at load instead.
+		if strings.Contains(q.Prompt, "{{on_failure}}") && q.OnFailure == "" {
+			return fmt.Errorf("%s: queue %q: prompt references {{on_failure}} but on_failure is not set", path, name)
 		}
 		if prev, dup := queueByStatus[q.Status]; dup {
 			return fmt.Errorf("%s: queues %q and %q both watch status %q; a status may drive at most one queue", path, prev, name, q.Status)
