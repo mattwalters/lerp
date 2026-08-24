@@ -38,8 +38,12 @@ dispose = 'git worktree remove --force "$LERP_WORKSPACE"'
 # fails at the first tool it is not allowed to use, so the pipeline needs
 # either this grant — made deliberately, in review, where this file lives —
 # or an `--allowedTools` list you curate.
+#
+# Model and effort are pinned right here in the command — the template is the
+# knob, lerp has no model concept. To vary them per stage, add another
+# [runners.NAME] with different flags and point a queue's `runner` at it.
 [runners.claude]
-command = "claude -p {{prompt}} --session-id {{session}} --permission-mode bypassPermissions"
+command = "claude -p {{prompt}} --session-id {{session}} --model claude-opus-5 --effort high --permission-mode bypassPermissions"
 resume = "claude --resume {{session}}"
 
 # The agent needs its own Linear access — lerp passes only the ticket
