@@ -159,6 +159,8 @@ func openTUI(ctx context.Context, lanes int) error {
 	// next lerp adopts them.
 	return tui.Run(ctx, tui.Options{
 		Ticker:   rec,
+		Promoter: rec,
+		Statuses: repo.PromoteTargets(),
 		Interval: loop.DefaultInterval,
 		Lanes:    lanes,
 		Events:   events,

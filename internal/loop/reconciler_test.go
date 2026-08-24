@@ -629,46 +629,56 @@ func TestTickPublishesQueueSnapshotEveryPass(t *testing.T) {
 	h.waitEvents(t, EventExited, 1)
 }
 
-// Done-when: the attention pass reports exactly the operator's claimed
-// tickets sitting in statuses no queue serves — and, once nothing does, an
-// empty list, so a subscriber can show the goal state.
+// Done-when: the attention pass reports exactly the unclaimed tickets and
+// the operator's claimed tickets sitting in statuses no queue serves,
+// to-route items before parked ones — and once neither half has anything,
+// an empty list, so a subscriber can show the goal state.
 func TestTickEmitsAttention(t *testing.T) {
 	h := newHarness(t, 1, nil)
-	// Blocked on the operator: claimed, in a status no queue serves.
+	// Parked on the operator: claimed, in a status no queue serves.
 	h.fake.AddIssue("LERP", linear.Issue{ID: "help", Identifier: "LERP-1", Title: "Fix the build",
 		Status: "Needs Help", AssigneeID: "fake-viewer", URL: "https://linear.app/l/LERP-1"})
-	// Not blocked: claimed but in a queue's own status — a run may hold it.
+	// Neither: claimed but in a queue's own status — a run may hold it.
 	h.fake.AddIssue("LERP", linear.Issue{ID: "queued", Identifier: "LERP-2", Status: "Todo",
 		AssigneeID: "fake-viewer"})
-	// Not blocked: someone else's claim is someone else's work.
+	// Neither: someone else's claim is someone else's work.
 	h.fake.AddIssue("LERP", linear.Issue{ID: "theirs", Identifier: "LERP-3", Status: "Needs Help",
 		AssigneeID: "somebody-else"})
-	// Not blocked: unclaimed tickets belong to the queues, not the operator.
-	h.fake.AddIssue("LERP", linear.Issue{ID: "loose", Identifier: "LERP-4", Status: "Backlog"})
-	// Not blocked: finished tickets wait on nobody.
+	// To route: unclaimed, in a status no queue serves.
+	h.fake.AddIssue("LERP", linear.Issue{ID: "loose", Identifier: "LERP-4", Title: "Nobody's routed this",
+		Status: "Backlog", URL: "https://linear.app/l/LERP-4"})
+	// Neither: finished tickets wait on nobody.
 	h.fake.AddIssue("LERP", linear.Issue{ID: "done", Identifier: "LERP-5", Status: "Done",
 		AssigneeID: "fake-viewer"})
 	ctx := context.Background()
 
 	h.rec.Tick(ctx)
 	got := h.waitEvents(t, EventAttention, 1)[0]
-	want := []AttentionItem{{
-		Ticket: "LERP-1", Title: "Fix the build", Status: "Needs Help",
-		Reason: `claimed in "Needs Help" — no queue serves it`,
-		URL:    "https://linear.app/l/LERP-1",
-	}}
+	want := []AttentionItem{
+		{
+			Group: ToRoute, Ticket: "LERP-4", TicketID: "loose", Title: "Nobody's routed this", Status: "Backlog",
+			Reason: `unassigned in "Backlog" — no queue serves it`,
+			URL:    "https://linear.app/l/LERP-4",
+		},
+		{
+			Group: Parked, Ticket: "LERP-1", TicketID: "help", Title: "Fix the build", Status: "Needs Help",
+			Reason: `claimed in "Needs Help" — no queue serves it`,
+			URL:    "https://linear.app/l/LERP-1",
+		},
+	}
 	if !reflect.DeepEqual(got.Attention, want) {
 		t.Errorf("attention = %+v, want %+v", got.Attention, want)
 	}
 
-	// The operator acts (in Linear, not in lerp) and the next pass agrees
-	// that nothing needs them.
-	if err := h.fake.UnassignIssue(ctx, "help"); err != nil {
+	// The operator routes the ticket (in Linear, not in lerp) into a queue's
+	// own status, and the next pass agrees only the unrouted ticket remains.
+	if err := h.fake.MoveIssue(ctx, "help", "Todo"); err != nil {
 		t.Fatal(err)
 	}
 	h.rec.Tick(ctx)
-	if got := h.waitEvents(t, EventAttention, 1)[0]; len(got.Attention) != 0 {
-		t.Errorf("attention after the operator acted = %+v, want empty", got.Attention)
+	got = h.waitEvents(t, EventAttention, 1)[0]
+	if len(got.Attention) != 1 || got.Attention[0].Ticket != "LERP-4" {
+		t.Errorf("attention after the operator routed it = %+v, want only LERP-4 to route", got.Attention)
 	}
 }
 
@@ -688,8 +698,24 @@ func TestFailedRunLandsInAttention(t *testing.T) {
 
 	h.rec.Tick(ctx)
 	got := h.waitEvents(t, EventAttention, 1)[0]
-	if len(got.Attention) != 1 || got.Attention[0].Ticket != "LERP-1" || got.Attention[0].Status != "Needs Help" {
-		t.Errorf("attention after a failed run = %+v, want LERP-1 in Needs Help", got.Attention)
+	if len(got.Attention) != 1 || got.Attention[0].Ticket != "LERP-1" || got.Attention[0].Status != "Needs Help" ||
+		got.Attention[0].Group != Parked {
+		t.Errorf("attention after a failed run = %+v, want LERP-1 in Needs Help, parked on the operator", got.Attention)
+	}
+}
+
+// Promote is the TUI's one write action: a plain MoveIssue through the same
+// client the loop reads with, nothing else touched.
+func TestReconcilerPromote(t *testing.T) {
+	h := newHarness(t, 1, nil)
+	h.fake.AddIssue("LERP", linear.Issue{ID: "loose", Identifier: "LERP-4", Status: "Backlog"})
+	ctx := context.Background()
+
+	if err := h.rec.Promote(ctx, "loose", "Todo"); err != nil {
+		t.Fatalf("Promote: %v", err)
+	}
+	if got := h.issue(t, "loose"); got.Status != "Todo" {
+		t.Errorf("status after Promote = %q, want Todo", got.Status)
 	}
 }
 

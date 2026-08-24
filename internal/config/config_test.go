@@ -73,6 +73,21 @@ func TestLoadRepoConfig(t *testing.T) {
 	}
 }
 
+// PromoteTargets is the promote picker's option list: every queue status
+// once, then whichever on_success/on_failure targets are not already one —
+// the pipeline's exits.
+func TestPromoteTargets(t *testing.T) {
+	path := writeFile(t, "lerp.toml", validRepo)
+	c, err := LoadRepoConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"Implementing", "Planning", "In Review", "Blocked"}
+	if got := c.PromoteTargets(); !reflect.DeepEqual(got, want) {
+		t.Errorf("PromoteTargets = %v, want %v", got, want)
+	}
+}
+
 func TestLoadRepoConfigErrors(t *testing.T) {
 	// A minimal valid pipeline appended to team/workspace fragments, so each
 	// case isolates the error it is about.

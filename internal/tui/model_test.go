@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -25,18 +26,63 @@ type countingTicker struct {
 
 func (c *countingTicker) Tick(context.Context) { c.ticks.Add(1) }
 
+// recordingPromoter stands in for the reconciler's one write action: it
+// records every Promote call, so a test can assert what the picker sent,
+// and returns whatever err is set to.
+type recordingPromoter struct {
+	mu    sync.Mutex
+	calls []promoteCall
+	err   error
+}
+
+type promoteCall struct {
+	ticketID string
+	status   string
+}
+
+func (p *recordingPromoter) Promote(_ context.Context, ticketID, status string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.calls = append(p.calls, promoteCall{ticketID, status})
+	return p.err
+}
+
+func (p *recordingPromoter) last() promoteCall {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.calls) == 0 {
+		return promoteCall{}
+	}
+	return p.calls[len(p.calls)-1]
+}
+
+// defaultTestStatuses are the promote picker's options in tests that do not
+// care which ones — two, so up/down has somewhere to go.
+var defaultTestStatuses = []string{"Planning", "Implementing"}
+
 func newTestModel(t *testing.T, lanes int) (model, *countingTicker, chan loop.Event) {
 	t.Helper()
+	m, ticker, events, _ := newPromoteTestModel(t, lanes, defaultTestStatuses)
+	return m, ticker, events
+}
+
+// newPromoteTestModel is newTestModel plus the recording promoter, for tests
+// that drive the promote picker and need to see what it sent.
+func newPromoteTestModel(t *testing.T, lanes int, statuses []string) (model, *countingTicker, chan loop.Event, *recordingPromoter) {
+	t.Helper()
 	ticker := &countingTicker{}
+	promoter := &recordingPromoter{}
 	events := make(chan loop.Event, 8)
 	m := newModel(context.Background(), Options{
 		Ticker:   ticker,
+		Promoter: promoter,
+		Statuses: statuses,
 		Interval: time.Millisecond,
 		Lanes:    lanes,
 		Events:   events,
 	})
 	resized, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
-	return resized.(model), ticker, events
+	return resized.(model), ticker, events, promoter
 }
 
 func update(t *testing.T, m model, msg tea.Msg) model {
@@ -53,6 +99,10 @@ func keyMsg(s string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyUp}
 	case "down":
 		return tea.KeyMsg{Type: tea.KeyDown}
+	case "enter":
+		return tea.KeyMsg{Type: tea.KeyEnter}
+	case "esc":
+		return tea.KeyMsg{Type: tea.KeyEsc}
 	default:
 		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
 	}
@@ -61,7 +111,7 @@ func keyMsg(s string) tea.KeyMsg {
 func TestLanesShowTheRunLifecycle(t *testing.T) {
 	m, _, _ := newTestModel(t, 2)
 	view := m.View()
-	for _, want := range []string{"lanes", "attention", "up next", "idle", "q quit"} {
+	for _, want := range []string{"needs you", "running", "up next", "idle", "q quit"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("initial view is missing %q:\n%s", want, view)
 		}
@@ -142,14 +192,14 @@ func TestFocusSwitching(t *testing.T) {
 	}
 	m = update(t, m, keyMsg("1"))
 	if m.focus != panelAttention {
-		t.Fatalf("key 1 focused %v, want attention", m.focus)
+		t.Fatalf("key 1 focused %v, want needs you", m.focus)
 	}
 	if !strings.Contains(m.View(), "reading the board") {
-		t.Fatalf("attention lens before the first pass missing its state text:\n%s", m.View())
+		t.Fatalf("needs-you lens before the first pass missing its state text:\n%s", m.View())
 	}
 	m = update(t, m, keyMsg("tab"))
 	if m.focus != panelLanes {
-		t.Fatalf("tab from attention landed on %v, want lanes", m.focus)
+		t.Fatalf("tab from needs-you landed on %v, want running", m.focus)
 	}
 }
 
@@ -194,7 +244,8 @@ func TestUpNextShowsWhatRunsNext(t *testing.T) {
 	}
 
 	// The next pass's snapshot replaces the whole view: a ticket that left
-	// the queue leaves the screen.
+	// the queue leaves the screen, and the emptied board explains how
+	// tickets enter.
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
 		{Team: "LERP", Name: "implement", Status: "Todo"},
 	}}})
@@ -202,8 +253,8 @@ func TestUpNextShowsWhatRunsNext(t *testing.T) {
 	if strings.Contains(view, "LERP-1") {
 		t.Fatalf("stale ticket survived a refresh:\n%s", view)
 	}
-	if !strings.Contains(view, "empty") {
-		t.Fatalf("emptied queue does not read empty:\n%s", view)
+	if !strings.Contains(view, `tickets enter when moved to "Todo"`) {
+		t.Fatalf("emptied queue does not explain how tickets enter:\n%s", view)
 	}
 }
 
@@ -232,10 +283,11 @@ func TestUpNextCapsToItsPanel(t *testing.T) {
 	}
 }
 
-// The attention panel folds attention events; its lens shows the loop's
+// The needs-you panel folds attention events; its lens shows the loop's
 // reason and Linear's URL for the selected item. The empty state is the goal
-// state — but never claimed before the first pass has reported.
-func TestAttentionListsWhatWaits(t *testing.T) {
+// state — but never claimed before the first pass has reported, and it says
+// what would make items appear.
+func TestNeedsYouListsWhatWaits(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, keyMsg("1"))
 
@@ -256,7 +308,7 @@ func TestAttentionListsWhatWaits(t *testing.T) {
 		"https://linear.app/acme/issue/LERP-42/fix",
 	} {
 		if !strings.Contains(view, want) {
-			t.Fatalf("attention view is missing %q:\n%s", want, view)
+			t.Fatalf("needs-you view is missing %q:\n%s", want, view)
 		}
 	}
 
@@ -264,10 +316,120 @@ func TestAttentionListsWhatWaits(t *testing.T) {
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention}})
 	view = m.View()
 	if !strings.Contains(view, "nothing needs you") {
-		t.Fatalf("empty attention list does not read as the goal state:\n%s", view)
+		t.Fatalf("empty needs-you list does not read as the goal state:\n%s", view)
+	}
+	if !strings.Contains(view, "shows unclaimed tickets") {
+		t.Fatalf("empty needs-you lens does not explain what would make items appear:\n%s", view)
 	}
 	if strings.Contains(view, "LERP-42") {
 		t.Fatalf("cleared item still rendered:\n%s", view)
+	}
+}
+
+// needs-you widens attention into two groups: unclaimed work to route, and
+// the operator's own claimed tickets parked outside every queue. The panel
+// renders each group heading above its tickets, in the loop's order.
+func TestNeedsYouGroupsToRouteAndParked(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Group: loop.ToRoute, Ticket: "LERP-4", TicketID: "loose", Title: "Nobody's routed this", Status: "Backlog",
+			Reason: `unassigned in "Backlog" — no queue serves it`},
+		{Group: loop.Parked, Ticket: "LERP-1", TicketID: "help", Title: "Fix the build", Status: "Needs Help",
+			Reason: `claimed in "Needs Help" — no queue serves it`},
+	}}})
+	// Assert on the panel itself: in the full view the lens also names the
+	// selected ticket, which would shadow the ordering check.
+	panel := m.attentionPanel(40, 8)
+	toRoute := strings.Index(panel, "to route")
+	parked := strings.Index(panel, "parked on you")
+	lerp4 := strings.Index(panel, "LERP-4")
+	lerp1 := strings.Index(panel, "LERP-1")
+	if toRoute < 0 || parked < 0 || lerp4 < 0 || lerp1 < 0 {
+		t.Fatalf("panel is missing a group heading or ticket:\n%s", panel)
+	}
+	if !(toRoute < lerp4 && lerp4 < parked && parked < lerp1) {
+		t.Fatalf("groups are not rendered to-route-then-parked, each above its ticket:\n%s", panel)
+	}
+	if !strings.Contains(m.View(), string(loop.ToRoute)) {
+		t.Fatalf("group heading missing from the full view:\n%s", m.View())
+	}
+}
+
+// Selecting a needs-you item and pressing "p" opens the promote picker in
+// the main pane; choosing a status and confirming calls Promote with the
+// ticket's Linear id and the chosen status, and settles into a transient
+// note on the status bar. Cancelling touches nothing.
+func TestPromotePicker(t *testing.T) {
+	m, _, _, promoter := newPromoteTestModel(t, 1, []string{"Planning", "Implementing"})
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Group: loop.ToRoute, Ticket: "LERP-4", TicketID: "loose", Title: "Nobody's routed this", Status: "Backlog"},
+	}}})
+
+	// esc backs out without promoting.
+	m = update(t, m, keyMsg("p"))
+	if !m.promoting {
+		t.Fatal("p did not open the promote picker")
+	}
+	m = update(t, m, keyMsg("esc"))
+	if m.promoting {
+		t.Fatal("esc did not close the promote picker")
+	}
+	if len(promoter.calls) != 0 {
+		t.Fatalf("esc called Promote: %+v", promoter.calls)
+	}
+
+	// p, choose the second status, enter: confirms with the right ticket id
+	// and status.
+	m = update(t, m, keyMsg("p"))
+	view := m.View()
+	for _, want := range []string{"promote LERP-4", "Planning", "Implementing", "enter promote"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("promote picker is missing %q:\n%s", want, view)
+		}
+	}
+	m = update(t, m, keyMsg("down"))
+	next, cmd := m.Update(keyMsg("enter"))
+	m = next.(model)
+	if m.promoting {
+		t.Fatal("enter did not close the promote picker")
+	}
+	if cmd == nil {
+		t.Fatal("enter produced no promote command")
+	}
+	// Promote runs off the render loop, exactly like a tick; running the
+	// command here is what actually calls it.
+	msg := cmd()
+	promoted, ok := msg.(promotedMsg)
+	if !ok {
+		t.Fatalf("promote command yielded %T, want promotedMsg", msg)
+	}
+	if got := promoter.last(); got.ticketID != "loose" || got.status != "Implementing" {
+		t.Fatalf("Promote call = %+v, want {loose Implementing}", got)
+	}
+
+	m = update(t, m, promoted)
+	if !strings.Contains(m.View(), "promoted LERP-4 to Implementing") {
+		t.Fatalf("view does not note the promotion:\n%s", m.View())
+	}
+}
+
+// A pass that reports the promoted ticket gone (it moved out of needs-you)
+// while the picker is still open must not leave a dangling selection.
+func TestPromotePickerClosesWhenTheListEmpties(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Group: loop.ToRoute, Ticket: "LERP-4", TicketID: "loose", Title: "Nobody's routed this"},
+	}}})
+	m = update(t, m, keyMsg("p"))
+	if !m.promoting {
+		t.Fatal("p did not open the promote picker")
+	}
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention}})
+	if m.promoting {
+		t.Fatal("promote picker stayed open after its item vanished")
 	}
 }
 
@@ -275,7 +437,7 @@ func TestAttentionListsWhatWaits(t *testing.T) {
 // main pane for the full keymap.
 func TestStatusBarAndHelp(t *testing.T) {
 	m, _, _ := newTestModel(t, 2)
-	if !strings.Contains(m.View(), "LANES") {
+	if !strings.Contains(m.View(), "RUNNING") {
 		t.Fatalf("status bar does not name the focused panel:\n%s", m.View())
 	}
 	if !strings.Contains(m.View(), "pass running") {
@@ -290,7 +452,7 @@ func TestStatusBarAndHelp(t *testing.T) {
 		{Ticket: "LERP-1", Title: "one"}, {Ticket: "LERP-2", Title: "two"},
 	}}})
 	if !strings.Contains(m.View(), "2 need you") {
-		t.Fatalf("status bar does not count attention:\n%s", m.View())
+		t.Fatalf("status bar does not count needs-you:\n%s", m.View())
 	}
 
 	m = update(t, m, keyMsg("?"))
@@ -304,7 +466,8 @@ func TestStatusBarAndHelp(t *testing.T) {
 	}
 }
 
-// No rendered line may overflow the terminal, wide layout or stacked.
+// No rendered line may overflow the terminal, wide layout or stacked — the
+// long explanatory empty states included.
 func TestViewFitsTheWindow(t *testing.T) {
 	for _, width := range []int{120, 100, 80, 60} {
 		m, _, _ := newTestModel(t, 3)
@@ -312,6 +475,10 @@ func TestViewFitsTheWindow(t *testing.T) {
 		m = resized.(model)
 		m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 			TicketID: "id-42", Ticket: "LERP-42", Queue: "implement", LogPath: "/dev/null"}})
+		m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention}})
+		m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+			{Team: "LERP", Name: "review", Status: "A Status With A Very Long Name"},
+		}}})
 		for i, line := range strings.Split(m.View(), "\n") {
 			if got := lipgloss.Width(line); got > width {
 				t.Fatalf("width %d: line %d is %d cells wide:\n%s", width, i, got, line)
@@ -422,8 +589,8 @@ func TestSelectingALaneTailsItsLog(t *testing.T) {
 }
 
 // The log keeps tailing while the operator looks elsewhere: appended output
-// gathered during an attention detour is on screen the moment lanes regain
-// focus.
+// gathered during a needs-you detour is on screen the moment the running
+// panel regains focus.
 func TestLogSurvivesAFocusDetour(t *testing.T) {
 	dir := t.TempDir()
 	one := filepath.Join(dir, "one.log")
@@ -434,7 +601,7 @@ func TestLogSurvivesAFocusDetour(t *testing.T) {
 		Ticket: "LERP-1", Queue: "plan", LogPath: one}})
 	m = update(t, m, keyMsg("1"))
 	if strings.Contains(m.View(), "first line") {
-		t.Fatalf("attention lens still shows the log:\n%s", m.View())
+		t.Fatalf("needs-you lens still shows the log:\n%s", m.View())
 	}
 
 	f, err := os.OpenFile(one, os.O_APPEND|os.O_WRONLY, 0)

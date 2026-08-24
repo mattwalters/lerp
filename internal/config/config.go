@@ -184,6 +184,33 @@ func orStock(name, stock string) string {
 	return name
 }
 
+// PromoteTargets lists every status the TUI's promote action may move a
+// ticket into: each queue's own status, in queue-name order, followed by any
+// on_success/on_failure target not already a queue's status — the
+// pipeline's exits, statuses no queue watches (a review column, a "Needs
+// Attention" parking spot). Each name appears once.
+func (c *RepoConfig) PromoteTargets() []string {
+	seen := make(map[string]bool)
+	var targets []string
+	add := func(status string) {
+		if status == "" || seen[status] {
+			return
+		}
+		seen[status] = true
+		targets = append(targets, status)
+	}
+	names := slices.Sorted(maps.Keys(c.Queues))
+	for _, name := range names {
+		add(c.Queues[name].Status)
+	}
+	for _, name := range names {
+		q := c.Queues[name]
+		add(q.OnSuccess)
+		add(q.OnFailure)
+	}
+	return targets
+}
+
 // LoadRepoConfig reads and validates the per-repo config file at path
 // (conventionally RepoConfigFile at the repo root).
 func LoadRepoConfig(path string) (*RepoConfig, error) {

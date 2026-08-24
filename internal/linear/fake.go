@@ -150,6 +150,21 @@ func (f *Fake) ListAssignedIssues(_ context.Context, teamKey, assigneeID string)
 	return issues, nil
 }
 
+// ListUnassignedIssues mirrors the real query: the team's issues with no
+// assignee, minus the ones whose status counts as complete.
+func (f *Fake) ListUnassignedIssues(_ context.Context, teamKey string) ([]Issue, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var issues []Issue
+	for _, fi := range f.issues {
+		if fi.team == teamKey && fi.issue.AssigneeID == "" && !f.doneStatuses[fi.issue.Status] {
+			issues = append(issues, f.view(fi))
+		}
+	}
+	sort.Slice(issues, func(i, j int) bool { return issues[i].Identifier < issues[j].Identifier })
+	return issues, nil
+}
+
 func (f *Fake) GetIssue(_ context.Context, issueID string) (Issue, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

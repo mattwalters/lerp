@@ -158,6 +158,42 @@ func TestListAssignedIssues(t *testing.T) {
 	}
 }
 
+func TestListUnassignedIssues(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		req := decodeRequest(t, r)
+		if req.Variables["team"] != "LERP" {
+			t.Errorf("variables = %v", req.Variables)
+		}
+		if !strings.Contains(req.Query, "assignee: { null: true }") {
+			t.Errorf("query does not filter for no assignee: %q", req.Query)
+		}
+		if !strings.Contains(req.Query, `nin: ["completed", "canceled"]`) {
+			t.Errorf("query does not exclude finished states: %q", req.Query)
+		}
+		writeData(t, w, `{"issues":{
+			"pageInfo":{"hasNextPage":false,"endCursor":""},
+			"nodes":[{
+				"id":"iss-1","identifier":"LERP-1","title":"First","state":{"name":"Backlog"},
+				"url":"https://linear.app/acme/issue/LERP-1/first",
+				"assignee":null,
+				"inverseRelations":{"nodes":[]}
+			}]
+		}}`)
+	})
+
+	issues, err := c.ListUnassignedIssues(context.Background(), "LERP")
+	if err != nil {
+		t.Fatalf("ListUnassignedIssues: %v", err)
+	}
+	want := []Issue{
+		{ID: "iss-1", Identifier: "LERP-1", Title: "First", Status: "Backlog",
+			URL: "https://linear.app/acme/issue/LERP-1/first"},
+	}
+	if !reflect.DeepEqual(issues, want) {
+		t.Errorf("issues = %+v, want %+v", issues, want)
+	}
+}
+
 func TestGetIssue(t *testing.T) {
 	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 		req := decodeRequest(t, r)

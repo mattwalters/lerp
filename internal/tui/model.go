@@ -26,9 +26,18 @@ type Ticker interface {
 	Tick(ctx context.Context)
 }
 
+// Promoter is the TUI's one write action (SCOPE's promote amendment): moving
+// a selected ticket into a queue. It is Reconciler.Promote in production; a
+// plain MoveIssue through the same client the loop reads with.
+type Promoter interface {
+	Promote(ctx context.Context, ticketID, status string) error
+}
+
 // Options wires the shell to the loop.
 type Options struct {
 	Ticker   Ticker
+	Promoter Promoter
+	Statuses []string      // promote targets: configured queue statuses, plus the pipeline's exits
 	Interval time.Duration // tick cadence; loop.DefaultInterval when zero
 	Lanes    int           // N, for the fixed lane rows
 	Events   <-chan loop.Event
@@ -38,6 +47,8 @@ func (o Options) validate() error {
 	switch {
 	case o.Ticker == nil:
 		return fmt.Errorf("tui: ticker is required")
+	case o.Promoter == nil:
+		return fmt.Errorf("tui: promoter is required")
 	case o.Lanes < 1:
 		return fmt.Errorf("tui: lanes must be at least 1")
 	case o.Events == nil:
@@ -60,9 +71,9 @@ const (
 func (p panel) String() string {
 	switch p {
 	case panelAttention:
-		return "attention"
+		return "needs you"
 	case panelLanes:
-		return "lanes"
+		return "running"
 	default:
 		return "up next"
 	}
@@ -108,6 +119,13 @@ type (
 	eventMsg   struct{ ev loop.Event }
 	pollMsg    struct{}
 	openErrMsg struct{ err error }
+	// promotedMsg reports the outcome of a promote action: MoveIssue on a
+	// selected ticket, run off the render loop like every other write.
+	promotedMsg struct {
+		ticket string
+		status string
+		err    error
+	}
 )
 
 // nextRef addresses one ticket in the queue snapshot: queue index, ticket
@@ -138,7 +156,13 @@ type model struct {
 	// so an empty panel never claims "nothing needs you" before it is known.
 	attention     []loop.AttentionItem
 	attentionSeen bool
-	attnSel       int
+	attnSel       int // index into attention; the promote target
+
+	// promoting is the promote picker's open/closed state; promoteSel is its
+	// selected index into o.Statuses. Opened by "p" on a selected needs-you
+	// item, closed by confirming, cancelling, or the list going empty.
+	promoting  bool
+	promoteSel int
 
 	vp     viewport.Model
 	tail   tail
@@ -155,7 +179,8 @@ type model struct {
 	lastPass time.Time
 
 	lastErr    string
-	passHadErr bool // an error event arrived during the pass now in flight
+	lastInfo   string // transient note, e.g. a promote's outcome; cleared at the next pass
+	passHadErr bool   // an error event arrived during the pass now in flight
 
 	// passes counts in-flight reconciliation passes; Run waits on it after
 	// the program exits, so quitting never severs a pass mid-mutation.
@@ -223,6 +248,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKey(msg)
 	case tickMsg:
 		m.passHadErr = false
+		m.lastInfo = "" // a new pass starting is the "transient" in transient note
 		m.inFlight = true
 		return m, m.runTick()
 	case tickedMsg:
@@ -248,11 +274,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case openErrMsg:
 		m.lastErr = msg.err.Error()
 		return m, nil
+	case promotedMsg:
+		if msg.err != nil {
+			m.lastErr = fmt.Sprintf("promote %s to %s: %v", msg.ticket, msg.status, msg.err)
+		} else {
+			m.lastInfo = fmt.Sprintf("promoted %s to %s", msg.ticket, msg.status)
+		}
+		return m, nil
 	}
 	return m, nil
 }
 
 func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.promoting {
+		return m.handlePromoteKey(msg)
+	}
 	switch {
 	case key.Matches(msg, m.keys.Quit):
 		return m, tea.Quit
@@ -272,6 +308,11 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.moveSelection(-1)
 	case key.Matches(msg, m.keys.Down):
 		m.moveSelection(1)
+	case key.Matches(msg, m.keys.Promote):
+		if m.focus == panelAttention && len(m.attention) > 0 && len(m.o.Statuses) > 0 {
+			m.promoting = true
+			m.promoteSel = 0
+		}
 	case key.Matches(msg, m.keys.PageUp):
 		m.vp.ViewUp()
 		m.follow = m.vp.AtBottom()
@@ -289,6 +330,39 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	m.layout()
 	return m, nil
+}
+
+// handlePromoteKey drives the promote picker: choose a target status for the
+// needs-you panel's selected ticket, or back out without touching Linear.
+func (m model) handlePromoteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "q", "ctrl+c":
+		m.promoting = false
+	case "up", "k":
+		if m.promoteSel > 0 {
+			m.promoteSel--
+		}
+	case "down", "j":
+		if m.promoteSel < len(m.o.Statuses)-1 {
+			m.promoteSel++
+		}
+	case "enter":
+		item := m.attention[clampIndex(m.attnSel, len(m.attention))]
+		status := m.o.Statuses[m.promoteSel]
+		m.promoting = false
+		return m, m.doPromote(item.TicketID, item.Ticket, status)
+	}
+	return m, nil
+}
+
+// doPromote calls the one write the TUI is allowed (SCOPE's promote
+// amendment) off the render loop, so a slow Linear call never blocks a
+// frame.
+func (m model) doPromote(ticketID, ticket, status string) tea.Cmd {
+	return func() tea.Msg {
+		err := m.o.Promoter.Promote(m.ctx, ticketID, status)
+		return promotedMsg{ticket: ticket, status: status, err: err}
+	}
 }
 
 func (m *model) setFocus(p panel) {
@@ -321,7 +395,7 @@ func clampIndex(i, n int) int {
 	return max(0, min(i, n-1))
 }
 
-// selectedURL is what `o` opens: Linear's own URL for the selected attention
+// selectedURL is what `o` opens: Linear's own URL for the selected needs-you
 // item or up-next ticket. Lanes have no URL — a running lane's door is its
 // log, already on screen.
 func (m *model) selectedURL() string {
@@ -339,8 +413,8 @@ func (m *model) selectedURL() string {
 }
 
 // openURL hands the URL to the OS opener. This is the TUI opening the
-// operator's browser, not lerp speaking to an API; acting on the ticket
-// still happens in Linear.
+// operator's browser, not lerp speaking to an API; everything beyond
+// promote still happens in Linear.
 func openURL(url string) tea.Cmd {
 	if url == "" {
 		return nil
@@ -395,7 +469,13 @@ func (m *model) apply(ev loop.Event) {
 	case loop.EventAttention:
 		m.attention = ev.Attention
 		m.attentionSeen = true
+		// A pass mid-picker may shrink or empty the list out from under it;
+		// clamp the selection and close the picker rather than index a
+		// ticket that is no longer there.
 		m.attnSel = clampIndex(m.attnSel, len(m.attention))
+		if len(m.attention) == 0 {
+			m.promoting = false
+		}
 	}
 	m.reorder()
 	m.layout()
@@ -471,7 +551,7 @@ func (m *model) retarget() {
 }
 
 // refreshMain points the main pane's viewport at whatever the focused panel
-// selects: the log tail for lanes, a detail lens for the other two.
+// selects: the log tail for running lanes, a detail lens for the other two.
 func (m *model) refreshMain() {
 	switch m.focus {
 	case panelLanes:
@@ -520,7 +600,7 @@ func (m *model) nextTicket() *loop.QueueTicket {
 	return &m.queues[r.qi].Tickets[r.ti]
 }
 
-// geometry is the cockpit's arithmetic: side panels sized to their content,
+// geometry is the screen's arithmetic: side panels sized to their content,
 // the main pane taking whatever is left, one narrow fallback that stacks
 // everything. Heights include borders; panelBox truncates overflow itself.
 type geometry struct {
@@ -535,10 +615,10 @@ func (m *model) geometry() geometry {
 	g := geometry{bodyH: max(4, m.height-1)}
 	g.wide = m.width >= narrowWidth
 
-	// The attention panel sizes to its list, one line minimum for its state
-	// text, six maximum before it truncates — attention must never crowd out
+	// The needs-you panel sizes to its list — group headers included — with
+	// one line minimum for its state text and a cap so it never crowds out
 	// the lanes below it.
-	g.attnH = min(max(len(m.attention), 1), 6) + 2
+	g.attnH = min(max(len(m.attention)+len(m.attentionGroups()), 1), 8) + 2
 	g.lanesH = len(m.order) + 2
 
 	if g.wide {
@@ -557,6 +637,18 @@ func (m *model) geometry() geometry {
 	g.nextH = min(max(nextRows, 1), 6) + 2
 	g.mainH = max(5, g.bodyH-g.attnH-g.lanesH-g.nextH)
 	return g
+}
+
+// attentionGroups lists the distinct groups in display order, for the panel's
+// header rows.
+func (m *model) attentionGroups() []loop.AttentionGroup {
+	var groups []loop.AttentionGroup
+	for _, it := range m.attention {
+		if len(groups) == 0 || groups[len(groups)-1] != it.Group {
+			groups = append(groups, it.Group)
+		}
+	}
+	return groups
 }
 
 // layout sizes the main pane's viewport from the geometry.
@@ -625,12 +717,17 @@ func (m model) attentionPanel(w, h int) string {
 	case len(m.attention) == 0:
 		rows = []string{styleFaint.Render("nothing needs you")}
 	default:
+		group := loop.AttentionGroup("")
 		for i, it := range m.attention {
+			if it.Group != group {
+				group = it.Group
+				rows = append(rows, styleTicket.Render(string(group)))
+			}
 			rows = append(rows, marker(focused && i == m.attnSel)+
 				styleAttention.Render("● ")+styleTicket.Render(it.Ticket)+" "+it.Title)
 		}
 	}
-	return panelBox(panelTitle(1, "attention", focused, extra), focused, w, h, rows)
+	return panelBox(panelTitle(1, "needs you", focused, extra), focused, w, h, rows)
 }
 
 func (m model) lanesPanel(w, h int) string {
@@ -646,7 +743,7 @@ func (m model) lanesPanel(w, h int) string {
 	for _, n := range m.order {
 		rows = append(rows, m.laneRow(n, w-2))
 	}
-	return panelBox(panelTitle(2, "lanes", focused, extra), focused, w, h, rows)
+	return panelBox(panelTitle(2, "running", focused, extra), focused, w, h, rows)
 }
 
 // laneRow is one lane, elapsed clock right-aligned so it survives narrow
@@ -728,9 +825,13 @@ func (m model) nextPanel(w, h int) string {
 	return panelBox(panelTitle(3, "up next", focused, ""), focused, w, h, rows)
 }
 
-// mainPanel is the lens: the ? overlay when open, otherwise the log for
-// lanes and a read-only detail for the other panels.
+// mainPanel is the lens: the promote picker while it is open, the ? overlay,
+// otherwise the log for running lanes and a read-only detail for the other
+// panels.
 func (m model) mainPanel(w, h int) string {
+	if m.promoting {
+		return m.promotePicker(w, h)
+	}
 	if m.helpOn {
 		return panelBox(styleTitleFocus.Render("help"), true, w, h,
 			strings.Split(m.help.View(m.keys), "\n"))
@@ -740,13 +841,29 @@ func (m model) mainPanel(w, h int) string {
 		strings.Split(m.vp.View(), "\n"))
 }
 
+// promotePicker renders the target-status list for the selected needs-you
+// item: every configured queue status plus the pipeline's exits — exactly
+// what Promote (a plain MoveIssue) is allowed to move a ticket into.
+func (m model) promotePicker(w, h int) string {
+	item := m.attention[clampIndex(m.attnSel, len(m.attention))]
+	rows := []string{item.Title, ""}
+	for i, status := range m.o.Statuses {
+		if i == m.promoteSel {
+			rows = append(rows, styleFocus.Render("▸ "+status))
+		} else {
+			rows = append(rows, "  "+status)
+		}
+	}
+	return panelBox(styleTitleFocus.Render("promote "+item.Ticket), true, w, h, rows)
+}
+
 func (m model) mainTitle() string {
 	switch m.focus {
 	case panelAttention:
 		if i := clampIndex(m.attnSel, len(m.attention)); i < len(m.attention) {
 			return m.attention[i].Ticket
 		}
-		return "attention"
+		return "needs you"
 	case panelNext:
 		if t := m.nextTicket(); t != nil {
 			return t.Identifier
@@ -766,37 +883,45 @@ func (m model) mainTitle() string {
 	}
 }
 
-// attentionDetail is the main pane's lens on the selected attention item —
-// everything the loop knows, plus Linear's URL, which is where acting on
-// the item happens (SCOPE: lerp is not a Linear client).
+// attentionDetail is the main pane's lens on the selected needs-you item —
+// everything the loop knows, plus Linear's URL. Promote is the one action
+// here; everything else about the item happens in Linear.
 func (m model) attentionDetail() string {
 	if !m.attentionSeen {
 		return styleFaint.Render("reading the board…")
 	}
 	if len(m.attention) == 0 {
-		return styleFaint.Render("nothing needs you — the empty list is the goal state")
+		return styleFaint.Render("nothing needs you — the empty list is the goal state") + "\n" +
+			styleFaint.Render("(shows "+loop.AttentionDefinition+")")
 	}
 	it := m.attention[clampIndex(m.attnSel, len(m.attention))]
 	return strings.Join([]string{
 		styleTicket.Render(it.Ticket) + " " + it.Title,
 		"",
+		styleFaint.Render("group   ") + string(it.Group),
 		styleFaint.Render("status  ") + it.Status,
 		styleFaint.Render("why     ") + it.Reason,
 		styleFaint.Render("linear  ") + it.URL,
 		"",
-		styleFaint.Render("o opens it in Linear; acting on it happens there"),
+		styleFaint.Render("p promotes it into a queue · o opens it in Linear"),
 	}, "\n")
 }
 
 // nextDetail is the lens on the selected up-next ticket: where it sits in
-// pickup order and what, if anything, gates it.
+// pickup order and what, if anything, gates it. With nothing queued it says
+// how tickets enter each queue instead.
 func (m model) nextDetail() string {
 	if m.queues == nil {
 		return styleFaint.Render("waiting for the first pass…")
 	}
 	refs := m.nextRefs()
 	if len(refs) == 0 {
-		return styleFaint.Render("every queue is empty")
+		lines := []string{styleFaint.Render("every queue is empty"), ""}
+		for _, q := range m.queues {
+			lines = append(lines, styleTicket.Render(q.Name)+
+				styleFaint.Render(fmt.Sprintf(` — tickets enter when moved to "%s"`, q.Status)))
+		}
+		return strings.Join(lines, "\n")
 	}
 	r := refs[clampIndex(m.nextSel, len(refs))]
 	q := m.queues[r.qi]
@@ -820,8 +945,9 @@ func (m model) nextDetail() string {
 }
 
 // statusBar is the heartbeat line: focused panel, pass clock, capacity,
-// attention count, keys. A pass error takes over the middle — there is no
-// permanently reserved error line.
+// needs-you count, keys. A pass error — or a transient note like a
+// promote's outcome — takes over the middle; there is no permanently
+// reserved error line.
 func (m model) statusBar() string {
 	badgeColor := colorFocus
 	switch m.focus {
@@ -846,9 +972,12 @@ func (m model) statusBar() string {
 	}
 
 	left := badge + " " + heart
-	if m.lastErr != "" {
+	switch {
+	case m.lastErr != "":
 		left += "  " + styleErr.Render("✗ "+m.lastErr)
-	} else {
+	case m.lastInfo != "":
+		left += "  " + styleRunning.Render("✓ "+m.lastInfo)
+	default:
 		busy := 0
 		for _, ln := range m.lanes {
 			if ln.state != laneIdle {
@@ -861,6 +990,9 @@ func (m model) statusBar() string {
 		}
 	}
 	right := styleFaint.Render("? help · q quit")
+	if m.promoting {
+		right = styleFaint.Render("↑/↓ choose · enter promote · esc cancel")
+	}
 
 	pad := m.width - lipgloss.Width(left) - lipgloss.Width(right)
 	if pad < 1 {
