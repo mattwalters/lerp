@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -129,8 +130,8 @@ func TestAdoptedRunOccupiesAndFreesItsRow(t *testing.T) {
 func TestViewSwitching(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, keyMsg("3"))
-	if !strings.Contains(m.View(), "queue view is not built yet") {
-		t.Fatalf("key 3 did not show the queue placeholder:\n%s", m.View())
+	if !strings.Contains(m.View(), "waiting for the first pass") {
+		t.Fatalf("key 3 did not show the queue view:\n%s", m.View())
 	}
 	m = update(t, m, keyMsg("1"))
 	if !strings.Contains(m.View(), "attention view is not built yet") {
@@ -139,6 +140,73 @@ func TestViewSwitching(t *testing.T) {
 	m = update(t, m, keyMsg("tab"))
 	if m.view != viewBoard {
 		t.Fatalf("tab from attention landed on %v, want board", m.view)
+	}
+}
+
+// The queue view is the loop's own snapshot, verbatim: eligible tickets in
+// pickup order, blocked and claimed ones visibly gated, empty queues named,
+// the whole body replaced on every pass.
+func TestQueueViewShowsWhatRunsNext(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("3"))
+
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
+			{ID: "t1", Identifier: "LERP-1", Title: "ship the thing", Eligible: true},
+			{ID: "t2", Identifier: "LERP-2", Title: "gated work", BlockedBy: []string{"LERP-1", "LERP-9"}},
+			{ID: "t3", Identifier: "LERP-3", Title: "already picked up", Assigned: true},
+		}},
+		{Team: "LERP", Name: "review", Status: "In Review"},
+	}}})
+	view := m.View()
+	for _, want := range []string{
+		"implement", "Todo", "team LERP",
+		"LERP-1", "ship the thing",
+		"blocked by LERP-1, LERP-9",
+		"LERP-3", "claimed",
+		"review", "In Review", "empty",
+	} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("queue view is missing %q:\n%s", want, view)
+		}
+	}
+
+	// The next pass's snapshot replaces the whole view: a ticket that left
+	// the queue leaves the screen.
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Team: "LERP", Name: "implement", Status: "Todo"},
+	}}})
+	view = m.View()
+	if strings.Contains(view, "LERP-1") {
+		t.Fatalf("stale ticket survived a refresh:\n%s", view)
+	}
+	if !strings.Contains(view, "empty") {
+		t.Fatalf("emptied queue does not read empty:\n%s", view)
+	}
+}
+
+// A backlog deeper than the terminal is capped, not allowed to push the
+// footer off screen.
+func TestQueueViewCapsToTheWindow(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("3"))
+	tickets := make([]loop.QueueTicket, 60)
+	for i := range tickets {
+		tickets[i] = loop.QueueTicket{ID: fmt.Sprintf("t%d", i),
+			Identifier: fmt.Sprintf("LERP-%d", i), Title: "work", Eligible: true}
+	}
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: tickets},
+	}}})
+	view := m.View()
+	if !strings.Contains(view, "more") {
+		t.Fatalf("overflowing queue view shows no cap line:\n%s", view)
+	}
+	if got := strings.Count(view, "\n"); got > 30 {
+		t.Fatalf("queue view is %d lines tall in a 30-line window", got)
+	}
+	if !strings.Contains(view, "q quit") {
+		t.Fatalf("cap pushed the help line off screen:\n%s", view)
 	}
 }
 

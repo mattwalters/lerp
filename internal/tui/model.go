@@ -41,8 +41,8 @@ func (o Options) validate() error {
 	return nil
 }
 
-// view is which of SCOPE's three views fills the body. Only Board is built;
-// Attention and Queue are placeholders until their own tickets land.
+// view is which of SCOPE's three views fills the body. Board and Queue are
+// built; Attention is a placeholder until its own ticket lands.
 type view int
 
 const (
@@ -108,6 +108,11 @@ type model struct {
 	lanes    map[int]*lane
 	order    []int // lane numbers, sorted; adopted runs may sit above N
 	selected int   // the selected lane's NUMBER, not its position (see reorder)
+
+	// queues is the loop's latest queue snapshot, replaced wholesale on every
+	// pass; nil until the first pass reports. It is display state only — the
+	// queue view edits nothing (SCOPE: not a Linear client).
+	queues []loop.QueueSnapshot
 
 	vp     viewport.Model
 	tail   tail
@@ -271,6 +276,8 @@ func (m *model) apply(ev loop.Event) {
 		if ev.Lane > 0 {
 			m.settle(ev, "failed; see below")
 		}
+	case loop.EventQueues:
+		m.queues = ev.Queues
 	}
 	m.reorder()
 	m.layout()
@@ -386,9 +393,11 @@ func (m model) View() string {
 	switch m.view {
 	case viewBoard:
 		b.WriteString(m.board())
+	case viewQueue:
+		b.WriteString(m.queueView())
 	default:
-		// Deliberately empty shells: the Attention and Queue views are their
-		// own tickets. The switching seam is what this shell provides.
+		// Deliberately an empty shell: the Attention view is its own ticket.
+		// The switching seam is what this shell provides.
 		b.WriteString(inactiveStyle.Render(fmt.Sprintf("the %s view is not built yet", m.view)))
 		b.WriteString("\n")
 	}
@@ -478,6 +487,53 @@ func (ln *lane) status() string {
 
 func elapsed(since time.Time) string {
 	return time.Since(since).Truncate(time.Second).String()
+}
+
+// queueView renders what runs next: each configured queue with every ticket
+// sitting in its status, in the loop's own pickup order — the body is the
+// loop's per-pass snapshot, verbatim. Eligible tickets run in listed order as
+// lanes free up. Blocked and claimed tickets are shown faint rather than
+// omitted: a ticket that silently vanished from its queue would look lost,
+// when it is really just gated on a blocker or already being worked —
+// possibly by a colleague's lerp. The view is read-only; to change what runs
+// next, move tickets in Linear.
+func (m model) queueView() string {
+	if m.queues == nil {
+		return inactiveStyle.Render("waiting for the first pass…") + "\n"
+	}
+	var lines []string
+	for _, q := range m.queues {
+		lines = append(lines, titleStyle.Render(q.Name)+
+			inactiveStyle.Render(fmt.Sprintf("  %s · team %s", q.Status, q.Team)))
+		if len(q.Tickets) == 0 {
+			lines = append(lines, idleStyle.Render("    empty"))
+			continue
+		}
+		for _, tk := range q.Tickets {
+			lines = append(lines, m.queueTicketRow(tk))
+		}
+	}
+	// Cap to the body height the chrome leaves over (header above, error and
+	// help lines below), so a deep backlog cannot push the footer off screen.
+	if body := m.height - 3; len(lines) > body && body > 1 {
+		over := len(lines) - (body - 1)
+		lines = append(lines[:body-1], idleStyle.Render(fmt.Sprintf("    … %d more", over)))
+	}
+	return strings.Join(lines, "\n") + "\n"
+}
+
+// queueTicketRow renders one ticket: normal when the loop would pick it up,
+// faint with the reason when it would not.
+func (m model) queueTicketRow(tk loop.QueueTicket) string {
+	row := fmt.Sprintf("    %-12s %s", tk.Identifier, tk.Title)
+	if tk.Eligible {
+		return truncate(row, m.width)
+	}
+	note := "claimed"
+	if len(tk.BlockedBy) > 0 {
+		note = "blocked by " + strings.Join(tk.BlockedBy, ", ")
+	}
+	return idleStyle.Render(truncate(row+"  — "+note, m.width))
 }
 
 func (m model) logTitle() string {
