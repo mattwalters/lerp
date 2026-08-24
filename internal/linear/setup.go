@@ -51,6 +51,51 @@ query TeamStates($key: String!) {
   teams(filter: { key: { eq: $key } }, first: 1) { nodes { id states(first: 100) { nodes { name type } } } }
 }`
 
+// teamState is one workflow state as the states query reports it.
+type teamState struct {
+	Name string `json:"name"`
+	Type string `json:"type"`
+}
+
+// teamStates reads a team's id and workflow states by team key.
+func (c *HTTP) teamStates(ctx context.Context, teamKey string) (string, []teamState, error) {
+	var found struct {
+		Teams struct {
+			Nodes []struct {
+				ID     string `json:"id"`
+				States struct {
+					Nodes []teamState `json:"nodes"`
+				} `json:"states"`
+			} `json:"nodes"`
+		} `json:"teams"`
+	}
+	if err := c.do(ctx, teamStatesByKeyQuery, map[string]any{"key": teamKey}, &found); err != nil {
+		return "", nil, err
+	}
+	if len(found.Teams.Nodes) == 0 {
+		return "", nil, fmt.Errorf("team %q: %w", teamKey, ErrNotFound)
+	}
+	team := found.Teams.Nodes[0]
+	return team.ID, team.States.Nodes, nil
+}
+
+// TeamStates reports the names of every workflow state on the team, in
+// Linear's listing order. Unlike this file's Ensure methods it is a pure
+// read, safe outside setup: the loop's startup verification calls it once
+// per configured team to check that every configured status names a real
+// state (and to show the team's actual names next to a miss).
+func (c *HTTP) TeamStates(ctx context.Context, teamKey string) ([]string, error) {
+	_, states, err := c.teamStates(ctx, teamKey)
+	if err != nil {
+		return nil, fmt.Errorf("team states: %w", err)
+	}
+	names := make([]string, len(states))
+	for i, s := range states {
+		names[i] = s.Name
+	}
+	return names, nil
+}
+
 const workflowStateCreateMutation = `
 mutation WorkflowStateCreate($teamId: String!, $name: String!, $type: String!, $color: String!) {
   workflowStateCreate(input: { teamId: $teamId, name: $name, type: $type, color: $color }) { success }
@@ -79,28 +124,12 @@ type StateSpec struct {
 // existing states as Linear categorises them, created ones as requested.
 // Existing states are left exactly as the operator has them.
 func (c *HTTP) EnsureWorkflowStates(ctx context.Context, teamKey string, states []StateSpec) (map[string]string, error) {
-	var found struct {
-		Teams struct {
-			Nodes []struct {
-				ID     string `json:"id"`
-				States struct {
-					Nodes []struct {
-						Name string `json:"name"`
-						Type string `json:"type"`
-					} `json:"nodes"`
-				} `json:"states"`
-			} `json:"nodes"`
-		} `json:"teams"`
-	}
-	if err := c.do(ctx, teamStatesByKeyQuery, map[string]any{"key": teamKey}, &found); err != nil {
+	teamID, existing, err := c.teamStates(ctx, teamKey)
+	if err != nil {
 		return nil, err
 	}
-	if len(found.Teams.Nodes) == 0 {
-		return nil, fmt.Errorf("team %q: %w", teamKey, ErrNotFound)
-	}
-	team := found.Teams.Nodes[0]
 	categories := map[string]string{}
-	for _, state := range team.States.Nodes {
+	for _, state := range existing {
 		categories[state.Name] = state.Type
 	}
 	states = append([]StateSpec(nil), states...)
@@ -118,7 +147,7 @@ func (c *HTTP) EnsureWorkflowStates(ctx context.Context, teamKey string, states 
 			} `json:"workflowStateCreate"`
 		}
 		vars := map[string]any{
-			"teamId": team.ID,
+			"teamId": teamID,
 			"name":   state.Name,
 			"type":   state.Type,
 			"color":  defaultStateColor,

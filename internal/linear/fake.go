@@ -16,6 +16,7 @@ type Fake struct {
 	issues       map[string]*fakeIssue
 	comments     map[string][]string
 	doneStatuses map[string]bool
+	teamStates   map[string][]string
 }
 
 type fakeIssue struct {
@@ -34,6 +35,7 @@ func NewFake() *Fake {
 		issues:       map[string]*fakeIssue{},
 		comments:     map[string][]string{},
 		doneStatuses: map[string]bool{"Done": true, "Canceled": true},
+		teamStates:   map[string][]string{},
 	}
 }
 
@@ -62,6 +64,26 @@ func (f *Fake) SetViewer(id string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.viewerID = id
+}
+
+// SetTeamStates declares the workflow state names TeamStates reports
+// for a team, in board order.
+func (f *Fake) SetTeamStates(teamKey string, names ...string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.teamStates[teamKey] = append([]string(nil), names...)
+}
+
+// TeamStates mirrors the real client: the declared state names for the
+// team, or ErrNotFound for a team never declared.
+func (f *Fake) TeamStates(_ context.Context, teamKey string) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	names, ok := f.teamStates[teamKey]
+	if !ok {
+		return nil, fmt.Errorf("team states: team %q: %w", teamKey, ErrNotFound)
+	}
+	return append([]string(nil), names...), nil
 }
 
 // SetDoneStatuses replaces the set of status names that count as
