@@ -34,9 +34,18 @@ type harness struct {
 
 func newHarness(t *testing.T, lanes int, execute ExecuteFunc) *harness {
 	t.Helper()
+	fake := linear.NewFake()
+	return newHarnessWith(t, lanes, execute, fake, fake)
+}
+
+// newHarnessWith is newHarness with the board and the reconciler's client
+// supplied by the caller — for tests that run two reconcilers against one
+// shared fake board through per-lerp client wrappers.
+func newHarnessWith(t *testing.T, lanes int, execute ExecuteFunc, fake *linear.Fake, client linear.Client) *harness {
+	t.Helper()
 	root := t.TempDir()
 	h := &harness{
-		fake:     linear.NewFake(),
+		fake:     fake,
 		evidence: evidence.New(root),
 		root:     root,
 		events:   make(chan Event, 64),
@@ -48,7 +57,7 @@ func newHarness(t *testing.T, lanes int, execute ExecuteFunc) *harness {
 		}
 	}
 	rec, err := NewReconciler(ReconcilerOptions{
-		Client:   h.fake,
+		Client:   client,
 		Repo:     testRepo(),
 		RepoDir:  "/repo",
 		Evidence: h.evidence,
@@ -128,6 +137,77 @@ func drainEventsOn(events <-chan Event) []Event {
 		default:
 			return got
 		}
+	}
+}
+
+// recordingExecute returns a stub ExecuteFunc that exits cleanly, recording
+// what it ran, and a function returning the recording. Each run records the
+// invocation's ticket identifier — or label, when non-empty, for tests that
+// run two lerps and need to know which one executed.
+func recordingExecute(label string) (ExecuteFunc, func() []string) {
+	var mu sync.Mutex
+	var runs []string
+	execute := func(_ context.Context, inv run.Invocation) (run.Result, error) {
+		mu.Lock()
+		if label != "" {
+			runs = append(runs, label)
+		} else {
+			runs = append(runs, inv.Ticket)
+		}
+		mu.Unlock()
+		return run.Result{ExitCode: 0}, nil
+	}
+	recorded := func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), runs...)
+	}
+	return execute, recorded
+}
+
+// blockingExecute is recordingExecute with every run held open until release
+// is called. release is idempotent and registered as a test cleanup, so a
+// test that fails before releasing cannot strand its runs' goroutines.
+func blockingExecute(t *testing.T, label string) (execute ExecuteFunc, release func(), recorded func() []string) {
+	t.Helper()
+	gate := make(chan struct{})
+	release = sync.OnceFunc(func() { close(gate) })
+	t.Cleanup(release)
+	record, recorded := recordingExecute(label)
+	execute = func(ctx context.Context, inv run.Invocation) (run.Result, error) {
+		result, err := record(ctx, inv)
+		<-gate
+		return result, err
+	}
+	return execute, release, recorded
+}
+
+// assertReaped asserts the local half of a reap: the run's record is gone and
+// its workspace was disposed.
+func assertReaped(t *testing.T, h *harness, record evidence.Record) {
+	t.Helper()
+	if _, err := h.evidence.Read(record.RunID); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("reaped record %s read error = %v, want not exist", record.RunID, err)
+	}
+	for _, id := range h.disposedIdentities() {
+		if id.Workspace == record.Workspace {
+			return
+		}
+	}
+	t.Errorf("disposed workspaces = %v, want the reaped run's %q among them",
+		h.disposedIdentities(), record.Workspace)
+}
+
+// waitIdle waits for a reconciler's runs to wind down, on the same 5-second
+// deadline every other wait in these tests uses.
+func waitIdle(t *testing.T, rec *Reconciler) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() { rec.wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for the reconciler's runs to wind down")
 	}
 }
 
@@ -225,7 +305,11 @@ func TestTickRunsAtMostNLanesAndRefills(t *testing.T) {
 	if maxRunning != 3 {
 		t.Errorf("max concurrent runs = %d, want exactly 3", maxRunning)
 	}
-	if records, _ := h.evidence.List(); len(records) != 0 {
+	records, err = h.evidence.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 0 {
 		t.Errorf("run records after all runs settled = %d, want 0", len(records))
 	}
 	if got := h.disposedIdentities(); len(got) != 5 {
@@ -237,14 +321,7 @@ func TestTickRunsAtMostNLanesAndRefills(t *testing.T) {
 // the run — the lane is occupied, the log path is announced for tailing, and
 // the ticket is not restarted.
 func TestTickAdoptsLiveOrphans(t *testing.T) {
-	var mu sync.Mutex
-	var executed []string
-	execute := func(_ context.Context, inv run.Invocation) (run.Result, error) {
-		mu.Lock()
-		executed = append(executed, inv.Ticket)
-		mu.Unlock()
-		return run.Result{ExitCode: 0}, nil
-	}
+	execute, executed := recordingExecute("")
 	h := newHarness(t, 1, execute)
 	record, err := h.evidence.Create(evidence.Record{
 		Lane: 1, TicketID: "orphan", Queue: "todo", StartingStatus: "Todo",
@@ -278,11 +355,9 @@ func TestTickAdoptsLiveOrphans(t *testing.T) {
 	if adopted != 1 {
 		t.Fatalf("adopted events across two ticks = %d, want exactly 1", adopted)
 	}
-	mu.Lock()
-	if len(executed) != 0 {
-		t.Fatalf("executed runs = %v, want none: adoption must not restart, and the lane is full", executed)
+	if got := executed(); len(got) != 0 {
+		t.Fatalf("executed runs = %v, want none: adoption must not restart, and the lane is full", got)
 	}
-	mu.Unlock()
 	if _, err := h.evidence.Read(record.RunID); err != nil {
 		t.Fatalf("adopted run's record: %v", err)
 	}
@@ -295,12 +370,7 @@ func TestTickAdoptsLiveOrphans(t *testing.T) {
 	h.alive[record.RunID] = false
 	h.rec.Tick(ctx)
 	h.waitEvents(t, EventReaped, 1)
-	if _, err := h.evidence.Read(record.RunID); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("reaped record read error = %v, want not exist", err)
-	}
-	if got := h.disposedIdentities(); len(got) == 0 || got[0].Workspace != record.Workspace {
-		t.Errorf("reap disposed %v, want the dead run's workspace %q", got, record.Workspace)
-	}
+	assertReaped(t, h, record)
 	restarted := h.waitEvents(t, EventStarted, 1)
 	if restarted[0].TicketID != "orphan" {
 		t.Errorf("restarted ticket = %+v, want the reaped orphan", restarted[0])
@@ -332,9 +402,7 @@ func TestTickReapsDeadOrphansAndRepicksTheTicket(t *testing.T) {
 	if reaped[0].RunID != record.RunID {
 		t.Errorf("reaped event = %+v, want the dead orphan's record", reaped[0])
 	}
-	if _, err := h.evidence.Read(record.RunID); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("reaped record read error = %v, want not exist", err)
-	}
+	assertReaped(t, h, record)
 	if got := h.disposedIdentities(); len(got) == 0 || got[0] != (workspace.Identity{
 		Lane: 1, TicketID: "orphan", Workspace: record.Workspace,
 	}) {
@@ -376,11 +444,8 @@ func TestReapLeavesOtherPeoplesBoardStateAlone(t *testing.T) {
 
 	h.rec.Tick(context.Background())
 	h.waitEvents(t, EventReaped, 2)
-	for _, runID := range []string{moved.RunID, theirs.RunID} {
-		if _, err := h.evidence.Read(runID); !errors.Is(err, os.ErrNotExist) {
-			t.Errorf("record %s read error = %v, want not exist", runID, err)
-		}
-	}
+	assertReaped(t, h, moved)
+	assertReaped(t, h, theirs)
 	if got := h.issue(t, "moved"); got.Status != "Escalated" || got.AssigneeID != "fake-viewer" {
 		t.Errorf("moved ticket = %+v, want its post-move state untouched", got)
 	}

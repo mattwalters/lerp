@@ -9,23 +9,20 @@ package loop
 // leaves behind can: run records under .lerp/runs whose agent processes are
 // still alive. Where a scenario's point is a real kill, the agent is a real
 // operating-system process and liveness is judged by the real evidence.Alive
-// check; everything else stays stubbed and deterministic.
+// check; everything else stays stubbed and deterministic. The harness and
+// its helpers are shared with reconciler_test.go.
 
 import (
 	"context"
-	"errors"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sync"
 	"syscall"
 	"testing"
 
 	"github.com/mattwalters/lerp/internal/evidence"
 	"github.com/mattwalters/lerp/internal/linear"
-	"github.com/mattwalters/lerp/internal/run"
-	"github.com/mattwalters/lerp/internal/workspace"
 )
 
 // fakeAgent is a real process standing in for a coding agent: cat with its
@@ -58,7 +55,9 @@ func (a *fakeAgent) pid() int { return a.cmd.Process.Pid }
 func (a *fakeAgent) alive() bool { return syscall.Kill(a.pid(), 0) == nil }
 
 // kill9 is the crash mid-run: SIGKILL, then reap the child so the PID is
-// gone and the real Alive check reads the run as dead.
+// gone and the real Alive check reads the run as dead. The raw signal is
+// safe here because the child has not been waited on yet — at worst it is a
+// zombie we still own, so the PID cannot have been reused.
 func (a *fakeAgent) kill9() {
 	a.t.Helper()
 	if err := syscall.Kill(a.pid(), syscall.SIGKILL); err != nil {
@@ -79,8 +78,11 @@ func (a *fakeAgent) finish() {
 }
 
 // stop reaps the process at test end in whatever state the test left it.
+// os.Process.Kill — unlike a raw syscall.Kill — refuses to signal once the
+// process has been waited on, so a test that already reaped its agent can
+// never SIGKILL an unrelated process that reused the PID.
 func (a *fakeAgent) stop() {
-	_ = syscall.Kill(a.pid(), syscall.SIGKILL)
+	_ = a.cmd.Process.Kill()
 	_ = a.cmd.Wait()
 }
 
@@ -102,19 +104,12 @@ func orphanRecord(t *testing.T, h *harness, lane int, ticketID string, agent *fa
 
 // Scenario 1 — kill -9 the agent mid-run. The next tick reaps the dead run:
 // workspace disposed, claim released, ticket still in its queue status. The
-// tick after picks the ticket straight back up; the worst case is a re-run
-// stage.
+// following tick picks the ticket straight back up; the worst case is a
+// re-run stage. A blocker holds the re-pick off for one pass so the released
+// claim itself is visible on the board, not just inferred from the re-pick
+// succeeding.
 func TestKillSafetyAgentKilledMidRun(t *testing.T) {
-	release := make(chan struct{})
-	var mu sync.Mutex
-	var reruns []string
-	execute := func(_ context.Context, inv run.Invocation) (run.Result, error) {
-		mu.Lock()
-		reruns = append(reruns, inv.Ticket)
-		mu.Unlock()
-		<-release
-		return run.Result{ExitCode: 0}, nil
-	}
+	execute, release, reruns := blockingExecute(t, "")
 	h := newHarness(t, 1, execute)
 	h.rec.o.Alive = evidence.Alive // the kill below must register as a real death
 	agent := startFakeAgent(t)
@@ -122,6 +117,8 @@ func TestKillSafetyAgentKilledMidRun(t *testing.T) {
 	h.fake.AddIssue("LERP", linear.Issue{
 		ID: "tkt", Identifier: "LERP-1", Status: "Todo", AssigneeID: "fake-viewer",
 	})
+	h.fake.AddIssue("LERP", linear.Issue{ID: "blocker", Identifier: "LERP-2", Status: "In Progress"})
+	h.fake.Block("tkt", "blocker")
 	ctx := context.Background()
 
 	// While the agent lives, the loop adopts it — remembering, not touching.
@@ -138,32 +135,35 @@ func TestKillSafetyAgentKilledMidRun(t *testing.T) {
 
 	// The next tick reaps: workspace disposed, record removed, and the ticket
 	// exactly where the dead run found it — its queue status, claim released.
+	// The blocker keeps the ticket ineligible, so nothing re-picks it yet and
+	// the released claim can be read straight off the board.
 	h.rec.Tick(ctx)
 	h.waitEvents(t, EventReaped, 1)
-	if _, err := h.evidence.Read(record.RunID); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("reaped record read error = %v, want not exist", err)
-	}
-	if got := h.disposedIdentities(); len(got) == 0 || got[0].Workspace != record.Workspace {
-		t.Errorf("reap disposed %v, want the dead run's workspace %q", got, record.Workspace)
+	assertReaped(t, h, record)
+	if got := h.issue(t, "tkt"); got.Status != "Todo" || got.AssigneeID != "" {
+		t.Errorf("reaped ticket = %+v, want released back to unclaimed Todo", got)
 	}
 
-	// The same pass re-picks the ticket. The run starts from its beginning:
-	// while the new agent works, the ticket is back in its queue status,
-	// claimed again — never lost, never in an in-between state.
+	// With the blocker done, the next pass re-picks the ticket. The run
+	// starts from its beginning: while the new agent works, the ticket is
+	// back in its queue status, claimed again — never lost, never in an
+	// in-between state.
+	if err := h.fake.MoveIssue(ctx, "blocker", "Done"); err != nil {
+		t.Fatal(err)
+	}
+	h.rec.Tick(ctx)
 	h.waitEvents(t, EventStarted, 1)
 	if got := h.issue(t, "tkt"); got.Status != "Todo" || got.AssigneeID != "fake-viewer" {
 		t.Errorf("re-picked ticket = %+v, want claimed in Todo", got)
 	}
-	close(release)
+	release()
 	h.waitEvents(t, EventExited, 1)
 
 	if got := h.issue(t, "tkt"); got.Status != "Done" {
 		t.Errorf("final status = %q, want Done", got.Status)
 	}
-	mu.Lock()
-	defer mu.Unlock()
-	if len(reruns) != 1 || reruns[0] != "LERP-1" {
-		t.Errorf("re-runs = %v, want exactly one re-run of LERP-1", reruns)
+	if got := reruns(); len(got) != 1 || got[0] != "LERP-1" {
+		t.Errorf("re-runs = %v, want exactly one re-run of LERP-1", got)
 	}
 }
 
@@ -174,14 +174,7 @@ func TestKillSafetyAgentKilledMidRun(t *testing.T) {
 // exit code to a lerp that was not its parent, so its ticket is released back
 // to its queue and re-run from the beginning — the tolerated worst case.
 func TestKillSafetyLerpKilledMidRun(t *testing.T) {
-	var mu sync.Mutex
-	var reruns []string
-	execute := func(_ context.Context, inv run.Invocation) (run.Result, error) {
-		mu.Lock()
-		reruns = append(reruns, inv.Ticket)
-		mu.Unlock()
-		return run.Result{ExitCode: 0}, nil
-	}
+	execute, reruns := recordingExecute("")
 	h := newHarness(t, 2, execute)
 	h.rec.o.Alive = evidence.Alive
 	mover := startFakeAgent(t)
@@ -205,11 +198,9 @@ func TestKillSafetyLerpKilledMidRun(t *testing.T) {
 	if !adopted[moverRecord.RunID] || !adopted[silentRecord.RunID] {
 		t.Fatalf("adopted runs = %v, want both orphans", adopted)
 	}
-	mu.Lock()
-	if len(reruns) != 0 {
-		t.Fatalf("adoption executed %v, want nothing: the live agents keep their runs", reruns)
+	if got := reruns(); len(got) != 0 {
+		t.Fatalf("adoption executed %v, want nothing: the live agents keep their runs", got)
 	}
-	mu.Unlock()
 
 	// One agent concludes by moving its ticket — a branch, not on_success —
 	// and exits cleanly. The other exits cleanly without concluding.
@@ -230,18 +221,26 @@ func TestKillSafetyLerpKilledMidRun(t *testing.T) {
 	}
 	h.waitEvents(t, EventExited, 1)
 
+	// The claim-kept half of this assertion traces to the LERP-9 house rule
+	// that the loop leaves other people's work alone (releaseDead,
+	// reconciler.go): the board no longer looks as the dead run left it, so
+	// nothing is released. SCOPE invariants 3 and 4 do not themselves require
+	// claim retention — changing releaseDead's behavior here means revisiting
+	// this assertion deliberately, not a broken invariant.
 	if got := h.issue(t, "moved"); got.Status != "Escalated" || got.AssigneeID != "fake-viewer" {
 		t.Errorf("concluded ticket = %+v, want the agent's own move and claim kept", got)
 	}
 	if got := h.issue(t, "silent"); got.Status != "Done" {
 		t.Errorf("re-run ticket status = %q, want Done", got.Status)
 	}
-	mu.Lock()
-	defer mu.Unlock()
-	if len(reruns) != 1 || reruns[0] != "LERP-2" {
-		t.Errorf("re-runs = %v, want exactly the unconcluded ticket", reruns)
+	if got := reruns(); len(got) != 1 || got[0] != "LERP-2" {
+		t.Errorf("re-runs = %v, want exactly the unconcluded ticket", got)
 	}
-	if records, _ := h.evidence.List(); len(records) != 0 {
+	records, err := h.evidence.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 0 {
 		t.Errorf("run records after everything settled = %d, want 0", len(records))
 	}
 }
@@ -255,12 +254,9 @@ func TestKillSafetyLerpKilledMidRun(t *testing.T) {
 func TestKillSafetyRunEvidenceDeletedUnderLiveAgent(t *testing.T) {
 	// The owning lerp: its agent is mid-run when the evidence vanishes. The
 	// run settles from memory — ticket moved by the move rule, no reap, no
-	// double start.
-	release := make(chan struct{})
-	execute := func(context.Context, run.Invocation) (run.Result, error) {
-		<-release
-		return run.Result{ExitCode: 0}, nil
-	}
+	// double start — and its lane still counts as occupied: a second eligible
+	// ticket must wait until the remembered run finishes.
+	execute, release, ran := blockingExecute(t, "")
 	h := newHarness(t, 1, execute)
 	h.fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Todo"})
 	ctx := context.Background()
@@ -270,29 +266,40 @@ func TestKillSafetyRunEvidenceDeletedUnderLiveAgent(t *testing.T) {
 	if err := os.RemoveAll(filepath.Join(h.root, ".lerp", "runs")); err != nil {
 		t.Fatal(err)
 	}
+	h.fake.AddIssue("LERP", linear.Issue{ID: "two", Identifier: "LERP-2", Status: "Todo"})
 	h.rec.Tick(ctx)
 	h.rec.Tick(ctx)
 	for _, ev := range h.drainEvents() {
 		t.Errorf("tick over deleted evidence emitted %s: %+v", ev.Type, ev)
 	}
-	close(release)
+	if got := h.issue(t, "two"); got.Status != "Todo" || got.AssigneeID != "" {
+		t.Errorf("second ticket while the lane is occupied from memory = %+v, want untouched", got)
+	}
+	release()
 	h.waitEvents(t, EventExited, 1)
 	if got := h.issue(t, "one"); got.Status != "Done" {
 		t.Errorf("owned run's ticket = %+v, want Done despite the deleted evidence", got)
 	}
+	// The settled run freed its lane; the ticket that waited runs on the
+	// next pass, from its beginning.
+	h.rec.Tick(ctx)
+	h.waitEvents(t, EventExited, 1)
+	if got := h.issue(t, "two"); got.Status != "Done" {
+		t.Errorf("waiting ticket after the lane freed = %+v, want Done", got)
+	}
+	if got := ran(); len(got) != 2 || got[0] != "LERP-1" || got[1] != "LERP-2" {
+		t.Errorf("runs = %v, want LERP-1 then LERP-2, once each", got)
+	}
 
 	// A lerp restarted after the deletion: the agent is alive but recordless,
-	// so nothing can adopt it — an orphaned process, the documented cost. The
-	// ticket is neither lost nor corrupted: still claimed, still in its queue
-	// status, and ineligible until someone settles it. Lerp never guesses.
-	var mu sync.Mutex
-	var reruns []string
-	h2 := newHarness(t, 1, func(_ context.Context, inv run.Invocation) (run.Result, error) {
-		mu.Lock()
-		reruns = append(reruns, inv.Ticket)
-		mu.Unlock()
-		return run.Result{ExitCode: 0}, nil
-	})
+	// so nothing can adopt it — an orphaned process, the documented cost. No
+	// record names the orphan's PID, so this lerp cannot even see the
+	// process, let alone signal it; that blindness is the orphan behavior
+	// itself, and the meaningful assertions are on the board. The ticket is
+	// neither lost nor corrupted: still claimed, still in its queue status,
+	// and ineligible until someone settles it. Lerp never guesses.
+	execute2, reruns := recordingExecute("")
+	h2 := newHarness(t, 1, execute2)
 	h2.rec.o.Alive = evidence.Alive
 	orphan := startFakeAgent(t)
 	h2.fake.AddIssue("LERP", linear.Issue{
@@ -303,9 +310,6 @@ func TestKillSafetyRunEvidenceDeletedUnderLiveAgent(t *testing.T) {
 	h2.rec.Tick(ctx)
 	for _, ev := range h2.drainEvents() {
 		t.Errorf("restarted lerp emitted %s over the orphan's ticket: %+v", ev.Type, ev)
-	}
-	if !orphan.alive() {
-		t.Error("orphaned agent was killed; lerp must leave processes it cannot adopt alone")
 	}
 	if got := h2.issue(t, "claimed"); got.Status != "Todo" || got.AssigneeID != "fake-viewer" {
 		t.Errorf("orphan's ticket = %+v, want still claimed in Todo", got)
@@ -323,10 +327,8 @@ func TestKillSafetyRunEvidenceDeletedUnderLiveAgent(t *testing.T) {
 	if got := h2.issue(t, "claimed"); got.Status != "Done" {
 		t.Errorf("recovered ticket status = %q, want Done", got.Status)
 	}
-	mu.Lock()
-	defer mu.Unlock()
-	if len(reruns) != 1 || reruns[0] != "LERP-2" {
-		t.Errorf("re-runs = %v, want exactly one after the human released the claim", reruns)
+	if got := reruns(); len(got) != 1 || got[0] != "LERP-2" {
+		t.Errorf("re-runs = %v, want exactly one after the human released the claim", got)
 	}
 }
 
@@ -345,13 +347,14 @@ func (c *racingClient) AssignIssue(ctx context.Context, issueID, userID string) 
 	return c.assign(func() error { return c.Client.AssignIssue(ctx, issueID, userID) })
 }
 
-// Scenario 4 — the duplicate claim race. Two lerps (two clones, two Linear
-// users, one board — the multiplayer model) claim the same ticket at once.
-// The claim protocol is assign, settle, read back (SCOPE invariant 4): both
-// assigns land before either read-back, the second overwrites the first, and
-// the loser walks away without disturbing the winner's claim. Here the loser
-// never even starts an agent; the residual window where both run costs only
-// duplicated compute, which scenarios 1 and 2 prove is safe.
+// Scenario 4 — the duplicate claim race, loser-detects branch. Two lerps (two
+// clones, two Linear users, one board — the multiplayer model) claim the same
+// ticket at once. The claim protocol is assign, settle, read back (SCOPE
+// invariant 4): both assigns land before either read-back, the second
+// overwrites the first, and the loser walks away without disturbing the
+// winner's claim — here the loser never even starts an agent. The other
+// branch, where both read-backs report a win and both agents run, is
+// TestKillSafetyBothWinClaimRace.
 func TestKillSafetyDuplicateClaimRace(t *testing.T) {
 	fake := linear.NewFake()
 	fake.AddIssue("LERP", linear.Issue{ID: "contested", Identifier: "LERP-1", Status: "Todo"})
@@ -376,67 +379,116 @@ func TestKillSafetyDuplicateClaimRace(t *testing.T) {
 		return err
 	}}
 
-	var mu sync.Mutex
-	var executed []string
-	newLerp := func(client linear.Client, who string) (*Reconciler, *evidence.Evidence, chan Event) {
-		store := evidence.New(t.TempDir())
-		events := make(chan Event, 64)
-		rec, err := NewReconciler(ReconcilerOptions{
-			Client:   client,
-			Repo:     testRepo(),
-			RepoDir:  "/repo",
-			Evidence: store,
-			Lanes:    1,
-			Events:   func(ev Event) { events <- ev },
-			Execute: func(context.Context, run.Invocation) (run.Result, error) {
-				mu.Lock()
-				executed = append(executed, who)
-				mu.Unlock()
-				return run.Result{ExitCode: 0}, nil
-			},
-			Provision: func(context.Context, string, string, workspace.Identity, io.Writer) error {
-				return nil
-			},
-			Dispose: func(context.Context, string, string, workspace.Identity, io.Writer) {},
-			Alive:   func(evidence.Record) bool { return false },
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		return rec, store, events
-	}
-	aRec, aEvidence, aEvents := newLerp(clientA, "lerp-a")
-	bRec, bEvidence, bEvents := newLerp(clientB, "lerp-b")
+	aExecute, aRan := recordingExecute("lerp-a")
+	bExecute, bRan := recordingExecute("lerp-b")
+	ha := newHarnessWith(t, 1, aExecute, fake, clientA)
+	hb := newHarnessWith(t, 1, bExecute, fake, clientB)
 	ctx := context.Background()
 
-	aRec.Tick(ctx) // A lists the ticket, then blocks before assigning
-	bRec.Tick(ctx) // B lists the same ticket while it is still unassigned
+	ha.rec.Tick(ctx) // A lists the ticket, then blocks before assigning
+	hb.rec.Tick(ctx) // B lists the same ticket while it is still unassigned
 	close(aMayAssign)
 
-	waitEventsOn(t, bEvents, EventExited, 1)
-	aRec.wg.Wait()
-	bRec.wg.Wait()
+	hb.waitEvents(t, EventExited, 1)
+	waitIdle(t, ha.rec)
+	waitIdle(t, hb.rec)
 
 	// The loser walked away silently: no run, no events, no leftover record,
 	// and — critically — no unassign of the claim it lost.
-	for _, ev := range drainEventsOn(aEvents) {
+	for _, ev := range ha.drainEvents() {
 		t.Errorf("losing lerp emitted %s: %+v", ev.Type, ev)
 	}
-	mu.Lock()
-	if len(executed) != 1 || executed[0] != "lerp-b" {
-		t.Errorf("executed runs = %v, want the winner exactly once", executed)
+	if got := aRan(); len(got) != 0 {
+		t.Errorf("losing lerp executed %v, want nothing", got)
 	}
-	mu.Unlock()
-	for who, store := range map[string]*evidence.Evidence{"lerp-a": aEvidence, "lerp-b": bEvidence} {
-		if records, _ := store.List(); len(records) != 0 {
+	if got := bRan(); len(got) != 1 {
+		t.Errorf("winning lerp executed %v, want exactly one run", got)
+	}
+	for who, hh := range map[string]*harness{"lerp-a": ha, "lerp-b": hb} {
+		records, err := hh.evidence.List()
+		if err != nil {
+			t.Fatalf("%s evidence list: %v", who, err)
+		}
+		if len(records) != 0 {
 			t.Errorf("%s run records after the race = %d, want 0", who, len(records))
 		}
 	}
-	issue, err := fake.GetIssue(ctx, "contested")
-	if err != nil {
-		t.Fatal(err)
+	// The winner's settled run disposed its workspace; the loser never
+	// provisioned one.
+	if got := hb.disposedIdentities(); len(got) != 1 || got[0].TicketID != "contested" {
+		t.Errorf("winner disposed %v, want exactly its own run's workspace", got)
 	}
-	if issue.Status != "Done" || issue.AssigneeID != "lerp-b" {
-		t.Errorf("contested ticket = %+v, want Done and held by the winner", issue)
+	if got := ha.disposedIdentities(); len(got) != 0 {
+		t.Errorf("loser disposed %v, want nothing", got)
+	}
+	if got := hb.issue(t, "contested"); got.Status != "Done" || got.AssigneeID != "lerp-b" {
+		t.Errorf("contested ticket = %+v, want Done and held by the winner", got)
+	}
+}
+
+// Scenario 5 — the both-win interleaving of the duplicate claim race: A's
+// assign, settle, and read-back all complete before B assigns, so A starts
+// its agent believing it won; B then overwrites the claim, reads itself
+// back, and wins too. Both agents run — duplicated compute, the tolerated
+// worst case — but the board converges on the winner's state: whichever run
+// concludes first moves the ticket, and the other's late move is refused by
+// conclude's ticket-still-in-queue-status guard (once.go), so the loser
+// cannot disturb the winner's board.
+func TestKillSafetyBothWinClaimRace(t *testing.T) {
+	fake := linear.NewFake()
+	fake.AddIssue("LERP", linear.Issue{ID: "contested", Identifier: "LERP-1", Status: "Todo"})
+
+	// Choreography: B lists the ticket while it is unassigned, then holds its
+	// assign until A has fully claimed the ticket and started its agent.
+	bMayAssign := make(chan struct{})
+	clientA := &racingClient{Client: fake, viewerID: "lerp-a",
+		assign: func(do func() error) error { return do() }}
+	clientB := &racingClient{Client: fake, viewerID: "lerp-b",
+		assign: func(do func() error) error { <-bMayAssign; return do() }}
+
+	aExecute, aRelease, aRan := blockingExecute(t, "lerp-a")
+	bExecute, bRan := recordingExecute("lerp-b")
+	ha := newHarnessWith(t, 1, aExecute, fake, clientA)
+	hb := newHarnessWith(t, 1, bExecute, fake, clientB)
+	ctx := context.Background()
+
+	hb.rec.Tick(ctx)                  // B lists the unassigned ticket, then parks before assigning
+	ha.rec.Tick(ctx)                  // A claims uncontested: assign, settle, read-back, all its own
+	ha.waitEvents(t, EventStarted, 1) // A is mid-run, its agent held open
+	close(bMayAssign)                 // B assigns over A's claim and reads itself back a winner
+	hb.waitEvents(t, EventExited, 1)  // B's whole run lands while A is still working
+
+	// A's agent finishes after the winner settled the ticket. Its late
+	// conclude finds the ticket no longer in the queue status and leaves the
+	// winner's board alone.
+	aRelease()
+	ha.waitEvents(t, EventExited, 1)
+	waitIdle(t, ha.rec)
+	waitIdle(t, hb.rec)
+
+	// Both ran — the cost is at most duplicated compute — and both settled
+	// cleanly: no leftover records, both workspaces disposed.
+	if got := aRan(); len(got) != 1 {
+		t.Errorf("first claimant executed %v, want exactly one run", got)
+	}
+	if got := bRan(); len(got) != 1 {
+		t.Errorf("second claimant executed %v, want exactly one run", got)
+	}
+	for who, hh := range map[string]*harness{"lerp-a": ha, "lerp-b": hb} {
+		records, err := hh.evidence.List()
+		if err != nil {
+			t.Fatalf("%s evidence list: %v", who, err)
+		}
+		if len(records) != 0 {
+			t.Errorf("%s run records after the race = %d, want 0", who, len(records))
+		}
+		if got := hh.disposedIdentities(); len(got) != 1 || got[0].TicketID != "contested" {
+			t.Errorf("%s disposed %v, want exactly its own run's workspace", who, got)
+		}
+	}
+	// The final board is the winner's: B holds the claim, and the ticket
+	// sits where the first conclude moved it, untouched by the second.
+	if got := hb.issue(t, "contested"); got.Status != "Done" || got.AssigneeID != "lerp-b" {
+		t.Errorf("contested ticket = %+v, want Done and held by the winner", got)
 	}
 }
