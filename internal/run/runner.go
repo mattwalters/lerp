@@ -37,6 +37,12 @@ type Invocation struct {
 	Ticket  string // human identifier, e.g. LERP-42
 	Workdir string
 	LogPath string
+
+	// Started, when set, is called once with the runner's PID as soon as the
+	// process exists, before it is waited on. It is how run evidence learns
+	// the PID of an agent that is still alive; a PID first reported after
+	// exit would be useless for adoption.
+	Started func(pid int)
 }
 
 // Execute expands inv.Runner.Command and runs it in inv.Workdir, writing the
@@ -90,7 +96,13 @@ func Execute(ctx context.Context, inv Invocation) (Result, error) {
 	}
 
 	started := time.Now()
-	err = cmd.Run()
+	if err := cmd.Start(); err != nil {
+		return result, fmt.Errorf("starting runner: %w", err)
+	}
+	if inv.Started != nil {
+		inv.Started(cmd.Process.Pid)
+	}
+	err = cmd.Wait()
 	result.Duration = time.Since(started)
 	if err == nil {
 		result.ExitCode = 0
@@ -98,7 +110,7 @@ func Execute(ctx context.Context, inv Invocation) (Result, error) {
 	}
 	var exitErr *exec.ExitError
 	if !errors.As(err, &exitErr) {
-		return result, fmt.Errorf("starting runner: %w", err)
+		return result, fmt.Errorf("waiting for runner: %w", err)
 	}
 	result.ExitCode = exitErr.ExitCode()
 	return result, nil
