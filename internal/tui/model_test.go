@@ -1037,6 +1037,14 @@ func TestQuietWorkPanelKeepsItsBox(t *testing.T) {
 
 	m = update(t, m, keyMsg("1"))
 	g := m.geometry()
+	if rows, _ := m.workListRows(g.sideW - 2); len(rows)+2 >= panelFloor {
+		t.Fatalf("this board asks for %d lines: the floor is not what is under test",
+			len(rows)+2)
+	}
+	if g.workH != panelFloor {
+		t.Fatalf("a work panel with one empty queue is %d lines, want the floor %d",
+			g.workH, panelFloor)
+	}
 	view := m.View()
 	if !strings.Contains(view, "plan · Planning · LERP · empty") {
 		t.Fatalf("empty work panel does not show its queues:\n%s", view)
@@ -1048,6 +1056,43 @@ func TestQuietWorkPanelKeepsItsBox(t *testing.T) {
 	if g2 := m.geometry(); g2.workH != g.workH {
 		t.Fatalf("focusing the empty work panel resized it: %d then %d lines",
 			g.workH, g2.workH)
+	}
+}
+
+// The third is a ceiling, not a reservation: a full work list beside a
+// nearly empty needs-you takes the room needs-you has nothing to put in,
+// rather than truncating into a column of blank lines.
+func TestWorkTakesTheRoomNeedsYouCannotUse(t *testing.T) {
+	m, _, _ := newTestModel(t, 6)
+	resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	m = resized.(model)
+	m = fillBoard(t, m, 20)
+	// Four items waiting, twenty tickets queued: needs-you cannot fill two
+	// thirds of this column and work has more list than a third holds.
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-1", Title: "one", Status: "Backlog"},
+		{Ticket: "LERP-2", Title: "two", Status: "Backlog"},
+	}}})
+
+	g := m.geometry()
+	attn, _ := m.attentionRows(g.sideW - 2)
+	work, _ := m.workListRows(g.sideW - 2)
+	if g.workH <= g.bodyH/3 {
+		t.Fatalf("work is %d lines of a %d-line body while needs-you held blanks",
+			g.workH, g.bodyH)
+	}
+	if g.workH != len(work)+2 {
+		t.Fatalf("work is %d lines for the %d rows it renders: it truncated anyway",
+			g.workH, len(work))
+	}
+	if g.attnH < len(attn)+2 {
+		t.Fatalf("needs-you is %d lines for the %d rows it renders", g.attnH, len(attn))
+	}
+	if strings.Contains(m.View(), "more") {
+		t.Fatalf("a panel cut its list with the other holding blank lines:\n%s", m.View())
+	}
+	if got := g.attnH + g.workH; got != g.bodyH {
+		t.Fatalf("stack is %d lines in a %d-line body", got, g.bodyH)
 	}
 }
 
@@ -1151,13 +1196,17 @@ func TestStackedLayoutKeepsBothPanelsReadable(t *testing.T) {
 		t.Fatalf("stacked layout is %d lines in a %d-line body", got, g.bodyH)
 	}
 
-	// Focus work: the selected row is running, so the main pane asks for
-	// the whole body to tail its log.
+	// Focus work: the selected row is running, so the main pane opens a log
+	// tail, which asks for the whole body. It gets its half and no more —
+	// the panels are exactly where the operator left them.
 	m = update(t, m, keyMsg("2"))
 	g2 := m.geometry()
+	if g2 != g {
+		t.Fatalf("focus moved the stacked layout: %+v then %+v", g, g2)
+	}
 	if g2.attnH+g2.workH < g.bodyH/2 {
-		t.Fatalf("the log lens took the board: needs-you %d, work %d of %d lines",
-			g2.attnH, g2.workH, g2.bodyH)
+		t.Fatalf("the board is %d lines of a %d-line body, under its half",
+			g2.attnH+g2.workH, g2.bodyH)
 	}
 	if g2.attnH <= panelFloor || g2.workH <= panelFloor {
 		t.Fatalf("focusing work floored the panels: needs-you %d, work %d",

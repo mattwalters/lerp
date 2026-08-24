@@ -1199,7 +1199,7 @@ func (m *model) cycleProject() {
 
 // geometry is the screen's arithmetic. One rule: needs-you gets the room.
 // Work is the smaller panel because it is the smaller question — it asks
-// for the rows it renders, capped at about a third of the panel stack, and
+// for the rows it renders, held to about a third of the panel stack, and
 // needs-you takes everything left over. Focus is not in the arithmetic at
 // all: moving between panels never moves the geometry, and a panel that is
 // quiet keeps its border rather than collapsing to a line. Heights include
@@ -1239,37 +1239,43 @@ func (m *model) geometry() geometry {
 		g.mainW = m.width - g.sideW
 	}
 	workRows, _ := m.workListRows(g.sideW - 2)
+	attnRows, _ := m.attentionRows(g.sideW - 2)
 
-	// Wide, the panel stack has the side column to itself. Stacked, the
-	// main pane is one more claimant on the body, and the stack splits
-	// whatever it leaves.
 	stackH := g.bodyH
 	if g.wide {
+		// The main pane has the other column to itself, so it fits its own
+		// content and never competes with the stack.
 		g.mainH = min(g.bodyH, m.mainWant(g.bodyH, g.mainW-2))
 	} else {
-		// The main pane fits its own content here too, but never past the
-		// half of the body that keeps the board on screen. Half is also
-		// what keeps focus out of the arithmetic: the log lens wants the
-		// whole body and opens on focusing work, so an uncapped main pane
-		// would squeeze both panels to their floors on a keystroke — the
-		// old failure wearing the other layout's clothes.
-		g.mainH = fitH(m.mainWant(g.bodyH, g.mainW-2), mainFloor,
-			g.bodyH-max(2*panelFloor, g.bodyH/2))
+		// Stacked, the body is split rather than fitted: half the screen is
+		// the board, half is whatever the selected row opens. Fitting the
+		// main pane to its content here would put focus straight back into
+		// the arithmetic — the log lens asks for the whole body and opens on
+		// focusing work — and both panels would jump on the keystroke. What
+		// the lens holds scrolls; a panel that shrank under the operator
+		// does not.
+		g.mainH = fitH(g.bodyH/2, mainFloor, g.bodyH-2*panelFloor)
 		stackH = g.bodyH - g.mainH
 	}
-	g.workH = workHeight(stackH, len(workRows)+2)
+	g.workH = workHeight(stackH, len(workRows)+2, len(attnRows)+2)
 	g.attnH = stackH - g.workH
 	return g
 }
 
 // workHeight is work's share of the stack: the rows it renders plus its
-// borders, never past about a third of the stack however much it holds and
+// borders, held to about a third of the stack however much it holds and
 // never under a panel's floor however little. A quiet work panel is still a
-// panel, and a busy one still leaves needs-you the room. In a window too
-// short for both floors needs-you keeps its own first — it is the panel the
-// backlog is in.
-func workHeight(stackH, want int) int {
-	return fitH(want, panelFloor, min(max(panelFloor, stackH/3), stackH-panelFloor))
+// panel, and a busy one still leaves needs-you the room.
+//
+// The third is a ceiling, not a reservation: work may take what needs-you
+// has no rows to put in, so neither panel truncates its list while the
+// other holds blank lines — and needs-you takes its two thirds back the
+// moment it has the rows to fill them. Content decides that; focus never
+// does. In a window too short for both floors needs-you keeps its own
+// first, being the panel the backlog is in.
+func workHeight(stackH, want, attnWant int) int {
+	share := max(stackH/3, stackH-attnWant)
+	return fitH(want, panelFloor, min(max(panelFloor, share), stackH-panelFloor))
 }
 
 // fitH holds a height between lo and hi, and hi wins a conflict: the body
