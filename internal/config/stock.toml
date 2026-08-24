@@ -33,6 +33,10 @@ dispose = 'git worktree remove --force "$LERP_WORKSPACE"'
 # UUID lerp generates so the run can later be resumed by `resume` below —
 # which is what `eject` hands you when you want to take the wheel yourself.
 #
+# `--output-format stream-json --verbose` streams every event as a JSON line
+# while the run is live. Without it, `claude -p` prints only the final result
+# at exit, and the board's log tail stays empty for the whole run.
+#
 # PERMISSIONS: with `--permission-mode bypassPermissions`, the agent edits
 # files and runs commands (git, gh, tests) without asking — using your full
 # user account. The worktree that `provision` above builds is a tidiness
@@ -42,7 +46,7 @@ dispose = 'git worktree remove --force "$LERP_WORKSPACE"'
 # either this grant — made deliberately, in review, where this file lives —
 # or an `--allowedTools` list you curate.
 [runners.claude]
-command = "claude -p {{prompt}} --session-id {{session}} --permission-mode bypassPermissions"
+command = "claude -p {{prompt}} --session-id {{session}} --output-format stream-json --verbose --permission-mode bypassPermissions"
 resume = "claude --resume {{session}}"
 
 # The agent needs its own Linear access — lerp passes only the ticket
