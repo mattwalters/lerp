@@ -878,3 +878,91 @@ func TestQuitAwaitsTheInFlightPass(t *testing.T) {
 		t.Fatal("a finished pass is still tracked as in flight")
 	}
 }
+
+// hostile is a ticket title as an attacker would write it: an OSC title
+// write, a screen erase, a cursor home, and a carriage return to repaint the
+// row it lands on.
+const hostile = "\x1b]0;pwned\x07\x1b[2J\x1b[1;1Hpwn\rme"
+
+// Linear-sourced text reaching the terminal is the whole finding: whatever a
+// ticket is titled, every panel and every lens renders it inert, and the
+// screen keeps the shape the same board with plain titles would have.
+func TestHostileTitlesRenderInert(t *testing.T) {
+	board := func(t *testing.T, title string) model {
+		t.Helper()
+		m, _, _ := newTestModel(t, 2)
+		m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+			TicketID: title, Ticket: title, Queue: title, LogPath: "/dev/null"}})
+		m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+			{Group: loop.ToRoute, Ticket: title, TicketID: title, Title: title,
+				Status: title, Reason: title, URL: title},
+		}}})
+		return update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+			{Team: title, Name: title, Status: title, Tickets: []loop.QueueTicket{
+				{ID: title, Identifier: title, Title: title, URL: title, Eligible: true}}},
+		}}})
+	}
+
+	for _, focus := range []string{"1", "2", "3"} {
+		hm := update(t, board(t, hostile), keyMsg(focus))
+		view := hm.View()
+		escapeFree(t, "panel "+focus, view)
+
+		// Geometry is the assertion that proves the injection is inert
+		// rather than merely absent: a title that cannot add a row or shift
+		// a column renders the same screen a plain title does.
+		benign := update(t, board(t, "plain title"), keyMsg(focus)).View()
+		if got, want := lipgloss.Height(view), lipgloss.Height(benign); got != want {
+			t.Fatalf("panel %s: hostile board is %d lines, benign board is %d:\n%s",
+				focus, got, want, view)
+		}
+		for i, line := range strings.Split(view, "\n") {
+			if got := lipgloss.Width(line); got > hm.width {
+				t.Fatalf("panel %s: line %d is %d cells wide in a %d-column window:\n%s",
+					focus, i, got, hm.width, view)
+			}
+		}
+	}
+
+	// The promote picker renders the selected item's title too.
+	m := update(t, update(t, board(t, hostile), keyMsg("1")), keyMsg("p"))
+	escapeFree(t, "promote picker", m.View())
+}
+
+// The log pane carries agent output, which is legitimately colored — so it
+// keeps SGR and drops everything that could move the cursor or repaint the
+// chrome around it.
+func TestHostileLogOutputCannotRepaintTheScreen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "one.log")
+	writeLog(t, path, []byte("\x1b[31mcolored output\x1b[0m\n"+hostile+"\n"))
+
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		Ticket: "LERP-1", Queue: "plan", LogPath: path}})
+
+	view := m.View()
+	escapeFree(t, "log pane", view)
+	if !strings.Contains(view, "colored output") {
+		t.Fatalf("log pane lost the agent's output:\n%s", view)
+	}
+	if !strings.Contains(view, "\x1b[31m") {
+		t.Fatalf("log pane dropped the agent's color:\n%q", view)
+	}
+	for i, line := range strings.Split(view, "\n") {
+		if got := lipgloss.Width(line); got > m.width {
+			t.Fatalf("line %d is %d cells wide in a %d-column window:\n%s", i, got, m.width, view)
+		}
+	}
+}
+
+// A pass error carries Linear's own status and team names into the status
+// bar, which is one line and must stay one line.
+func TestHostileErrorTextCannotRepaintTheStatusBar(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventError, Err: errors.New(hostile)}})
+	escapeFree(t, "status bar", m.View())
+	m = update(t, m, openErrMsg{err: errors.New(hostile)})
+	escapeFree(t, "status bar", m.View())
+	m = update(t, m, promotedMsg{ticket: "LERP-1", status: "Planning", err: errors.New(hostile)})
+	escapeFree(t, "status bar", m.View())
+}
