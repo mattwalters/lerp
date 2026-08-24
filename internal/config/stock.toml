@@ -1,28 +1,60 @@
-# Stock lerp config — written by `lerp init` when no global config exists.
+# lerp.toml — this repository's lerp configuration, written by `lerp init`.
+# Check this file in: it is the pipeline everyone working on this repo runs,
+# and it contains the permissions you grant the agents. Review it like code.
 #
 # This file is the opinion; the engine has none. Lerp does not know that
 # planning comes before implementing: that order exists only in the
 # `on_success` pointers below. Rewrite them into a different shape, or delete
 # queues entirely, and no lerp code changes.
+#
+# Tickets enter by where a human puts them. A big feature is blessed into
+# Planning; a small fix goes straight to Implementing. That placement is the
+# routing decision — there is no syntax for it here.
 
-# Concurrent agents. Keep it small: each one is a real coding agent with a
-# real workspace on this machine.
-lanes = 3
+# Linear team keys this repo serves. One repo may serve several teams (the
+# monorepo case); two repos may never claim the same team.
+teams = [{{teams}}]
+
+# Commands that create and destroy a lane's workspace, run from the repo
+# root. Lerp invokes them with a unique lane/run identity and otherwise knows
+# nothing about what they do. Environment isolation — ports, databases,
+# containers — is this repo's problem, solved here.
+provision = 'git worktree add --detach "$LERP_WORKSPACE" HEAD'
+dispose = 'git worktree remove --force "$LERP_WORKSPACE"'
+
+# --------------------------------------------------------------------------
+# Runner
+# --------------------------------------------------------------------------
 
 # Claude Code, headless. {{prompt}} carries the queue's prompt, {{session}} a
-# UUID lerp generates so the run can later be resumed by `resume` below.
+# UUID lerp generates so the run can later be resumed by `resume` below —
+# which is what `eject` hands you when you want to take the wheel yourself.
 #
-# PERMISSIONS: bypassPermissions lets the agent edit files and run commands
-# (git, gh, tests) without asking. This is a real grant, and it is yours to
-# make deliberately. It is bounded by the workspace your repo's provision
-# command builds; with the stock git-worktree provisioning that is a throwaway
-# checkout, not your working tree.
+# PERMISSIONS: with `--permission-mode bypassPermissions`, the agent edits
+# files and runs commands (git, gh, tests) without asking — using your full
+# user account. The worktree that `provision` above builds is a tidiness
+# boundary, not a security one: nothing stops the agent from reading
+# ~/.ssh or writing outside its workspace. Without the flag, a headless run
+# fails at the first tool it is not allowed to use, so the pipeline needs
+# either this grant — made deliberately, in review, where this file lives —
+# or an `--allowedTools` list you curate.
 [runners.claude]
 command = "claude -p {{prompt}} --session-id {{session}} --permission-mode bypassPermissions"
 resume = "claude --resume {{session}}"
 
-# The agent needs its own Linear access. Configure the Linear MCP server in
-# Claude Code before expecting these prompts to work.
+# The agent needs its own Linear access — lerp passes only the ticket
+# identifier, never the ticket body, and stage artifacts (plan comments,
+# review verdicts) are written by the agent, not by lerp. Configure the
+# Linear MCP server in Claude Code before expecting these prompts to work.
+
+# --------------------------------------------------------------------------
+# Queues
+# --------------------------------------------------------------------------
+#
+# Prompts are plain text: read them, argue with them, edit them. Each one
+# names its ticket with {{ticket}}, tells the agent where durable decisions
+# belong (Linear), and says how to escalate (move the ticket itself — lerp
+# will not overrule an agent that moved its own ticket).
 
 [queues.plan]
 status = "Planning"
@@ -77,3 +109,10 @@ Do not merge, and do not fix the code yourself. If it needs changes, move
 run will pick it up from there. A clean review leaves {{ticket}} for a human
 to merge.
 """
+
+# On a clean review the ticket lands in "In Review" — a status no queue
+# watches, which is how work leaves the automated path. A human merges the
+# pull request, and Linear's GitHub integration moves the ticket to Done.
+#
+# "Needs Attention" is the same idea for failures: no queue watches it, so a
+# ticket that lands there waits for you rather than being retried forever.

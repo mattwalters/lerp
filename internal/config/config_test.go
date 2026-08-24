@@ -18,8 +18,10 @@ func writeFile(t *testing.T, name, contents string) string {
 	return path
 }
 
-const validGlobal = `
-lanes = 3
+const validRepo = `
+teams = ["LERP", "OPS"]
+provision = "git worktree add {{workdir}}"
+dispose = "git worktree remove {{workdir}}"
 
 [runners.claude]
 command = "claude -p {{prompt}} --cwd {{workdir}}"
@@ -42,103 +44,47 @@ on_success = "In Review"
 on_failure = "Blocked"
 `
 
-func TestLoadGlobal(t *testing.T) {
-	path := writeFile(t, "config.toml", validGlobal)
-	g, err := LoadGlobal(path)
+func TestLoadRepoConfig(t *testing.T) {
+	path := writeFile(t, "lerp.toml", validRepo)
+	c, err := LoadRepoConfig(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if g.Lanes != 3 {
-		t.Errorf("Lanes = %d, want 3", g.Lanes)
+	if len(c.Teams) != 2 || c.Teams[0] != "LERP" || c.Teams[1] != "OPS" {
+		t.Errorf("Teams = %v", c.Teams)
 	}
-	if got := g.Runners["claude"].Resume; got != "claude --resume {{session}}" {
+	if c.Provision == "" || c.Dispose == "" {
+		t.Errorf("Provision = %q, Dispose = %q", c.Provision, c.Dispose)
+	}
+	if got := c.Runners["claude"].Resume; got != "claude --resume {{session}}" {
 		t.Errorf("Runners[claude].Resume = %q", got)
 	}
-	if got := g.Runners["codex"].Resume; got != "" {
+	if got := c.Runners["codex"].Resume; got != "" {
 		t.Errorf("Runners[codex].Resume = %q, want empty", got)
 	}
-	q := g.Queues["implement"]
+	q := c.Queues["implement"]
 	if q.Status != "Implementing" || q.Runner != "codex" ||
 		q.OnSuccess != "In Review" || q.OnFailure != "Blocked" {
 		t.Errorf("Queues[implement] = %+v", q)
 	}
-	if got := g.Queues["plan"].OnFailure; got != "" {
+	if got := c.Queues["plan"].OnFailure; got != "" {
 		t.Errorf("Queues[plan].OnFailure = %q, want empty", got)
 	}
 }
 
-func TestLoadGlobalDefaultLanes(t *testing.T) {
-	path := writeFile(t, "config.toml", `
+func TestLoadRepoConfigErrors(t *testing.T) {
+	// A minimal valid pipeline appended to team/workspace fragments, so each
+	// case isolates the error it is about.
+	const pipeline = `
 [runners.claude]
-command = "claude -p {{prompt}}"
+command = "claude"
 
 [queues.plan]
 status = "Planning"
-prompt = "Write a plan."
+prompt = "Plan {{ticket}}."
 runner = "claude"
-on_success = "Implementing"
-`)
-	g, err := LoadGlobal(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if g.Lanes != 5 {
-		t.Errorf("Lanes = %d, want default 5", g.Lanes)
-	}
-}
-
-func TestLoadOrCreateGlobal(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "lerp", "config.toml")
-	g, created, err := LoadOrCreateGlobal(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !created {
-		t.Error("created = false, want true")
-	}
-	if g.Runners["claude"].Command == "" || len(g.Queues) == 0 {
-		t.Errorf("stock global = %+v, want Claude runner and queues", g)
-	}
-
-	contents := "[runners.mine]\ncommand = \"mine\"\n"
-	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	_, created, err = LoadOrCreateGlobal(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if created {
-		t.Error("created = true, want false for existing config")
-	}
-	got, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != contents {
-		t.Errorf("existing config changed to %q", got)
-	}
-}
-
-func TestStockGlobalMatchesExample(t *testing.T) {
-	stockPath := filepath.Join(t.TempDir(), "config.toml")
-	if _, err := WriteStockGlobal(stockPath); err != nil {
-		t.Fatal(err)
-	}
-	stock, err := LoadGlobal(stockPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	example, err := LoadGlobal(filepath.Join("..", "..", "config.example.toml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(stock, example) {
-		t.Error("embedded stock config differs from config.example.toml")
-	}
-}
-
-func TestLoadGlobalErrors(t *testing.T) {
+on_success = "Done"
+`
 	tests := []struct {
 		name    string
 		toml    string
@@ -146,26 +92,105 @@ func TestLoadGlobalErrors(t *testing.T) {
 	}{
 		{
 			name:    "malformed toml",
-			toml:    "lanes = ",
+			toml:    "teams = [",
 			wantErr: "toml",
 		},
 		{
-			name:    "unknown top-level key",
-			toml:    "lanez = 5",
-			wantErr: `unknown key(s): lanez`,
+			name: "unknown key",
+			toml: `
+teams = ["LERP"]
+provision = "p"
+dispose = "d"
+team_lead = "matt"
+` + pipeline,
+			wantErr: "unknown key(s): team_lead",
+		},
+		{
+			name: "missing teams",
+			toml: `
+provision = "p"
+dispose = "d"
+` + pipeline,
+			wantErr: "teams must list at least one Linear team key",
+		},
+		{
+			name: "empty teams",
+			toml: `
+teams = []
+provision = "p"
+dispose = "d"
+` + pipeline,
+			wantErr: "teams must list at least one Linear team key",
+		},
+		{
+			name: "empty team key",
+			toml: `
+teams = ["LERP", ""]
+provision = "p"
+dispose = "d"
+` + pipeline,
+			wantErr: "teams must not contain an empty team key",
+		},
+		{
+			name: "duplicate team",
+			toml: `
+teams = ["LERP", "OPS", "LERP"]
+provision = "p"
+dispose = "d"
+` + pipeline,
+			wantErr: `team "LERP" is listed more than once`,
+		},
+		{
+			name: "missing provision",
+			toml: `
+teams = ["LERP"]
+dispose = "d"
+` + pipeline,
+			wantErr: "provision must not be empty",
+		},
+		{
+			name: "missing dispose",
+			toml: `
+teams = ["LERP"]
+provision = "p"
+` + pipeline,
+			wantErr: "dispose must not be empty",
+		},
+		{
+			name: "no queues",
+			toml: `
+teams = ["LERP"]
+provision = "p"
+dispose = "d"
+`,
+			wantErr: "at least one queue is required",
 		},
 		{
 			name: "unknown runner key",
 			toml: `
+teams = ["LERP"]
+provision = "p"
+dispose = "d"
+
 [runners.claude]
 command = "claude"
 timeout = 30
+
+[queues.plan]
+status = "Planning"
+prompt = "p"
+runner = "claude"
+on_success = "Done"
 `,
 			wantErr: "unknown key(s): runners.claude.timeout",
 		},
 		{
 			name: "unknown queue key",
 			toml: `
+teams = ["LERP"]
+provision = "p"
+dispose = "d"
+
 [runners.claude]
 command = "claude"
 
@@ -179,26 +204,24 @@ when = "always"
 			wantErr: "unknown key(s): queues.plan.when",
 		},
 		{
-			name:    "zero lanes",
-			toml:    "lanes = 0",
-			wantErr: "lanes must be at least 1, got 0",
-		},
-		{
-			name:    "negative lanes",
-			toml:    "lanes = -2",
-			wantErr: "lanes must be at least 1, got -2",
-		},
-		{
 			name: "runner without command",
 			toml: `
-[runners.claude]
-resume = "claude --resume {{session}}"
-`,
-			wantErr: `runner "claude": command must not be empty`,
+teams = ["LERP"]
+provision = "p"
+dispose = "d"
+
+[runners.mine]
+resume = "mine --resume {{session}}"
+` + pipeline,
+			wantErr: `runner "mine": command must not be empty`,
 		},
 		{
 			name: "queue without status",
 			toml: `
+teams = ["LERP"]
+provision = "p"
+dispose = "d"
+
 [runners.claude]
 command = "claude"
 
@@ -212,6 +235,10 @@ on_success = "Done"
 		{
 			name: "queue without prompt",
 			toml: `
+teams = ["LERP"]
+provision = "p"
+dispose = "d"
+
 [runners.claude]
 command = "claude"
 
@@ -225,6 +252,10 @@ on_success = "Done"
 		{
 			name: "queue without runner",
 			toml: `
+teams = ["LERP"]
+provision = "p"
+dispose = "d"
+
 [runners.claude]
 command = "claude"
 
@@ -238,6 +269,10 @@ on_success = "Done"
 		{
 			name: "queue without on_success",
 			toml: `
+teams = ["LERP"]
+provision = "p"
+dispose = "d"
+
 [runners.claude]
 command = "claude"
 
@@ -251,6 +286,10 @@ runner = "claude"
 		{
 			name: "queue names undefined runner",
 			toml: `
+teams = ["LERP"]
+provision = "p"
+dispose = "d"
+
 [runners.claude]
 command = "claude"
 
@@ -265,6 +304,10 @@ on_success = "Done"
 		{
 			name: "two queues share a status",
 			toml: `
+teams = ["LERP"]
+provision = "p"
+dispose = "d"
+
 [runners.claude]
 command = "claude"
 
@@ -285,125 +328,6 @@ on_success = "Done"
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			path := writeFile(t, "config.toml", tt.toml)
-			_, err := LoadGlobal(path)
-			if err == nil {
-				t.Fatal("want error, got nil")
-			}
-			if !strings.Contains(err.Error(), tt.wantErr) {
-				t.Errorf("error %q does not contain %q", err, tt.wantErr)
-			}
-			if !strings.Contains(err.Error(), path) {
-				t.Errorf("error %q does not carry the file path %q", err, path)
-			}
-		})
-	}
-}
-
-func TestLoadGlobalMissingFile(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.toml")
-	_, err := LoadGlobal(path)
-	if err == nil {
-		t.Fatal("want error, got nil")
-	}
-	if !strings.Contains(err.Error(), path) {
-		t.Errorf("error %q does not carry the file path %q", err, path)
-	}
-}
-
-func TestLoadRepoConfig(t *testing.T) {
-	path := writeFile(t, "lerp.toml", `
-teams = ["LERP", "OPS"]
-provision = "git worktree add {{workdir}}"
-dispose = "git worktree remove {{workdir}}"
-`)
-	c, err := LoadRepoConfig(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(c.Teams) != 2 || c.Teams[0] != "LERP" || c.Teams[1] != "OPS" {
-		t.Errorf("Teams = %v", c.Teams)
-	}
-	if c.Provision == "" || c.Dispose == "" {
-		t.Errorf("Provision = %q, Dispose = %q", c.Provision, c.Dispose)
-	}
-}
-
-func TestLoadRepoConfigErrors(t *testing.T) {
-	tests := []struct {
-		name    string
-		toml    string
-		wantErr string
-	}{
-		{
-			name:    "malformed toml",
-			toml:    "teams = [",
-			wantErr: "toml",
-		},
-		{
-			name: "unknown key",
-			toml: `
-teams = ["LERP"]
-provision = "p"
-dispose = "d"
-team_lead = "matt"
-`,
-			wantErr: "unknown key(s): team_lead",
-		},
-		{
-			name: "missing teams",
-			toml: `
-provision = "p"
-dispose = "d"
-`,
-			wantErr: "teams must list at least one Linear team key",
-		},
-		{
-			name: "empty teams",
-			toml: `
-teams = []
-provision = "p"
-dispose = "d"
-`,
-			wantErr: "teams must list at least one Linear team key",
-		},
-		{
-			name: "empty team key",
-			toml: `
-teams = ["LERP", ""]
-provision = "p"
-dispose = "d"
-`,
-			wantErr: "teams must not contain an empty team key",
-		},
-		{
-			name: "duplicate team",
-			toml: `
-teams = ["LERP", "OPS", "LERP"]
-provision = "p"
-dispose = "d"
-`,
-			wantErr: `team "LERP" is listed more than once`,
-		},
-		{
-			name: "missing provision",
-			toml: `
-teams = ["LERP"]
-dispose = "d"
-`,
-			wantErr: "provision must not be empty",
-		},
-		{
-			name: "missing dispose",
-			toml: `
-teams = ["LERP"]
-provision = "p"
-`,
-			wantErr: "dispose must not be empty",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
 			path := writeFile(t, "lerp.toml", tt.toml)
 			_, err := LoadRepoConfig(path)
 			if err == nil {
@@ -419,54 +343,85 @@ provision = "p"
 	}
 }
 
-func TestGlobalPath(t *testing.T) {
-	t.Run("respects XDG_CONFIG_HOME", func(t *testing.T) {
-		t.Setenv("XDG_CONFIG_HOME", "/xdg")
-		got, err := GlobalPath()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if want := filepath.Join("/xdg", "lerp", "config.toml"); got != want {
-			t.Errorf("GlobalPath() = %q, want %q", got, want)
-		}
-	})
-	t.Run("falls back to ~/.config", func(t *testing.T) {
-		t.Setenv("XDG_CONFIG_HOME", "")
-		t.Setenv("HOME", "/home/matt")
-		got, err := GlobalPath()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if want := filepath.Join("/home/matt", ".config", "lerp", "config.toml"); got != want {
-			t.Errorf("GlobalPath() = %q, want %q", got, want)
-		}
-	})
+func TestLoadRepoConfigMissingFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "lerp.toml")
+	_, err := LoadRepoConfig(path)
+	if err == nil {
+		t.Fatal("want error, got nil")
+	}
+	if !strings.Contains(err.Error(), path) {
+		t.Errorf("error %q does not carry the file path %q", err, path)
+	}
 }
 
-// The shipped example is what a new operator copies into place, so it has to
-// load and validate like any other config — and its topology has to actually
-// connect.
-func TestExampleConfigIsUsable(t *testing.T) {
-	path := filepath.Join("..", "..", "config.example.toml")
-	g, err := LoadGlobal(path)
+func TestStockRepoConfig(t *testing.T) {
+	c, err := ParseRepoConfig(StockRepoConfig([]string{"LERP", "OPS"}, true), "stock")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if g.Lanes < 1 {
-		t.Errorf("lanes = %d, want a positive default", g.Lanes)
+	if !reflect.DeepEqual(c.Teams, []string{"LERP", "OPS"}) {
+		t.Errorf("Teams = %v", c.Teams)
+	}
+	if c.Runners["claude"].Command == "" || len(c.Queues) == 0 {
+		t.Errorf("stock config = %+v, want Claude runner and queues", c)
+	}
+	if !strings.Contains(c.Runners["claude"].Command, "--permission-mode bypassPermissions") {
+		t.Errorf("accepted grant missing from command %q", c.Runners["claude"].Command)
+	}
+}
+
+// Declining the grant must scrub it from every command — the comments still
+// name the flag, deliberately, so the operator knows how to widen later.
+func TestStockRepoConfigWithoutBypass(t *testing.T) {
+	c, err := ParseRepoConfig(StockRepoConfig([]string{"LERP"}, false), "stock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, r := range c.Runners {
+		if strings.Contains(r.Command, "bypassPermissions") {
+			t.Errorf("runner %q kept the declined grant: %q", name, r.Command)
+		}
+	}
+	if got := c.Runners["claude"].Command; !strings.Contains(got, "claude -p") {
+		t.Errorf("command = %q, want a claude invocation", got)
+	}
+}
+
+func TestStockMatchesExample(t *testing.T) {
+	stock, err := ParseRepoConfig(StockRepoConfig([]string{"LERP"}, true), "stock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	example, err := LoadRepoConfig(filepath.Join("..", "..", "lerp.example.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(stock, example) {
+		t.Error("embedded stock config differs from lerp.example.toml")
+	}
+}
+
+// The shipped example is what a new operator reads first, so it has to load
+// and validate like any other config — and its topology has to actually
+// connect.
+func TestExampleConfigIsUsable(t *testing.T) {
+	path := filepath.Join("..", "..", "lerp.example.toml")
+	c, err := LoadRepoConfig(path)
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	byStatus := map[string]Queue{}
-	for _, q := range g.Queues {
+	for _, q := range c.Queues {
 		byStatus[q.Status] = q
 	}
-	for name, q := range g.Queues {
+	for name, q := range c.Queues {
 		// A prompt that never names its ticket reaches every agent as the same
 		// anonymous instruction, and lerp would still advance the ticket.
 		if !strings.Contains(q.Prompt, "{{ticket}}") {
 			t.Errorf("queue %q prompt does not name {{ticket}}", name)
 		}
-		if _, ok := g.Runners[q.Runner]; !ok {
+		if _, ok := c.Runners[q.Runner]; !ok {
 			t.Errorf("queue %q names undefined runner %q", name, q.Runner)
 		}
 		// Failures must land somewhere no queue watches, or a ticket that fails

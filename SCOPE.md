@@ -185,8 +185,11 @@ Deferred consciously — none of these may sneak in as a subsystem:
 - Live mid-run steering of agents — eject covers grabbing the wheel;
   revisit only if usage screams, and only within the runner contract.
 - Headless `lerp run` — same loop, no TUI; wait until it hurts.
-- Per-project queue overrides in org-level config — start with one
-  global queue definition.
+- Per-operator config layered over the repo's — the checked-in
+  lerp.toml is the whole config, pipeline included, so the permissions
+  it grants are versioned and reviewed and every developer runs the
+  same pipeline. Repos share a pipeline by copying the file. A
+  personal override or merge layer is complexity waiting for a reason.
 
 ## Litmus tests
 
