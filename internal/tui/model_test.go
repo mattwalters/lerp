@@ -544,7 +544,7 @@ func TestInboxListsWhatWaits(t *testing.T) {
 	}
 }
 
-// board is a inbox list with everything the table sorts, groups, marks
+// board is an inbox list with everything the table sorts, groups, marks
 // and filters by: two projects and one ticket in none, three statuses, and
 // a chain that gives the top ticket its leverage.
 func board() loop.Event {
@@ -842,7 +842,7 @@ func TestInboxRowsCarryLeverageAndPriority(t *testing.T) {
 	}
 }
 
-// Selecting a inbox item and pressing "p" opens the promote picker in
+// Selecting an inbox item and pressing "p" opens the promote picker in
 // the main pane; choosing a status and confirming calls Promote with the
 // ticket's Linear id and the chosen status, and settles into a transient
 // note on the status bar. Cancelling touches nothing.
@@ -937,7 +937,7 @@ func TestStatusBarAndHelp(t *testing.T) {
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
 		{Ticket: "LERP-1", Title: "one"}, {Ticket: "LERP-2", Title: "two"},
 	}}})
-	if !strings.Contains(m.View(), "2 need you") {
+	if !strings.Contains(m.View(), "2 inbox") {
 		t.Fatalf("status bar does not count inbox:\n%s", m.View())
 	}
 
@@ -1284,7 +1284,7 @@ func TestRawToggleIsInTheHelpOverlay(t *testing.T) {
 }
 
 // The log keeps tailing while the operator looks elsewhere: appended output
-// gathered during a inbox detour is on screen the moment the running
+// gathered during an inbox detour is on screen the moment the running
 // panel regains focus.
 func TestLogSurvivesAFocusDetour(t *testing.T) {
 	dir := t.TempDir()
@@ -1436,7 +1436,7 @@ func TestQuitAwaitsTheInFlightPass(t *testing.T) {
 	}
 }
 
-// threeWaiting is a inbox board with room to walk: three items, three
+// threeWaiting is an inbox board with room to walk: three items, three
 // ticket IDs.
 func threeWaiting() loop.Event {
 	return loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
@@ -1504,7 +1504,7 @@ func TestTicketDetailFetchesOnceTheSelectionSettles(t *testing.T) {
 	}
 }
 
-// Done-when: selecting a inbox item shows its body and its comments in
+// Done-when: selecting an inbox item shows its body and its comments in
 // the main pane, oldest comment first, without leaving lerp.
 func TestTicketDetailShowsBodyAndComments(t *testing.T) {
 	m, _, reader := newReadingTestModel(t)

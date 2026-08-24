@@ -1994,7 +1994,7 @@ func (m model) statusBar() string {
 	left := badge + " " + heart
 	left += "  " + styleFaint.Render(fmt.Sprintf("%d/%d running", m.busyLanes(), m.o.Lanes))
 	if len(m.attention) > 0 {
-		left += "  " + styleAttention.Render(fmt.Sprintf("● %d need you", len(m.attention)))
+		left += "  " + styleAttention.Render(fmt.Sprintf("● %d inbox", len(m.attention)))
 	}
 	right := styleFaint.Render("? help · q quit")
 	if m.promoting {
