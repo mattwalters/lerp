@@ -26,7 +26,7 @@ type keymap struct {
 
 func newKeymap() keymap {
 	return keymap{
-		Attention: key.NewBinding(key.WithKeys("1"), key.WithHelp("1", "needs you")),
+		Attention: key.NewBinding(key.WithKeys("1"), key.WithHelp("1", "inbox")),
 		Work:      key.NewBinding(key.WithKeys("2"), key.WithHelp("2", "work")),
 		NextPanel: key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next panel")),
 		PrevPanel: key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "prev panel")),
@@ -37,7 +37,7 @@ func newKeymap() keymap {
 		Top:       key.NewBinding(key.WithKeys("home", "g"), key.WithHelp("home/g", "top")),
 		Bottom:    key.NewBinding(key.WithKeys("end", "G"), key.WithHelp("end/G", "follow")),
 		Promote:   key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "promote")),
-		Sort:      key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort needs you")),
+		Sort:      key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort inbox")),
 		Project:   key.NewBinding(key.WithKeys("P"), key.WithHelp("P", "filter by project")),
 		Open:      key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "open in Linear")),
 		Raw:       key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "raw log")),

@@ -927,7 +927,7 @@ func TestStatusRelevanceIsDerivedFromTheQueues(t *testing.T) {
 
 // A failed run's on_failure move lands the ticket — still claimed — in a
 // status no queue serves; the next pass surfaces it in attention, marked as
-// somewhere a run failed. Neither half of needs-you needs machinery of its
+// somewhere a run failed. Neither half of the inbox needs machinery of its
 // own.
 func TestFailedRunLandsInAttention(t *testing.T) {
 	h := newHarness(t, 1, func(context.Context, run.Invocation) (run.Result, error) {
@@ -1075,7 +1075,7 @@ func TestReconcilerIssueDetail(t *testing.T) {
 }
 
 // The pane\'s read is issued on selection, never by a pass: a board full of
-// needs-you items must cost the same queries it always did.
+// inbox items must cost the same queries it always did.
 func TestPassNeverReadsTicketDetail(t *testing.T) {
 	fake := linear.NewFake()
 	client := &countingDetailClient{Client: fake}

@@ -108,7 +108,7 @@ func newPromoteTestModel(t *testing.T, lanes int, statuses []string) (model, *co
 }
 
 // newReadingTestModel is newTestModel plus the recording reader, for tests
-// that drive the needs-you pane's read of the selected ticket.
+// that drive the inbox pane's read of the selected ticket.
 func newReadingTestModel(t *testing.T) (model, chan loop.Event, *recordingReader) {
 	t.Helper()
 	reader := &recordingReader{}
@@ -167,7 +167,7 @@ func keyMsg(s string) tea.KeyMsg {
 func TestWorkPanelShowsTheRunLifecycle(t *testing.T) {
 	m, _, _ := newTestModel(t, 2)
 	view := m.View()
-	for _, want := range []string{"needs you", "work", "q quit"} {
+	for _, want := range []string{"inbox", "work", "q quit"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("initial view is missing %q:\n%s", want, view)
 		}
@@ -270,10 +270,10 @@ func TestFocusSwitching(t *testing.T) {
 	}
 	m = update(t, m, keyMsg("1"))
 	if m.focus != panelAttention {
-		t.Fatalf("key 1 focused %v, want needs you", m.focus)
+		t.Fatalf("key 1 focused %v, want inbox", m.focus)
 	}
 	if !strings.Contains(m.View(), "reading the board") {
-		t.Fatalf("needs-you lens before the first pass missing its state text:\n%s", m.View())
+		t.Fatalf("inbox lens before the first pass missing its state text:\n%s", m.View())
 	}
 	m = update(t, m, keyMsg("3"))
 	if m.focus != panelAttention {
@@ -285,7 +285,7 @@ func TestFocusSwitching(t *testing.T) {
 	}
 	m = update(t, m, keyMsg("tab"))
 	if m.focus != panelAttention {
-		t.Fatalf("tab from work landed on %v, want needs you", m.focus)
+		t.Fatalf("tab from work landed on %v, want inbox", m.focus)
 	}
 }
 
@@ -501,11 +501,11 @@ func TestWorkPanelCapsToItsPanel(t *testing.T) {
 	}
 }
 
-// The needs-you panel folds attention events; its lens shows the loop's
+// The inbox panel folds attention events; its lens shows the loop's
 // reason and Linear's URL for the selected item. The empty state is the goal
 // state — but never claimed before the first pass has reported, and it says
 // what would make items appear.
-func TestNeedsYouListsWhatWaits(t *testing.T) {
+func TestInboxListsWhatWaits(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, keyMsg("1"))
 
@@ -526,7 +526,7 @@ func TestNeedsYouListsWhatWaits(t *testing.T) {
 		"https://linear.app/acme/issue/LERP-42/fix",
 	} {
 		if !strings.Contains(view, want) {
-			t.Fatalf("needs-you view is missing %q:\n%s", want, view)
+			t.Fatalf("inbox view is missing %q:\n%s", want, view)
 		}
 	}
 
@@ -534,17 +534,17 @@ func TestNeedsYouListsWhatWaits(t *testing.T) {
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention}})
 	view = m.View()
 	if !strings.Contains(view, "nothing needs you") {
-		t.Fatalf("empty needs-you list does not read as the goal state:\n%s", view)
+		t.Fatalf("empty inbox list does not read as the goal state:\n%s", view)
 	}
 	if !strings.Contains(view, "shows unclaimed tickets") {
-		t.Fatalf("empty needs-you lens does not explain what would make items appear:\n%s", view)
+		t.Fatalf("empty inbox lens does not explain what would make items appear:\n%s", view)
 	}
 	if strings.Contains(view, "LERP-42") {
 		t.Fatalf("cleared item still rendered:\n%s", view)
 	}
 }
 
-// board is a needs-you list with everything the table sorts, groups, marks
+// board is a inbox list with everything the table sorts, groups, marks
 // and filters by: two projects and one ticket in none, three statuses, and
 // a chain that gives the top ticket its leverage.
 func board() loop.Event {
@@ -601,7 +601,7 @@ func order(panel string, tickets ...string) []string {
 // rests, and a status the configured pipeline never names is marked as one
 // — the fingerprint of a ticket that left the pipeline, readable without
 // selecting the row.
-func TestNeedsYouRowsCarryTheRealStatus(t *testing.T) {
+func TestInboxRowsCarryTheRealStatus(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: board()})
@@ -615,7 +615,7 @@ func TestNeedsYouRowsCarryTheRealStatus(t *testing.T) {
 	}
 	for _, want := range []string{"Needs Attention", "Backlog", "In Review"} {
 		if !strings.Contains(panel, want) {
-			t.Fatalf("needs-you panel is missing the status %q:\n%s", want, panel)
+			t.Fatalf("inbox panel is missing the status %q:\n%s", want, panel)
 		}
 	}
 	// Backlog is named by no queue and by no on_success or on_failure
@@ -644,7 +644,7 @@ func TestNeedsYouRowsCarryTheRealStatus(t *testing.T) {
 // Done-when: four sort modes cycle on one key, the two grouped ones draw
 // headers and the two flat ones do not, and the panel title says which is
 // in force. Sorting is the only grouping control there is.
-func TestNeedsYouSortModesCycle(t *testing.T) {
+func TestInboxSortModesCycle(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: board()})
@@ -730,7 +730,7 @@ func TestSortKeepsTheSelectedTicket(t *testing.T) {
 // Done-when: one key scopes the panel to a single project and cycles back
 // to all, and a pass that no longer has the scoped project resets the
 // filter rather than leaving the panel hidden behind a stale choice.
-func TestNeedsYouProjectFilter(t *testing.T) {
+func TestInboxProjectFilter(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: board()})
@@ -784,7 +784,7 @@ func TestNeedsYouProjectFilter(t *testing.T) {
 // itself, without selecting it — and the columns elide from the right, so a
 // narrow panel truncates the title first, then drops the project, and never
 // costs the identifier, the leverage or the status.
-func TestNeedsYouRowsCarryLeverageAndPriority(t *testing.T) {
+func TestInboxRowsCarryLeverageAndPriority(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
@@ -798,7 +798,7 @@ func TestNeedsYouRowsCarryLeverageAndPriority(t *testing.T) {
 	panel := m.attentionPanel(70, 8)
 	for _, want := range []string{"↓3", "↓0", "⊘", "High", "Urgent", "Medium"} {
 		if !strings.Contains(panel, want) {
-			t.Fatalf("needs-you row is missing %q:\n%s", want, panel)
+			t.Fatalf("inbox row is missing %q:\n%s", want, panel)
 		}
 	}
 	// The selection sits on the first row, so the second row's Urgent and
@@ -842,7 +842,7 @@ func TestNeedsYouRowsCarryLeverageAndPriority(t *testing.T) {
 	}
 }
 
-// Selecting a needs-you item and pressing "p" opens the promote picker in
+// Selecting a inbox item and pressing "p" opens the promote picker in
 // the main pane; choosing a status and confirming calls Promote with the
 // ticket's Linear id and the chosen status, and settles into a transient
 // note on the status bar. Cancelling touches nothing.
@@ -901,7 +901,7 @@ func TestPromotePicker(t *testing.T) {
 	}
 }
 
-// A pass that reports the promoted ticket gone (it moved out of needs-you)
+// A pass that reports the promoted ticket gone (it moved out of inbox)
 // while the picker is still open must not leave a dangling selection.
 func TestPromotePickerClosesWhenTheListEmpties(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
@@ -938,7 +938,7 @@ func TestStatusBarAndHelp(t *testing.T) {
 		{Ticket: "LERP-1", Title: "one"}, {Ticket: "LERP-2", Title: "two"},
 	}}})
 	if !strings.Contains(m.View(), "2 need you") {
-		t.Fatalf("status bar does not count needs-you:\n%s", m.View())
+		t.Fatalf("status bar does not count inbox:\n%s", m.View())
 	}
 
 	m = update(t, m, keyMsg("?"))
@@ -952,7 +952,7 @@ func TestStatusBarAndHelp(t *testing.T) {
 	}
 }
 
-// fillBoard puts n items in needs-you and n tickets in one queue, so every
+// fillBoard puts n items in inbox and n tickets in one queue, so every
 // panel has more rows than a small window can hold.
 func fillBoard(t *testing.T, m model, n int) model {
 	t.Helper()
@@ -971,7 +971,7 @@ func fillBoard(t *testing.T, m model, n int) model {
 }
 
 // Every panel asks for the rows it will render and the focused one absorbs
-// the slack: with 15 items waiting and every queue empty, needs-you gets the
+// the slack: with 15 items waiting and every queue empty, inbox gets the
 // whole column and renders all 15. Moving focus moves the space — there is
 // no expand key, only focus.
 func TestFocusedPanelTakesTheSlack(t *testing.T) {
@@ -1001,20 +1001,20 @@ func TestFocusedPanelTakesTheSlack(t *testing.T) {
 	view := m.View()
 	for i := 1; i <= 15; i++ {
 		if !strings.Contains(view, fmt.Sprintf("LERP-%d ", i)) {
-			t.Fatalf("needs-you dropped LERP-%d with a column to spare:\n%s", i, view)
+			t.Fatalf("inbox dropped LERP-%d with a column to spare:\n%s", i, view)
 		}
 	}
 	if strings.Contains(view, "more") {
-		t.Fatalf("needs-you cut its list with room left over:\n%s", view)
+		t.Fatalf("inbox cut its list with room left over:\n%s", view)
 	}
 
-	// Focus moves, and the slack moves with it: needs-you falls back to the
+	// Focus moves, and the slack moves with it: inbox falls back to the
 	// rows it renders, work takes what is left.
 	m = update(t, m, keyMsg("2"))
 	g2 := m.geometry()
 	rows, _ := m.attentionRows(g2.sideW - 2)
 	if g2.attnH != len(rows)+2 {
-		t.Fatalf("unfocused needs-you is %d lines for %d rows", g2.attnH, len(rows))
+		t.Fatalf("unfocused inbox is %d lines for %d rows", g2.attnH, len(rows))
 	}
 	if g2.workH <= g.workH || g2.workH != g.bodyH-g2.attnH {
 		t.Fatalf("work did not take the slack on focus: %d lines", g2.workH)
@@ -1072,7 +1072,7 @@ func TestOverflowSqueezesTheUnfocusedPanelFirst(t *testing.T) {
 		t.Fatalf("the unfocused panel is not at the floor: %d lines", g.workH)
 	}
 	if want := g.bodyH - panelFloor; g.attnH != want {
-		t.Fatalf("focused needs-you is %d lines, want %d", g.attnH, want)
+		t.Fatalf("focused inbox is %d lines, want %d", g.attnH, want)
 	}
 	if lines := strings.Count(m.View(), "\n") + 1; lines > 24 {
 		t.Fatalf("view is %d lines tall in a 24-line window", lines)
@@ -1082,7 +1082,7 @@ func TestOverflowSqueezesTheUnfocusedPanelFirst(t *testing.T) {
 	m = update(t, m, keyMsg("2"))
 	g = m.geometry()
 	if g.attnH != panelFloor || g.workH != g.bodyH-panelFloor {
-		t.Fatalf("focus did not move the squeeze: needs-you %d, work %d", g.attnH, g.workH)
+		t.Fatalf("focus did not move the squeeze: inbox %d, work %d", g.attnH, g.workH)
 	}
 }
 
@@ -1284,7 +1284,7 @@ func TestRawToggleIsInTheHelpOverlay(t *testing.T) {
 }
 
 // The log keeps tailing while the operator looks elsewhere: appended output
-// gathered during a needs-you detour is on screen the moment the running
+// gathered during a inbox detour is on screen the moment the running
 // panel regains focus.
 func TestLogSurvivesAFocusDetour(t *testing.T) {
 	dir := t.TempDir()
@@ -1296,7 +1296,7 @@ func TestLogSurvivesAFocusDetour(t *testing.T) {
 		Ticket: "LERP-1", Queue: "plan", LogPath: one}})
 	m = update(t, m, keyMsg("1"))
 	if strings.Contains(m.View(), "first line") {
-		t.Fatalf("needs-you lens still shows the log:\n%s", m.View())
+		t.Fatalf("inbox lens still shows the log:\n%s", m.View())
 	}
 
 	f, err := os.OpenFile(one, os.O_APPEND|os.O_WRONLY, 0)
@@ -1436,7 +1436,7 @@ func TestQuitAwaitsTheInFlightPass(t *testing.T) {
 	}
 }
 
-// threeWaiting is a needs-you board with room to walk: three items, three
+// threeWaiting is a inbox board with room to walk: three items, three
 // ticket IDs.
 func threeWaiting() loop.Event {
 	return loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
@@ -1504,7 +1504,7 @@ func TestTicketDetailFetchesOnceTheSelectionSettles(t *testing.T) {
 	}
 }
 
-// Done-when: selecting a needs-you item shows its body and its comments in
+// Done-when: selecting a inbox item shows its body and its comments in
 // the main pane, oldest comment first, without leaving lerp.
 func TestTicketDetailShowsBodyAndComments(t *testing.T) {
 	m, _, reader := newReadingTestModel(t)
@@ -1602,7 +1602,7 @@ func TestTicketDetailRendersHostileBodyInert(t *testing.T) {
 	}, nil, reader)
 
 	view := m.View()
-	escapeFree(t, "needs-you detail", view)
+	escapeFree(t, "inbox detail", view)
 	if !strings.Contains(view, "blocked by LERP-36") || strings.Contains(view, "<issue") {
 		t.Fatalf("issue tags did not reduce to identifiers:\n%s", view)
 	}

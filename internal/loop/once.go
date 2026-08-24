@@ -187,7 +187,7 @@ func statusRelevance(repo *config.RepoConfig) func(string) StatusRelevance {
 // status is stranded there permanently: no later pass can pick it up, and
 // nothing reports an error. Coming to rest in a status no queue serves keeps
 // the claim on purpose, because that is what parks the ticket on the operator
-// in the needs-you view.
+// in the inbox view.
 func conclude(ctx context.Context, client linear.Client, issue linear.Issue, queue config.Queue, repo *config.RepoConfig, exitCode int, log io.Writer) (string, error) {
 	target, rule := queue.OnFailure, "on_failure"
 	if exitCode == 0 {

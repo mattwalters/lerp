@@ -85,7 +85,7 @@ type QueueSnapshot struct {
 
 // StatusRelevance is what the configured pipeline says about the status a
 // waiting ticket rests in, derived from lerp.toml and nothing else. It is
-// the needs-you table's status ordering, and the reason a ticket that left
+// the inbox table's status ordering, and the reason a ticket that left
 // the pipeline is worth marking on sight.
 type StatusRelevance int
 
@@ -112,7 +112,7 @@ const (
 	StatusOther
 )
 
-// Note is the short phrase the needs-you table prints beside a status
+// Note is the short phrase the inbox table prints beside a status
 // header, so an ordering derived from config still explains itself.
 func (r StatusRelevance) Note() string {
 	switch r {
@@ -340,7 +340,7 @@ const AttentionDefinition = "unclaimed tickets, and your claimed tickets, sittin
 // From one Linear read that state is indistinguishable from a live run
 // under the same user on another machine, so v0 leaves it to the log line
 // conclude writes. This is a reading of the board plus a place to route
-// from, not a general inbox; resist growing it further.
+// from, not a general notification feed; resist growing it further.
 //
 // A pass that could not list every team emits nothing: the failure is
 // reported and the subscriber keeps its last full list, because a partial
@@ -480,7 +480,7 @@ func (r *Reconciler) Promote(ctx context.Context, ticketID, status string) error
 }
 
 // IssueDetail reads the selected ticket's body and its comments for the
-// TUI's needs-you pane — the read SCOPE's "not a Linear client" bullet
+// TUI's inbox pane — the read SCOPE's "not a Linear client" bullet
 // licenses. Like Promote it is a passthrough to the client, touching no
 // lane, claim, or evidence; unlike Promote it writes nothing at all.
 // Nothing in a pass calls it: attention() lists boards, and a per-ticket

@@ -303,7 +303,7 @@ lerp does not recognize is shown exactly as it was written, with no
 configuration, and `r` toggles the pane back to the runner's raw
 output — the log on disk is untouched either way. The list is
 read-only; to change what runs next, move tickets in Linear. The
-Needs-you view lists what waits on a
+Inbox lists what waits on a
 human: unclaimed tickets, and the operator's own claimed tickets,
 sitting in a status no queue serves. It is a table, one row per
 ticket, carrying the identifier, the leverage, the title, the real
@@ -331,7 +331,7 @@ queue statuses or a pipeline exit, and lerp moves it there. That
 MoveIssue is the only write any view makes; everything else about a
 ticket still happens in Linear. Keys: `1`/`2` choose a panel and
 `tab` cycles. `↑`/`↓` pick a row, `s` sorts
-needs-you and `P` scopes it to a project, `o` opens the selected ticket
+the inbox and `P` scopes it to a project, `o` opens the selected ticket
 in Linear, `pgup`/`pgdn` scroll the log or the ticket, `end` resumes
 following, `r` shows the raw log, `q` quits (or backs out of the
 promote picker).
@@ -403,7 +403,7 @@ run it:
 opens it, and the reconciling loop of the mental model — N lanes,
 adopting live runs, reaping dead ones, repairing drift — is real,
 running behavior while it is open (see [Running](#running)). Both
-panels are built, and needs-you's promote is the TUI's one write
+panels are built, and the inbox's promote is the TUI's one write
 action. `lerp once` is the single-shot alternative: one ticket through
 its queue, no loop, no evidence store. Beyond those, `lerp version`
 and `lerp init` complete the surface.

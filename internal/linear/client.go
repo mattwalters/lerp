@@ -37,12 +37,12 @@ type Issue struct {
 	Priority int
 	// Project is the name of Linear's own project for the issue, empty when
 	// it has none. Carried for the same reason as Priority and acted on as
-	// little: it is the needs-you table's project column, and the one field
+	// little: it is the inbox table's project column, and the one field
 	// its project filter matches.
 	Project string
 }
 
-// IssueDetail is one ticket as the needs-you pane reads it: the body the
+// IssueDetail is one ticket as the inbox pane reads it: the body the
 // operator has to judge, and the comments on it — which, by SCOPE.md
 // invariant 7, are lerp's own stage-boundary artifacts (the plan, the
 // review verdict, the escalation note that parked the ticket).
@@ -64,7 +64,7 @@ type Comment struct {
 // interface and tested against Fake.
 type Client interface {
 	ListIssues(ctx context.Context, teamKey, statusName string) ([]Issue, error)
-	// ListAssignedIssues is half of the needs-you view's read: the
+	// ListAssignedIssues is half of the inbox view's read: the
 	// operator's own claimed tickets, in any workflow state, of which the
 	// view keeps the ones resting outside every queue status. Completed and
 	// canceled issues are excluded; they wait on nobody.
@@ -80,7 +80,7 @@ type Client interface {
 	TeamStates(ctx context.Context, teamKey string) ([]string, error)
 	GetIssue(ctx context.Context, issueID string) (Issue, error)
 	// GetIssueDetail reads one issue's body and its comments — the read
-	// SCOPE.md's "not a Linear client" bullet licenses for the needs-you
+	// SCOPE.md's "not a Linear client" bullet licenses for the inbox
 	// pane. Read-only, and only for the ticket the operator selected; no
 	// pass calls it, the TUI issues it on selection.
 	GetIssueDetail(ctx context.Context, issueID string) (IssueDetail, error)
