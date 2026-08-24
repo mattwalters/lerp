@@ -117,23 +117,28 @@ work items of its own.
 **4. Run it.**
 
 ```sh
-LINEAR_API_KEY=... lerp once
+LINEAR_API_KEY=... lerp
 ```
 
-`lerp once` runs one eligible ticket through its queue and exits:
-it claims the ticket by assigning it to your Linear user, provisions a
-disposable workspace (the stock config uses a git worktree), runs the
-queue's agent to exit, and applies the queue's move rule — `on_success`
-on a clean exit, `on_failure` otherwise, and only if the agent didn't
-move the ticket itself. The agent's full stream goes to a log file,
-whose path is printed when the run finishes; its workspace and log live
-under a temporary directory.
+Bare `lerp` opens the TUI, and the loop runs while it is open: each
+pass claims eligible tickets — assigning one to your Linear user is
+the claim — provisions a disposable workspace per lane (the stock
+config uses a git worktree), runs the queue's agent to exit, and
+applies the queue's move rule: `on_success` on a clean exit,
+`on_failure` otherwise, and only if the agent didn't move the ticket
+itself. [Running](#running) describes the interface.
+
+For scripts, or to watch a single run at ground level, `lerp once`
+runs one eligible ticket through the same claim → provision → run →
+move sequence and exits. It predates the loop's evidence store: its
+workspace and agent log live under a temporary directory instead, and
+the log's path is printed when the run finishes.
 
 A finished run leaves the ticket assigned to you. The assignment is
 the claim, and a claimed ticket is someone else's work as far as lerp
 is concerned — even when the someone is you. So to carry the ticket
-through its next stage: unassign it in Linear, then run `lerp once`
-again.
+through its next stage: unassign it in Linear. The loop picks it up
+again on its next pass; with `lerp once`, run the command again.
 
 ## Configuration
 
@@ -245,6 +250,37 @@ If provisioning fails, lerp leaves the ticket untouched and does not start
 the runner. A disposal failure is recorded in the lane log but never keeps a
 lane occupied.
 
+## Running
+
+```sh
+LINEAR_API_KEY=... lerp
+```
+
+`lerp` opens the TUI, and the TUI is the engine: the loop runs while it
+is open, and there is no daemon. Each pass reads the run evidence on
+disk, adopts live agents a previous lerp left behind, reaps dead ones —
+disposing the workspace and releasing the claim, when the board still
+looks exactly as the dead run left it — and starts eligible tickets
+into free lanes. `-lanes N` caps how many agents run at once (default
+3). The TUI needs a terminal: in a pipe or a script, `lerp` prints
+usage and exits 2 rather than quietly starting to claim tickets.
+
+The Board view shows one row per lane — ticket, queue, and runner
+state: provisioning, running, or adopted, each with the run's elapsed
+time (an adopted run shows its true age, not the moment it was
+adopted) — and a live tail of the selected lane's log, with
+scrollback that survives the run's exit. Keys: `1`/`2`/`3` choose a
+view and `tab` cycles — the Attention and Queue views are empty shells
+until their own tickets (LERP-13, LERP-12) land. `↑`/`↓` pick a lane,
+`pgup`/`pgdn` scroll the log, `end` resumes following, `q` quits.
+
+Quitting (`q` or `ctrl+c`) closes the screen, stops future passes, and
+waits briefly for a pass already in flight to settle. The agents are
+never touched: they are their own processes, with run evidence on
+disk, and the next `lerp` adopts them. An advisory lock keeps it to
+one loop per clone, and the loop's own diagnostics — provision,
+dispose, adopt, reap — append to `.lerp/loop.log`.
+
 ## Stock pipeline
 
 [lerp.example.toml](lerp.example.toml) ships one opinion. Lerp holds
@@ -283,40 +319,45 @@ run it:
 
 ## How it behaves
 
-**What ships today?** Three commands: `lerp version`, `lerp init`, and
-`lerp once`. The reconciling loop of the mental model — N lanes,
-adopting live runs, reaping dead ones, repairing drift — is the design
-[SCOPE.md](SCOPE.md) commits to and the codebase implements, but no
-shipped command drives it yet; it arrives with the TUI (LERP-11).
-Until then, `lerp once` is the only way to run a ticket.
+**What ships today?** The TUI is the way to run the loop: bare `lerp`
+opens it, and the reconciling loop of the mental model — N lanes,
+adopting live runs, reaping dead ones, repairing drift — is real,
+running behavior while it is open (see [Running](#running)). Of the
+TUI's three views only the Board is built so far. `lerp once` is the
+single-shot alternative: one ticket through its queue, no loop, no
+evidence store. Beyond those, `lerp version` and `lerp init` complete
+the surface.
 
 **Where does state live?** In Linear — that is the first sentence of
-the model, and [SCOPE.md](SCOPE.md) invariant 1 holds it. Locally the
-design keeps exactly two things: `lerp.toml` (config, checked in) and
-an evidence store, `.lerp/` at the repo root — one record per run
-under `.lerp/runs` (pid, log file, ticket, workspace path), workspaces
-under `.lerp/workspaces`, and an advisory lock at `.lerp/lock` that
-keeps it to one loop per clone. Local state is evidence, never truth:
-losing all of it may cost compute, never correctness. None of `.lerp/`
-is driven by a shipped command yet — today `lerp once` keeps its
-workspace and log under a temporary directory instead.
+the model, and [SCOPE.md](SCOPE.md) invariant 1 holds it. Locally lerp
+keeps exactly two things: `lerp.toml` (config, checked in) and an
+evidence store, `.lerp/` at the repo root — one record per run under
+`.lerp/runs` (pid, log file, ticket, workspace path), workspaces under
+`.lerp/workspaces`, an advisory lock at `.lerp/lock` that keeps it to
+one loop per clone, and the loop's diagnostics in `.lerp/loop.log`.
+Local state is evidence, never truth: losing all of it may cost
+compute, never correctness. `lerp once` predates the store and keeps
+its workspace and log under a temporary directory instead.
 
 **What happens on crash or kill?** Every queue run is safe to kill and
 restart from its beginning: progress is checkpointed only at queue
 boundaries, as artifacts in Linear — a plan comment, a PR link — so
 the worst case is a re-run stage, never a lost ticket
-([SCOPE.md](SCOPE.md) invariants 3 and 4 carry the full argument). One
-caveat while the interface is young: a `lerp once` killed mid-run
-leaves the ticket assigned, so unassign it in Linear yourself to make
-it eligible again.
+([SCOPE.md](SCOPE.md) invariants 3 and 4 carry the full argument).
+That includes killing lerp itself: agents outlive it, and the next
+`lerp` adopts the live ones and reaps the dead — releasing a dead
+run's claim so its ticket becomes eligible again. One caveat: a `lerp
+once` killed mid-run has no evidence for a later loop to reap, so it
+leaves the ticket assigned — unassign it in Linear yourself to make it
+eligible again.
 
 **Why isn't my ticket being picked up?** Check the three eligibility
 conditions from step 3 of [Getting started](#getting-started): a
 queue's status, no assignee, not blocked. The one that surprises
 people is the assignee — the assignment is the claim, so a ticket
 assigned to anyone, including you, is someone else's work as far as
-lerp is concerned. A finished `lerp once` leaves the ticket assigned
-to you on purpose (see step 4).
+lerp is concerned. A finished run leaves the ticket assigned to you on
+purpose (see step 4).
 
 **Why does init tell me to set a status's category myself?** Statuses
 lerp creates are always in-progress (Linear's "started" category), and
