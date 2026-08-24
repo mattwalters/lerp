@@ -18,6 +18,7 @@ type keymap struct {
 	Bottom    key.Binding
 	Promote   key.Binding
 	Open      key.Binding
+	Raw       key.Binding
 	Help      key.Binding
 	Quit      key.Binding
 }
@@ -37,6 +38,7 @@ func newKeymap() keymap {
 		Bottom:    key.NewBinding(key.WithKeys("end", "G"), key.WithHelp("end/G", "follow")),
 		Promote:   key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "promote")),
 		Open:      key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "open in Linear")),
+		Raw:       key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "raw log")),
 		Help:      key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 		Quit:      key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
 	}
@@ -52,6 +54,6 @@ func (k keymap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Attention, k.Lanes, k.UpNext, k.NextPanel, k.PrevPanel},
 		{k.Up, k.Down, k.PageUp, k.PageDown, k.Top, k.Bottom},
-		{k.Promote, k.Open, k.Help, k.Quit},
+		{k.Promote, k.Open, k.Raw, k.Help, k.Quit},
 	}
 }
