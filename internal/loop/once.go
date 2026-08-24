@@ -29,7 +29,6 @@ type DisposeFunc func(context.Context, string, string, workspace.Identity, io.Wr
 // record implementation, not this vertical slice.
 type OnceOptions struct {
 	Client       linear.Client
-	Global       *config.Global
 	Repo         *config.RepoConfig
 	RepoDir      string
 	Lane         int
@@ -65,7 +64,7 @@ func Once(ctx context.Context, o OnceOptions) (bool, error) {
 		o.Dispose = workspace.Dispose
 	}
 
-	issue, queue, found, err := next(ctx, o.Client, o.Global, o.Repo.Teams)
+	issue, queue, found, err := next(ctx, o.Client, o.Repo)
 	if err != nil || !found {
 		return false, err
 	}
@@ -136,7 +135,7 @@ func Once(ctx context.Context, o OnceOptions) (bool, error) {
 	}
 
 	result, err := o.Execute(ctx, run.Invocation{
-		Runner:  o.Global.Runners[queue.Runner],
+		Runner:  o.Repo.Runners[queue.Runner],
 		Prompt:  queue.Prompt,
 		Ticket:  issue.Identifier,
 		Workdir: workdir,
@@ -180,8 +179,6 @@ func (o OnceOptions) validate() error {
 	switch {
 	case o.Client == nil:
 		return fmt.Errorf("once: client is required")
-	case o.Global == nil:
-		return fmt.Errorf("once: global config is required")
 	case o.Repo == nil:
 		return fmt.Errorf("once: repo config is required")
 	case o.RepoDir == "":
@@ -196,15 +193,15 @@ func (o OnceOptions) validate() error {
 	return nil
 }
 
-func next(ctx context.Context, client linear.Client, global *config.Global, teams []string) (linear.Issue, config.Queue, bool, error) {
-	queueNames := make([]string, 0, len(global.Queues))
-	for name := range global.Queues {
+func next(ctx context.Context, client linear.Client, repo *config.RepoConfig) (linear.Issue, config.Queue, bool, error) {
+	queueNames := make([]string, 0, len(repo.Queues))
+	for name := range repo.Queues {
 		queueNames = append(queueNames, name)
 	}
 	sort.Strings(queueNames)
-	for _, team := range teams {
+	for _, team := range repo.Teams {
 		for _, name := range queueNames {
-			queue := global.Queues[name]
+			queue := repo.Queues[name]
 			issues, err := client.ListIssues(ctx, team, queue.Status)
 			if err != nil {
 				return linear.Issue{}, config.Queue{}, false, fmt.Errorf("list %s queue for team %s: %w", queue.Status, team, err)

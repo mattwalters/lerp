@@ -8,9 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 
-	"github.com/BurntSushi/toml"
 	"github.com/mattwalters/lerp/internal/config"
 	"github.com/mattwalters/lerp/internal/linear"
 )
@@ -21,23 +19,92 @@ type Board interface {
 	EnsureWorkflowStates(ctx context.Context, teamKey string, states []linear.StateSpec) error
 }
 
-// Init creates the missing board statuses required by global, then creates a
-// repo config at repoRoot. Repeating it verifies the existing config rather
-// than replacing a user's choices.
-func Init(ctx context.Context, board Board, global *config.Global, repoRoot, teamKey, teamName string) error {
+// Init creates the board structure this repo's config requires, writing the
+// stock config first when the repo has none. Repeating it verifies the
+// existing config rather than replacing a user's choices.
+//
+// When lerp.toml is absent, confirmBypass is consulted exactly once: it
+// decides whether the stock runner keeps its bypassPermissions grant (nil
+// declines). The file is written only after the board calls succeed, so a
+// failed init leaves nothing behind; created reports whether this invocation
+// wrote it. The file lands uncommitted in the working tree, where the grant
+// is reviewed and checked in like any other code.
+func Init(ctx context.Context, board Board, repoRoot, teamKey, teamName string, confirmBypass func() bool) (created bool, err error) {
 	if teamKey == "" {
-		return fmt.Errorf("team key must not be empty")
+		return false, fmt.Errorf("team key must not be empty")
 	}
 	if teamName == "" {
 		teamName = teamKey
 	}
+	path := filepath.Join(repoRoot, config.RepoConfigFile)
+	cfg, stock, err := planRepoConfig(path, teamKey, confirmBypass)
+	if err != nil {
+		return false, err
+	}
 	if err := board.EnsureTeam(ctx, teamKey, teamName); err != nil {
-		return fmt.Errorf("ensure team %q: %w", teamKey, err)
+		return false, fmt.Errorf("ensure team %q: %w", teamKey, err)
 	}
-	if err := board.EnsureWorkflowStates(ctx, teamKey, stateSpecs(global)); err != nil {
-		return fmt.Errorf("ensure workflow states for %q: %w", teamKey, err)
+	if err := board.EnsureWorkflowStates(ctx, teamKey, stateSpecs(cfg)); err != nil {
+		return false, fmt.Errorf("ensure workflow states for %q: %w", teamKey, err)
 	}
-	return ensureRepoConfig(filepath.Join(repoRoot, config.RepoConfigFile), teamKey)
+	if stock == "" {
+		return false, nil
+	}
+	return writeRepoConfig(path, teamKey, stock)
+}
+
+// planRepoConfig loads an existing lerp.toml and verifies it serves teamKey,
+// or renders the stock config to be written later. stock is empty when the
+// file already exists.
+func planRepoConfig(path, teamKey string, confirmBypass func() bool) (cfg *config.RepoConfig, stock string, err error) {
+	if _, err := os.Stat(path); err == nil {
+		cfg, err := loadFor(path, teamKey)
+		return cfg, "", err
+	} else if !os.IsNotExist(err) {
+		return nil, "", fmt.Errorf("check repo config: %w", err)
+	}
+	bypass := confirmBypass != nil && confirmBypass()
+	stock = config.StockRepoConfig([]string{teamKey}, bypass)
+	// Parsing what we are about to install catches a broken stock template
+	// here, not on the operator's first run.
+	cfg, err = config.ParseRepoConfig(stock, path)
+	if err != nil {
+		return nil, "", fmt.Errorf("stock repo config: %w", err)
+	}
+	return cfg, stock, nil
+}
+
+func loadFor(path, teamKey string) (*config.RepoConfig, error) {
+	c, err := config.LoadRepoConfig(path)
+	if err != nil {
+		return nil, fmt.Errorf("existing repo config: %w", err)
+	}
+	if !slices.Contains(c.Teams, teamKey) {
+		return nil, fmt.Errorf("existing repo config %s does not serve team %q", path, teamKey)
+	}
+	return c, nil
+}
+
+func writeRepoConfig(path, teamKey, stock string) (created bool, err error) {
+	// O_EXCL makes creation race-safe and, importantly, never overwrites a
+	// configuration that appeared since planRepoConfig looked.
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		if os.IsExist(err) {
+			_, err := loadFor(path, teamKey)
+			return false, err
+		}
+		return false, fmt.Errorf("create repo config: %w", err)
+	}
+	_, writeErr := f.WriteString(stock)
+	closeErr := f.Close()
+	if writeErr != nil {
+		return false, fmt.Errorf("write repo config: %w", writeErr)
+	}
+	if closeErr != nil {
+		return false, fmt.Errorf("close repo config: %w", closeErr)
+	}
+	return true, nil
 }
 
 // stateSpecs names every status the queues reference, with the category to
@@ -49,7 +116,7 @@ func Init(ctx context.Context, board Board, global *config.Global, repoRoot, tea
 // leaves the automated path, so it is "completed" — created as "started",
 // Linear would keep reporting finished tickets as blockers and every ticket
 // waiting on one would be ineligible forever (see linear.StateSpec).
-func stateSpecs(global *config.Global) []linear.StateSpec {
+func stateSpecs(cfg *config.RepoConfig) []linear.StateSpec {
 	const (
 		live = "started"
 		done = "completed"
@@ -57,15 +124,15 @@ func stateSpecs(global *config.Global) []linear.StateSpec {
 	category := map[string]string{}
 	// on_success targets first, so a status that is also a queue status or a
 	// failure route overwrites the terminal guess below.
-	for _, q := range global.Queues {
+	for _, q := range cfg.Queues {
 		category[q.OnSuccess] = done
 	}
-	for _, q := range global.Queues {
+	for _, q := range cfg.Queues {
 		if q.OnFailure != "" {
 			category[q.OnFailure] = live
 		}
 	}
-	for _, q := range global.Queues {
+	for _, q := range cfg.Queues {
 		category[q.Status] = live
 	}
 
@@ -79,47 +146,4 @@ func stateSpecs(global *config.Global) []linear.StateSpec {
 		specs = append(specs, linear.StateSpec{Name: name, Type: category[name]})
 	}
 	return specs
-}
-
-func ensureRepoConfig(path, teamKey string) error {
-	if _, err := os.Stat(path); err == nil {
-		c, err := config.LoadRepoConfig(path)
-		if err != nil {
-			return fmt.Errorf("existing repo config: %w", err)
-		}
-		if !slices.Contains(c.Teams, teamKey) {
-			return fmt.Errorf("existing repo config %s does not serve team %q", path, teamKey)
-		}
-		return nil
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("check repo config: %w", err)
-	}
-
-	c := config.RepoConfig{
-		Teams:     []string{teamKey},
-		Provision: "git worktree add --detach \"$LERP_WORKSPACE\" HEAD",
-		Dispose:   "git worktree remove --force \"$LERP_WORKSPACE\"",
-	}
-	var b strings.Builder
-	if err := toml.NewEncoder(&b).Encode(c); err != nil {
-		return fmt.Errorf("encode repo config: %w", err)
-	}
-	// O_EXCL makes creation race-safe and, importantly, never overwrites an
-	// existing checked-in configuration.
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
-	if err != nil {
-		if os.IsExist(err) {
-			return ensureRepoConfig(path, teamKey)
-		}
-		return fmt.Errorf("create repo config: %w", err)
-	}
-	_, writeErr := f.WriteString(b.String())
-	closeErr := f.Close()
-	if writeErr != nil {
-		return fmt.Errorf("write repo config: %w", writeErr)
-	}
-	if closeErr != nil {
-		return fmt.Errorf("close repo config: %w", closeErr)
-	}
-	return nil
 }

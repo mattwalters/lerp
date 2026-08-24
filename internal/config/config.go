@@ -2,11 +2,9 @@ package config
 
 import (
 	_ "embed"
-	"errors"
 	"fmt"
 	"maps"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 
@@ -17,22 +15,35 @@ import (
 // repo root.
 const RepoConfigFile = "lerp.toml"
 
-// defaultLanes is the lane count used when the global config does not
-// set one.
-const defaultLanes = 5
+// bypassFlag is the permission grant the stock Claude runner carries when the
+// operator accepts it at init. It is stripped verbatim when they decline.
+const bypassFlag = " --permission-mode bypassPermissions"
 
-// stockGlobal is the first-run configuration written by lerp init. Keep this
-// in the config package so the binary, rather than a source checkout, owns
-// the template it installs.
+// stockRepo is the first-run lerp.toml written by lerp init, rendered by
+// StockRepoConfig. Keep it in the config package so the binary, rather than a
+// source checkout, owns the template it installs.
 //
 //go:embed stock.toml
-var stockGlobal string
+var stockRepo string
 
-// Global is the operator-wide config: lanes, runners, and queues.
-type Global struct {
-	Lanes   int               `toml:"lanes"`
-	Runners map[string]Runner `toml:"runners"`
-	Queues  map[string]Queue  `toml:"queues"`
+// RepoConfig is the whole configuration, one checked-in file per repo: the
+// Linear teams this repo serves, the commands that provision and dispose lane
+// workspaces (SCOPE invariants 2 and 9), and the pipeline — runners and
+// queues (invariant 5). It lives in the repo so the pipeline and the
+// permissions it grants are versioned and reviewed like code, and so every
+// developer on a team runs the same pipeline against the same board.
+//
+// A repo config names the teams one repo serves. The other half of SCOPE
+// invariant 2 — that no two repos claim the same team — cannot be
+// checked here: loading a single repo config sees a single repo. The
+// loop verifies the full team → repo function at startup and refuses
+// to run if it doesn't hold.
+type RepoConfig struct {
+	Teams     []string          `toml:"teams"`
+	Provision string            `toml:"provision"`
+	Dispose   string            `toml:"dispose"`
+	Runners   map[string]Runner `toml:"runners"`
+	Queues    map[string]Queue  `toml:"queues"`
 }
 
 // Runner is an adapter to a coding-agent CLI. Command is a template
@@ -58,139 +69,44 @@ type Queue struct {
 	OnFailure string `toml:"on_failure"`
 }
 
-// RepoConfig is the per-repo config: the Linear teams this repo serves
-// and the commands that provision and dispose lane workspaces
-// (SCOPE invariants 2 and 9).
-//
-// A repo config names the teams one repo serves. The other half of SCOPE
-// invariant 2 — that no two repos claim the same team — cannot be
-// checked here: loading a single repo config sees a single repo. The
-// loop verifies the full team → repo function at startup and refuses
-// to run if it doesn't hold.
-type RepoConfig struct {
-	Teams     []string `toml:"teams"`
-	Provision string   `toml:"provision"`
-	Dispose   string   `toml:"dispose"`
-}
-
-// GlobalPath returns the default location of the global config file:
-// $XDG_CONFIG_HOME/lerp/config.toml, or ~/.config/lerp/config.toml
-// when XDG_CONFIG_HOME is unset.
-func GlobalPath() (string, error) {
-	if dir := os.Getenv("XDG_CONFIG_HOME"); dir != "" {
-		return filepath.Join(dir, "lerp", "config.toml"), nil
+// StockRepoConfig renders the stock lerp.toml for the given teams. bypass
+// keeps the stock runner's `--permission-mode bypassPermissions` grant;
+// declining strips the flag, leaving a runner the operator must widen
+// deliberately before unattended runs can do real work.
+func StockRepoConfig(teams []string, bypass bool) string {
+	quoted := make([]string, len(teams))
+	for i, team := range teams {
+		quoted[i] = fmt.Sprintf("%q", team)
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("locating global config: %w", err)
+	rendered := strings.ReplaceAll(stockRepo, "{{teams}}", strings.Join(quoted, ", "))
+	if !bypass {
+		rendered = strings.ReplaceAll(rendered, bypassFlag, "")
 	}
-	return filepath.Join(home, ".config", "lerp", "config.toml"), nil
-}
-
-// LoadGlobal reads and validates the global config at path.
-func LoadGlobal(path string) (*Global, error) {
-	var g Global
-	md, err := toml.DecodeFile(path, &g)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
-	}
-	if keys := md.Undecoded(); len(keys) > 0 {
-		return nil, fmt.Errorf("%s: unknown key(s): %s", path, joinKeys(keys))
-	}
-	if !md.IsDefined("lanes") {
-		g.Lanes = defaultLanes
-	}
-	if err := g.validate(path); err != nil {
-		return nil, err
-	}
-	return &g, nil
-}
-
-// LoadOrCreateGlobal loads path, creating the stock configuration when the
-// file is absent. It never replaces a file that appeared concurrently.
-func LoadOrCreateGlobal(path string) (global *Global, created bool, err error) {
-	global, err = LoadGlobal(path)
-	if !errors.Is(err, os.ErrNotExist) {
-		return global, false, err
-	}
-	created, err = WriteStockGlobal(path)
-	if err != nil {
-		return nil, false, err
-	}
-	global, err = LoadGlobal(path)
-	return global, created, err
-}
-
-// WriteStockGlobal creates path from Lerp's stock configuration. It never
-// replaces an existing file; created reports whether this invocation won the
-// creation race.
-func WriteStockGlobal(path string) (created bool, err error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return false, fmt.Errorf("create global config directory: %w", err)
-	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
-	if err != nil {
-		if os.IsExist(err) {
-			return false, nil
-		}
-		return false, fmt.Errorf("create global config: %w", err)
-	}
-	_, writeErr := f.WriteString(stockGlobal)
-	closeErr := f.Close()
-	if writeErr != nil {
-		return false, fmt.Errorf("write global config: %w", writeErr)
-	}
-	if closeErr != nil {
-		return false, fmt.Errorf("close global config: %w", closeErr)
-	}
-	return true, nil
-}
-
-func (g *Global) validate(path string) error {
-	if g.Lanes < 1 {
-		return fmt.Errorf("%s: lanes must be at least 1, got %d", path, g.Lanes)
-	}
-	for _, name := range slices.Sorted(maps.Keys(g.Runners)) {
-		if g.Runners[name].Command == "" {
-			return fmt.Errorf("%s: runner %q: command must not be empty", path, name)
-		}
-	}
-	queueByStatus := make(map[string]string)
-	for _, name := range slices.Sorted(maps.Keys(g.Queues)) {
-		q := g.Queues[name]
-		switch {
-		case q.Status == "":
-			return fmt.Errorf("%s: queue %q: status must not be empty", path, name)
-		case q.Prompt == "":
-			return fmt.Errorf("%s: queue %q: prompt must not be empty", path, name)
-		case q.Runner == "":
-			return fmt.Errorf("%s: queue %q: runner must not be empty", path, name)
-		case q.OnSuccess == "":
-			return fmt.Errorf("%s: queue %q: on_success must not be empty", path, name)
-		}
-		if _, ok := g.Runners[q.Runner]; !ok {
-			return fmt.Errorf("%s: queue %q: runner %q is not defined under [runners]", path, name, q.Runner)
-		}
-		if prev, dup := queueByStatus[q.Status]; dup {
-			return fmt.Errorf("%s: queues %q and %q both watch status %q; a status may drive at most one queue", path, prev, name, q.Status)
-		}
-		queueByStatus[q.Status] = name
-	}
-	return nil
+	return rendered
 }
 
 // LoadRepoConfig reads and validates the per-repo config file at path
 // (conventionally RepoConfigFile at the repo root).
 func LoadRepoConfig(path string) (*RepoConfig, error) {
-	var c RepoConfig
-	md, err := toml.DecodeFile(path, &c)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
-	if keys := md.Undecoded(); len(keys) > 0 {
-		return nil, fmt.Errorf("%s: unknown key(s): %s", path, joinKeys(keys))
+	return ParseRepoConfig(string(data), path)
+}
+
+// ParseRepoConfig decodes and validates repo config source; label names the
+// origin (a file path) in errors.
+func ParseRepoConfig(source, label string) (*RepoConfig, error) {
+	var c RepoConfig
+	md, err := toml.Decode(source, &c)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", label, err)
 	}
-	if err := c.validate(path); err != nil {
+	if keys := md.Undecoded(); len(keys) > 0 {
+		return nil, fmt.Errorf("%s: unknown key(s): %s", label, joinKeys(keys))
+	}
+	if err := c.validate(label); err != nil {
 		return nil, err
 	}
 	return &c, nil
@@ -215,6 +131,35 @@ func (c *RepoConfig) validate(path string) error {
 	}
 	if c.Dispose == "" {
 		return fmt.Errorf("%s: dispose must not be empty", path)
+	}
+	for _, name := range slices.Sorted(maps.Keys(c.Runners)) {
+		if c.Runners[name].Command == "" {
+			return fmt.Errorf("%s: runner %q: command must not be empty", path, name)
+		}
+	}
+	if len(c.Queues) == 0 {
+		return fmt.Errorf("%s: at least one queue is required", path)
+	}
+	queueByStatus := make(map[string]string)
+	for _, name := range slices.Sorted(maps.Keys(c.Queues)) {
+		q := c.Queues[name]
+		switch {
+		case q.Status == "":
+			return fmt.Errorf("%s: queue %q: status must not be empty", path, name)
+		case q.Prompt == "":
+			return fmt.Errorf("%s: queue %q: prompt must not be empty", path, name)
+		case q.Runner == "":
+			return fmt.Errorf("%s: queue %q: runner must not be empty", path, name)
+		case q.OnSuccess == "":
+			return fmt.Errorf("%s: queue %q: on_success must not be empty", path, name)
+		}
+		if _, ok := c.Runners[q.Runner]; !ok {
+			return fmt.Errorf("%s: queue %q: runner %q is not defined under [runners]", path, name, q.Runner)
+		}
+		if prev, dup := queueByStatus[q.Status]; dup {
+			return fmt.Errorf("%s: queues %q and %q both watch status %q; a status may drive at most one queue", path, prev, name, q.Status)
+		}
+		queueByStatus[q.Status] = name
 	}
 	return nil
 }

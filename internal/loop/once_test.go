@@ -79,9 +79,9 @@ func TestOnceFailureWithoutRouteKeepsTheClaim(t *testing.T) {
 	o := onceOptions(fake, func(context.Context, run.Invocation) (run.Result, error) {
 		return run.Result{ExitCode: 3}, nil
 	}, nil, nil)
-	queue := o.Global.Queues["todo"]
+	queue := o.Repo.Queues["todo"]
 	queue.OnFailure = ""
-	o.Global.Queues["todo"] = queue
+	o.Repo.Queues["todo"] = queue
 
 	ran, err := Once(context.Background(), o)
 	if err != nil || !ran {
@@ -207,13 +207,15 @@ func onceOptions(client linear.Client, execute ExecuteFunc, provision ProvisionF
 	}
 	return OnceOptions{
 		Client: client,
-		Global: &config.Global{
-			Runners: map[string]config.Runner{"agent": {Command: "agent"}},
+		Repo: &config.RepoConfig{
+			Teams:     []string{"LERP"},
+			Provision: "provision",
+			Dispose:   "dispose",
+			Runners:   map[string]config.Runner{"agent": {Command: "agent"}},
 			Queues: map[string]config.Queue{"todo": {
 				Status: "Todo", Prompt: "do the work", Runner: "agent", OnSuccess: "Done", OnFailure: "Needs Help",
 			}},
 		},
-		Repo:      &config.RepoConfig{Teams: []string{"LERP"}, Provision: "provision", Dispose: "dispose"},
 		RepoDir:   "/repo",
 		Lane:      1,
 		Workspace: "/work/one",

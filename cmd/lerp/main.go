@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"flag"
@@ -67,14 +68,6 @@ func once(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	globalPath, err := config.GlobalPath()
-	if err != nil {
-		return err
-	}
-	global, err := config.LoadGlobal(globalPath)
-	if err != nil {
-		return err
-	}
 	repo, err := config.LoadRepoConfig(filepath.Join(repoDir, config.RepoConfigFile))
 	if err != nil {
 		return err
@@ -90,7 +83,6 @@ func once(ctx context.Context) error {
 	var logPath string
 	ran, err := loop.Once(ctx, loop.OnceOptions{
 		Client:  linear.New(apiKey, nil),
-		Global:  global,
 		Repo:    repo,
 		RepoDir: repoDir,
 		Lane:    1,
@@ -129,26 +121,40 @@ func initCommand(args []string) {
 	if os.Getenv("LINEAR_API_KEY") == "" {
 		fatal(fmt.Errorf("lerp init: LINEAR_API_KEY is required"))
 	}
-	globalPath, err := config.GlobalPath()
-	if err != nil {
-		fatal(err)
-	}
-	global, created, err := config.LoadOrCreateGlobal(globalPath)
-	if err != nil {
-		fatal(fmt.Errorf("load global config: %w", err))
-	}
-	if created {
-		fmt.Printf("created global config at %s from Lerp's stock pipeline\n", globalPath)
-		fmt.Fprintln(os.Stderr, "review it before running agents: the stock Claude runner grants broad workspace permissions")
-	}
 	repoRoot, err := gitRoot()
 	if err != nil {
 		fatal(err)
 	}
-	if err := initcmd.Init(context.Background(), linear.New(os.Getenv("LINEAR_API_KEY"), nil), global, filepath.Clean(repoRoot), *team, *name); err != nil {
+	created, err := initcmd.Init(context.Background(), linear.New(os.Getenv("LINEAR_API_KEY"), nil), filepath.Clean(repoRoot), *team, *name, confirmBypass)
+	if err != nil {
 		fatal(fmt.Errorf("lerp init: %w", err))
 	}
+	if created {
+		fmt.Printf("wrote %s with Lerp's stock pipeline — review it and check it in\n", config.RepoConfigFile)
+	}
 	fmt.Printf("initialized %s for Linear team %s\n", repoRoot, *team)
+}
+
+// confirmBypass asks the operator whether the stock runner keeps its
+// bypassPermissions grant. Anything but an explicit yes — including EOF, so a
+// piped or scripted init — declines.
+func confirmBypass() bool {
+	fmt.Println("The stock Claude runner can include --permission-mode bypassPermissions,")
+	fmt.Println("letting agents edit files and run commands unattended with your full user")
+	fmt.Println("account. Declining writes a runner without the flag; unattended runs will")
+	fmt.Println("fail at the first tool they are not allowed to use until you widen it in")
+	fmt.Println(config.RepoConfigFile + ", in review, deliberately.")
+	fmt.Print("Include --permission-mode bypassPermissions? [y/N] ")
+	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	if err != nil && line == "" {
+		fmt.Println()
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(line)) {
+	case "y", "yes":
+		return true
+	}
+	return false
 }
 
 func gitRoot() (string, error) {
