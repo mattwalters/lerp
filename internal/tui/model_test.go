@@ -164,7 +164,7 @@ func TestQueueViewShowsWhatRunsNext(t *testing.T) {
 		"LERP-1", "ship the thing",
 		"blocked by LERP-1, LERP-9",
 		"LERP-3", "claimed",
-		"review", "In Review", "empty",
+		"review", "In Review", `empty — tickets enter when moved to "In Review"`,
 	} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("queue view is missing %q:\n%s", want, view)
@@ -180,7 +180,7 @@ func TestQueueViewShowsWhatRunsNext(t *testing.T) {
 	if strings.Contains(view, "LERP-1") {
 		t.Fatalf("stale ticket survived a refresh:\n%s", view)
 	}
-	if !strings.Contains(view, "empty") {
+	if !strings.Contains(view, `empty — tickets enter when moved to "Todo"`) {
 		t.Fatalf("emptied queue does not read empty:\n%s", view)
 	}
 }
@@ -244,6 +244,9 @@ func TestAttentionViewListsWhatWaits(t *testing.T) {
 	view = m.View()
 	if !strings.Contains(view, "nothing needs you") {
 		t.Fatalf("empty attention list does not read as the goal state:\n%s", view)
+	}
+	if !strings.Contains(view, "shows your claimed tickets sitting in statuses no queue serves") {
+		t.Fatalf("empty attention list does not explain what would make items appear:\n%s", view)
 	}
 	if strings.Contains(view, "LERP-42") {
 		t.Fatalf("cleared item still rendered:\n%s", view)
