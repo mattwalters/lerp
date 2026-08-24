@@ -2,6 +2,7 @@ package loop
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -64,12 +65,14 @@ func Once(ctx context.Context, o OnceOptions) (bool, error) {
 		o.Dispose = workspace.Dispose
 	}
 
-	cands, err := candidates(ctx, o.Client, o.Repo)
-	if err != nil {
-		return false, err
-	}
+	cands, listErr := candidates(ctx, o.Client, o.Repo)
 	if len(cands) == 0 {
-		return false, nil
+		return false, listErr
+	}
+	if listErr != nil && o.Log != nil {
+		// A ticket was found, so run it; the broken listings only narrowed
+		// the choice.
+		fmt.Fprintf(o.Log, "some queues could not be listed: %v\n", listErr)
 	}
 	issue, queue := cands[0].issue, cands[0].queue
 
@@ -184,6 +187,11 @@ type candidate struct {
 // candidates lists every eligible ticket across the repo's teams and queues,
 // in a deterministic order: configured team order, then queue name, then
 // whatever order Linear lists issues in.
+//
+// A listing that fails does not discard the rest: the tickets that were
+// listed are returned alongside the joined errors, so one broken queue cannot
+// starve every lane while the outage lasts. Callers act on what was found and
+// report the error.
 func candidates(ctx context.Context, client linear.Client, repo *config.RepoConfig) ([]candidate, error) {
 	queueNames := make([]string, 0, len(repo.Queues))
 	for name := range repo.Queues {
@@ -191,12 +199,14 @@ func candidates(ctx context.Context, client linear.Client, repo *config.RepoConf
 	}
 	sort.Strings(queueNames)
 	var cands []candidate
+	var errs []error
 	for _, team := range repo.Teams {
 		for _, name := range queueNames {
 			queue := repo.Queues[name]
 			issues, err := client.ListIssues(ctx, team, queue.Status)
 			if err != nil {
-				return nil, fmt.Errorf("list %s queue for team %s: %w", queue.Status, team, err)
+				errs = append(errs, fmt.Errorf("list %s queue for team %s: %w", queue.Status, team, err))
+				continue
 			}
 			for _, issue := range issues {
 				if Eligible(issue, map[string]bool{queue.Status: true}) {
@@ -205,5 +215,5 @@ func candidates(ctx context.Context, client linear.Client, repo *config.RepoConf
 			}
 		}
 	}
-	return cands, nil
+	return cands, errors.Join(errs...)
 }

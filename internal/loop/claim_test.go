@@ -13,12 +13,15 @@ func TestClaimWin(t *testing.T) {
 	f.SetViewer("me")
 	f.AddIssue("LERP", linear.Issue{ID: "iss-1", Identifier: "LERP-1", Status: "Todo"})
 
-	won, err := Claim(context.Background(), f, "iss-1")
+	issue, viewerID, won, err := Claim(context.Background(), f, "iss-1")
 	if err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
 	if !won {
 		t.Error("Claim won = false, want true")
+	}
+	if viewerID != "me" || issue.AssigneeID != "me" {
+		t.Errorf("Claim read-back = (%q, %+v), want the operating user", viewerID, issue)
 	}
 }
 
@@ -27,7 +30,7 @@ func TestClaimLostRace(t *testing.T) {
 	f.SetViewer("me")
 	f.AddIssue("LERP", linear.Issue{ID: "iss-1", Identifier: "LERP-1", Status: "Todo"})
 
-	won, err := Claim(context.Background(), losingClient{Fake: f, rivalID: "someone-else"}, "iss-1")
+	_, _, won, err := Claim(context.Background(), losingClient{Fake: f, rivalID: "someone-else"}, "iss-1")
 	if err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
@@ -38,7 +41,7 @@ func TestClaimLostRace(t *testing.T) {
 
 func TestClaimAPIError(t *testing.T) {
 	errBoom := errors.New("temporary Linear failure")
-	won, err := Claim(context.Background(), failingClient{Client: linear.NewFake(), viewerErr: errBoom}, "iss-1")
+	_, _, won, err := Claim(context.Background(), failingClient{Client: linear.NewFake(), viewerErr: errBoom}, "iss-1")
 	if won {
 		t.Error("Claim won = true, want false")
 	}

@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/mattwalters/lerp/internal/config"
@@ -75,8 +77,9 @@ type ReconcilerOptions struct {
 	// from the loop's goroutines and must be safe for concurrent use; a
 	// subscriber that can block should hand events off to its own channel.
 	Events func(Event)
-	// Log receives human-readable diagnostics, including provision and
-	// dispose output. May be nil.
+	// Log receives human-readable diagnostics, including provision, dispose,
+	// and runner output from every lane. Lanes run concurrently, so the loop
+	// serializes writes itself; any writer will do. May be nil.
 	Log io.Writer
 
 	Execute   ExecuteFunc
@@ -138,7 +141,24 @@ func NewReconciler(o ReconcilerOptions) (*Reconciler, error) {
 	if o.Alive == nil {
 		o.Alive = evidence.Alive
 	}
+	if o.Log != nil {
+		o.Log = &syncWriter{w: o.Log}
+	}
 	return &Reconciler{o: o}, nil
+}
+
+// syncWriter serializes the Log writes that arrive concurrently from the tick
+// loop, each lane's goroutine, and the subprocesses whose output streams into
+// the shared writer.
+type syncWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (s *syncWriter) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.w.Write(p)
 }
 
 // Run ticks until ctx is cancelled, waits for the runs this process started
@@ -166,18 +186,21 @@ func (r *Reconciler) Run(ctx context.Context) error {
 // repairs drift, and a pass that could not finish is just drift for the next
 // one.
 func (r *Reconciler) Tick(ctx context.Context) {
-	r.reconcileEvidence(ctx)
-	r.fill(ctx)
+	if r.reconcileEvidence(ctx) {
+		r.fill(ctx)
+	}
 }
 
 // reconcileEvidence converges the lanes with .lerp/runs: every record either
 // belongs to a run this process is settling itself, or names a live process
-// to adopt, or is the residue of a dead one to reap.
-func (r *Reconciler) reconcileEvidence(ctx context.Context) {
+// to adopt, or is the residue of a dead one to reap. It reports whether the
+// evidence could be read at all: when it could not, live orphans may occupy
+// lanes this pass knows nothing about, so the caller must not fill.
+func (r *Reconciler) reconcileEvidence(ctx context.Context) bool {
 	records, err := r.o.Evidence.List()
 	if err != nil {
 		r.fail(fmt.Errorf("list run evidence: %w", err))
-		return
+		return false
 	}
 	seen := make(map[string]bool, len(records))
 	for _, record := range records {
@@ -191,18 +214,32 @@ func (r *Reconciler) reconcileEvidence(ctx context.Context) {
 			r.adopt(record)
 			continue
 		}
-		r.forget(record.RunID)
-		r.reap(ctx, record)
+		// The listing is a snapshot: a run this process was settling may have
+		// concluded — record removed, lane unregistered — since it was taken.
+		// Re-check the disk before treating the record as a dead orphan, or a
+		// just-settled run would be reaped and releaseDead could unassign a
+		// claim conclude deliberately held.
+		if _, err := r.o.Evidence.Read(record.RunID); errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if r.reap(ctx, record) {
+			r.forget(record.RunID)
+		}
 	}
 	// An adopted run whose record was deleted out from under it — local
 	// evidence is disposable — is still a live process occupying a lane. Keep
 	// watching the remembered record, and reap from it when the process dies.
+	// The remembered record is the run's last trace, so it is forgotten only
+	// once the reap finishes; dropping it first would leave a failed reap
+	// nothing to retry from, leaking the dead run's claim.
 	for _, record := range r.adoptedRecords() {
 		if !seen[record.RunID] && !r.o.Alive(record) {
-			r.forget(record.RunID)
-			r.reap(ctx, record)
+			if r.reap(ctx, record) {
+				r.forget(record.RunID)
+			}
 		}
 	}
+	return true
 }
 
 // adopt takes ownership of a previous process's live run: the lane is marked
@@ -228,28 +265,37 @@ func (r *Reconciler) adopt(record evidence.Record) {
 		TicketID: record.TicketID, Queue: record.Queue, LogPath: record.LogPath})
 }
 
+// reapDisposeTimeout bounds the dispose command run while reaping. Reaps run
+// on the tick loop itself, so a dispose that hangs would otherwise stall
+// every later pass — and shutdown — indefinitely.
+const reapDisposeTimeout = 2 * time.Minute
+
 // reap cleans up after a run whose process is dead: dispose the workspace,
 // release the dead run's claim when the board still shows it, and remove the
 // local record. The ticket's status is left wherever Linear says it is — a
 // crash is drift, and re-running the stage repairs it (SCOPE invariant 3).
 //
-// A reap that cannot finish keeps the record, so the next pass retries it.
-func (r *Reconciler) reap(ctx context.Context, record evidence.Record) {
+// It reports whether the reap finished. One that could not keeps the record,
+// so the next pass retries it.
+func (r *Reconciler) reap(ctx context.Context, record evidence.Record) bool {
 	// The process is gone, so the workspace is garbage whether or not the
 	// provision command ever finished building it. Dispose reports its own
 	// failures to the log and never blocks the reap.
 	id := workspace.Identity{Lane: record.Lane, TicketID: record.TicketID, Workspace: record.Workspace}
-	r.o.Dispose(context.WithoutCancel(ctx), r.o.RepoDir, r.o.Repo.Dispose, id, r.o.Log)
+	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), reapDisposeTimeout)
+	r.o.Dispose(dctx, r.o.RepoDir, r.o.Repo.Dispose, id, r.o.Log)
+	cancel()
 	if err := r.releaseDead(ctx, record); err != nil {
 		r.fail(fmt.Errorf("reap run %s: %w", record.RunID, err))
-		return
+		return false
 	}
 	if err := r.o.Evidence.Remove(record.RunID); err != nil {
 		r.fail(fmt.Errorf("reap run %s: %w", record.RunID, err))
-		return
+		return false
 	}
 	r.emit(Event{Type: EventReaped, RunID: record.RunID, Lane: record.Lane,
 		TicketID: record.TicketID, Queue: record.Queue, LogPath: record.LogPath})
+	return true
 }
 
 // releaseDead releases a dead run's claim so its ticket becomes eligible
@@ -292,8 +338,10 @@ func (r *Reconciler) fill(ctx context.Context) {
 	}
 	cands, err := candidates(ctx, r.o.Client, r.o.Repo)
 	if err != nil {
+		// Partial listings still fill lanes: one broken queue must not starve
+		// the others while its outage lasts. The failure is reported and the
+		// broken queue retried next pass.
 		r.fail(err)
-		return
 	}
 	for _, c := range cands {
 		if len(lanes) == 0 {
@@ -323,7 +371,7 @@ func (r *Reconciler) runLane(ctx context.Context, lr *laneRun, c candidate) {
 	}
 }
 
-// executeLane is one run: claim, record, provision, execute, move. It mirrors
+// executeLane is one run: record, claim, provision, execute, move. It mirrors
 // Once's single-lane flow with run evidence added around the agent.
 func (r *Reconciler) executeLane(ctx context.Context, lr *laneRun, c candidate) (Event, bool) {
 	issue := c.issue
@@ -332,14 +380,11 @@ func (r *Reconciler) executeLane(ctx context.Context, lr *laneRun, c candidate) 
 			Ticket: issue.Identifier, Queue: c.name, Err: err}, true
 	}
 
-	viewerID, won, err := claimForQueue(ctx, r.o.Client, issue.ID, c.queue.Status)
-	if err != nil {
-		return fail(err)
-	}
-	if !won {
-		return Event{}, false
-	}
-
+	// The record exists before the claim is attempted, so a crash anywhere
+	// after winning leaves evidence behind: the next process reaps the dead
+	// record and releases the claim. The reverse order would leave the ticket
+	// assigned and recordless — invisible to every future pass — until a
+	// human noticed.
 	record, err := r.o.Evidence.Create(evidence.Record{
 		Lane:           lr.lane,
 		StartedAt:      time.Now().UTC(),
@@ -348,11 +393,21 @@ func (r *Reconciler) executeLane(ctx context.Context, lr *laneRun, c candidate) 
 		StartingStatus: c.queue.Status,
 	})
 	if err != nil {
-		err = fmt.Errorf("record run for issue %s: %w", issue.ID, err)
-		if releaseErr := releaseClaim(ctx, r.o.Client, issue.ID, viewerID); releaseErr != nil {
-			err = fmt.Errorf("%w (%v)", err, releaseErr)
-		}
+		return fail(fmt.Errorf("record run for issue %s: %w", issue.ID, err))
+	}
+
+	viewerID, won, err := claimForQueue(ctx, r.o.Client, issue.ID, c.queue.Status)
+	if err != nil {
+		// Keep the record: if the assign landed before the protocol failed
+		// and its best-effort release did not stick, the next pass reaps the
+		// dead record and releases the claim — the same repair a crash gets.
 		return fail(err)
+	}
+	if !won {
+		if err := r.o.Evidence.Remove(record.RunID); err != nil {
+			r.fail(fmt.Errorf("remove run record %s: %w", record.RunID, err))
+		}
+		return Event{}, false
 	}
 
 	ev, keepRecord, ok := r.provisionAndRun(ctx, lr, c, record, viewerID)
@@ -366,8 +421,8 @@ func (r *Reconciler) executeLane(ctx context.Context, lr *laneRun, c candidate) 
 
 // provisionAndRun is the part of a run that owns a workspace. The deferred
 // dispose runs when this function returns, before the caller discards the run
-// record — the workspace lives inside the run directory, so dispose has to
-// see it before Remove sweeps the directory away.
+// record, so a settled run never leaves a workspace behind without the record
+// that names it.
 func (r *Reconciler) provisionAndRun(ctx context.Context, lr *laneRun, c candidate, record evidence.Record, viewerID string) (ev Event, keepRecord, ok bool) {
 	issue := c.issue
 	id := workspace.Identity{Lane: lr.lane, TicketID: issue.ID, Workspace: record.Workspace}
@@ -403,9 +458,14 @@ func (r *Reconciler) provisionAndRun(ctx context.Context, lr *laneRun, c candida
 		LogPath: record.LogPath,
 		Started: func(pid int) {
 			// The PID makes the record adoptable; without it the run would be
-			// reaped by the next process even while the agent is alive.
+			// reaped by the next process even while the agent is alive. An
+			// agent whose PID cannot be recorded must not keep running: kill
+			// its process group so the run fails now, visibly, instead of
+			// surviving as an unadoptable orphan for a successor to reap —
+			// workspace and all — out from under it.
 			if _, err := r.o.Evidence.Attach(record.RunID, pid); err != nil {
 				r.fail(fmt.Errorf("attach pid of run %s: %w", record.RunID, err))
+				_ = syscall.Kill(-pid, syscall.SIGKILL)
 			}
 		},
 	})

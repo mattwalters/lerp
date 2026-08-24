@@ -16,9 +16,10 @@ import (
 )
 
 const (
-	stateDir = ".lerp"
-	runsDir  = "runs"
-	lockFile = "lock"
+	stateDir      = ".lerp"
+	runsDir       = "runs"
+	workspacesDir = "workspaces"
+	lockFile      = "lock"
 )
 
 // Record is the local evidence for a lane's running agent. It is intentionally
@@ -95,9 +96,13 @@ func (e *Evidence) Create(record Record) (Record, error) {
 	record.LogPath = filepath.Join(runPath, "run.log")
 	if record.Workspace == "" {
 		// Unless the caller has its own placement policy, the workspace lives
-		// inside the run directory: a run's whole local footprint is then one
-		// directory, and Remove sweeps up anything dispose left behind.
-		record.Workspace = filepath.Join(runPath, "workspace")
+		// under .lerp/workspaces, beside the run evidence rather than inside
+		// it. Deleting run records must orphan agents, never rip working
+		// trees out from under them (SCOPE invariant 1), and Remove must
+		// never delete a provisioned workspace behind its dispose command's
+		// back — a git worktree swept away by RemoveAll would strand its
+		// registration in the parent repository.
+		record.Workspace = filepath.Join(e.workspacesPath(), record.RunID)
 	}
 	log, err := os.OpenFile(filepath.Join(staging, "run.log"), os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o600)
 	if err != nil {
@@ -364,6 +369,7 @@ func parseStartTime(text string) (int64, error) {
 
 func (e *Evidence) statePath() string           { return filepath.Join(e.root, stateDir) }
 func (e *Evidence) runsPath() string            { return filepath.Join(e.statePath(), runsDir) }
+func (e *Evidence) workspacesPath() string      { return filepath.Join(e.statePath(), workspacesDir) }
 func (e *Evidence) lockPath() string            { return filepath.Join(e.statePath(), lockFile) }
 func (e *Evidence) runPath(runID string) string { return filepath.Join(e.runsPath(), runID) }
 

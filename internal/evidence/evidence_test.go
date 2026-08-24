@@ -53,16 +53,17 @@ func TestRecordsRoundTripAndRemove(t *testing.T) {
 	}
 }
 
-// A record without a workspace policy of its own gets one inside the run
-// directory, so a run's whole local footprint is a single directory.
-func TestCreateChoosesAWorkspaceInsideTheRunDirectory(t *testing.T) {
+// A record without a workspace policy of its own gets one under
+// .lerp/workspaces — beside the run evidence, not inside it, so deleting run
+// records never touches a live agent's working tree.
+func TestCreateChoosesAWorkspaceBesideTheRunDirectory(t *testing.T) {
 	e := New(t.TempDir())
 	record, err := e.Create(Record{Lane: 1, TicketID: "LERP-9"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if record.Workspace != filepath.Join(e.runPath(record.RunID), "workspace") {
-		t.Errorf("Workspace = %q, want it inside the run directory", record.Workspace)
+	if record.Workspace != filepath.Join(e.workspacesPath(), record.RunID) {
+		t.Errorf("Workspace = %q, want it under the workspaces directory", record.Workspace)
 	}
 	kept, err := e.Create(Record{Lane: 1, TicketID: "LERP-9", Workspace: "/elsewhere"})
 	if err != nil {
