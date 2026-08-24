@@ -82,9 +82,10 @@ func claimForQueue(ctx context.Context, client linear.Client, issueID, status st
 	return viewerID, true, nil
 }
 
-// releaseClaim unassigns an issue this process claimed but never ran, so the
-// queued ticket remains eligible for a later attempt. The claim is verified
-// first: if someone else holds the issue now, their claim is left alone.
+// releaseClaim unassigns an issue so it becomes eligible again — for a run
+// this process claimed but never started, and for a ticket promote moved
+// back into a queue. The claim is verified first: if someone else holds the
+// issue now, their claim is left alone.
 func releaseClaim(ctx context.Context, client linear.Client, issueID, viewerID string) error {
 	current, err := client.GetIssue(ctx, issueID)
 	if err != nil {

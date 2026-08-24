@@ -963,6 +963,84 @@ func TestReconcilerPromote(t *testing.T) {
 	}
 }
 
+// The rework loop, end to end: a failed run parks the ticket with its claim
+// intact, and promoting it back into the queue has to release that claim or
+// nothing will ever pick it up again — silently, with no run and no error.
+func TestPromoteReleasesTheClaimThatParkedTheTicket(t *testing.T) {
+	h := newHarness(t, 1, nil)
+	ctx := context.Background()
+	repo := testRepo()
+	queue := repo.Queues["todo"]
+	issue := linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Todo"}
+	h.fake.AddIssue("LERP", issue)
+
+	if _, won, err := claimForQueue(ctx, h.fake, issue.ID, queue.Status); err != nil || !won {
+		t.Fatalf("claimForQueue = (%v, %v), want the claim won", won, err)
+	}
+	if _, err := conclude(ctx, h.fake, issue, queue, repo, 1, nil); err != nil {
+		t.Fatalf("conclude: %v", err)
+	}
+	parked := h.issue(t, "one")
+	if parked.Status != "Needs Help" || parked.AssigneeID == "" {
+		t.Fatalf("parked ticket = %+v, want it resting in Needs Help still claimed", parked)
+	}
+
+	// What the operator does after reading the verdict.
+	if err := h.rec.Promote(ctx, "one", "Todo"); err != nil {
+		t.Fatalf("Promote: %v", err)
+	}
+	back := h.issue(t, "one")
+	if !Eligible(back, map[string]bool{"Todo": true}) {
+		t.Fatalf("promoted ticket is not eligible, so no pass will ever run it: %+v", back)
+	}
+	cands, err := candidates(ctx, h.fake, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cands) != 1 || cands[0].issue.ID != "one" {
+		t.Fatalf("candidates after the promote = %+v, want the reworked ticket", cands)
+	}
+}
+
+// The other half of the same rule: promoting into a status no queue serves
+// is how work gets parked on purpose, so the claim stays exactly where it is.
+func TestPromoteIntoAnUnservedStatusKeepsTheClaim(t *testing.T) {
+	h := newHarness(t, 1, nil)
+	ctx := context.Background()
+	viewerID, err := h.fake.Viewer(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Todo", AssigneeID: viewerID})
+
+	if err := h.rec.Promote(ctx, "one", "Needs Help"); err != nil {
+		t.Fatalf("Promote: %v", err)
+	}
+	got := h.issue(t, "one")
+	if got.Status != "Needs Help" {
+		t.Errorf("status = %q, want Needs Help", got.Status)
+	}
+	if got.AssigneeID != viewerID {
+		t.Error("parking the ticket released its claim, so it no longer shows as waiting on the operator")
+	}
+}
+
+// Promote runs against a ticket the operator merely selected, which may be
+// running under someone else on another machine. Their claim is not ours to
+// clear.
+func TestPromoteLeavesAnotherUsersClaimAlone(t *testing.T) {
+	h := newHarness(t, 1, nil)
+	ctx := context.Background()
+	h.fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Backlog", AssigneeID: "someone-else"})
+
+	if err := h.rec.Promote(ctx, "one", "Todo"); err != nil {
+		t.Fatalf("Promote: %v", err)
+	}
+	if got := h.issue(t, "one"); got.AssigneeID != "someone-else" {
+		t.Errorf("assignee after Promote = %q, want the colleague's claim untouched", got.AssigneeID)
+	}
+}
+
 // countingDetailClient counts the detail reads made through it — the
 // mechanical form of "no per-item comment query entered attention()".
 type countingDetailClient struct {
