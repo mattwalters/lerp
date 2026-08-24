@@ -225,3 +225,82 @@ func onceOptions(client linear.Client, execute ExecuteFunc, provision ProvisionF
 		Dispose:   dispose,
 	}
 }
+
+// The pipeline only chains if a finished run releases its claim: an assigned
+// ticket is never eligible, so a ticket that keeps its claim through a move
+// into a served status is stranded there permanently, with nothing reporting
+// an error.
+func TestOnceChainsThroughTwoQueues(t *testing.T) {
+	fake := linear.NewFake()
+	fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Planning"})
+
+	var ran []string
+	o := onceOptions(fake, func(_ context.Context, inv run.Invocation) (run.Result, error) {
+		ran = append(ran, inv.Queue.Status)
+		return run.Result{ExitCode: 0}, nil
+	}, nil, nil)
+	o.Repo.Queues = map[string]config.Queue{
+		"plan":      {Status: "Planning", Prompt: "plan it", Runner: "agent", OnSuccess: "Implementing", OnFailure: "Needs Help"},
+		"implement": {Status: "Implementing", Prompt: "build it", Runner: "agent", OnSuccess: "Done", OnFailure: "Needs Help"},
+	}
+
+	for pass := 1; pass <= 2; pass++ {
+		started, err := Once(context.Background(), o)
+		if err != nil || !started {
+			t.Fatalf("pass %d: Once = (%v, %v), want (true, nil)", pass, started, err)
+		}
+	}
+	if len(ran) != 2 || ran[0] != "Planning" || ran[1] != "Implementing" {
+		t.Fatalf("stages run = %v, want [Planning Implementing]", ran)
+	}
+	if got, _ := fake.GetIssue(context.Background(), "one"); got.Status != "Done" {
+		t.Errorf("chained status = %q, want Done", got.Status)
+	}
+}
+
+// Finishing into a status no queue serves keeps the claim: that is what parks
+// the ticket on the operator in the needs-you view, and it is how an unserved
+// status works as a human gate.
+func TestOnceKeepsClaimWhenFinishingOutsideEveryQueue(t *testing.T) {
+	fake := linear.NewFake()
+	fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Todo"})
+	started, err := Once(context.Background(), onceOptions(fake, func(context.Context, run.Invocation) (run.Result, error) {
+		return run.Result{ExitCode: 0}, nil
+	}, nil, nil))
+	if err != nil || !started {
+		t.Fatalf("Once = (%v, %v), want (true, nil)", started, err)
+	}
+	got, _ := fake.GetIssue(context.Background(), "one")
+	if got.Status != "Done" {
+		t.Fatalf("status = %q, want Done", got.Status)
+	}
+	if got.AssigneeID == "" {
+		t.Error("finishing outside every queue released the claim, so the ticket is not parked on the operator")
+	}
+}
+
+// An agent that moves its own ticket into another queue's status must not
+// leave it stranded: lerp respects the move and still releases the claim, so
+// the queue serving that status can pick the ticket up.
+func TestOnceReleasesClaimWhenAgentMovesIntoServedStatus(t *testing.T) {
+	fake := linear.NewFake()
+	fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Planning"})
+	o := onceOptions(fake, func(context.Context, run.Invocation) (run.Result, error) {
+		return run.Result{}, fake.MoveIssue(context.Background(), "one", "Implementing")
+	}, nil, nil)
+	o.Repo.Queues = map[string]config.Queue{
+		"plan":      {Status: "Planning", Prompt: "plan it", Runner: "agent", OnSuccess: "Plan Review", OnFailure: "Needs Help"},
+		"implement": {Status: "Implementing", Prompt: "build it", Runner: "agent", OnSuccess: "Done", OnFailure: "Needs Help"},
+	}
+	started, err := Once(context.Background(), o)
+	if err != nil || !started {
+		t.Fatalf("Once = (%v, %v), want (true, nil)", started, err)
+	}
+	got, _ := fake.GetIssue(context.Background(), "one")
+	if got.Status != "Implementing" {
+		t.Fatalf("agent move was overwritten: status = %q", got.Status)
+	}
+	if !Eligible(got, map[string]bool{"Implementing": true}) {
+		t.Errorf("ticket is stranded after the agent's move: %+v", got)
+	}
+}
