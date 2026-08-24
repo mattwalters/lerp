@@ -1,0 +1,79 @@
+# Stock lerp config — written by `lerp init` when no global config exists.
+#
+# This file is the opinion; the engine has none. Lerp does not know that
+# planning comes before implementing: that order exists only in the
+# `on_success` pointers below. Rewrite them into a different shape, or delete
+# queues entirely, and no lerp code changes.
+
+# Concurrent agents. Keep it small: each one is a real coding agent with a
+# real workspace on this machine.
+lanes = 3
+
+# Claude Code, headless. {{prompt}} carries the queue's prompt, {{session}} a
+# UUID lerp generates so the run can later be resumed by `resume` below.
+#
+# PERMISSIONS: bypassPermissions lets the agent edit files and run commands
+# (git, gh, tests) without asking. This is a real grant, and it is yours to
+# make deliberately. It is bounded by the workspace your repo's provision
+# command builds; with the stock git-worktree provisioning that is a throwaway
+# checkout, not your working tree.
+[runners.claude]
+command = "claude -p {{prompt}} --session-id {{session}} --permission-mode bypassPermissions"
+resume = "claude --resume {{session}}"
+
+# The agent needs its own Linear access. Configure the Linear MCP server in
+# Claude Code before expecting these prompts to work.
+
+[queues.plan]
+status = "Planning"
+runner = "claude"
+on_success = "Implementing"
+on_failure = "Needs Attention"
+prompt = """
+You are planning {{ticket}}, nothing more. Do not write code.
+
+Read {{ticket}} in Linear, read SCOPE.md and AGENTS.md if this repository has
+them, and explore enough of the code to know what the change touches. Then
+post a plan as a Linear comment on {{ticket}}: what you will change, which
+files, and how you will know it worked.
+
+If the ticket is too vague to plan, or big enough that it should be several
+tickets, say so in a comment and move {{ticket}} to Needs Attention instead of
+guessing.
+"""
+
+[queues.implement]
+status = "Implementing"
+runner = "claude"
+on_success = "Agent Review"
+on_failure = "Needs Attention"
+prompt = """
+Implement {{ticket}}, following the plan comment on it in Linear.
+
+You are in a disposable workspace for this ticket alone. Work here, commit,
+push a branch, and open a pull request with `gh`. Make the tests and whatever
+this repository uses as its check pass before you open it.
+
+The pull request is the artifact — do not paste diffs or transcripts into
+Linear. If the plan turns out to be wrong or missing, move {{ticket}} to
+Needs Attention and say why in a comment rather than inventing a new plan.
+"""
+
+[queues.review]
+status = "Agent Review"
+runner = "claude"
+on_success = "In Review"
+on_failure = "Needs Attention"
+prompt = """
+Review the pull request for {{ticket}} as a careful senior engineer.
+
+Find it with `gh`, read the diff, and check it against the plan comment on
+{{ticket}} and against this repository's own conventions. Post your verdict as
+a Linear comment: what you checked, and anything real you found. Concrete
+failure scenarios only — no style essays.
+
+Do not merge, and do not fix the code yourself. If it needs changes, move
+{{ticket}} back to Implementing with your findings in the comment; the next
+run will pick it up from there. A clean review leaves {{ticket}} for a human
+to merge.
+"""

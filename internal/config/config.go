@@ -1,6 +1,8 @@
 package config
 
 import (
+	_ "embed"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -18,6 +20,13 @@ const RepoConfigFile = "lerp.toml"
 // defaultLanes is the lane count used when the global config does not
 // set one.
 const defaultLanes = 5
+
+// stockGlobal is the first-run configuration written by lerp init. Keep this
+// in the config package so the binary, rather than a source checkout, owns
+// the template it installs.
+//
+//go:embed stock.toml
+var stockGlobal string
 
 // Global is the operator-wide config: lanes, runners, and queues.
 type Global struct {
@@ -95,6 +104,46 @@ func LoadGlobal(path string) (*Global, error) {
 		return nil, err
 	}
 	return &g, nil
+}
+
+// LoadOrCreateGlobal loads path, creating the stock configuration when the
+// file is absent. It never replaces a file that appeared concurrently.
+func LoadOrCreateGlobal(path string) (global *Global, created bool, err error) {
+	global, err = LoadGlobal(path)
+	if !errors.Is(err, os.ErrNotExist) {
+		return global, false, err
+	}
+	created, err = WriteStockGlobal(path)
+	if err != nil {
+		return nil, false, err
+	}
+	global, err = LoadGlobal(path)
+	return global, created, err
+}
+
+// WriteStockGlobal creates path from Lerp's stock configuration. It never
+// replaces an existing file; created reports whether this invocation won the
+// creation race.
+func WriteStockGlobal(path string) (created bool, err error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return false, fmt.Errorf("create global config directory: %w", err)
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		if os.IsExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("create global config: %w", err)
+	}
+	_, writeErr := f.WriteString(stockGlobal)
+	closeErr := f.Close()
+	if writeErr != nil {
+		return false, fmt.Errorf("write global config: %w", writeErr)
+	}
+	if closeErr != nil {
+		return false, fmt.Errorf("close global config: %w", closeErr)
+	}
+	return true, nil
 }
 
 func (g *Global) validate(path string) error {
