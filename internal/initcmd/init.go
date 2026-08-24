@@ -148,7 +148,7 @@ func converse(out io.Writer, answers io.Reader, teamKey string, existing []strin
 	}
 	in := bufio.NewReader(answers)
 	s.Plan = askYesNo(out, in, "Include a planning stage?", true)
-	s.Review = askYesNo(out, in, "Include an agent review stage?", true)
+	s.Review = askYesNo(out, in, "Review each change before it exits?", true)
 	mapStatuses(out, in, teamKey, existing, &s)
 	s.Bypass = askBypass(out, in)
 	return s
@@ -164,6 +164,8 @@ type slot struct {
 }
 
 // pipelineSlots lists the statuses s's stages reference, in pipeline order.
+// The review pass has no slot: it runs inside the implement queue and names
+// no status of its own.
 func pipelineSlots(s *config.Stock) []slot {
 	slots := []slot{}
 	if s.Plan {
@@ -173,9 +175,6 @@ func pipelineSlots(s *config.Stock) []slot {
 		)
 	}
 	slots = append(slots, slot{"implement runs in", config.StockImplementStatus, &s.ImplementStatus})
-	if s.Review {
-		slots = append(slots, slot{"review runs in", config.StockReviewStatus, &s.ReviewStatus})
-	}
 	return append(slots,
 		slot{"finished work exits to", config.StockExitStatus, &s.ExitStatus},
 		slot{"failures exit to", config.StockAttentionStatus, &s.AttentionStatus},
