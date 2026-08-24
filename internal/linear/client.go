@@ -23,6 +23,7 @@ type Issue struct {
 	Title      string
 	Status     string // workflow state name, e.g. "In Progress"
 	AssigneeID string // empty when unassigned
+	URL        string // Linear's own web URL for the issue
 	Blocked    bool   // true when any incomplete issue blocks this one
 	BlockedBy  []string
 }
@@ -32,6 +33,12 @@ type Issue struct {
 // interface and tested against Fake.
 type Client interface {
 	ListIssues(ctx context.Context, teamKey, statusName string) ([]Issue, error)
+	// ListAssignedIssues is the attention view's one read beyond the queue
+	// listings: the queue listings see only queue statuses, so the operator's
+	// claimed tickets parked anywhere else — exactly the ones waiting on a
+	// human — are invisible without it. Completed and canceled issues are
+	// excluded; they wait on nobody.
+	ListAssignedIssues(ctx context.Context, teamKey, assigneeID string) ([]Issue, error)
 	GetIssue(ctx context.Context, issueID string) (Issue, error)
 	MoveIssue(ctx context.Context, issueID, statusName string) error
 	AssignIssue(ctx context.Context, issueID, userID string) error

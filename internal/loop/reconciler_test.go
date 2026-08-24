@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"reflect"
 	"slices"
 	"sync"
 	"testing"
@@ -343,6 +344,8 @@ func TestTickAdoptsLiveOrphans(t *testing.T) {
 	adopted := 0
 	for _, ev := range h.drainEvents() {
 		switch ev.Type {
+		case EventAttention:
+			// Recomputed every pass; nothing here waits on the operator.
 		case EventAdopted:
 			adopted++
 			if ev.RunID != record.RunID || ev.Lane != 1 || ev.LogPath != record.LogPath {
@@ -477,8 +480,8 @@ func TestRunAnnouncesProvisioningBeforeStart(t *testing.T) {
 			if ev.Type == EventError {
 				t.Fatalf("unexpected error event: %v", ev.Err)
 			}
-			if ev.Type == EventQueues {
-				continue // the per-pass snapshot is not part of the run's sequence
+			if ev.Type == EventQueues || ev.Type == EventAttention {
+				continue // every pass emits both; the run's own sequence is under test
 			}
 			seq = append(seq, ev)
 		case <-deadline:
@@ -624,6 +627,70 @@ func TestTickPublishesQueueSnapshotEveryPass(t *testing.T) {
 
 	release()
 	h.waitEvents(t, EventExited, 1)
+}
+
+// Done-when: the attention pass reports exactly the operator's claimed
+// tickets sitting in statuses no queue serves — and, once nothing does, an
+// empty list, so a subscriber can show the goal state.
+func TestTickEmitsAttention(t *testing.T) {
+	h := newHarness(t, 1, nil)
+	// Blocked on the operator: claimed, in a status no queue serves.
+	h.fake.AddIssue("LERP", linear.Issue{ID: "help", Identifier: "LERP-1", Title: "Fix the build",
+		Status: "Needs Help", AssigneeID: "fake-viewer", URL: "https://linear.app/l/LERP-1"})
+	// Not blocked: claimed but in a queue's own status — a run may hold it.
+	h.fake.AddIssue("LERP", linear.Issue{ID: "queued", Identifier: "LERP-2", Status: "Todo",
+		AssigneeID: "fake-viewer"})
+	// Not blocked: someone else's claim is someone else's work.
+	h.fake.AddIssue("LERP", linear.Issue{ID: "theirs", Identifier: "LERP-3", Status: "Needs Help",
+		AssigneeID: "somebody-else"})
+	// Not blocked: unclaimed tickets belong to the queues, not the operator.
+	h.fake.AddIssue("LERP", linear.Issue{ID: "loose", Identifier: "LERP-4", Status: "Backlog"})
+	// Not blocked: finished tickets wait on nobody.
+	h.fake.AddIssue("LERP", linear.Issue{ID: "done", Identifier: "LERP-5", Status: "Done",
+		AssigneeID: "fake-viewer"})
+	ctx := context.Background()
+
+	h.rec.Tick(ctx)
+	got := h.waitEvents(t, EventAttention, 1)[0]
+	want := []AttentionItem{{
+		Ticket: "LERP-1", Title: "Fix the build", Status: "Needs Help",
+		Reason: `claimed in "Needs Help" — no queue serves it`,
+		URL:    "https://linear.app/l/LERP-1",
+	}}
+	if !reflect.DeepEqual(got.Attention, want) {
+		t.Errorf("attention = %+v, want %+v", got.Attention, want)
+	}
+
+	// The operator acts (in Linear, not in lerp) and the next pass agrees
+	// that nothing needs them.
+	if err := h.fake.UnassignIssue(ctx, "help"); err != nil {
+		t.Fatal(err)
+	}
+	h.rec.Tick(ctx)
+	if got := h.waitEvents(t, EventAttention, 1)[0]; len(got.Attention) != 0 {
+		t.Errorf("attention after the operator acted = %+v, want empty", got.Attention)
+	}
+}
+
+// A failed run's on_failure move lands the ticket — still claimed — in a
+// status no queue serves; the next pass surfaces it in attention. The
+// on-failure half of "blocked on me" needs no machinery of its own.
+func TestFailedRunLandsInAttention(t *testing.T) {
+	h := newHarness(t, 1, func(context.Context, run.Invocation) (run.Result, error) {
+		return run.Result{ExitCode: 3}, nil
+	})
+	h.fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Title: "Flaky", Status: "Todo"})
+	ctx := context.Background()
+
+	h.rec.Tick(ctx)
+	h.waitEvents(t, EventExited, 1)
+	h.drainEvents()
+
+	h.rec.Tick(ctx)
+	got := h.waitEvents(t, EventAttention, 1)[0]
+	if len(got.Attention) != 1 || got.Attention[0].Ticket != "LERP-1" || got.Attention[0].Status != "Needs Help" {
+		t.Errorf("attention after a failed run = %+v, want LERP-1 in Needs Help", got.Attention)
+	}
 }
 
 func TestNewReconcilerValidatesOptions(t *testing.T) {

@@ -112,6 +112,22 @@ func (f *Fake) ListIssues(_ context.Context, teamKey, statusName string) ([]Issu
 	return issues, nil
 }
 
+// ListAssignedIssues mirrors the real query: the team's issues assigned to
+// the user, in any status, minus the ones whose status counts as complete
+// (the real client filters completed and canceled state types server-side).
+func (f *Fake) ListAssignedIssues(_ context.Context, teamKey, assigneeID string) ([]Issue, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var issues []Issue
+	for _, fi := range f.issues {
+		if fi.team == teamKey && fi.issue.AssigneeID == assigneeID && !f.doneStatuses[fi.issue.Status] {
+			issues = append(issues, f.view(fi))
+		}
+	}
+	sort.Slice(issues, func(i, j int) bool { return issues[i].Identifier < issues[j].Identifier })
+	return issues, nil
+}
+
 func (f *Fake) GetIssue(_ context.Context, issueID string) (Issue, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

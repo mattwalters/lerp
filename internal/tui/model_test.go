@@ -134,8 +134,8 @@ func TestViewSwitching(t *testing.T) {
 		t.Fatalf("key 3 did not show the queue view:\n%s", m.View())
 	}
 	m = update(t, m, keyMsg("1"))
-	if !strings.Contains(m.View(), "attention view is not built yet") {
-		t.Fatalf("key 1 did not show the attention placeholder:\n%s", m.View())
+	if !strings.Contains(m.View(), "reading the board") {
+		t.Fatalf("key 1 did not show the attention view:\n%s", m.View())
 	}
 	m = update(t, m, keyMsg("tab"))
 	if m.view != viewBoard {
@@ -207,6 +207,46 @@ func TestQueueViewCapsToTheWindow(t *testing.T) {
 	}
 	if !strings.Contains(view, "q quit") {
 		t.Fatalf("cap pushed the help line off screen:\n%s", view)
+	}
+}
+
+// The attention view folds attention events: it lists each waiting ticket
+// with the loop's reason and its Linear URL, and renders the empty list as
+// the goal state — never as a bare blank.
+func TestAttentionViewListsWhatWaits(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("1"))
+
+	// Before the first pass reports, the view must not claim the goal state.
+	if view := m.View(); strings.Contains(view, "nothing needs you") {
+		t.Fatalf("view claims the goal state before any pass reported:\n%s", view)
+	}
+
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-42", Title: "Fix the flaky test", Status: "Needs Help",
+			Reason: `claimed in "Needs Help" — no queue serves it`,
+			URL:    "https://linear.app/acme/issue/LERP-42/fix"},
+	}}})
+	view := m.View()
+	for _, want := range []string{
+		"LERP-42",
+		"Fix the flaky test",
+		`claimed in "Needs Help" — no queue serves it`,
+		"https://linear.app/acme/issue/LERP-42/fix",
+	} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("attention view is missing %q:\n%s", want, view)
+		}
+	}
+
+	// A later pass with nothing waiting clears the list and says so.
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention}})
+	view = m.View()
+	if !strings.Contains(view, "nothing needs you") {
+		t.Fatalf("empty attention list does not read as the goal state:\n%s", view)
+	}
+	if strings.Contains(view, "LERP-42") {
+		t.Fatalf("cleared item still rendered:\n%s", view)
 	}
 }
 

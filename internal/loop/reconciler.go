@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"sync"
 	"syscall"
 	"time"
@@ -53,6 +54,11 @@ const (
 	// lane was free, so the queue view always mirrors exactly the listing the
 	// loop fills from.
 	EventQueues EventType = "queues"
+	// EventAttention reports what the board says is waiting on the operator,
+	// recomputed once per pass. The event carries the whole list — including
+	// an empty one, so a subscriber can show the goal state when the last
+	// item clears.
+	EventAttention EventType = "attention"
 )
 
 // QueueTicket is one ticket as a queue snapshot saw it, with why it will or
@@ -76,6 +82,17 @@ type QueueSnapshot struct {
 	Tickets []QueueTicket
 }
 
+// AttentionItem is one ticket waiting on the operator: what it is, why it
+// needs a human, and Linear's URL for it — acting on the item (blessing it
+// into a queue) happens in Linear, never in lerp.
+type AttentionItem struct {
+	Ticket string // human identifier, e.g. LERP-42
+	Title  string
+	Status string
+	Reason string
+	URL    string
+}
+
 // Event is one observation from the loop. Fields beyond Type are filled as
 // far as they are known: an adopted or reaped run is known only from its
 // local record, which carries the ticket's ID but not its human identifier.
@@ -93,6 +110,7 @@ type Event struct {
 	StartedAt time.Time
 	ExitCode  int             // meaningful only for EventExited
 	Queues    []QueueSnapshot // meaningful only for EventQueues
+	Attention []AttentionItem // EventAttention only: everything waiting on the operator
 	Err       error
 }
 
@@ -224,6 +242,59 @@ func (r *Reconciler) Tick(ctx context.Context) {
 	if r.reconcileEvidence(ctx) {
 		r.fill(ctx)
 	}
+	r.attention(ctx)
+}
+
+// attention recomputes what is blocked on the operator and emits it as one
+// EventAttention carrying the whole list.
+//
+// The v0 definition of "blocked on me", in full: a ticket needs the operator
+// when it is assigned to the operating user and sits in a status no queue
+// serves. That one rule covers both halves of the question — a ticket the
+// operator claimed and parked in a human column (Backlog, a review status)
+// waits to be blessed onward, and a failed run's on_failure move lands its
+// ticket, still claimed, in exactly such a status. Deliberately out of v0: a
+// claimed ticket sitting in a queue status with no live run in a lane (a
+// failed run whose queue has no on_failure route). From one Linear read that
+// state is indistinguishable from a live run under the same user on another
+// machine, so v0 leaves it to the log line conclude writes. This is a
+// reading of the board, not an inbox product; resist growing it.
+//
+// A pass that could not list every team emits nothing: the failure is
+// reported and the subscriber keeps its last full list, because a partial
+// one could falsely read as "nothing needs you".
+func (r *Reconciler) attention(ctx context.Context) {
+	viewerID, err := r.o.Client.Viewer(ctx)
+	if err != nil {
+		r.fail(fmt.Errorf("attention: read viewer: %w", err))
+		return
+	}
+	served := make(map[string]bool, len(r.o.Repo.Queues))
+	for _, q := range r.o.Repo.Queues {
+		served[q.Status] = true
+	}
+	var items []AttentionItem
+	for _, team := range r.o.Repo.Teams {
+		issues, err := r.o.Client.ListAssignedIssues(ctx, team, viewerID)
+		if err != nil {
+			r.fail(fmt.Errorf("attention: list claimed tickets for team %s: %w", team, err))
+			return
+		}
+		for _, issue := range issues {
+			if served[issue.Status] {
+				continue
+			}
+			items = append(items, AttentionItem{
+				Ticket: issue.Identifier,
+				Title:  issue.Title,
+				Status: issue.Status,
+				Reason: fmt.Sprintf("claimed in %q — no queue serves it", issue.Status),
+				URL:    issue.URL,
+			})
+		}
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].Ticket < items[j].Ticket })
+	r.emit(Event{Type: EventAttention, Attention: items})
 }
 
 // reconcileEvidence converges the lanes with .lerp/runs: every record either

@@ -31,6 +31,33 @@ func TestFakeListIssues(t *testing.T) {
 	}
 }
 
+func TestFakeListAssignedIssues(t *testing.T) {
+	f := newTestFake()
+	ctx := context.Background()
+	for _, id := range []string{"iss-1", "iss-3", "iss-4"} {
+		if err := f.AssignIssue(ctx, id, "user-9"); err != nil {
+			t.Fatalf("AssignIssue(%s): %v", id, err)
+		}
+	}
+	// A finished assigned issue waits on nobody, exactly as the real
+	// query's state-type filter behaves.
+	if err := f.MoveIssue(ctx, "iss-3", "Done"); err != nil {
+		t.Fatalf("MoveIssue: %v", err)
+	}
+
+	issues, err := f.ListAssignedIssues(ctx, "LERP", "user-9")
+	if err != nil {
+		t.Fatalf("ListAssignedIssues: %v", err)
+	}
+	var ids []string
+	for _, is := range issues {
+		ids = append(ids, is.Identifier)
+	}
+	if want := []string{"LERP-1"}; !reflect.DeepEqual(ids, want) {
+		t.Errorf("identifiers = %v, want %v", ids, want)
+	}
+}
+
 func TestFakeBlocking(t *testing.T) {
 	f := newTestFake()
 	f.Block("iss-1", "iss-3") // LERP-3 (In Progress) blocks LERP-1
