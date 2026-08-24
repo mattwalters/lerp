@@ -41,8 +41,7 @@ func (o Options) validate() error {
 	return nil
 }
 
-// view is which of SCOPE's three views fills the body. Board and Queue are
-// built; Attention is a placeholder until its own ticket lands.
+// view is which of SCOPE's three views fills the body.
 type view int
 
 const (
@@ -113,6 +112,12 @@ type model struct {
 	// pass; nil until the first pass reports. It is display state only — the
 	// queue view edits nothing (SCOPE: not a Linear client).
 	queues []loop.QueueSnapshot
+
+	// attention is the loop's latest full list of what waits on the operator;
+	// attentionSeen separates "no pass has reported yet" from the goal state,
+	// so an empty screen never claims "nothing needs you" before it is known.
+	attention     []loop.AttentionItem
+	attentionSeen bool
 
 	vp     viewport.Model
 	tail   tail
@@ -278,6 +283,9 @@ func (m *model) apply(ev loop.Event) {
 		}
 	case loop.EventQueues:
 		m.queues = ev.Queues
+	case loop.EventAttention:
+		m.attention = ev.Attention
+		m.attentionSeen = true
 	}
 	m.reorder()
 	m.layout()
@@ -391,15 +399,12 @@ func (m model) View() string {
 	b.WriteString(m.header())
 	b.WriteString("\n")
 	switch m.view {
+	case viewAttention:
+		b.WriteString(m.attentionList())
 	case viewBoard:
 		b.WriteString(m.board())
 	case viewQueue:
 		b.WriteString(m.queueView())
-	default:
-		// Deliberately an empty shell: the Attention view is its own ticket.
-		// The switching seam is what this shell provides.
-		b.WriteString(inactiveStyle.Render(fmt.Sprintf("the %s view is not built yet", m.view)))
-		b.WriteString("\n")
 	}
 	b.WriteString(m.footer())
 	return b.String()
@@ -416,6 +421,32 @@ func (m model) header() string {
 		}
 	}
 	return titleStyle.Render("lerp") + "  " + strings.Join(tabs, "  ")
+}
+
+// attentionList renders the Attention view: every ticket the loop reported
+// as blocked on the operator — the definition lives on the loop's attention
+// pass — with the reason and Linear's URL for it, which most terminals make
+// clickable. The view is deliberately dumb: it folds attention events and
+// renders them; acting on an item happens in Linear, because lerp is not a
+// Linear client. The empty state is the goal state.
+func (m model) attentionList() string {
+	if !m.attentionSeen {
+		return inactiveStyle.Render("reading the board…") + "\n"
+	}
+	if len(m.attention) == 0 {
+		return inactiveStyle.Render("nothing needs you") + "\n"
+	}
+	var b strings.Builder
+	for _, it := range m.attention {
+		b.WriteString(fmt.Sprintf("%-9s %s\n", it.Ticket, it.Title))
+		detail := it.Reason
+		if it.URL != "" {
+			detail += "  " + it.URL
+		}
+		b.WriteString(idleStyle.Render("          " + detail))
+		b.WriteString("\n")
+	}
+	return b.String()
 }
 
 func (m model) board() string {

@@ -10,6 +10,7 @@ type issueNode struct {
 	ID         string `json:"id"`
 	Identifier string `json:"identifier"`
 	Title      string `json:"title"`
+	URL        string `json:"url"`
 	State      struct {
 		Name string `json:"name"`
 	} `json:"state"`
@@ -34,6 +35,7 @@ func (n issueNode) toIssue() Issue {
 		ID:         n.ID,
 		Identifier: n.Identifier,
 		Title:      n.Title,
+		URL:        n.URL,
 		Status:     n.State.Name,
 	}
 	if n.Assignee != nil {
@@ -75,6 +77,7 @@ query ListIssues($team: String!, $state: String!, $after: String) {
       id
       identifier
       title
+      url
       state { name }
       assignee { id }
       inverseRelations(first: 50) {
@@ -90,12 +93,66 @@ query ListIssues($team: String!, $state: String!, $after: String) {
 // ListIssues returns every issue of the team with the given key sitting
 // in the workflow state with the given name.
 func (c *HTTP) ListIssues(ctx context.Context, teamKey, statusName string) ([]Issue, error) {
+	issues, err := c.listIssues(ctx, listIssuesQuery, map[string]any{"team": teamKey, "state": statusName})
+	if err != nil {
+		return nil, fmt.Errorf("list issues: %w", err)
+	}
+	return issues, nil
+}
+
+const listAssignedIssuesQuery = `
+query ListAssignedIssues($team: String!, $assignee: ID!, $after: String) {
+  issues(
+    first: 50
+    after: $after
+    filter: {
+      team: { key: { eq: $team } }
+      assignee: { id: { eq: $assignee } }
+      state: { type: { nin: ["completed", "canceled"] } }
+    }
+  ) {
+    pageInfo { hasNextPage endCursor }
+    nodes {
+      id
+      identifier
+      title
+      url
+      state { name }
+      assignee { id }
+      inverseRelations(first: 50) {
+        nodes {
+          type
+          issue { identifier state { type } }
+        }
+      }
+    }
+  }
+}`
+
+// ListAssignedIssues returns the team's unfinished issues assigned to the
+// user, in any workflow state — the read behind the attention view (see
+// Client). Completed and canceled issues are filtered out server-side.
+func (c *HTTP) ListAssignedIssues(ctx context.Context, teamKey, assigneeID string) ([]Issue, error) {
+	issues, err := c.listIssues(ctx, listAssignedIssuesQuery, map[string]any{"team": teamKey, "assignee": assigneeID})
+	if err != nil {
+		return nil, fmt.Errorf("list assigned issues: %w", err)
+	}
+	return issues, nil
+}
+
+// listIssues runs one of the issue-listing queries to exhaustion, following
+// pageInfo cursors. vars holds the query's own variables; the cursor is
+// added here.
+func (c *HTTP) listIssues(ctx context.Context, query string, vars map[string]any) ([]Issue, error) {
 	var issues []Issue
 	after := ""
 	for {
-		vars := map[string]any{"team": teamKey, "state": statusName}
+		page := make(map[string]any, len(vars)+1)
+		for k, v := range vars {
+			page[k] = v
+		}
 		if after != "" {
-			vars["after"] = after
+			page["after"] = after
 		}
 		var resp struct {
 			Issues struct {
@@ -106,8 +163,8 @@ func (c *HTTP) ListIssues(ctx context.Context, teamKey, statusName string) ([]Is
 				Nodes []issueNode `json:"nodes"`
 			} `json:"issues"`
 		}
-		if err := c.do(ctx, listIssuesQuery, vars, &resp); err != nil {
-			return nil, fmt.Errorf("list issues: %w", err)
+		if err := c.do(ctx, query, page, &resp); err != nil {
+			return nil, err
 		}
 		for _, n := range resp.Issues.Nodes {
 			issues = append(issues, n.toIssue())
@@ -125,6 +182,7 @@ query GetIssue($id: String!) {
     id
     identifier
     title
+    url
     state { name }
     assignee { id }
     inverseRelations(first: 50) {

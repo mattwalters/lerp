@@ -123,6 +123,41 @@ func TestListIssues(t *testing.T) {
 	}
 }
 
+func TestListAssignedIssues(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		req := decodeRequest(t, r)
+		if req.Variables["team"] != "LERP" || req.Variables["assignee"] != "user-9" {
+			t.Errorf("variables = %v", req.Variables)
+		}
+		// Finished issues wait on nobody; the query must exclude them
+		// server-side rather than page them all back.
+		if !strings.Contains(req.Query, `nin: ["completed", "canceled"]`) {
+			t.Errorf("query does not exclude finished states: %q", req.Query)
+		}
+		writeData(t, w, `{"issues":{
+			"pageInfo":{"hasNextPage":false,"endCursor":""},
+			"nodes":[{
+				"id":"iss-1","identifier":"LERP-1","title":"First","state":{"name":"Needs Help"},
+				"url":"https://linear.app/acme/issue/LERP-1/first",
+				"assignee":{"id":"user-9"},
+				"inverseRelations":{"nodes":[]}
+			}]
+		}}`)
+	})
+
+	issues, err := c.ListAssignedIssues(context.Background(), "LERP", "user-9")
+	if err != nil {
+		t.Fatalf("ListAssignedIssues: %v", err)
+	}
+	want := []Issue{
+		{ID: "iss-1", Identifier: "LERP-1", Title: "First", Status: "Needs Help",
+			AssigneeID: "user-9", URL: "https://linear.app/acme/issue/LERP-1/first"},
+	}
+	if !reflect.DeepEqual(issues, want) {
+		t.Errorf("issues = %+v, want %+v", issues, want)
+	}
+}
+
 func TestGetIssue(t *testing.T) {
 	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 		req := decodeRequest(t, r)
