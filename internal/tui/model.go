@@ -313,18 +313,28 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.promoting = true
 			m.promoteSel = 0
 		}
+	// The scroll keys move whatever the main pane shows; follow is the log's
+	// state alone, so a detour through a detail lens can never freeze the tail.
 	case key.Matches(msg, m.keys.PageUp):
 		m.vp.ViewUp()
-		m.follow = m.vp.AtBottom()
+		if m.focus == panelLanes {
+			m.follow = m.vp.AtBottom()
+		}
 	case key.Matches(msg, m.keys.PageDown):
 		m.vp.ViewDown()
-		m.follow = m.vp.AtBottom()
+		if m.focus == panelLanes {
+			m.follow = m.vp.AtBottom()
+		}
 	case key.Matches(msg, m.keys.Top):
 		m.vp.GotoTop()
-		m.follow = false
+		if m.focus == panelLanes {
+			m.follow = false
+		}
 	case key.Matches(msg, m.keys.Bottom):
 		m.vp.GotoBottom()
-		m.follow = true
+		if m.focus == panelLanes {
+			m.follow = true
+		}
 	case key.Matches(msg, m.keys.Open):
 		return m, openURL(m.selectedURL())
 	}
@@ -347,10 +357,12 @@ func (m model) handlePromoteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.promoteSel++
 		}
 	case "enter":
-		item := m.attention[clampIndex(m.attnSel, len(m.attention))]
-		status := m.o.Statuses[m.promoteSel]
+		it := m.selectedAttention()
 		m.promoting = false
-		return m, m.doPromote(item.TicketID, item.Ticket, status)
+		if it == nil {
+			return m, nil
+		}
+		return m, m.doPromote(it.TicketID, it.Ticket, m.o.Statuses[m.promoteSel])
 	}
 	return m, nil
 }
@@ -368,6 +380,9 @@ func (m model) doPromote(ticketID, ticket, status string) tea.Cmd {
 func (m *model) setFocus(p panel) {
 	m.focus = p
 	m.refreshMain()
+	if p != panelLanes {
+		m.vp.GotoTop()
+	}
 }
 
 // moveSelection moves within the focused panel. The lane selection is by
@@ -385,9 +400,11 @@ func (m *model) moveSelection(delta int) {
 	case panelAttention:
 		m.attnSel = clampIndex(m.attnSel+delta, len(m.attention))
 		m.refreshMain()
+		m.vp.GotoTop()
 	case panelNext:
 		m.nextSel = clampIndex(m.nextSel+delta, len(m.nextRefs()))
 		m.refreshMain()
+		m.vp.GotoTop()
 	}
 }
 
@@ -401,8 +418,8 @@ func clampIndex(i, n int) int {
 func (m *model) selectedURL() string {
 	switch m.focus {
 	case panelAttention:
-		if i := clampIndex(m.attnSel, len(m.attention)); i < len(m.attention) {
-			return m.attention[i].URL
+		if it := m.selectedAttention(); it != nil {
+			return it.URL
 		}
 	case panelNext:
 		if t := m.nextTicket(); t != nil {
@@ -441,6 +458,7 @@ func (m *model) apply(ev loop.Event) {
 		m.lastErr = ev.Err.Error()
 		m.passHadErr = true
 	}
+	changed := panel(-1) // which panel's lens data this event feeds
 	switch ev.Type {
 	case loop.EventProvisioning:
 		m.lanes[ev.Lane] = &lane{state: laneProvisioning, runID: ev.RunID, ticketID: ev.TicketID,
@@ -466,6 +484,7 @@ func (m *model) apply(ev loop.Event) {
 	case loop.EventQueues:
 		m.queues = ev.Queues
 		m.nextSel = clampIndex(m.nextSel, len(m.nextRefs()))
+		changed = panelNext
 	case loop.EventAttention:
 		m.attention = ev.Attention
 		m.attentionSeen = true
@@ -476,11 +495,16 @@ func (m *model) apply(ev loop.Event) {
 		if len(m.attention) == 0 {
 			m.promoting = false
 		}
+		changed = panelAttention
 	}
 	m.reorder()
 	m.layout()
 	m.retarget()
-	m.refreshMain()
+	// Only the lens this event feeds is re-rendered; the log pane refreshes
+	// through retarget and the poll, never from here.
+	if changed == m.focus {
+		m.refreshMain()
+	}
 }
 
 // settle frees the lane a run just left. An in-range lane goes idle with a
@@ -552,16 +576,16 @@ func (m *model) retarget() {
 
 // refreshMain points the main pane's viewport at whatever the focused panel
 // selects: the log tail for running lanes, a detail lens for the other two.
+// Scroll position is the caller's concern — focus and selection changes jump
+// to the top; a data refresh keeps the operator's place.
 func (m *model) refreshMain() {
 	switch m.focus {
 	case panelLanes:
 		m.refreshLog()
 	case panelAttention:
 		m.vp.SetContent(m.attentionDetail())
-		m.vp.GotoTop()
 	case panelNext:
 		m.vp.SetContent(m.nextDetail())
-		m.vp.GotoTop()
 	}
 }
 
@@ -600,9 +624,21 @@ func (m *model) nextTicket() *loop.QueueTicket {
 	return &m.queues[r.qi].Tickets[r.ti]
 }
 
-// geometry is the screen's arithmetic: side panels sized to their content,
-// the main pane taking whatever is left, one narrow fallback that stacks
-// everything. Heights include borders; panelBox truncates overflow itself.
+// selectedAttention is the needs-you selection, nil when the list is empty —
+// the one place that owns the empty case, like nextTicket for the other
+// panel.
+func (m *model) selectedAttention() *loop.AttentionItem {
+	if len(m.attention) == 0 {
+		return nil
+	}
+	return &m.attention[clampIndex(m.attnSel, len(m.attention))]
+}
+
+// geometry is the screen's arithmetic: side panels sized to the rows they
+// will render, the main pane taking whatever is left, one narrow fallback
+// that stacks everything. Heights include borders, and the stack is clamped
+// to bodyH so the status bar always stays on screen — panelBox and
+// windowRows absorb the overflow inside each panel.
 type geometry struct {
 	wide                 bool
 	sideW, mainW         int
@@ -615,40 +651,33 @@ func (m *model) geometry() geometry {
 	g := geometry{bodyH: max(4, m.height-1)}
 	g.wide = m.width >= narrowWidth
 
-	// The needs-you panel sizes to its list — group headers included — with
-	// one line minimum for its state text and a cap so it never crowds out
-	// the lanes below it.
-	g.attnH = min(max(len(m.attention)+len(m.attentionGroups()), 1), 8) + 2
+	// Panels size to the rows they will render — the same rows the panels
+	// draw, so the counts can never drift — capped so no panel crowds out
+	// the others, then clamped so the whole stack fits bodyH. Each clamp
+	// leaves the panels below it their minimum height; View's too-small
+	// guard keeps the arithmetic non-negative.
+	attnRows, _ := m.attentionRows()
+	nextRows, _ := m.nextListRows()
+	g.attnH = min(len(attnRows), 8) + 2
 	g.lanesH = len(m.order) + 2
 
 	if g.wide {
 		g.sideW = max(28, m.width/3)
 		g.mainW = m.width - g.sideW
 		g.mainH = g.bodyH
-		g.nextH = max(4, g.bodyH-g.attnH-g.lanesH)
+		g.attnH = min(g.attnH, g.bodyH-3-4)
+		g.lanesH = min(g.lanesH, g.bodyH-g.attnH-4)
+		g.nextH = g.bodyH - g.attnH - g.lanesH
 		return g
 	}
 	g.sideW = m.width
 	g.mainW = m.width
-	nextRows := 0
-	for _, q := range m.queues {
-		nextRows += 1 + len(q.Tickets)
-	}
-	g.nextH = min(max(nextRows, 1), 6) + 2
-	g.mainH = max(5, g.bodyH-g.attnH-g.lanesH-g.nextH)
+	g.nextH = min(len(nextRows), 6) + 2
+	g.attnH = min(g.attnH, g.bodyH-3-3-5)
+	g.lanesH = min(g.lanesH, g.bodyH-g.attnH-3-5)
+	g.nextH = min(g.nextH, g.bodyH-g.attnH-g.lanesH-5)
+	g.mainH = g.bodyH - g.attnH - g.lanesH - g.nextH
 	return g
-}
-
-// attentionGroups lists the distinct groups in display order, for the panel's
-// header rows.
-func (m *model) attentionGroups() []loop.AttentionGroup {
-	var groups []loop.AttentionGroup
-	for _, it := range m.attention {
-		if len(groups) == 0 || groups[len(groups)-1] != it.Group {
-			groups = append(groups, it.Group)
-		}
-	}
-	return groups
 }
 
 // layout sizes the main pane's viewport from the geometry.
@@ -666,7 +695,14 @@ func (m model) View() string {
 	if !m.ready {
 		return "starting lerp…\n"
 	}
-	if m.width < 24 || m.height < 8 {
+	// geometry's clamps need room for every panel's minimum height (the
+	// stacked narrow layout needs the most); below that, say so rather than
+	// render a screen taller than the terminal.
+	minH := 11
+	if m.width < narrowWidth {
+		minH = 15
+	}
+	if m.width < 24 || m.height < minH {
 		return "lerp — window too small\n"
 	}
 	g := m.geometry()
@@ -704,44 +740,71 @@ func marker(on bool) string {
 	return "  "
 }
 
+// attentionRows builds the needs-you panel's rows — group headers above
+// their tickets; sel is the selected row's index (-1 with nothing to
+// select), for the focus window.
+func (m *model) attentionRows() ([]string, int) {
+	switch {
+	case !m.attentionSeen:
+		return []string{styleFaint.Render("reading the board…")}, -1
+	case len(m.attention) == 0:
+		return []string{styleFaint.Render("nothing needs you")}, -1
+	}
+	focused := m.focus == panelAttention
+	var rows []string
+	sel := -1
+	group := loop.AttentionGroup("")
+	for i, it := range m.attention {
+		if it.Group != group {
+			group = it.Group
+			rows = append(rows, styleTicket.Render(string(group)))
+		}
+		if i == m.attnSel {
+			sel = len(rows)
+		}
+		rows = append(rows, marker(focused && i == m.attnSel)+
+			styleAttention.Render("● ")+styleTicket.Render(it.Ticket)+" "+it.Title)
+	}
+	return rows, sel
+}
+
 func (m model) attentionPanel(w, h int) string {
 	focused := m.focus == panelAttention
 	extra := ""
 	if len(m.attention) > 0 {
 		extra = styleAttention.Render(fmt.Sprintf(" ● %d", len(m.attention)))
 	}
-	var rows []string
-	switch {
-	case !m.attentionSeen:
-		rows = []string{styleFaint.Render("reading the board…")}
-	case len(m.attention) == 0:
-		rows = []string{styleFaint.Render("nothing needs you")}
-	default:
-		group := loop.AttentionGroup("")
-		for i, it := range m.attention {
-			if it.Group != group {
-				group = it.Group
-				rows = append(rows, styleTicket.Render(string(group)))
-			}
-			rows = append(rows, marker(focused && i == m.attnSel)+
-				styleAttention.Render("● ")+styleTicket.Render(it.Ticket)+" "+it.Title)
-		}
+	rows, sel := m.attentionRows()
+	if focused && sel >= 0 {
+		rows = windowRows(rows, sel, h-2)
 	}
 	return panelBox(panelTitle(1, "needs you", focused, extra), focused, w, h, rows)
 }
 
-func (m model) lanesPanel(w, h int) string {
-	focused := m.focus == panelLanes
+// busyLanes counts the configured lanes hosting live runs. Adopted runs
+// above N are visible as extra rows but sit outside the configured
+// capacity, so they stay out of the fraction.
+func (m model) busyLanes() int {
 	busy := 0
-	for _, ln := range m.lanes {
-		if ln.state != laneIdle {
+	for n, ln := range m.lanes {
+		if n <= m.o.Lanes && ln.state != laneIdle {
 			busy++
 		}
 	}
-	extra := styleFaint.Render(fmt.Sprintf(" · %d/%d busy", busy, m.o.Lanes))
+	return busy
+}
+
+func (m model) lanesPanel(w, h int) string {
+	focused := m.focus == panelLanes
+	extra := styleFaint.Render(fmt.Sprintf(" · %d/%d busy", m.busyLanes(), m.o.Lanes))
 	rows := make([]string, 0, len(m.order))
 	for _, n := range m.order {
 		rows = append(rows, m.laneRow(n, w-2))
+	}
+	if focused {
+		if i := slices.Index(m.order, m.selected); i >= 0 {
+			rows = windowRows(rows, i, h-2)
+		}
 	}
 	return panelBox(panelTitle(2, "running", focused, extra), focused, w, h, rows)
 }
@@ -793,17 +856,20 @@ func (m model) laneRow(number, width int) string {
 	return left + pad + " " + right
 }
 
-func (m model) nextPanel(w, h int) string {
-	focused := m.focus == panelNext
+// nextListRows builds the up-next panel's rows — each queue header, then its
+// tickets in pickup order; sel is the selected row's index (-1 with nothing
+// to select), for the focus window.
+func (m *model) nextListRows() ([]string, int) {
 	if m.queues == nil {
-		return panelBox(panelTitle(3, "up next", focused, ""), focused, w, h,
-			[]string{styleFaint.Render("waiting for the first pass…")})
+		return []string{styleFaint.Render("waiting for the first pass…")}, -1
+	}
+	focused := m.focus == panelNext
+	selIdx := -1
+	if refs := m.nextRefs(); len(refs) > 0 {
+		selIdx = clampIndex(m.nextSel, len(refs))
 	}
 	var rows []string
 	sel := -1
-	if refs := m.nextRefs(); len(refs) > 0 {
-		sel = clampIndex(m.nextSel, len(refs))
-	}
 	idx := 0
 	for _, q := range m.queues {
 		meta := fmt.Sprintf(" %s · %s · %d", q.Status, q.Team, len(q.Tickets))
@@ -812,15 +878,27 @@ func (m model) nextPanel(w, h int) string {
 		}
 		rows = append(rows, styleTicket.Render(q.Name)+styleFaint.Render(meta))
 		for _, tk := range q.Tickets {
-			row := marker(focused && idx == sel)
+			row := marker(focused && idx == selIdx)
 			if tk.Eligible {
 				row += styleTicket.Render(tk.Identifier) + " " + tk.Title
 			} else {
 				row += styleFaint.Render(tk.Identifier + " " + tk.Title)
 			}
+			if idx == selIdx {
+				sel = len(rows)
+			}
 			rows = append(rows, row)
 			idx++
 		}
+	}
+	return rows, sel
+}
+
+func (m model) nextPanel(w, h int) string {
+	focused := m.focus == panelNext
+	rows, sel := m.nextListRows()
+	if focused && sel >= 0 {
+		rows = windowRows(rows, sel, h-2)
 	}
 	return panelBox(panelTitle(3, "up next", focused, ""), focused, w, h, rows)
 }
@@ -830,7 +908,9 @@ func (m model) nextPanel(w, h int) string {
 // panels.
 func (m model) mainPanel(w, h int) string {
 	if m.promoting {
-		return m.promotePicker(w, h)
+		if it := m.selectedAttention(); it != nil {
+			return m.promotePicker(*it, w, h)
+		}
 	}
 	if m.helpOn {
 		return panelBox(styleTitleFocus.Render("help"), true, w, h,
@@ -844,9 +924,8 @@ func (m model) mainPanel(w, h int) string {
 // promotePicker renders the target-status list for the selected needs-you
 // item: every configured queue status plus the pipeline's exits — exactly
 // what Promote (a plain MoveIssue) is allowed to move a ticket into.
-func (m model) promotePicker(w, h int) string {
-	item := m.attention[clampIndex(m.attnSel, len(m.attention))]
-	rows := []string{item.Title, ""}
+func (m model) promotePicker(it loop.AttentionItem, w, h int) string {
+	rows := []string{it.Title, ""}
 	for i, status := range m.o.Statuses {
 		if i == m.promoteSel {
 			rows = append(rows, styleFocus.Render("▸ "+status))
@@ -854,14 +933,16 @@ func (m model) promotePicker(w, h int) string {
 			rows = append(rows, "  "+status)
 		}
 	}
-	return panelBox(styleTitleFocus.Render("promote "+item.Ticket), true, w, h, rows)
+	// The highlighted status must be on screen before enter can confirm it.
+	rows = windowRows(rows, 2+m.promoteSel, h-2)
+	return panelBox(styleTitleFocus.Render("promote "+it.Ticket), true, w, h, rows)
 }
 
 func (m model) mainTitle() string {
 	switch m.focus {
 	case panelAttention:
-		if i := clampIndex(m.attnSel, len(m.attention)); i < len(m.attention) {
-			return m.attention[i].Ticket
+		if it := m.selectedAttention(); it != nil {
+			return it.Ticket
 		}
 		return "needs you"
 	case panelNext:
@@ -894,7 +975,7 @@ func (m model) attentionDetail() string {
 		return styleFaint.Render("nothing needs you — the empty list is the goal state") + "\n" +
 			styleFaint.Render("(shows "+loop.AttentionDefinition+")")
 	}
-	it := m.attention[clampIndex(m.attnSel, len(m.attention))]
+	it := m.selectedAttention()
 	return strings.Join([]string{
 		styleTicket.Render(it.Ticket) + " " + it.Title,
 		"",
@@ -946,9 +1027,15 @@ func (m model) nextDetail() string {
 
 // statusBar is the heartbeat line: focused panel, pass clock, capacity,
 // needs-you count, keys. A pass error — or a transient note like a
-// promote's outcome — takes over the middle; there is no permanently
-// reserved error line.
+// promote's outcome — takes over the whole line; a truncated error is not
+// actionable, so nothing else competes with it for the width.
 func (m model) statusBar() string {
+	switch {
+	case m.lastErr != "":
+		return ansi.Truncate(styleErr.Render("✗ "+m.lastErr), m.width, "…")
+	case m.lastInfo != "":
+		return ansi.Truncate(styleRunning.Render("✓ "+m.lastInfo), m.width, "…")
+	}
 	badgeColor := colorFocus
 	switch m.focus {
 	case panelAttention:
@@ -972,22 +1059,9 @@ func (m model) statusBar() string {
 	}
 
 	left := badge + " " + heart
-	switch {
-	case m.lastErr != "":
-		left += "  " + styleErr.Render("✗ "+m.lastErr)
-	case m.lastInfo != "":
-		left += "  " + styleRunning.Render("✓ "+m.lastInfo)
-	default:
-		busy := 0
-		for _, ln := range m.lanes {
-			if ln.state != laneIdle {
-				busy++
-			}
-		}
-		left += "  " + styleFaint.Render(fmt.Sprintf("lanes %d/%d", busy, m.o.Lanes))
-		if len(m.attention) > 0 {
-			left += "  " + styleAttention.Render(fmt.Sprintf("● %d need you", len(m.attention)))
-		}
+	left += "  " + styleFaint.Render(fmt.Sprintf("lanes %d/%d", m.busyLanes(), m.o.Lanes))
+	if len(m.attention) > 0 {
+		left += "  " + styleAttention.Render(fmt.Sprintf("● %d need you", len(m.attention)))
 	}
 	right := styleFaint.Render("? help · q quit")
 	if m.promoting {
@@ -996,6 +1070,7 @@ func (m model) statusBar() string {
 
 	pad := m.width - lipgloss.Width(left) - lipgloss.Width(right)
 	if pad < 1 {
+		right = ansi.Truncate(right, max(0, m.width-1), "…")
 		left = ansi.Truncate(left, max(0, m.width-lipgloss.Width(right)-1), "…")
 		pad = max(1, m.width-lipgloss.Width(left)-lipgloss.Width(right))
 	}

@@ -83,3 +83,28 @@ func panelBox(title string, focused bool, w, h int, rows []string) string {
 	b.WriteString(border.Render("╰" + strings.Repeat("─", iw) + "╯"))
 	return b.String()
 }
+
+// windowRows slides rows so the row at sel stays visible within ih lines,
+// standing in for the spans cut at either edge with a faint "⋯ n more".
+// panelBox's own cut covers unfocused panels; this is the focused variant,
+// so a selection can never walk off the rendered rows.
+func windowRows(rows []string, sel, ih int) []string {
+	if ih < 2 || len(rows) <= ih {
+		return rows
+	}
+	sel = clampIndex(sel, len(rows))
+	more := func(n int) string { return styleFaint.Render(fmt.Sprintf("⋯ %d more", n)) }
+	if sel < ih-1 {
+		return append(append([]string{}, rows[:ih-1]...), more(len(rows)-(ih-1)))
+	}
+	if lo := len(rows) - (ih - 1); sel >= lo {
+		return append([]string{more(lo)}, rows[lo:]...)
+	}
+	hi := sel + 1
+	lo := hi - max(1, ih-2)
+	out := append([]string{more(lo)}, rows[lo:hi]...)
+	if len(out) < ih {
+		out = append(out, more(len(rows)-hi))
+	}
+	return out
+}
