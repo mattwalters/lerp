@@ -59,9 +59,10 @@ type Runner struct {
 // Queue is a Linear status with instructions attached: exactly the
 // four fields of SCOPE concept 2, plus the optional on_failure.
 // OnSuccess and OnFailure name Linear statuses, not queues — they may
-// point at a status with no queue (a human review column). Whether
-// they exist on the actual Linear board is checked by the loop at
-// startup, not here.
+// point at a status with no queue (a human review column). That Status
+// and both targets exist on each configured team's board is verified
+// once at startup, before the first reconciler pass
+// (loop.VerifyStatuses), not here: loading config cannot see the board.
 type Queue struct {
 	Status    string `toml:"status"`
 	Prompt    string `toml:"prompt"`

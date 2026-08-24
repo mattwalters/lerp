@@ -2,6 +2,7 @@ package linear
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"reflect"
 	"strings"
@@ -51,6 +52,36 @@ func TestEnsureTeamDoesNotCreateExistingTeam(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Errorf("calls = %d, want only the team lookup", calls)
+	}
+}
+
+func TestTeamStatesReportsNamesInBoardOrder(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		req := decodeRequest(t, r)
+		if !strings.Contains(req.Query, "TeamStates") {
+			t.Errorf("unexpected query: %s", req.Query)
+		}
+		if req.Variables["key"] != "LERP" {
+			t.Errorf("key = %v", req.Variables["key"])
+		}
+		writeData(t, w, `{"teams":{"nodes":[{"id":"team-1","states":{"nodes":[{"name":"Backlog","type":"backlog"},{"name":"Todo","type":"unstarted"},{"name":"Done","type":"completed"}]}}]}}`)
+	})
+	names, err := c.TeamStates(context.Background(), "LERP")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"Backlog", "Todo", "Done"}; !reflect.DeepEqual(names, want) {
+		t.Errorf("names = %v, want %v", names, want)
+	}
+}
+
+func TestTeamStatesReportsUnknownTeam(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		writeData(t, w, `{"teams":{"nodes":[]}}`)
+	})
+	_, err := c.TeamStates(context.Background(), "NOPE")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("error = %v, want ErrNotFound", err)
 	}
 }
 

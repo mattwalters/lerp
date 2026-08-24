@@ -105,6 +105,16 @@ func openTUI(ctx context.Context, lanes int) error {
 		return err
 	}
 
+	// Refuse to run before the first reconciler pass unless every configured
+	// status exists on its team (SCOPE invariant 2's refuse-at-startup
+	// spirit): a misspelled queue status would poll as a permanently empty
+	// queue, not an error, and a missing on_success target would fail only
+	// after an agent's whole run.
+	client := linear.New(apiKey, nil)
+	if err := loop.VerifyStatuses(ctx, client, repo); err != nil {
+		return err
+	}
+
 	ev := evidence.New(repoDir)
 	lock, err := ev.AcquireLock()
 	if err != nil {
@@ -130,7 +140,7 @@ func openTUI(ctx context.Context, lanes int) error {
 	// receive pending, so the channel drains for as long as the TUI is open.
 	events := make(chan loop.Event, 64)
 	rec, err := loop.NewReconciler(loop.ReconcilerOptions{
-		Client:   linear.New(apiKey, nil),
+		Client:   client,
 		Repo:     repo,
 		RepoDir:  repoDir,
 		Evidence: ev,
