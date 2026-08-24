@@ -67,7 +67,7 @@ creates a new team under that key.
 
 This creates the Linear team if it is missing and, on a first run,
 holds a short conversation to fit the
-[stock planning → implementing → review pipeline](#stock-pipeline)
+[stock planning → approval → implementing → review pipeline](#stock-pipeline)
 onto the board the team already has: it shows the team's existing
 statuses, asks whether to include the optional planning and
 agent-review stages, and offers to create the stock statuses the chosen
@@ -142,11 +142,16 @@ move sequence and exits. It predates the loop's evidence store: its
 workspace and agent log live under a temporary directory instead, and
 the log's path is printed when the run finishes.
 
-A finished run leaves the ticket assigned to you. The assignment is
-the claim, and a claimed ticket is someone else's work as far as lerp
-is concerned — even when the someone is you. So to carry the ticket
-through its next stage: unassign it in Linear. The loop picks it up
-again on its next pass; with `lerp once`, run the command again.
+Where a finished run leaves the ticket is the whole of the topology.
+Coming to rest in a status some queue serves releases the claim — the
+assignment is the claim, and a claimed ticket is someone else's work
+as far as lerp is concerned, even when the someone is you — so the
+next pass picks the ticket up for that stage on its own. Coming to
+rest in a status no queue serves keeps it assigned to you on purpose:
+that is the pipeline waiting on a human, and the stock config waits
+twice, in "Plan Review" for you to read the plan and in "In Review"
+for you to merge the PR. Promote it with `p` in the TUI, or move it in
+Linear; either way the loop carries it on from there.
 
 ## Configuration
 
@@ -162,8 +167,8 @@ is the database (see the model above). The file is strictly parsed: an
 unknown key is an error, not a shrug.
 
 [lerp.example.toml](lerp.example.toml) is the stock planning →
-implementing → review pipeline, with prompts you can read and argue
-with. `lerp init --team KEY` writes it into the repo for you (see
+approval → implementing → review pipeline, with prompts you can read
+and argue with. `lerp init --team KEY` writes it into the repo for you (see
 [Getting started](#getting-started)).
 
 Read it before you run it. It may grant the agent broad permissions and it
@@ -321,7 +326,8 @@ rewriting them into a different shape needs no code change.
 | Status | Who acts | Then |
 | --- | --- | --- |
 | Backlog / Todo | you | promote a ticket into Planning, or into Implementing if it is small |
-| Planning | agent | posts a plan comment → Implementing |
+| Planning | agent | posts a plan comment → Plan Review |
+| Plan Review | you | read the plan, then press `p` to promote: Implementing to build it, Planning to re-plan, Needs Attention to park it |
 | Implementing | agent | commits, pushes, opens a PR with `gh` → Agent Review |
 | Agent Review | agent | posts a review verdict → In Review, or to Needs Attention with findings |
 | In Review | you | merge the PR; Linear's GitHub integration moves it to Done |
@@ -401,10 +407,11 @@ each `on_success` target no queue watches, init prints whether Linear
 categorises it as completed. If such a status genuinely means the work
 is done, set its category to Done in Linear; left in-progress,
 finished tickets there would block their dependents forever. If a
-human still acts on tickets there — the stock pipeline's "In Review",
-where you merge the PR and Linear's GitHub integration moves the
-ticket on — in-progress is exactly right, and marking it completed
-would release dependent tickets before the work had actually landed.
+human still acts on tickets there — the stock pipeline's "Plan Review",
+where you approve a plan, and "In Review", where you merge the PR and
+Linear's GitHub integration moves the ticket on — in-progress is
+exactly right, and marking it completed would release dependent
+tickets before the work had actually landed.
 
 **How does multiplayer work?** It is inherited from Linear, not built:
 each developer runs their own lerp against their own clone, and the

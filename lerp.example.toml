@@ -68,7 +68,7 @@ resume = "claude --resume {{session}}"
 [queues.plan]
 status = "Planning"
 runner = "claude"
-on_success = "Implementing"
+on_success = "Plan Review"
 on_failure = "Needs Attention"
 prompt = """
 You are planning {{ticket}}, nothing more. Do not write code.
@@ -119,9 +119,21 @@ can send the work back through implementation. A clean review leaves
 {{ticket}} for a human to merge.
 """
 
-# "In Review" is where work leaves the automated path: no queue watches
-# it, so a ticket that lands there on success waits for a human to merge the
-# pull request — and Linear's GitHub integration moves it to Done.
+# A status no queue watches is how this pipeline waits for a human: the
+# ticket comes to rest there, still assigned to whoever claimed it, and shows
+# up under "parked on you" in the board.
+#
+# "Plan Review" is the first such gate. A plan is worth writing only if
+# someone reads it, so a finished plan stops here instead of flowing straight
+# into "Implementing". Read the plan comment and press `p` to promote the
+# ticket: to "Implementing" to build it, back to "Planning" to re-plan,
+# or to "Needs Attention" to let it sit — that promote is the approval.
+# Work that needs no plan never enters "Planning" and never meets this gate —
+# routing is placement.
+#
+# "In Review" is where work leaves the automated path: a ticket that
+# lands there on success waits for a human to merge the pull request — and
+# Linear's GitHub integration moves it to Done.
 #
 # "Needs Attention" is the same idea for failures: no queue watches it,
 # so a ticket that lands there waits for you rather than being retried

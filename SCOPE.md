@@ -94,9 +94,11 @@ five. If that trade is unappealing, the feature is out of scope.
    tolerates. No lerp server, no coordination service, ever.
 
 5. **The engine is generic; the opinion ships as config.** Lerp's stock
-   config encodes planning → implementing → reviewing. The engine knows
-   nothing about that sequence — each queue is independent, and the
-   topology exists only in the `on-success` pointers.
+   config encodes planning → human plan approval → implementing →
+   reviewing. The engine knows nothing about that sequence — each queue
+   is independent, and the topology exists only in the `on-success`
+   pointers. The approval step is not engine either: it is a status no
+   queue serves, where a ticket rests until a human promotes it.
 
 6. **Setup time and run time never mix.** `lerp init` (and humans) may
    create board structure — teams, statuses matching queues. The loop

@@ -29,11 +29,12 @@ var stockRepo string
 // Stock status names: what the pipeline maps onto when the operator does
 // not choose otherwise.
 const (
-	StockPlanStatus      = "Planning"
-	StockImplementStatus = "Implementing"
-	StockReviewStatus    = "Agent Review"
-	StockExitStatus      = "In Review"
-	StockAttentionStatus = "Needs Attention"
+	StockPlanStatus       = "Planning"
+	StockPlanReviewStatus = "Plan Review"
+	StockImplementStatus  = "Implementing"
+	StockReviewStatus     = "Agent Review"
+	StockExitStatus       = "In Review"
+	StockAttentionStatus  = "Needs Attention"
 )
 
 // Stock describes one rendering of the stock lerp.toml: which optional
@@ -47,11 +48,12 @@ type Stock struct {
 	Plan   bool // include the plan queue
 	Review bool // include the review queue; declining wires implement straight to ExitStatus
 
-	PlanStatus      string
-	ImplementStatus string
-	ReviewStatus    string
-	ExitStatus      string // where clean runs leave the automated path
-	AttentionStatus string // where failures wait for a human
+	PlanStatus       string
+	PlanReviewStatus string // where a finished plan waits for a human to approve it
+	ImplementStatus  string
+	ReviewStatus     string
+	ExitStatus       string // where clean runs leave the automated path
+	AttentionStatus  string // where failures wait for a human
 }
 
 // RepoConfig is the whole configuration, one checked-in file per repo: the
@@ -142,6 +144,7 @@ func (s Stock) Render() string {
 	rendered = strings.NewReplacer(
 		"{{teams}}", strings.Join(quoted, ", "),
 		"{{plan_status}}", orStock(s.PlanStatus, StockPlanStatus),
+		"{{plan_review_status}}", orStock(s.PlanReviewStatus, StockPlanReviewStatus),
 		"{{implement_status}}", orStock(s.ImplementStatus, StockImplementStatus),
 		"{{implement_success}}", implementSuccess,
 		"{{review_status}}", orStock(s.ReviewStatus, StockReviewStatus),
