@@ -118,7 +118,7 @@ func Once(ctx context.Context, o OnceOptions) (bool, error) {
 	if err != nil {
 		return true, fmt.Errorf("run issue %s: %w", issue.ID, err)
 	}
-	if err := conclude(ctx, o.Client, issue, queue, servedStatuses(o.Repo), result.ExitCode, o.Log); err != nil {
+	if _, err := conclude(ctx, o.Client, issue, queue, o.Repo, result.ExitCode, o.Log); err != nil {
 		return true, err
 	}
 	return true, nil
@@ -140,6 +140,11 @@ func servedStatuses(repo *config.RepoConfig) map[string]bool {
 // OnFailure when configured; either move happens only while the ticket remains
 // in the queue status, so an agent or human move wins.
 //
+// A move that did not happen is reported rather than passed over in silence:
+// conclude returns the note naming the hop it skipped, empty when the ticket
+// stayed put and the rule applied normally. The caller carries it to the TUI;
+// conclude has already written it to the log.
+//
 // The claim is released exactly when the ticket comes to rest somewhere a queue
 // picks up from — whether lerp moved it there or the agent did. An assigned
 // ticket is never eligible, so a ticket still holding its claim in a served
@@ -147,10 +152,10 @@ func servedStatuses(repo *config.RepoConfig) map[string]bool {
 // nothing reports an error. Coming to rest in a status no queue serves keeps
 // the claim on purpose, because that is what parks the ticket on the operator
 // in the needs-you view.
-func conclude(ctx context.Context, client linear.Client, issue linear.Issue, queue config.Queue, served map[string]bool, exitCode int, log io.Writer) error {
-	target := queue.OnFailure
+func conclude(ctx context.Context, client linear.Client, issue linear.Issue, queue config.Queue, repo *config.RepoConfig, exitCode int, log io.Writer) (string, error) {
+	target, rule := queue.OnFailure, "on_failure"
 	if exitCode == 0 {
-		target = queue.OnSuccess
+		target, rule = queue.OnSuccess, "on_success"
 	}
 	if target == "" {
 		// A failed run with no failure route stays where it is, and stays
@@ -162,27 +167,66 @@ func conclude(ctx context.Context, client linear.Client, issue linear.Issue, que
 			fmt.Fprintf(log, "%s exited %d and its queue has no on_failure route: leaving it claimed for a human\n",
 				issue.Identifier, exitCode)
 		}
-		return nil
+		return "", nil
 	}
 
 	current, err := client.GetIssue(ctx, issue.ID)
 	if err != nil {
-		return fmt.Errorf("read completed issue %s: %w", issue.ID, err)
+		return "", fmt.Errorf("read completed issue %s: %w", issue.ID, err)
 	}
 	final := current.Status
-	if final == queue.Status {
+	var note string
+	switch {
+	case final == queue.Status:
 		if err := client.MoveIssue(ctx, issue.ID, target); err != nil {
-			return fmt.Errorf("move issue %s to %q: %w", issue.ID, target, err)
+			return "", fmt.Errorf("move issue %s to %q: %w", issue.ID, target, err)
 		}
 		final = target
+	case final != target:
+		// Skipping the move is on purpose — but a hop nobody reports is a
+		// stage nobody notices was never run. Whoever moved the ticket keeps
+		// their move; the log and the TUI only learn what it cost. A ticket
+		// already sitting in the target is not this case: whoever moved it
+		// made the very hop the rule would have, so nothing was skipped.
+		note = skippedHopNote(issue, queue, rule, target, final, namedStatuses(repo))
+		if log != nil {
+			fmt.Fprintln(log, note)
+		}
 	}
-	if !served[final] {
-		return nil
+	if !servedStatuses(repo)[final] {
+		return note, nil
 	}
 	if err := client.UnassignIssue(ctx, issue.ID); err != nil {
-		return fmt.Errorf("release issue %s in %q: %w", issue.ID, final, err)
+		return note, fmt.Errorf("release issue %s in %q: %w", issue.ID, final, err)
 	}
-	return nil
+	return note, nil
+}
+
+// namedStatuses is every Linear status lerp.toml names — each queue's status
+// and every on_success/on_failure target, which is exactly the promote menu.
+// A ticket that comes to rest outside it left the pipeline altogether.
+func namedStatuses(repo *config.RepoConfig) map[string]bool {
+	named := make(map[string]bool)
+	for _, status := range repo.PromoteTargets() {
+		named[status] = true
+	}
+	return named
+}
+
+// skippedHopNote is the one line conclude reports when a ticket left its queue
+// status mid-run, so the move rule found nothing to apply. A destination the
+// pipeline never names earns a second sentence: agents move tickets between
+// configured statuses, so a status lerp.toml has never heard of is the
+// fingerprint of something else — most often Linear's own GitHub integration,
+// which moves a ticket the moment its PR opens.
+func skippedHopNote(issue linear.Issue, queue config.Queue, rule, target, final string, named map[string]bool) string {
+	note := fmt.Sprintf("%s left %q for %q during its run — the %s hop to %q was skipped.",
+		issue.Identifier, queue.Status, final, rule, target)
+	if !named[final] {
+		note += fmt.Sprintf(" %q is not a status your pipeline names; an external automation"+
+			" (e.g. Linear's GitHub integration) may be moving tickets.", final)
+	}
+	return note
 }
 
 func (o OnceOptions) validate() error {

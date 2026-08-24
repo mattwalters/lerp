@@ -8,6 +8,7 @@ import (
 	"os"
 	"reflect"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -30,6 +31,7 @@ type harness struct {
 	root     string // the evidence store's repository root
 	events   chan Event
 	alive    map[string]bool // run ID → the recorded process is "alive"
+	logs     *logBuffer      // everything the loop wrote to its Log
 
 	mu       sync.Mutex
 	disposed []workspace.Identity
@@ -53,6 +55,7 @@ func newHarnessWith(t *testing.T, lanes int, execute ExecuteFunc, fake *linear.F
 		root:     root,
 		events:   make(chan Event, 64),
 		alive:    map[string]bool{},
+		logs:     &logBuffer{},
 	}
 	if execute == nil {
 		execute = func(context.Context, run.Invocation) (run.Result, error) {
@@ -66,6 +69,7 @@ func newHarnessWith(t *testing.T, lanes int, execute ExecuteFunc, fake *linear.F
 		Evidence: h.evidence,
 		Lanes:    lanes,
 		Events:   func(ev Event) { h.events <- ev },
+		Log:      h.logs,
 		Execute:  execute,
 		Provision: func(context.Context, string, string, workspace.Identity, io.Writer) error {
 			return nil
@@ -82,6 +86,24 @@ func newHarnessWith(t *testing.T, lanes int, execute ExecuteFunc, fake *linear.F
 	}
 	h.rec = rec
 	return h
+}
+
+// logBuffer is a Log a test can read while lanes are still writing to it.
+type logBuffer struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (l *logBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *logBuffer) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.String()
 }
 
 func testRepo() *config.RepoConfig {
@@ -539,6 +561,82 @@ func TestRunRespectsAgentMove(t *testing.T) {
 	h.waitEvents(t, EventExited, 1)
 	if got := h.issue(t, "one"); got.Status != "Escalated" {
 		t.Errorf("agent move was overwritten: status = %q", got.Status)
+	}
+}
+
+// Respecting a move is right; saying nothing about it is not. A ticket that
+// left the queue status mid-run cost its pipeline a stage, so the skipped hop
+// is named — in the run log and on the exit event the TUI reads.
+func TestRunReportsTheHopItSkipped(t *testing.T) {
+	var h *harness
+	h = newHarness(t, 1, func(context.Context, run.Invocation) (run.Result, error) {
+		return run.Result{ExitCode: 0}, h.fake.MoveIssue(context.Background(), "one", "In Progress")
+	})
+	h.fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Todo"})
+
+	h.rec.Tick(context.Background())
+	exited := h.waitEvents(t, EventExited, 1)
+
+	want := `LERP-1 left "Todo" for "In Progress" during its run — the on_success hop to "Done" was skipped.`
+	if !strings.Contains(exited[0].Note, want) {
+		t.Errorf("exit event note = %q, want it to contain %q", exited[0].Note, want)
+	}
+	// "In Progress" is a status lerp.toml never names, which is what an
+	// external automation looks like from here — say so, because the operator
+	// cannot read it off the board.
+	if !strings.Contains(exited[0].Note, `"In Progress" is not a status your pipeline names`) ||
+		!strings.Contains(exited[0].Note, "external automation") {
+		t.Errorf("exit event note = %q, want the external-automation cause named", exited[0].Note)
+	}
+	if !strings.Contains(h.logs.String(), want) {
+		t.Errorf("run log = %q, want it to contain %q", h.logs.String(), want)
+	}
+}
+
+// A destination the pipeline does name is an agent escalating, not an
+// automation: report the skipped hop without guessing at a cause.
+func TestRunReportsASkippedHopWithoutBlamingAnAutomation(t *testing.T) {
+	var h *harness
+	h = newHarness(t, 1, func(context.Context, run.Invocation) (run.Result, error) {
+		return run.Result{ExitCode: 0}, h.fake.MoveIssue(context.Background(), "one", "Needs Help")
+	})
+	h.fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Todo"})
+
+	h.rec.Tick(context.Background())
+	exited := h.waitEvents(t, EventExited, 1)
+
+	want := `LERP-1 left "Todo" for "Needs Help" during its run — the on_success hop to "Done" was skipped.`
+	if exited[0].Note != want {
+		t.Errorf("exit event note = %q, want exactly %q", exited[0].Note, want)
+	}
+}
+
+// The report must not become noise: a run whose ticket stayed put says
+// nothing, and neither does one whose ticket was moved to the very status the
+// rule would have moved it to.
+func TestRunReportsNothingWhenNoHopWasSkipped(t *testing.T) {
+	for name, move := range map[string]func(*harness) error{
+		"ticket did not move": func(*harness) error { return nil },
+		"agent made the hop itself": func(h *harness) error {
+			return h.fake.MoveIssue(context.Background(), "one", "Done")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var h *harness
+			h = newHarness(t, 1, func(context.Context, run.Invocation) (run.Result, error) {
+				return run.Result{ExitCode: 0}, move(h)
+			})
+			h.fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Todo"})
+
+			h.rec.Tick(context.Background())
+			exited := h.waitEvents(t, EventExited, 1)
+			if exited[0].Note != "" {
+				t.Errorf("exit event note = %q, want nothing on the happy path", exited[0].Note)
+			}
+			if strings.Contains(h.logs.String(), "skipped") {
+				t.Errorf("run log reports a skipped hop that never happened: %q", h.logs.String())
+			}
+		})
 	}
 }
 

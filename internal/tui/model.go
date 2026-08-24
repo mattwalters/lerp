@@ -235,9 +235,10 @@ type model struct {
 	inFlight bool
 	lastPass time.Time
 
-	lastErr    string
-	lastInfo   string // transient note, e.g. a promote's outcome; cleared at the next pass
-	passHadErr bool   // an error event arrived during the pass now in flight
+	lastErr      string
+	lastInfo     string // transient note, e.g. a promote's outcome; cleared at the next pass
+	lastInfoWarn bool   // the note reports something that went unhandled, not something that worked
+	passHadErr   bool   // an error event arrived during the pass now in flight
 
 	// passes counts in-flight reconciliation passes; Run waits on it after
 	// the program exits, so quitting never severs a pass mid-mutation.
@@ -306,7 +307,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKey(msg)
 	case tickMsg:
 		m.passHadErr = false
-		m.lastInfo = "" // a new pass starting is the "transient" in transient note
+		m.lastInfo, m.lastInfoWarn = "", false // a new pass starting is the "transient" in transient note
 		m.inFlight = true
 		return m, m.runTick()
 	case tickedMsg:
@@ -343,7 +344,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.lastErr = clean(fmt.Sprintf("promote %s to %s: %v", msg.ticket, msg.status, msg.err))
 		} else {
-			m.lastInfo = fmt.Sprintf("promoted %s to %s", msg.ticket, msg.status)
+			m.lastInfo, m.lastInfoWarn = fmt.Sprintf("promoted %s to %s", msg.ticket, msg.status), false
 		}
 		return m, nil
 	}
@@ -604,6 +605,11 @@ func (m *model) apply(ev loop.Event) {
 		note := fmt.Sprintf("%s exited %d", ev.Ticket, ev.ExitCode)
 		if ev.Err != nil {
 			note += " (move failed)"
+		}
+		if ev.Note != "" {
+			// A hop the loop skipped is the operator's business, not the log
+			// file's alone: it means a stage of their pipeline did not run.
+			m.lastInfo, m.lastInfoWarn = ev.Note, true
 		}
 		m.settle(ev, note)
 	case loop.EventReaped:
@@ -1434,7 +1440,13 @@ func (m model) statusBar() string {
 	case m.lastErr != "":
 		return ansi.Truncate(styleErr.Render("✗ "+m.lastErr), m.width, "…")
 	case m.lastInfo != "":
-		return ansi.Truncate(styleRunning.Render("✓ "+m.lastInfo), m.width, "…")
+		// A promote worked; a skipped hop did not. Reporting both with the
+		// same green tick would read as "all is well" either way.
+		mark, style := "✓ ", styleRunning
+		if m.lastInfoWarn {
+			mark, style = "! ", styleAttention
+		}
+		return ansi.Truncate(style.Render(mark+m.lastInfo), m.width, "…")
 	}
 	badgeColor := colorFocus
 	switch m.focus {
