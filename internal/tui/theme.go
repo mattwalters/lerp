@@ -84,6 +84,13 @@ func panelBox(title string, focused bool, w, h int, rows []string) string {
 	return b.String()
 }
 
+// panelLine renders a panel collapsed to its title row — the one line a
+// panel with nothing to show costs. Indented by the border's width, so the
+// stack still reads as one column.
+func panelLine(title string, w int) string {
+	return ansi.Truncate(" "+title, max(0, w), "…")
+}
+
 // windowRows slides rows so the row at sel stays visible within ih lines,
 // standing in for the spans cut at either edge with a faint "⋯ n more".
 // panelBox's own cut covers unfocused panels; this is the focused variant,
