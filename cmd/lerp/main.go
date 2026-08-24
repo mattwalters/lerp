@@ -5,11 +5,15 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/mattwalters/lerp/internal/config"
+	"github.com/mattwalters/lerp/internal/initcmd"
 	"github.com/mattwalters/lerp/internal/linear"
 	"github.com/mattwalters/lerp/internal/loop"
 	"github.com/mattwalters/lerp/internal/version"
@@ -21,6 +25,10 @@ func main() {
 			fmt.Fprintln(os.Stderr, "lerp once:", err)
 			os.Exit(1)
 		}
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "init" {
+		initCommand(os.Args[2:])
 		return
 	}
 	fmt.Printf("lerp %s\n", version.Version)
@@ -81,4 +89,47 @@ func once(ctx context.Context) error {
 		fmt.Println("lerp once: no eligible ticket")
 	}
 	return nil
+}
+
+func initCommand(args []string) {
+	fs := flag.NewFlagSet("lerp init", flag.ExitOnError)
+	team := fs.String("team", "", "Linear team key to set up")
+	name := fs.String("team-name", "", "name to use if the Linear team must be created")
+	fs.Parse(args)
+	if *team == "" {
+		fmt.Fprintln(os.Stderr, "lerp init: --team is required")
+		os.Exit(2)
+	}
+	if os.Getenv("LINEAR_API_KEY") == "" {
+		fatal(fmt.Errorf("lerp init: LINEAR_API_KEY is required"))
+	}
+	globalPath, err := config.GlobalPath()
+	if err != nil {
+		fatal(err)
+	}
+	global, err := config.LoadGlobal(globalPath)
+	if err != nil {
+		fatal(fmt.Errorf("load global config: %w", err))
+	}
+	repoRoot, err := gitRoot()
+	if err != nil {
+		fatal(fmt.Errorf("get working directory: %w", err))
+	}
+	if err := initcmd.Init(context.Background(), linear.New(os.Getenv("LINEAR_API_KEY"), nil), global, filepath.Clean(repoRoot), *team, *name); err != nil {
+		fatal(fmt.Errorf("lerp init: %w", err))
+	}
+	fmt.Printf("initialized %s for Linear team %s\n", repoRoot, *team)
+}
+
+func gitRoot() (string, error) {
+	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return "", fmt.Errorf("find repository root (run lerp init from a Git repository): %w", err)
+	}
+	return filepath.Clean(strings.TrimSpace(string(out))), nil
+}
+
+func fatal(err error) {
+	fmt.Fprintln(os.Stderr, err)
+	os.Exit(1)
 }

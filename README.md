@@ -21,6 +21,20 @@ Durable state lives in Linear, never in these files or anywhere else
 on disk. Both files are strictly parsed: an unknown key is an error,
 not a shrug.
 
+## Setup
+
+Create or verify a Linear team, add the statuses named by your queues, and
+create this repository's `lerp.toml` with:
+
+```sh
+LINEAR_API_KEY=... lerp init --team LERP --team-name "Lerp"
+```
+
+Run it from anywhere inside the Git repository after writing the global
+config. `lerp init` is safe to repeat: it creates only missing Linear
+structure and never replaces an existing `lerp.toml`; it verifies that the
+existing config serves the requested team instead.
+
 ### Global config
 
 Location: `$XDG_CONFIG_HOME/lerp/config.toml`, falling back to
