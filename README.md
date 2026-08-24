@@ -21,20 +21,6 @@ Durable state lives in Linear, never in these files or anywhere else
 on disk. Both files are strictly parsed: an unknown key is an error,
 not a shrug.
 
-## Setup
-
-Create or verify a Linear team, add the statuses named by your queues, and
-create this repository's `lerp.toml` with:
-
-```sh
-LINEAR_API_KEY=... lerp init --team LERP --team-name "Lerp"
-```
-
-Run it from anywhere inside the Git repository after writing the global
-config. `lerp init` is safe to repeat: it creates only missing Linear
-structure and never replaces an existing `lerp.toml`; it verifies that the
-existing config serves the requested team instead.
-
 ### Global config
 
 Location: `$XDG_CONFIG_HOME/lerp/config.toml`, falling back to
@@ -59,13 +45,13 @@ resume = "claude --resume"
 # agent already moved the ticket itself, which lerp respects.
 [queues.plan]
 status = "Planning"
-prompt = "Read the ticket and post a plan as a comment."
+prompt = "Read {{ticket}} and post a plan as a comment."
 runner = "claude"
 on_success = "Implementing"
 
 [queues.implement]
 status = "Implementing"
-prompt = "Implement the ticket per the plan comment. Open a PR."
+prompt = "Implement {{ticket}} per its plan comment. Open a PR."
 runner = "claude"
 on_success = "Reviewing"
 # Optional. Where the ticket goes when the agent exits non-zero.
@@ -86,12 +72,20 @@ Notes:
 - A status may drive at most one queue; two queues sharing a `status`
   is a config error.
 - Every queue's `runner` must be defined under `[runners]`.
-- `command` is run by `sh -c`. Use `{{prompt}}` and `{{workdir}}` to
-  insert the queue prompt and workspace directory; lerp shell-quotes
-  both values. If the runner accepts a caller-chosen session ID (for
-  example, Claude Code's `--session-id`), include `{{session}}` in its
-  command. Lerp records that generated ID with the run for a later
-  eject/resume action.
+- `command` is run by `sh -c`. Use `{{prompt}}`, `{{ticket}}` and
+  `{{workdir}}` to insert the queue prompt, the ticket identifier and
+  the workspace directory; lerp shell-quotes every value, so nothing in
+  a ticket can alter the command you configured. If the runner accepts
+  a caller-chosen session ID (for example, Claude Code's
+  `--session-id`), include `{{session}}` in its command. Lerp records
+  that generated ID with the run for a later eject/resume action.
+- **Name the ticket in your prompt.** `{{ticket}}` is expanded inside
+  the prompt as well as the command, and the identifier reaches the
+  runner as `LERP_TICKET`. A prompt is shared by every ticket in its
+  queue, so one that never names the ticket leaves the agent no way to
+  know which ticket it was started for — while lerp will still advance
+  that ticket on a clean exit. Write `prompt = "Implement {{ticket}}
+  ..."`, not `prompt = "Implement the ticket ..."`.
 
 ### Repo config
 
@@ -129,3 +123,26 @@ and standard error to the lane log, and receives these environment variables:
 If provisioning fails, lerp leaves the ticket untouched and does not start
 the runner. A disposal failure is recorded in the lane log but never keeps a
 lane occupied.
+
+## Setup
+
+With the global config written, create or verify the Linear team, add the
+statuses your queues name, and write this repository's `lerp.toml`:
+
+```sh
+LINEAR_API_KEY=... lerp init --team LERP --team-name "Lerp"
+```
+
+Run it from anywhere inside the Git repository; `lerp.toml` is written at
+the repository root. `lerp init` is safe to repeat: it creates only missing
+Linear structure and never replaces an existing `lerp.toml` — it verifies
+that the existing config serves the requested team instead.
+
+Statuses lerp creates are given a category from how your queues use them: a
+status some queue watches, or that failures route to, still holds live work,
+while a status only ever named by `on_success` is where work leaves the
+automated path and is created as a completed status. That distinction
+matters beyond appearances — Linear reports an issue as blocking its
+dependents until its status is a completed one, so a finished ticket in a
+status lerp had marked as in-progress would block everything waiting on it.
+Statuses that already exist are left exactly as you have them.

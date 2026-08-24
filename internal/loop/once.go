@@ -14,7 +14,7 @@ import (
 
 // ExecuteFunc runs one configured coding-agent command. It is a function type
 // so the vertical slice can be tested without starting a real agent.
-type ExecuteFunc func(context.Context, config.Runner, string, string, string) (run.Result, error)
+type ExecuteFunc func(context.Context, run.Invocation) (run.Result, error)
 
 // PathFunc derives an ephemeral path from the issue chosen for this run.
 type PathFunc func(linear.Issue) string
@@ -88,7 +88,17 @@ func Once(ctx context.Context, o OnceOptions) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("read claimed viewer: %w", err)
 	}
-	if claimed.Status != queue.Status || claimed.AssigneeID != viewerID {
+	if claimed.AssigneeID != viewerID {
+		// Someone else owns it now. Leave their claim alone.
+		return false, nil
+	}
+	if claimed.Status != queue.Status {
+		// The ticket left this queue while we were claiming it. Release the
+		// claim: an assigned ticket is never eligible, so keeping it would
+		// strand the ticket wherever it now sits until a human intervenes.
+		if err := o.Client.UnassignIssue(ctx, issue.ID); err != nil {
+			return false, fmt.Errorf("release moved issue %s: %w", issue.ID, err)
+		}
 		return false, nil
 	}
 
@@ -104,13 +114,18 @@ func Once(ctx context.Context, o OnceOptions) (bool, error) {
 		return false, fmt.Errorf("once: workspace and log path are required")
 	}
 	id := workspace.Identity{Lane: o.Lane, TicketID: issue.ID, Workspace: workdir}
+	// Registered before provisioning, not after: a provision command that
+	// created its workspace and then failed partway must still be cleaned up,
+	// or the next attempt collides with what it left behind. Dispose reports
+	// its own failures to the log and never blocks the caller, so running it
+	// against a workspace that was never created is harmless.
+	defer o.Dispose(context.WithoutCancel(ctx), o.RepoDir, o.Repo.Dispose, id, o.Log)
 	if err := o.Provision(ctx, o.RepoDir, o.Repo.Provision, id, o.Log); err != nil {
 		// Provisioning never starts a lane. Release our claim so the queued
 		// ticket remains eligible for a later attempt.
-		viewerID, viewerErr := o.Client.Viewer(ctx)
 		current, readErr := o.Client.GetIssue(ctx, issue.ID)
-		if viewerErr != nil || readErr != nil {
-			return false, fmt.Errorf("provision issue %s: %w (verify claim before release: viewer=%v, issue=%v)", issue.ID, err, viewerErr, readErr)
+		if readErr != nil {
+			return false, fmt.Errorf("provision issue %s: %w (verify claim before release: %v)", issue.ID, err, readErr)
 		}
 		if current.AssigneeID == viewerID {
 			if unassignErr := o.Client.UnassignIssue(ctx, issue.ID); unassignErr != nil {
@@ -119,9 +134,14 @@ func Once(ctx context.Context, o OnceOptions) (bool, error) {
 		}
 		return false, fmt.Errorf("provision issue %s: %w", issue.ID, err)
 	}
-	defer o.Dispose(context.WithoutCancel(ctx), o.RepoDir, o.Repo.Dispose, id, o.Log)
 
-	result, err := o.Execute(ctx, o.Global.Runners[queue.Runner], queue.Prompt, workdir, logPath)
+	result, err := o.Execute(ctx, run.Invocation{
+		Runner:  o.Global.Runners[queue.Runner],
+		Prompt:  queue.Prompt,
+		Ticket:  issue.Identifier,
+		Workdir: workdir,
+		LogPath: logPath,
+	})
 	if err != nil {
 		return true, fmt.Errorf("run issue %s: %w", issue.ID, err)
 	}
@@ -131,17 +151,14 @@ func Once(ctx context.Context, o OnceOptions) (bool, error) {
 		target = queue.OnSuccess
 	}
 	if target == "" {
-		// No failure route means leave the ticket in this queue for another
-		// attempt. Release only our unchanged claim; an agent or human may
-		// have moved or reassigned it while the runner was active.
-		current, err := o.Client.GetIssue(ctx, issue.ID)
-		if err != nil {
-			return true, fmt.Errorf("read failed issue %s: %w", issue.ID, err)
-		}
-		if current.Status == queue.Status && current.AssigneeID == viewerID {
-			if err := o.Client.UnassignIssue(ctx, issue.ID); err != nil {
-				return true, fmt.Errorf("release failed issue %s: %w", issue.ID, err)
-			}
+		// A failed run with no failure route stays where it is, and stays
+		// claimed. Releasing it would make it eligible again immediately, so a
+		// ticket that fails every time would be re-run on every pass, spending
+		// agent compute forever and starving the lane. Holding the claim stops
+		// the spin and leaves the ticket visibly waiting on a human.
+		if o.Log != nil {
+			fmt.Fprintf(o.Log, "%s exited %d and its queue has no on_failure route: leaving it claimed for a human\n",
+				issue.Identifier, result.ExitCode)
 		}
 		return true, nil
 	}

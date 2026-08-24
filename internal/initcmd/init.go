@@ -12,12 +12,13 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/mattwalters/lerp/internal/config"
+	"github.com/mattwalters/lerp/internal/linear"
 )
 
 // Board is the small setup-time Linear surface used by Init.
 type Board interface {
 	EnsureTeam(ctx context.Context, key, name string) error
-	EnsureWorkflowStates(ctx context.Context, teamKey string, names []string) error
+	EnsureWorkflowStates(ctx context.Context, teamKey string, states []linear.StateSpec) error
 }
 
 // Init creates the missing board statuses required by global, then creates a
@@ -33,27 +34,51 @@ func Init(ctx context.Context, board Board, global *config.Global, repoRoot, tea
 	if err := board.EnsureTeam(ctx, teamKey, teamName); err != nil {
 		return fmt.Errorf("ensure team %q: %w", teamKey, err)
 	}
-	if err := board.EnsureWorkflowStates(ctx, teamKey, stateNames(global)); err != nil {
+	if err := board.EnsureWorkflowStates(ctx, teamKey, stateSpecs(global)); err != nil {
 		return fmt.Errorf("ensure workflow states for %q: %w", teamKey, err)
 	}
 	return ensureRepoConfig(filepath.Join(repoRoot, config.RepoConfigFile), teamKey)
 }
 
-func stateNames(global *config.Global) []string {
-	set := map[string]bool{}
+// stateSpecs names every status the queues reference, with the category to
+// create it in when Linear does not have it yet.
+//
+// The rule is the smallest one that reads the topology correctly: a status some
+// queue watches, or that failures are routed to, still holds live work, so it
+// is "started". A status that is only ever an on_success target is where work
+// leaves the automated path, so it is "completed" — created as "started",
+// Linear would keep reporting finished tickets as blockers and every ticket
+// waiting on one would be ineligible forever (see linear.StateSpec).
+func stateSpecs(global *config.Global) []linear.StateSpec {
+	const (
+		live = "started"
+		done = "completed"
+	)
+	category := map[string]string{}
+	// on_success targets first, so a status that is also a queue status or a
+	// failure route overwrites the terminal guess below.
 	for _, q := range global.Queues {
-		set[q.Status] = true
-		set[q.OnSuccess] = true
+		category[q.OnSuccess] = done
+	}
+	for _, q := range global.Queues {
 		if q.OnFailure != "" {
-			set[q.OnFailure] = true
+			category[q.OnFailure] = live
 		}
 	}
-	names := make([]string, 0, len(set))
-	for name := range set {
+	for _, q := range global.Queues {
+		category[q.Status] = live
+	}
+
+	names := make([]string, 0, len(category))
+	for name := range category {
 		names = append(names, name)
 	}
 	slices.Sort(names)
-	return names
+	specs := make([]linear.StateSpec, 0, len(names))
+	for _, name := range names {
+		specs = append(specs, linear.StateSpec{Name: name, Type: category[name]})
+	}
+	return specs
 }
 
 func ensureRepoConfig(path, teamKey string) error {

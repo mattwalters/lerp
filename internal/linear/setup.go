@@ -2,8 +2,10 @@ package linear
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
+	"strings"
 )
 
 const teamByKeyQuery = `
@@ -39,7 +41,7 @@ func (c *HTTP) EnsureTeam(ctx context.Context, key, name string) error {
 		return err
 	}
 	if !created.TeamCreate.Success {
-		return fmt.Errorf("Linear reported failure creating team")
+		return errors.New("linear reported failure creating team")
 	}
 	return nil
 }
@@ -50,14 +52,31 @@ query TeamStates($key: String!) {
 }`
 
 const workflowStateCreateMutation = `
-mutation WorkflowStateCreate($teamId: String!, $name: String!) {
-  workflowStateCreate(input: { teamId: $teamId, name: $name, type: started }) { success }
+mutation WorkflowStateCreate($teamId: String!, $name: String!, $type: String!, $color: String!) {
+  workflowStateCreate(input: { teamId: $teamId, name: $name, type: $type, color: $color }) { success }
 }`
 
-// EnsureWorkflowStates adds absent state names as active ("started") states.
-// Their category is intentionally not inferred from queue topology: the
-// config names statuses but does not encode a workflow language.
-func (c *HTTP) EnsureWorkflowStates(ctx context.Context, teamKey string, names []string) error {
+// defaultStateColor is the color new states are created with. Linear requires
+// one; which color a column wears is not lerp's business, and an operator can
+// restyle it in Linear afterwards.
+const defaultStateColor = "#6b7280"
+
+// StateSpec is a workflow state to ensure: its name, and the Linear state
+// category to create it in when it is absent.
+//
+// The category matters beyond cosmetics. Linear reports an issue as blocking
+// its dependents until the blocker's state type is completed or canceled (see
+// how Issue.Blocked is derived), so a status that ends work must be created as
+// a completed category. Created as "started", it would leave every dependent
+// ticket permanently ineligible.
+type StateSpec struct {
+	Name string
+	Type string
+}
+
+// EnsureWorkflowStates adds any absent state in states, in its requested
+// category. Existing states are left exactly as the operator has them.
+func (c *HTTP) EnsureWorkflowStates(ctx context.Context, teamKey string, states []StateSpec) error {
 	var found struct {
 		Teams struct {
 			Nodes []struct {
@@ -81,22 +100,31 @@ func (c *HTTP) EnsureWorkflowStates(ctx context.Context, teamKey string, names [
 	for _, state := range team.States.Nodes {
 		existing[state.Name] = true
 	}
-	names = append([]string(nil), names...)
-	slices.Sort(names)
-	for _, name := range names {
-		if existing[name] {
+	states = append([]StateSpec(nil), states...)
+	slices.SortFunc(states, func(a, b StateSpec) int { return strings.Compare(a.Name, b.Name) })
+	for _, state := range states {
+		if existing[state.Name] {
 			continue
+		}
+		if state.Type == "" {
+			return fmt.Errorf("workflow state %q: no state category requested", state.Name)
 		}
 		var created struct {
 			WorkflowStateCreate struct {
 				Success bool `json:"success"`
 			} `json:"workflowStateCreate"`
 		}
-		if err := c.do(ctx, workflowStateCreateMutation, map[string]any{"teamId": team.ID, "name": name}, &created); err != nil {
-			return fmt.Errorf("create workflow state %q: %w", name, err)
+		vars := map[string]any{
+			"teamId": team.ID,
+			"name":   state.Name,
+			"type":   state.Type,
+			"color":  defaultStateColor,
+		}
+		if err := c.do(ctx, workflowStateCreateMutation, vars, &created); err != nil {
+			return fmt.Errorf("create workflow state %q: %w", state.Name, err)
 		}
 		if !created.WorkflowStateCreate.Success {
-			return fmt.Errorf("Linear reported failure creating workflow state %q", name)
+			return fmt.Errorf("linear reported failure creating workflow state %q", state.Name)
 		}
 	}
 	return nil

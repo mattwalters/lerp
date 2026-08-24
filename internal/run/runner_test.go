@@ -25,9 +25,13 @@ exit 7
 	logPath := filepath.Join(dir, "runner.log")
 	prompt := "plan; touch should-not-exist"
 
-	result, err := Execute(context.Background(), config.Runner{
-		Command: shellQuote(script) + " {{prompt}} {{workdir}} {{session}}",
-	}, prompt, dir, logPath)
+	result, err := Execute(context.Background(), Invocation{
+		Runner:  config.Runner{Command: shellQuote(script) + " {{prompt}} {{workdir}} {{session}}"},
+		Prompt:  prompt,
+		Ticket:  "LERP-1",
+		Workdir: dir,
+		LogPath: logPath,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +62,13 @@ func TestExecuteDoesNotCreateSessionWithoutPlaceholder(t *testing.T) {
 	dir := t.TempDir()
 	script := writeScript(t, dir, "runner.sh", "exit 0")
 
-	result, err := Execute(context.Background(), config.Runner{Command: shellQuote(script)}, "prompt", dir, filepath.Join(dir, "runner.log"))
+	result, err := Execute(context.Background(), Invocation{
+		Runner:  config.Runner{Command: shellQuote(script)},
+		Prompt:  "prompt",
+		Ticket:  "LERP-1",
+		Workdir: dir,
+		LogPath: filepath.Join(dir, "runner.log"),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,6 +77,51 @@ func TestExecuteDoesNotCreateSessionWithoutPlaceholder(t *testing.T) {
 	}
 	if result.SessionID != "" {
 		t.Errorf("SessionID = %q, want empty", result.SessionID)
+	}
+}
+
+// The agent has to be told which ticket it is working on: the prompt is shared
+// by every ticket in a queue, so {{ticket}} in the prompt and the environment
+// variable are the only things that name the work.
+func TestExecuteCarriesTicketIntoPromptAndEnvironment(t *testing.T) {
+	dir := t.TempDir()
+	script := writeScript(t, dir, "runner.sh", `
+printf 'prompt=%s\n' "$1"
+printf 'ticket=%s\n' "$2"
+printf 'env=%s\n' "$LERP_TICKET"
+`)
+	logPath := filepath.Join(dir, "runner.log")
+
+	if _, err := Execute(context.Background(), Invocation{
+		Runner:  config.Runner{Command: shellQuote(script) + " {{prompt}} {{ticket}}"},
+		Prompt:  "Implement {{ticket}} per its plan comment.",
+		Ticket:  "LERP-42",
+		Workdir: dir,
+		LogPath: logPath,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "prompt=Implement LERP-42 per its plan comment.\nticket=LERP-42\nenv=LERP-42\n"
+	if string(got) != want {
+		t.Errorf("log = %q, want %q", got, want)
+	}
+}
+
+func TestExecuteRequiresATicket(t *testing.T) {
+	dir := t.TempDir()
+	_, err := Execute(context.Background(), Invocation{
+		Runner:  config.Runner{Command: "true"},
+		Prompt:  "prompt",
+		Workdir: dir,
+		LogPath: filepath.Join(dir, "runner.log"),
+	})
+	if err == nil || !strings.Contains(err.Error(), "requires a ticket") {
+		t.Errorf("Execute error = %v, want a missing-ticket error", err)
 	}
 }
 
@@ -85,7 +140,13 @@ wait
 	resultCh := make(chan Result, 1)
 	errCh := make(chan error, 1)
 	go func() {
-		result, err := Execute(ctx, config.Runner{Command: shellQuote(script) + " {{prompt}}"}, childPIDPath, dir, logPath)
+		result, err := Execute(ctx, Invocation{
+			Runner:  config.Runner{Command: shellQuote(script) + " {{prompt}}"},
+			Prompt:  childPIDPath,
+			Ticket:  "LERP-1",
+			Workdir: dir,
+			LogPath: logPath,
+		})
 		resultCh <- result
 		errCh <- err
 	}()

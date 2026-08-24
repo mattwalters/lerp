@@ -10,11 +10,12 @@ import (
 	"testing"
 
 	"github.com/mattwalters/lerp/internal/config"
+	"github.com/mattwalters/lerp/internal/linear"
 )
 
 type fakeBoard struct {
 	teamKey, teamName string
-	states            []string
+	states            []linear.StateSpec
 	err               error
 }
 
@@ -22,8 +23,8 @@ func (b *fakeBoard) EnsureTeam(_ context.Context, key, name string) error {
 	b.teamKey, b.teamName = key, name
 	return b.err
 }
-func (b *fakeBoard) EnsureWorkflowStates(_ context.Context, _ string, states []string) error {
-	b.states = append([]string(nil), states...)
+func (b *fakeBoard) EnsureWorkflowStates(_ context.Context, _ string, states []linear.StateSpec) error {
+	b.states = append([]linear.StateSpec(nil), states...)
 	return b.err
 }
 
@@ -43,8 +44,16 @@ func TestInitCreatesConfigAndStates(t *testing.T) {
 	if b.teamKey != "LERP" || b.teamName != "Lerp" {
 		t.Errorf("EnsureTeam = (%q, %q)", b.teamKey, b.teamName)
 	}
-	if want := []string{"Human Review", "Implementing", "Planning", "Review"}; !reflect.DeepEqual(b.states, want) {
-		t.Errorf("states = %v, want %v", b.states, want)
+	// "Review" is only ever an on_success target, so it ends work and must be
+	// created as a completed category; everything else still holds live work.
+	want := []linear.StateSpec{
+		{Name: "Human Review", Type: "started"},
+		{Name: "Implementing", Type: "started"},
+		{Name: "Planning", Type: "started"},
+		{Name: "Review", Type: "completed"},
+	}
+	if !reflect.DeepEqual(b.states, want) {
+		t.Errorf("states = %+v, want %+v", b.states, want)
 	}
 	c, err := config.LoadRepoConfig(filepath.Join(dir, config.RepoConfigFile))
 	if err != nil {
