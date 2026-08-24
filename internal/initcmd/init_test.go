@@ -1,6 +1,7 @@
 package initcmd
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -16,16 +17,32 @@ import (
 type fakeBoard struct {
 	teamKey, teamName string
 	states            []linear.StateSpec
-	err               error
+	// categories plays the states Linear already has, name → category.
+	// Requested states it does not name come back as created, in their
+	// requested category — the contract of the real EnsureWorkflowStates.
+	categories map[string]string
+	err        error
 }
 
 func (b *fakeBoard) EnsureTeam(_ context.Context, key, name string) error {
 	b.teamKey, b.teamName = key, name
 	return b.err
 }
-func (b *fakeBoard) EnsureWorkflowStates(_ context.Context, _ string, states []linear.StateSpec) error {
+func (b *fakeBoard) EnsureWorkflowStates(_ context.Context, _ string, states []linear.StateSpec) (map[string]string, error) {
 	b.states = append([]linear.StateSpec(nil), states...)
-	return b.err
+	if b.err != nil {
+		return nil, b.err
+	}
+	categories := map[string]string{}
+	for name, category := range b.categories {
+		categories[name] = category
+	}
+	for _, s := range states {
+		if _, ok := categories[s.Name]; !ok {
+			categories[s.Name] = s.Type
+		}
+	}
+	return categories, nil
 }
 
 // existingConfig is a hand-rolled lerp.toml whose queues differ from the
@@ -55,7 +72,7 @@ on_failure = "Human Review"
 func TestInitCreatesConfigAndStates(t *testing.T) {
 	dir := t.TempDir()
 	b := &fakeBoard{}
-	created, err := Init(context.Background(), b, dir, "LERP", "Lerp", func() bool { return true })
+	created, err := Init(context.Background(), b, nil, dir, "LERP", "Lerp", func() bool { return true })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,13 +82,14 @@ func TestInitCreatesConfigAndStates(t *testing.T) {
 	if b.teamKey != "LERP" || b.teamName != "Lerp" {
 		t.Errorf("EnsureTeam = (%q, %q)", b.teamKey, b.teamName)
 	}
-	// The stock pipeline: "In Review" is only ever an on_success target, so it
-	// ends work and must be created as a completed category; everything else
-	// still holds live work.
+	// Every status the stock pipeline names, all "started": init never infers
+	// a completed category — "In Review" is only ever an on_success target,
+	// but whether it ends work is the operator's call, reported by init, not
+	// guessed.
 	want := []linear.StateSpec{
 		{Name: "Agent Review", Type: "started"},
 		{Name: "Implementing", Type: "started"},
-		{Name: "In Review", Type: "completed"},
+		{Name: "In Review", Type: "started"},
 		{Name: "Needs Attention", Type: "started"},
 		{Name: "Planning", Type: "started"},
 	}
@@ -97,7 +115,7 @@ func TestInitWithoutBypassGrant(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
-			if _, err := Init(context.Background(), &fakeBoard{}, dir, "LERP", "", confirm); err != nil {
+			if _, err := Init(context.Background(), &fakeBoard{}, nil, dir, "LERP", "", confirm); err != nil {
 				t.Fatal(err)
 			}
 			c, err := config.LoadRepoConfig(filepath.Join(dir, config.RepoConfigFile))
@@ -121,7 +139,7 @@ func TestInitIsIdempotentAndDoesNotReplaceConfig(t *testing.T) {
 	}
 	b := &fakeBoard{}
 	asked := false
-	created, err := Init(context.Background(), b, dir, "LERP", "", func() bool { asked = true; return true })
+	created, err := Init(context.Background(), b, nil, dir, "LERP", "", func() bool { asked = true; return true })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +154,7 @@ func TestInitIsIdempotentAndDoesNotReplaceConfig(t *testing.T) {
 		{Name: "Human Review", Type: "started"},
 		{Name: "Implementing", Type: "started"},
 		{Name: "Planning", Type: "started"},
-		{Name: "Review", Type: "completed"},
+		{Name: "Review", Type: "started"},
 	}
 	if !reflect.DeepEqual(b.states, want) {
 		t.Errorf("states = %+v, want %+v", b.states, want)
@@ -156,15 +174,64 @@ func TestInitRejectsExistingConfigForOtherTeam(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, config.RepoConfigFile), []byte(other), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, err := Init(context.Background(), &fakeBoard{}, dir, "LERP", "", nil)
+	_, err := Init(context.Background(), &fakeBoard{}, nil, dir, "LERP", "", nil)
 	if err == nil || !strings.Contains(err.Error(), `does not serve team "LERP"`) {
 		t.Fatalf("Init error = %v", err)
 	}
 }
 
+// The report covers exactly the on_success targets no queue watches. In
+// existingConfig that is "Review" alone: "Implementing" is watched by a
+// queue, and "Human Review" is only a failure route.
+func TestInitReportsPipelineExits(t *testing.T) {
+	for name, tc := range map[string]struct {
+		categories map[string]string
+		want       string
+		dontWant   string
+	}{
+		// Init just created "Review" as started, so the report must flag it.
+		"created as started": {
+			want: `pipeline exit "Review": Linear categorises it as started, not completed.`,
+		},
+		// A pre-existing human column keeps its category and gets the nudge.
+		"existing unstarted": {
+			categories: map[string]string{"Review": "unstarted"},
+			want:       `pipeline exit "Review": Linear categorises it as unstarted, not completed.`,
+		},
+		// A properly terminal exit is confirmed, not warned about.
+		"existing completed": {
+			categories: map[string]string{"Review": "completed"},
+			want:       `pipeline exit "Review": Linear categorises it as completed; tickets that land there stop blocking their dependents.`,
+			dontWant:   "not completed",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, config.RepoConfigFile), []byte(existingConfig), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			var out bytes.Buffer
+			if _, err := Init(context.Background(), &fakeBoard{categories: tc.categories}, &out, dir, "LERP", "", nil); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(out.String(), tc.want) {
+				t.Errorf("report %q\nmissing %q", out.String(), tc.want)
+			}
+			if tc.dontWant != "" && strings.Contains(out.String(), tc.dontWant) {
+				t.Errorf("report %q\ncontains %q", out.String(), tc.dontWant)
+			}
+			for _, notAnExit := range []string{`exit "Implementing"`, `exit "Human Review"`} {
+				if strings.Contains(out.String(), notAnExit) {
+					t.Errorf("report %q\nnames a non-exit: %s", out.String(), notAnExit)
+				}
+			}
+		})
+	}
+}
+
 func TestInitStopsWhenBoardFails(t *testing.T) {
 	dir := t.TempDir()
-	_, err := Init(context.Background(), &fakeBoard{err: errors.New("no access")}, dir, "LERP", "", nil)
+	_, err := Init(context.Background(), &fakeBoard{err: errors.New("no access")}, nil, dir, "LERP", "", nil)
 	if err == nil || !strings.Contains(err.Error(), "no access") {
 		t.Fatalf("Init error = %v", err)
 	}

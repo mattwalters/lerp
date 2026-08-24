@@ -141,14 +141,20 @@ diff you commit is where that decision gets reviewed.
 never replaces an existing `lerp.toml` — it verifies that the existing
 config serves the requested team instead.
 
-Statuses lerp creates are given a category from how your queues use them: a
-status some queue watches, or that failures route to, still holds live work,
-while a status only ever named by `on_success` is where work leaves the
-automated path and is created as a completed status. That distinction
-matters beyond appearances — Linear reports an issue as blocking its
-dependents until its status is a completed one, so a finished ticket in a
-status lerp had marked as in-progress would block everything waiting on it.
-Statuses that already exist are left exactly as you have them.
+Statuses lerp creates are always in-progress (Linear's "started" category),
+and statuses that already exist are left exactly as you have them. That
+leaves one piece of setup only you can finish: where your pipeline ends.
+Linear counts a ticket as blocking its dependents (`blockedBy`) until its
+status carries a completed category — a fact about your process that init
+cannot infer, so it reports instead of guessing. For each `on_success`
+target no queue watches, init prints whether Linear categorises it as
+completed. If such a status genuinely means the work is done, set its
+category to Done in Linear; left in-progress, finished tickets there
+would block their dependents forever. If a human still acts on tickets
+there — the stock pipeline's "In Review", where you merge the PR and
+Linear's GitHub integration moves the ticket on — in-progress is exactly
+right, and marking it completed would release dependent tickets before
+the work had actually landed.
 
 ## Stock pipeline
 

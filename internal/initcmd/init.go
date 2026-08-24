@@ -5,6 +5,7 @@ package initcmd
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -14,9 +15,11 @@ import (
 )
 
 // Board is the small setup-time Linear surface used by Init.
+// EnsureWorkflowStates reports the category of every state the team has
+// after the call, keyed by state name.
 type Board interface {
 	EnsureTeam(ctx context.Context, key, name string) error
-	EnsureWorkflowStates(ctx context.Context, teamKey string, states []linear.StateSpec) error
+	EnsureWorkflowStates(ctx context.Context, teamKey string, states []linear.StateSpec) (map[string]string, error)
 }
 
 // Init creates the board structure this repo's config requires, writing the
@@ -29,12 +32,17 @@ type Board interface {
 // failed init leaves nothing behind; created reports whether this invocation
 // wrote it. The file lands uncommitted in the working tree, where the grant
 // is reviewed and checked in like any other code.
-func Init(ctx context.Context, board Board, repoRoot, teamKey, teamName string, confirmBypass func() bool) (created bool, err error) {
+//
+// out receives the pipeline-exit report (see reportExits); nil discards it.
+func Init(ctx context.Context, board Board, out io.Writer, repoRoot, teamKey, teamName string, confirmBypass func() bool) (created bool, err error) {
 	if teamKey == "" {
 		return false, fmt.Errorf("team key must not be empty")
 	}
 	if teamName == "" {
 		teamName = teamKey
+	}
+	if out == nil {
+		out = io.Discard
 	}
 	path := filepath.Join(repoRoot, config.RepoConfigFile)
 	cfg, stock, err := planRepoConfig(path, teamKey, confirmBypass)
@@ -44,9 +52,11 @@ func Init(ctx context.Context, board Board, repoRoot, teamKey, teamName string, 
 	if err := board.EnsureTeam(ctx, teamKey, teamName); err != nil {
 		return false, fmt.Errorf("ensure team %q: %w", teamKey, err)
 	}
-	if err := board.EnsureWorkflowStates(ctx, teamKey, stateSpecs(cfg)); err != nil {
+	categories, err := board.EnsureWorkflowStates(ctx, teamKey, stateSpecs(cfg))
+	if err != nil {
 		return false, fmt.Errorf("ensure workflow states for %q: %w", teamKey, err)
 	}
+	reportExits(out, cfg, categories)
 	if stock == "" {
 		return false, nil
 	}
@@ -107,43 +117,78 @@ func writeRepoConfig(path, teamKey, stock string) (created bool, err error) {
 	return true, nil
 }
 
-// stateSpecs names every status the queues reference, with the category to
-// create it in when Linear does not have it yet.
+// stateSpecs names every status the queues reference, all in Linear's
+// "started" category.
 //
-// The rule is the smallest one that reads the topology correctly: a status some
-// queue watches, or that failures are routed to, still holds live work, so it
-// is "started". A status that is only ever an on_success target is where work
-// leaves the automated path, so it is "completed" — created as "started",
-// Linear would keep reporting finished tickets as blockers and every ticket
-// waiting on one would be ineligible forever (see linear.StateSpec).
+// "started" is deliberate, not a default: whether a status ends work is a
+// fact about the operator's process that queue topology cannot reveal. An
+// on_success target no queue watches is just as often a human column
+// ("Ready to Merge") as a terminal one, and creating a human column as
+// completed silently stops its tickets from blocking their dependents
+// (see linear.StateSpec) — work becomes eligible before it is done.
+// Created as "started", the failure mode is at least loud: a finished
+// blocker that still blocks is something a human notices. reportExits
+// turns that residual risk into an explicit instruction.
 func stateSpecs(cfg *config.RepoConfig) []linear.StateSpec {
-	const (
-		live = "started"
-		done = "completed"
-	)
-	category := map[string]string{}
-	// on_success targets first, so a status that is also a queue status or a
-	// failure route overwrites the terminal guess below.
+	names := map[string]bool{}
 	for _, q := range cfg.Queues {
-		category[q.OnSuccess] = done
-	}
-	for _, q := range cfg.Queues {
+		names[q.Status] = true
+		names[q.OnSuccess] = true
 		if q.OnFailure != "" {
-			category[q.OnFailure] = live
+			names[q.OnFailure] = true
 		}
 	}
-	for _, q := range cfg.Queues {
-		category[q.Status] = live
+	sorted := make([]string, 0, len(names))
+	for name := range names {
+		sorted = append(sorted, name)
 	}
-
-	names := make([]string, 0, len(category))
-	for name := range category {
-		names = append(names, name)
-	}
-	slices.Sort(names)
-	specs := make([]linear.StateSpec, 0, len(names))
-	for _, name := range names {
-		specs = append(specs, linear.StateSpec{Name: name, Type: category[name]})
+	slices.Sort(sorted)
+	specs := make([]linear.StateSpec, 0, len(sorted))
+	for _, name := range sorted {
+		specs = append(specs, linear.StateSpec{Name: name, Type: "started"})
 	}
 	return specs
+}
+
+// pipelineExits are the on_success targets no queue watches: the statuses
+// where work leaves the automated path.
+func pipelineExits(cfg *config.RepoConfig) []string {
+	watched := map[string]bool{}
+	for _, q := range cfg.Queues {
+		watched[q.Status] = true
+	}
+	seen := map[string]bool{}
+	exits := []string{}
+	for _, q := range cfg.Queues {
+		if watched[q.OnSuccess] || seen[q.OnSuccess] {
+			continue
+		}
+		seen[q.OnSuccess] = true
+		exits = append(exits, q.OnSuccess)
+	}
+	slices.Sort(exits)
+	return exits
+}
+
+// reportExits tells the operator, for each pipeline exit, whether Linear's
+// category for that status ends work. Lerp never sets a completed category
+// itself — that guess is wrong for a human column and its cost is silent —
+// so a genuinely terminal exit is the one piece of board setup only the
+// operator can finish, and this report is where init says so.
+func reportExits(out io.Writer, cfg *config.RepoConfig, categories map[string]string) {
+	for _, name := range pipelineExits(cfg) {
+		category, ok := categories[name]
+		if category == "completed" || category == "canceled" {
+			fmt.Fprintf(out, "pipeline exit %q: Linear categorises it as %s; tickets that land there stop blocking their dependents.\n", name, category)
+			continue
+		}
+		if !ok {
+			category = "unknown"
+		}
+		fmt.Fprintf(out, "pipeline exit %q: Linear categorises it as %s, not completed.\n", name, category)
+		fmt.Fprintf(out, "  Tickets that land there keep blocking their dependents — right if a human\n")
+		fmt.Fprintf(out, "  still acts on them there, wrong if %q means the work is done. Lerp\n", name)
+		fmt.Fprintf(out, "  will not guess: if that status truly ends work, set its category to Done\n")
+		fmt.Fprintf(out, "  in Linear yourself.\n")
+	}
 }
