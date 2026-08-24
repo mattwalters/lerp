@@ -40,13 +40,14 @@ func NewFake() *Fake {
 }
 
 // AddIssue puts an issue on the fake board under the given team key.
-// The Blocked and BlockedBy fields of is are ignored; blocking is
+// The Blocked, BlockedBy and Blocks fields of is are ignored; blocking is
 // declared with Block and computed from blocker statuses.
 func (f *Fake) AddIssue(teamKey string, is Issue) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	is.Blocked = false
 	is.BlockedBy = nil
+	is.Blocks = nil
 	f.issues[is.ID] = &fakeIssue{issue: is, team: teamKey}
 }
 
@@ -105,11 +106,13 @@ func (f *Fake) Comments(issueID string) []string {
 }
 
 // view materializes the caller-visible Issue, computing Blocked from the
-// current statuses of the declared blockers. Callers hold f.mu.
+// current statuses of the declared blockers and Blocks by reading the same
+// declarations backwards. Callers hold f.mu.
 func (f *Fake) view(fi *fakeIssue) Issue {
 	is := fi.issue
 	is.Blocked = false
 	is.BlockedBy = nil
+	is.Blocks = nil
 	for _, id := range fi.blockers {
 		b, ok := f.issues[id]
 		if !ok || f.doneStatuses[b.issue.Status] {
@@ -118,6 +121,22 @@ func (f *Fake) view(fi *fakeIssue) Issue {
 		is.BlockedBy = append(is.BlockedBy, b.issue.Identifier)
 	}
 	is.Blocked = len(is.BlockedBy) > 0
+	// The real client reads the forward relation off the issue itself; here
+	// the only record of it is the other issue's blockers list. A finished
+	// issue is held up by nothing, so it drops out — the mirror of the
+	// blocker rule above.
+	for _, other := range f.issues {
+		if f.doneStatuses[other.issue.Status] {
+			continue
+		}
+		for _, id := range other.blockers {
+			if id == fi.issue.ID {
+				is.Blocks = append(is.Blocks, other.issue.Identifier)
+				break
+			}
+		}
+	}
+	sort.Strings(is.Blocks)
 	return is
 }
 

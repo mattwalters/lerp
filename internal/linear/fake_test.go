@@ -95,6 +95,15 @@ func TestFakeBlocking(t *testing.T) {
 		t.Errorf("issue = %+v, want blocked by LERP-3", is)
 	}
 
+	// The blocker sees the same relation from the other side.
+	blocker, err := f.GetIssue(context.Background(), "iss-3")
+	if err != nil {
+		t.Fatalf("GetIssue: %v", err)
+	}
+	if !reflect.DeepEqual(blocker.Blocks, []string{"LERP-1"}) {
+		t.Errorf("blocker = %+v, want it blocking LERP-1", blocker)
+	}
+
 	// Completing the blocker unblocks the issue.
 	if err := f.MoveIssue(context.Background(), "iss-3", "Done"); err != nil {
 		t.Fatalf("MoveIssue: %v", err)
@@ -105,6 +114,18 @@ func TestFakeBlocking(t *testing.T) {
 	}
 	if is.Blocked || is.BlockedBy != nil {
 		t.Errorf("issue = %+v, want unblocked after blocker done", is)
+	}
+	// A finished issue is held up by nothing, so it drops off what its
+	// blocker blocks — the forward half of the same rule.
+	if err := f.MoveIssue(context.Background(), "iss-1", "Done"); err != nil {
+		t.Fatalf("MoveIssue: %v", err)
+	}
+	blocker, err = f.GetIssue(context.Background(), "iss-3")
+	if err != nil {
+		t.Fatalf("GetIssue: %v", err)
+	}
+	if blocker.Blocks != nil {
+		t.Errorf("blocker = %+v, want it blocking nothing once LERP-1 is done", blocker)
 	}
 }
 

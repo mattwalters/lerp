@@ -108,6 +108,17 @@ type AttentionItem struct {
 	Status   string
 	Reason   string
 	URL      string
+	// Priority is Linear's own scale: 0 none, 1 urgent, 2 high, 3 medium,
+	// 4 low. It orders the to-route group under leverage and is shown on
+	// the row; nothing in the loop acts on it.
+	Priority int
+	// BlockedBy names every unfinished ticket holding this one up, listed
+	// or not; Blocks names the unfinished tickets it holds up. Unblocks is
+	// how many other listed tickets it transitively frees — the leverage of
+	// routing it, and the to-route group's first sort key.
+	BlockedBy []string
+	Blocks    []string
+	Unblocks  int
 }
 
 // Event is one observation from the loop. Fields beyond Type are filled as
@@ -306,13 +317,16 @@ func (r *Reconciler) attention(ctx context.Context) {
 				continue
 			}
 			toRoute = append(toRoute, AttentionItem{
-				Group:    ToRoute,
-				Ticket:   issue.Identifier,
-				TicketID: issue.ID,
-				Title:    issue.Title,
-				Status:   issue.Status,
-				Reason:   fmt.Sprintf("unassigned in %q — no queue serves it", issue.Status),
-				URL:      issue.URL,
+				Group:     ToRoute,
+				Ticket:    issue.Identifier,
+				TicketID:  issue.ID,
+				Title:     issue.Title,
+				Status:    issue.Status,
+				Reason:    fmt.Sprintf("unassigned in %q — no queue serves it", issue.Status),
+				URL:       issue.URL,
+				Priority:  issue.Priority,
+				BlockedBy: issue.BlockedBy,
+				Blocks:    issue.Blocks,
 			})
 		}
 
@@ -326,19 +340,103 @@ func (r *Reconciler) attention(ctx context.Context) {
 				continue
 			}
 			parked = append(parked, AttentionItem{
-				Group:    Parked,
-				Ticket:   issue.Identifier,
-				TicketID: issue.ID,
-				Title:    issue.Title,
-				Status:   issue.Status,
-				Reason:   fmt.Sprintf("claimed in %q — no queue serves it", issue.Status),
-				URL:      issue.URL,
+				Group:     Parked,
+				Ticket:    issue.Identifier,
+				TicketID:  issue.ID,
+				Title:     issue.Title,
+				Status:    issue.Status,
+				Reason:    fmt.Sprintf("claimed in %q — no queue serves it", issue.Status),
+				URL:       issue.URL,
+				Priority:  issue.Priority,
+				BlockedBy: issue.BlockedBy,
+				Blocks:    issue.Blocks,
 			})
 		}
 	}
-	sort.Slice(toRoute, func(i, j int) bool { return toRoute[i].Ticket < toRoute[j].Ticket })
-	sort.Slice(parked, func(i, j int) bool { return parked[i].Ticket < parked[j].Ticket })
-	r.emit(Event{Type: EventAttention, Attention: append(toRoute, parked...)})
+	items := make([]AttentionItem, 0, len(toRoute)+len(parked))
+	items = append(items, toRoute...)
+	items = append(items, parked...)
+	countUnblocks(items)
+	route, park := items[:len(toRoute)], items[len(toRoute):]
+	// To route is ordered by leverage: what frees the most other listed
+	// tickets first, so the promote worth making is the top row. Parked
+	// keeps its identifier order — nothing is waiting on those.
+	sort.Slice(route, func(i, j int) bool {
+		a, b := route[i], route[j]
+		// A blocked ticket cannot usefully be routed anywhere yet, so it
+		// sorts below every ticket that can be — however much it would
+		// unblock once its own blocker clears.
+		if ablocked, bblocked := len(a.BlockedBy) > 0, len(b.BlockedBy) > 0; ablocked != bblocked {
+			return bblocked
+		}
+		if a.Unblocks != b.Unblocks {
+			return a.Unblocks > b.Unblocks
+		}
+		if ra, rb := priorityRank(a.Priority), priorityRank(b.Priority); ra != rb {
+			return ra < rb
+		}
+		return a.Ticket < b.Ticket
+	})
+	sort.Slice(park, func(i, j int) bool { return park[i].Ticket < park[j].Ticket })
+	r.emit(Event{Type: EventAttention, Attention: items})
+}
+
+// priorityRank turns Linear's priority into a sort key. The scale runs
+// urgent (1) to low (4) but puts "no priority" at 0, which would otherwise
+// sort ahead of urgent; unset means unranked, so it goes last.
+func priorityRank(p int) int {
+	if p == 0 {
+		return 5
+	}
+	return p
+}
+
+// countUnblocks fills in Unblocks: how many other items each one transitively
+// frees. The graph is the listed set and nothing else — a ticket blocked by
+// something outside the listing is still blocked, but a ticket blocking
+// something outside it gets no credit for work this list cannot show. Both
+// directions of the relation contribute the same edge, so an item whose own
+// relations were trimmed still counts through its blocked neighbours.
+func countUnblocks(items []AttentionItem) {
+	listed := make(map[string]bool, len(items))
+	for _, it := range items {
+		listed[it.Ticket] = true
+	}
+	blocks := make(map[string]map[string]bool, len(items))
+	edge := func(from, to string) {
+		if from == to || !listed[from] || !listed[to] {
+			return
+		}
+		if blocks[from] == nil {
+			blocks[from] = map[string]bool{}
+		}
+		blocks[from][to] = true
+	}
+	for _, it := range items {
+		for _, downstream := range it.Blocks {
+			edge(it.Ticket, downstream)
+		}
+		for _, blocker := range it.BlockedBy {
+			edge(blocker, it.Ticket)
+		}
+	}
+	for i, it := range items {
+		// Depth-first from the ticket, counting what it reaches. Marking on
+		// the way in keeps a cycle — Linear allows one — from looping here.
+		seen := map[string]bool{it.Ticket: true}
+		stack := []string{it.Ticket}
+		for len(stack) > 0 {
+			cur := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			for next := range blocks[cur] {
+				if !seen[next] {
+					seen[next] = true
+					stack = append(stack, next)
+				}
+			}
+		}
+		items[i].Unblocks = len(seen) - 1
+	}
 }
 
 // Promote is the TUI's one write action, the SCOPE amendment this ticket

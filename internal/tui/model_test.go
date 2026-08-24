@@ -356,6 +356,52 @@ func TestNeedsYouGroupsToRouteAndParked(t *testing.T) {
 	}
 }
 
+// Done-when: leverage, priority and blocked-ness are readable on the row
+// itself, without selecting it — and on a narrow panel the title is what
+// gets truncated, not the facts the operator chooses a promote by.
+func TestNeedsYouRowsCarryLeverageAndPriority(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Group: loop.ToRoute, Ticket: "LERP-22", Title: "GoReleaser: tagged releases", Priority: 2,
+			Unblocks: 3, Blocks: []string{"LERP-23", "LERP-38"}},
+		{Group: loop.ToRoute, Ticket: "LERP-36", Title: "Sanitize control characters", Priority: 1},
+		{Group: loop.ToRoute, Ticket: "LERP-23", Title: "curl install", Priority: 3,
+			Unblocks: 1, BlockedBy: []string{"LERP-22"}},
+	}}})
+
+	panel := m.attentionPanel(60, 8)
+	for _, want := range []string{"↓3", "↓0", "⊘", "High", "Urgent", "Medium"} {
+		if !strings.Contains(panel, want) {
+			t.Fatalf("needs-you row is missing %q:\n%s", want, panel)
+		}
+	}
+	// The selection sits on the first row, so the second row's Urgent and
+	// the third row's ⊘ are both facts no selection revealed.
+	lines := strings.Split(panel, "\n")
+	for _, want := range []struct{ ticket, mark string }{
+		{"LERP-22", "↓3"}, {"LERP-36", "Urgent"}, {"LERP-23", "⊘"},
+	} {
+		found := false
+		for _, line := range lines {
+			if strings.Contains(line, want.ticket) && strings.Contains(line, want.mark) {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("no row carries both %s and %s:\n%s", want.ticket, want.mark, panel)
+		}
+	}
+
+	narrow := m.attentionPanel(30, 8)
+	if !strings.Contains(narrow, "Urgent") || !strings.Contains(narrow, "↓3") {
+		t.Fatalf("a narrow panel dropped the leverage or the priority:\n%s", narrow)
+	}
+	if strings.Contains(narrow, "GoReleaser: tagged releases") {
+		t.Fatalf("a narrow panel did not truncate the title:\n%s", narrow)
+	}
+}
+
 // Selecting a needs-you item and pressing "p" opens the promote picker in
 // the main pane; choosing a status and confirming calls Promote with the
 // ticket's Linear id and the chosen status, and settles into a transient
@@ -525,8 +571,8 @@ func TestFocusedPanelTakesTheSlack(t *testing.T) {
 	// Focus moves, and the slack moves with it: needs-you falls back to the
 	// rows it renders, up-next takes what is left.
 	m = update(t, m, keyMsg("3"))
-	rows, _ := m.attentionRows()
 	g2 := m.geometry()
+	rows, _ := m.attentionRows(g2.sideW - 2)
 	if g2.attnH != len(rows)+2 {
 		t.Fatalf("unfocused needs-you is %d lines for %d rows", g2.attnH, len(rows))
 	}

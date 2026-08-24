@@ -682,6 +682,84 @@ func TestTickEmitsAttention(t *testing.T) {
 	}
 }
 
+// Done-when: to route is ordered by leverage — what a promote would free
+// first — with the unblock count and the priority carried on every item, so
+// the panel can show them without another read. Parked keeps its identifier
+// order; nothing is waiting on those.
+func TestAttentionOrdersToRouteByLeverage(t *testing.T) {
+	h := newHarness(t, 1, nil)
+	backlog := func(id, identifier string, priority int) {
+		h.fake.AddIssue("LERP", linear.Issue{ID: id, Identifier: identifier,
+			Title: identifier + " work", Status: "Backlog", Priority: priority})
+	}
+	// One chain — 22 blocks 38 and 23; 23 blocks 24 — and a field of roots.
+	backlog("t22", "LERP-22", 2)
+	backlog("t23", "LERP-23", 3)
+	backlog("t24", "LERP-24", 3)
+	backlog("t38", "LERP-38", 4)
+	h.fake.Block("t38", "t22")
+	h.fake.Block("t23", "t22")
+	h.fake.Block("t24", "t23")
+	backlog("t36", "LERP-36", 2) // High
+	backlog("t37", "LERP-37", 1) // Urgent — outranks 36 despite the identifier
+	backlog("t45", "LERP-45", 4) // Low
+	backlog("t40", "LERP-40", 0) // no priority, which ranks last, not first
+	// A blocker outside the listing: claimed by somebody else, so neither
+	// half of needs-you lists it. Its ticket still reads as blocked.
+	backlog("t50", "LERP-50", 1)
+	h.fake.AddIssue("LERP", linear.Issue{ID: "theirs", Identifier: "LERP-99",
+		Status: "Backlog", AssigneeID: "somebody-else"})
+	h.fake.Block("t50", "theirs")
+	// Parked on the operator, added out of order.
+	for _, id := range []string{"LERP-9", "LERP-3"} {
+		h.fake.AddIssue("LERP", linear.Issue{ID: id, Identifier: id, Status: "Needs Help",
+			AssigneeID: "fake-viewer", Priority: 1})
+	}
+
+	h.rec.Tick(context.Background())
+	got := h.waitEvents(t, EventAttention, 1)[0].Attention
+
+	var order []string
+	unblocks := map[string]int{}
+	for _, it := range got {
+		order = append(order, it.Ticket)
+		unblocks[it.Ticket] = it.Unblocks
+	}
+	want := []string{
+		// Leverage first, then priority, then the identifier; blocked
+		// tickets after everything that can actually be routed today.
+		"LERP-22", "LERP-37", "LERP-36", "LERP-45", "LERP-40",
+		"LERP-23", "LERP-50", "LERP-24", "LERP-38",
+		// Parked, in identifier order.
+		"LERP-3", "LERP-9",
+	}
+	if !slices.Equal(order, want) {
+		t.Errorf("attention order = %v, want %v", order, want)
+	}
+	// Transitive: 22 frees 38, 23 and — through 23 — 24.
+	for ticket, count := range map[string]int{
+		"LERP-22": 3, "LERP-23": 1, "LERP-24": 0, "LERP-38": 0, "LERP-50": 0, "LERP-36": 0,
+	} {
+		if unblocks[ticket] != count {
+			t.Errorf("%s unblocks %d, want %d", ticket, unblocks[ticket], count)
+		}
+	}
+	for _, it := range got {
+		switch it.Ticket {
+		case "LERP-22":
+			if it.Priority != 2 || len(it.BlockedBy) != 0 || !slices.Contains(it.Blocks, "LERP-23") {
+				t.Errorf("LERP-22 = %+v, want an unblocked High blocking LERP-23", it)
+			}
+		case "LERP-50":
+			// The blocker is outside the listing, so it earns no leverage
+			// there — but it still blocks, and the item says so.
+			if !slices.Equal(it.BlockedBy, []string{"LERP-99"}) {
+				t.Errorf("LERP-50 blocked by %v, want the unlisted LERP-99", it.BlockedBy)
+			}
+		}
+	}
+}
+
 // A failed run's on_failure move lands the ticket — still claimed — in a
 // status no queue serves; the next pass surfaces it in attention. The
 // on-failure half of "blocked on me" needs no machinery of its own.
