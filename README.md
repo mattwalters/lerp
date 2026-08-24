@@ -72,9 +72,12 @@ Notes:
 - A status may drive at most one queue; two queues sharing a `status`
   is a config error.
 - Every queue's `runner` must be defined under `[runners]`.
-- How `command` receives the prompt and working directory is defined
-  by runner execution (LERP-5) and will be documented here when it
-  lands.
+- `command` is run by `sh -c`. Use `{{prompt}}` and `{{workdir}}` to
+  insert the queue prompt and workspace directory; lerp shell-quotes
+  both values. If the runner accepts a caller-chosen session ID (for
+  example, Claude Code's `--session-id`), include `{{session}}` in its
+  command. Lerp records that generated ID with the run for a later
+  eject/resume action.
 
 ### Repo config
 
