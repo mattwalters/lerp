@@ -33,12 +33,14 @@ type Issue struct {
 // interface and tested against Fake.
 type Client interface {
 	ListIssues(ctx context.Context, teamKey, statusName string) ([]Issue, error)
-	// ListAssignedIssues is the attention view's one read beyond the queue
-	// listings: the queue listings see only queue statuses, so the operator's
-	// claimed tickets parked anywhere else — exactly the ones waiting on a
-	// human — are invisible without it. Completed and canceled issues are
-	// excluded; they wait on nobody.
+	// ListAssignedIssues is the needs-you view's "parked on you" read: the
+	// operator's claimed tickets parked outside every queue status. Completed
+	// and canceled issues are excluded; they wait on nobody.
 	ListAssignedIssues(ctx context.Context, teamKey, assigneeID string) ([]Issue, error)
+	// ListUnassignedIssues is the needs-you view's "to route" read: unclaimed
+	// tickets, in any workflow state. Completed and canceled issues are
+	// excluded, same as ListAssignedIssues.
+	ListUnassignedIssues(ctx context.Context, teamKey string) ([]Issue, error)
 	// TeamStates reports the names of the team's workflow states, in board
 	// order — the one read behind the startup verification that every
 	// configured status exists on its team (loop.VerifyStatuses). The loop's

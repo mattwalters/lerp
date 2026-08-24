@@ -140,6 +140,46 @@ func (c *HTTP) ListAssignedIssues(ctx context.Context, teamKey, assigneeID strin
 	return issues, nil
 }
 
+const listUnassignedIssuesQuery = `
+query ListUnassignedIssues($team: String!, $after: String) {
+  issues(
+    first: 50
+    after: $after
+    filter: {
+      team: { key: { eq: $team } }
+      assignee: { null: true }
+      state: { type: { nin: ["completed", "canceled"] } }
+    }
+  ) {
+    pageInfo { hasNextPage endCursor }
+    nodes {
+      id
+      identifier
+      title
+      url
+      state { name }
+      assignee { id }
+      inverseRelations(first: 50) {
+        nodes {
+          type
+          issue { identifier state { type } }
+        }
+      }
+    }
+  }
+}`
+
+// ListUnassignedIssues returns the team's unclaimed issues, in any workflow
+// state — the read behind needs-you's "to route" group (see Client).
+// Completed and canceled issues are filtered out server-side.
+func (c *HTTP) ListUnassignedIssues(ctx context.Context, teamKey string) ([]Issue, error) {
+	issues, err := c.listIssues(ctx, listUnassignedIssuesQuery, map[string]any{"team": teamKey})
+	if err != nil {
+		return nil, fmt.Errorf("list unassigned issues: %w", err)
+	}
+	return issues, nil
+}
+
 // listIssues runs one of the issue-listing queries to exhaustion, following
 // pageInfo cursors. vars holds the query's own variables; the cursor is
 // added here.

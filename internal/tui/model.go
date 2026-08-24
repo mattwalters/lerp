@@ -21,9 +21,18 @@ type Ticker interface {
 	Tick(ctx context.Context)
 }
 
+// Promoter is the TUI's one write action (SCOPE's promote amendment): moving
+// a selected ticket into a queue. It is Reconciler.Promote in production; a
+// plain MoveIssue through the same client the loop reads with.
+type Promoter interface {
+	Promote(ctx context.Context, ticketID, status string) error
+}
+
 // Options wires the shell to the loop.
 type Options struct {
 	Ticker   Ticker
+	Promoter Promoter
+	Statuses []string      // promote targets: configured queue statuses, plus the pipeline's exits
 	Interval time.Duration // tick cadence; loop.DefaultInterval when zero
 	Lanes    int           // N, for the board's fixed rows
 	Events   <-chan loop.Event
@@ -33,6 +42,8 @@ func (o Options) validate() error {
 	switch {
 	case o.Ticker == nil:
 		return fmt.Errorf("tui: ticker is required")
+	case o.Promoter == nil:
+		return fmt.Errorf("tui: promoter is required")
 	case o.Lanes < 1:
 		return fmt.Errorf("tui: lanes must be at least 1")
 	case o.Events == nil:
@@ -53,11 +64,11 @@ const (
 func (v view) String() string {
 	switch v {
 	case viewAttention:
-		return "attention"
+		return "needs-you"
 	case viewBoard:
-		return "board"
+		return "running"
 	default:
-		return "queue"
+		return "up-next"
 	}
 }
 
@@ -94,6 +105,13 @@ type (
 	tickedMsg struct{}
 	eventMsg  struct{ ev loop.Event }
 	pollMsg   struct{}
+	// promotedMsg reports the outcome of a promote action: MoveIssue on a
+	// selected ticket, run off the render loop like every other write.
+	promotedMsg struct {
+		ticket string
+		status string
+		err    error
+	}
 )
 
 type model struct {
@@ -118,13 +136,21 @@ type model struct {
 	// so an empty screen never claims "nothing needs you" before it is known.
 	attention     []loop.AttentionItem
 	attentionSeen bool
+	attentionSel  int // index into attention; the promote target
+
+	// promoting is the promote picker's open/closed state; promoteSel is its
+	// selected index into o.Statuses. Opened by "p" on a selected attention
+	// item, closed by confirming, cancelling, or the list going empty.
+	promoting  bool
+	promoteSel int
 
 	vp     viewport.Model
 	tail   tail
 	follow bool
 
 	lastErr    string
-	passHadErr bool // an error event arrived during the pass now in flight
+	lastInfo   string // transient note, e.g. a promote's outcome; cleared at the next pass
+	passHadErr bool   // an error event arrived during the pass now in flight
 
 	// passes counts in-flight reconciliation passes; Run waits on it after
 	// the program exits, so quitting never severs a pass mid-mutation.
@@ -188,6 +214,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKey(msg)
 	case tickMsg:
 		m.passHadErr = false
+		m.lastInfo = "" // a new pass starting is the "transient" in transient note
 		return m, m.runTick()
 	case tickedMsg:
 		// A pass that produced no error supersedes whatever error line an
@@ -206,11 +233,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.refreshLog()
 		}
 		return m, poll()
+	case promotedMsg:
+		if msg.err != nil {
+			m.lastErr = fmt.Sprintf("promote %s to %s: %v", msg.ticket, msg.status, msg.err)
+		} else {
+			m.lastInfo = fmt.Sprintf("promoted %s to %s", msg.ticket, msg.status)
+		}
+		return m, nil
 	}
 	return m, nil
 }
 
 func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.promoting {
+		return m.handlePromoteKey(msg)
+	}
 	switch msg.String() {
 	case "q", "ctrl+c":
 		return m, tea.Quit
@@ -223,18 +260,33 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "tab":
 		m.view = (m.view + 1) % 3
 	case "up", "k":
-		if m.view == viewBoard {
+		switch m.view {
+		case viewBoard:
 			if i := slices.Index(m.order, m.selected); i > 0 {
 				m.selected = m.order[i-1]
 				m.retarget()
 			}
+		case viewAttention:
+			if m.attentionSel > 0 {
+				m.attentionSel--
+			}
 		}
 	case "down", "j":
-		if m.view == viewBoard {
+		switch m.view {
+		case viewBoard:
 			if i := slices.Index(m.order, m.selected); i >= 0 && i < len(m.order)-1 {
 				m.selected = m.order[i+1]
 				m.retarget()
 			}
+		case viewAttention:
+			if m.attentionSel < len(m.attention)-1 {
+				m.attentionSel++
+			}
+		}
+	case "p":
+		if m.view == viewAttention && len(m.attention) > 0 && len(m.o.Statuses) > 0 {
+			m.promoting = true
+			m.promoteSel = 0
 		}
 	case "pgup", "b":
 		m.vp.ViewUp()
@@ -251,6 +303,39 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	m.layout()
 	return m, nil
+}
+
+// handlePromoteKey drives the promote picker: choose a target status for the
+// attention view's selected ticket, or back out without touching Linear.
+func (m model) handlePromoteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "q", "ctrl+c":
+		m.promoting = false
+	case "up", "k":
+		if m.promoteSel > 0 {
+			m.promoteSel--
+		}
+	case "down", "j":
+		if m.promoteSel < len(m.o.Statuses)-1 {
+			m.promoteSel++
+		}
+	case "enter":
+		item := m.attention[m.attentionSel]
+		status := m.o.Statuses[m.promoteSel]
+		m.promoting = false
+		return m, m.doPromote(item.TicketID, item.Ticket, status)
+	}
+	return m, nil
+}
+
+// doPromote calls the one write the TUI is allowed (SCOPE's promote
+// amendment) off the render loop, so a slow Linear call never blocks a
+// frame.
+func (m model) doPromote(ticketID, ticket, status string) tea.Cmd {
+	return func() tea.Msg {
+		err := m.o.Promoter.Promote(m.ctx, ticketID, status)
+		return promotedMsg{ticket: ticket, status: status, err: err}
+	}
 }
 
 // apply folds one loop event into the board.
@@ -286,6 +371,15 @@ func (m *model) apply(ev loop.Event) {
 	case loop.EventAttention:
 		m.attention = ev.Attention
 		m.attentionSeen = true
+		// A pass mid-picker may shrink or empty the list out from under it;
+		// clamp the selection and close the picker rather than index a
+		// ticket that is no longer there.
+		if m.attentionSel >= len(m.attention) {
+			m.attentionSel = max(0, len(m.attention)-1)
+		}
+		if len(m.attention) == 0 {
+			m.promoting = false
+		}
 	}
 	m.reorder()
 	m.layout()
@@ -400,7 +494,11 @@ func (m model) View() string {
 	b.WriteString("\n")
 	switch m.view {
 	case viewAttention:
-		b.WriteString(m.attentionList())
+		if m.promoting {
+			b.WriteString(m.promotePicker())
+		} else {
+			b.WriteString(m.attentionList())
+		}
 	case viewBoard:
 		b.WriteString(m.board())
 	case viewQueue:
@@ -423,12 +521,13 @@ func (m model) header() string {
 	return titleStyle.Render("lerp") + "  " + strings.Join(tabs, "  ")
 }
 
-// attentionList renders the Attention view: every ticket the loop reported
-// as blocked on the operator — the definition lives on the loop's attention
-// pass — with the reason and Linear's URL for it, which most terminals make
-// clickable. The view is deliberately dumb: it folds attention events and
-// renders them; acting on an item happens in Linear, because lerp is not a
-// Linear client. The empty state is the goal state.
+// attentionList renders the needs-you view: every ticket the loop reported
+// as needing the operator — the definition lives on the loop's attention
+// pass — grouped into to-route and parked-on-you, each with the reason and
+// Linear's URL, which most terminals make clickable. Selecting a row (↑/↓)
+// and pressing "p" opens the promote picker, the one write this view grants;
+// everything else about an item happens in Linear. The empty state is the
+// goal state.
 func (m model) attentionList() string {
 	if !m.attentionSeen {
 		return inactiveStyle.Render("reading the board…") + "\n"
@@ -438,13 +537,46 @@ func (m model) attentionList() string {
 			inactiveStyle.Render(truncate("(shows "+loop.AttentionDefinition+")", m.width)) + "\n"
 	}
 	var b strings.Builder
-	for _, it := range m.attention {
-		b.WriteString(fmt.Sprintf("%-9s %s\n", it.Ticket, it.Title))
+	group := loop.AttentionGroup("")
+	for i, it := range m.attention {
+		if it.Group != group {
+			group = it.Group
+			b.WriteString(titleStyle.Render(string(group)))
+			b.WriteString("\n")
+		}
+		marker := "  "
+		if i == m.attentionSel {
+			marker = "▸ "
+		}
+		row := fmt.Sprintf("%s%-9s %s", marker, it.Ticket, it.Title)
+		if i == m.attentionSel {
+			row = selectedStyle.Render(row)
+		}
+		b.WriteString(row)
+		b.WriteString("\n")
 		detail := it.Reason
 		if it.URL != "" {
 			detail += "  " + it.URL
 		}
-		b.WriteString(idleStyle.Render("          " + detail))
+		b.WriteString(idleStyle.Render("            " + detail))
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// promotePicker renders the target-status list for the selected attention
+// item: every configured queue status plus the pipeline's exits — exactly
+// what Promote (a plain MoveIssue) is allowed to move a ticket into.
+func (m model) promotePicker() string {
+	item := m.attention[m.attentionSel]
+	var b strings.Builder
+	b.WriteString(titleStyle.Render("promote "+item.Ticket) + "  " + item.Title + "\n")
+	for i, status := range m.o.Statuses {
+		row := "  " + status
+		if i == m.promoteSel {
+			row = selectedStyle.Render("▸ " + status)
+		}
+		b.WriteString(row)
 		b.WriteString("\n")
 	}
 	return b.String()
@@ -588,12 +720,18 @@ func (m model) logTitle() string {
 }
 
 func (m model) footer() string {
-	errLine := ""
-	if m.lastErr != "" {
-		errLine = errStyle.Render(truncate(m.lastErr, max(0, m.width)))
+	line := ""
+	switch {
+	case m.lastErr != "":
+		line = errStyle.Render(truncate(m.lastErr, max(0, m.width)))
+	case m.lastInfo != "":
+		line = idleStyle.Render(truncate(m.lastInfo, max(0, m.width)))
 	}
-	help := helpStyle.Render("1/2/3 views · tab next · ↑/↓ lane · pgup/pgdn scroll · end follow · q quit")
-	return errLine + "\n" + help
+	help := "1/2/3 views · tab next · ↑/↓ select · p promote · pgup/pgdn scroll · end follow · q quit"
+	if m.promoting {
+		help = "↑/↓ choose a status · enter promote · esc cancel"
+	}
+	return line + "\n" + helpStyle.Render(help)
 }
 
 func truncate(s string, width int) string {
