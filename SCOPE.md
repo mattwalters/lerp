@@ -26,6 +26,15 @@ done by placing a ticket: a big feature enters at Planning, a small fix
 enters at Implementing. Branching is a human or an agent moving a
 ticket, never config syntax.
 
+A hop on the board is a decision somebody makes. Iteration is not a
+decision: a stage that hands work back to an earlier one draws a cycle,
+and bounding a cycle needs a round count — state outside Linear, or an
+`if` about your process. So bounded iteration happens inside a single
+queue run, where the count is the agent's own context and the board
+never hears about it. Review-and-fix is the worked example: it lives in
+the implement prompt, and only what the loop could not settle comes back
+to a human as a move.
+
 **Lerp is a reconciler.** Desired state is the board; actual state is
 the agent processes running on this machine. Lerp runs one loop:
 compare the two, then start, adopt, or reap agents until they match. A
@@ -82,9 +91,9 @@ five. If that trade is unappealing, the feature is out of scope.
 
 3. **Every queue run is safe to kill and restart from its beginning.**
    Progress is checkpointed only at queue boundaries, as artifacts in
-   Linear (a plan comment, a PR link, a review verdict). Lerp never
-   checkpoints inside a run. Kill anything at any time, on any machine;
-   the worst case is a re-run stage.
+   Linear (a plan in the ticket, a PR link, a verdict comment). Lerp
+   never checkpoints inside a run. Kill anything at any time, on any
+   machine; the worst case is a re-run stage.
 
 4. **The claim is the assignment, and the lock is in Linear.** Picking
    up a ticket means assigning it to the operating developer's Linear
@@ -94,8 +103,9 @@ five. If that trade is unappealing, the feature is out of scope.
    tolerates. No lerp server, no coordination service, ever.
 
 5. **The engine is generic; the opinion ships as config.** Lerp's stock
-   config encodes planning → human plan approval → implementing →
-   reviewing. The engine knows nothing about that sequence — each queue
+   config encodes planning → human plan approval → implementing → a
+   human merge, and the implement stage reviews its own work before it
+   hands over. The engine knows nothing about that sequence — each queue
    is independent, and the topology exists only in the `on-success`
    pointers. The approval step is not engine either: it is a status no
    queue serves, where a ticket rests until a human promotes it.

@@ -67,10 +67,10 @@ creates a new team under that key.
 
 This creates the Linear team if it is missing and, on a first run,
 holds a short conversation to fit the
-[stock planning → approval → implementing → review pipeline](#stock-pipeline)
+[stock planning → approval → implementing pipeline](#stock-pipeline)
 onto the board the team already has: it shows the team's existing
-statuses, asks whether to include the optional planning and
-agent-review stages, and offers to create the stock statuses the chosen
+statuses, asks whether to include the optional planning stage and the
+review pass, and offers to create the stock statuses the chosen
 pipeline references — or, on customize, to map each one onto a status
 you already have. Existing statuses are never modified, and init says
 which statuses it creates and which it reuses before it acts. It then
@@ -167,8 +167,8 @@ is the database (see the model above). The file is strictly parsed: an
 unknown key is an error, not a shrug.
 
 [lerp.example.toml](lerp.example.toml) is the stock planning →
-approval → implementing → review pipeline, with prompts you can read
-and argue with. `lerp init --team KEY` writes it into the repo for you (see
+approval → implementing pipeline, with prompts you can read and argue
+with. `lerp init --team KEY` writes it into the repo for you (see
 [Getting started](#getting-started)).
 
 Read it before you run it. It may grant the agent broad permissions and it
@@ -321,9 +321,9 @@ fail, then where they finish, then the statuses it never names. `P`
 scopes the panel to one project and cycles back to all. Both are
 session-only: no saved views, no filter syntax, and neither changes
 which tickets are fetched. Selecting a row
-reads the ticket itself into the main pane: its body, and the comments
-on it — the plan, the review verdict, the note a failed run left — so
-a parked ticket can be decided from that one screen. That is a read
+reads the ticket itself into the main pane: its body — where the plan
+lives — and the comments on it, the verdict a run left behind, so a
+parked ticket can be decided from that one screen. That is a read
 and stays one: nothing composes, replies, or navigates on to another
 ticket, and `o` opens the ticket in Linear for everything else. Select
 one and press `p` to promote it: pick a target from the configured
@@ -352,32 +352,40 @@ rewriting them into a different shape needs no code change.
 | Status | Who acts | Then |
 | --- | --- | --- |
 | Backlog / Todo | you | promote a ticket into Planning, or into Implementing if it is small |
-| Planning | agent | posts a plan comment → Plan Review |
-| Plan Review | you | read the plan, then press `p` to promote: Implementing to build it, Planning to re-plan, Needs Attention to park it |
-| Implementing | agent | reads its brief — newest review comment, else the plan comment, else the ticket — commits, pushes, opens a PR with `gh`, or adds to the ticket's existing one → Agent Review |
-| Agent Review | agent | posts a review verdict → In Review, or to Needs Attention with findings |
+| Planning | agent | writes the plan into the ticket's description, under `## Plan` → Plan Review |
+| Plan Review | you | read the plan — it is the top of the ticket — edit it where you disagree, then press `p` to promote: Implementing to build it, Planning to re-plan, Needs Attention to park it |
+| Implementing | agent | reads its brief — unanswered PR review threads, else the newest comment asking for changes, else the ticket — commits, pushes, opens a draft PR with `gh` or adds to the ticket's existing one, then reviews and fixes its own work until a round is clean or three rounds are up; marks the PR ready → In Review |
 | In Review | you | merge the PR; Linear's GitHub integration moves it to Done |
-| Needs Attention | you | where failed runs and review findings park; no queue watches it, so nothing retries it — promote back to Implementing to rework |
+| Needs Attention | you | where failed runs and reviews that three rounds could not settle park; no queue watches it, so nothing retries it — promote back to Implementing to rework |
 
 Which ticket enters where is the only routing decision, and it is made by
 moving a ticket, not by configuration.
 
-A review that finds something is the same decision run backwards, and it
-closes a loop rather than ending the line. The verdict parks in Needs
-Attention; you read it and promote the ticket back to Implementing; the
-implement prompt takes the newest review comment as its brief, checks out the
-branch of the pull request that already exists, and adds commits to it — no
-second PR. Lerp itself remembers none of this: there is no "this is a re-run"
-flag anywhere, only a ticket in a queue status, with its comments and its
-pull request as the state.
+There is deliberately no queue for reviewing. A hop on the board is a
+decision somebody makes, and iteration is not a decision: a review stage of
+its own turns review-and-fix into a cycle nothing can bound, since counting
+the rounds would mean state outside Linear or an `if` about your process. So
+Implementing reviews and fixes its own work inside one run — findings go on
+the pull request, as comments on the lines they concern, and the round count
+is the agent's own context, which costs the board nothing. One short verdict
+comment on the ticket says how it went.
+
+What reaches Needs Attention is only what three rounds could not settle, and
+that is a loop rather than the end of the line: say what you want on the pull
+request, promote the ticket back to Implementing, and the next run reads your
+unanswered threads as its brief, checks out the branch of the pull request
+that already exists, and adds commits to it — no second PR. Lerp remembers
+none of this. There is no "this is a re-run" flag anywhere, only a ticket in a
+queue status, with its description, its comments and its pull request as the
+state.
 
 Two things the stock config assumes, both worth a deliberate look before you
 run it:
 
 - **The agent needs its own Linear access.** Lerp passes the ticket
   identifier and nothing else — never the ticket body — and every durable
-  artifact (the plan comment, the review verdict) is written by the agent,
-  not by lerp. For Claude Code that means the Linear MCP server from step 2
+  artifact — the plan in the ticket, the pull request, the verdict comment —
+  is written by the agent, not by lerp. For Claude Code that means the Linear MCP server from step 2
   of [Getting started](#getting-started).
 - **The agent runs with permissions — if you say so.** An unattended agent
   that cannot run `git`, `gh`, or your tests just fails, so the stock runner
@@ -413,7 +421,7 @@ its workspace and log under a temporary directory instead.
 
 **What happens on crash or kill?** Every queue run is safe to kill and
 restart from its beginning: progress is checkpointed only at queue
-boundaries, as artifacts in Linear — a plan comment, a PR link — so
+boundaries, as artifacts in Linear — the plan in the ticket, a PR link — so
 the worst case is a re-run stage, never a lost ticket
 ([SCOPE.md](SCOPE.md) invariants 3 and 4 carry the full argument).
 That includes killing lerp itself: agents outlive it, and the next

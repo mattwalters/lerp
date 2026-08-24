@@ -108,7 +108,6 @@ func TestInitCreatesConfigAndStates(t *testing.T) {
 	// but whether it ends work is the operator's call, reported by init, not
 	// guessed.
 	want := []linear.StateSpec{
-		{Name: "Agent Review", Type: "started"},
 		{Name: "Implementing", Type: "started"},
 		{Name: "In Review", Type: "started"},
 		{Name: "Needs Attention", Type: "started"},
@@ -154,11 +153,11 @@ func TestInitFastPathConversation(t *testing.T) {
 	inOrder := []string{
 		"team LERP has: Backlog, Todo, In Progress, Done, Canceled",
 		"Include a planning stage? [Y/n]",
-		"Include an agent review stage? [Y/n]",
-		"the pipeline references: Planning, Plan Review, Implementing, Agent Review, In Review, Needs Attention",
-		"Create these 6 statuses on team LERP? [Y]es / [c]ustomize",
+		"Review each change before it exits? [Y/n]",
+		"the pipeline references: Planning, Plan Review, Implementing, In Review, Needs Attention",
+		"Create these 5 statuses on team LERP? [Y]es / [c]ustomize",
 		"Include --permission-mode bypassPermissions? [y/N]",
-		"creating on team LERP: Agent Review, Implementing, In Review, Needs Attention, Plan Review, Planning",
+		"creating on team LERP: Implementing, In Review, Needs Attention, Plan Review, Planning",
 	}
 	rest := transcript
 	for _, wanted := range inOrder {
@@ -170,7 +169,7 @@ func TestInitFastPathConversation(t *testing.T) {
 	}
 	// The board question comes after init has said what it will do — the
 	// grant question is the last one, so it must follow the stage questions.
-	if strings.Index(transcript, "bypassPermissions?") < strings.Index(transcript, "Create these 6 statuses") {
+	if strings.Index(transcript, "bypassPermissions?") < strings.Index(transcript, "Create these 5 statuses") {
 		t.Error("bypass question asked before the board plan")
 	}
 	// Nothing on the fresh board matched, so nothing reads "using existing".
@@ -186,9 +185,10 @@ func TestInitCustomizeMapsOntoExistingStatuses(t *testing.T) {
 	existing := []string{"Backlog", "Todo", "In Progress", "In Review", "Done"}
 	var out bytes.Buffer
 	// plan yes, review yes, customize; plan → create, plan review → create,
-	// implement → 2) Todo, review → create, exit → default (In Review already
-	// exists), failures → create; decline the grant.
-	answers := strings.NewReader("\n\nc\nc\nc\n2\nc\n\nc\nn\n")
+	// implement → 2) Todo, exit → default (In Review already exists),
+	// failures → create; decline the grant. The review pass asks for no
+	// status of its own — it runs inside implement.
+	answers := strings.NewReader("\n\nc\nc\nc\n2\n\nc\nn\n")
 	b := &fakeBoard{existing: existing}
 	if _, err := Init(context.Background(), b, &out, answers, dir, "LERP", ""); err != nil {
 		t.Fatal(err)
@@ -203,11 +203,10 @@ func TestInitCustomizeMapsOntoExistingStatuses(t *testing.T) {
 	if got := c.Queues["plan"].OnSuccess; got != "Plan Review" {
 		t.Errorf("plan.on_success = %q, want the approval gate Plan Review", got)
 	}
-	if got := c.Queues["review"].OnSuccess; got != "In Review" {
-		t.Errorf("review.on_success = %q, want In Review", got)
+	if got := c.Queues["implement"].OnSuccess; got != "In Review" {
+		t.Errorf("implement.on_success = %q, want In Review", got)
 	}
 	want := []linear.StateSpec{
-		{Name: "Agent Review", Type: "started"},
 		{Name: "In Review", Type: "started"},
 		{Name: "Needs Attention", Type: "started"},
 		{Name: "Plan Review", Type: "started"},
@@ -226,7 +225,7 @@ func TestInitCustomizeMapsOntoExistingStatuses(t *testing.T) {
 		// The stock exit already exists, so its pick defaults to that status
 		// and offers nothing to create.
 		`finished work exits to:  1) Backlog  2) Todo  3) In Progress  4) In Review  5) Done  [4]`,
-		"creating on team LERP: Agent Review, Needs Attention, Plan Review, Planning  ·  using existing: In Review (review exit), Todo (implement)",
+		"creating on team LERP: Needs Attention, Plan Review, Planning  ·  using existing: In Review (implement exit), Todo (implement)",
 	} {
 		if !strings.Contains(transcript, wanted) {
 			t.Errorf("transcript missing %q:\n%s", wanted, transcript)
@@ -234,12 +233,14 @@ func TestInitCustomizeMapsOntoExistingStatuses(t *testing.T) {
 	}
 }
 
-// Declining review rewires implement's on_success to the human-review exit;
-// the review queue simply does not exist.
-func TestInitDeclinedReviewRewiresImplement(t *testing.T) {
+// Declining the review pass takes paragraphs out of the implement prompt and
+// nothing else: reviewing is not a queue, so it has no status to rewire and
+// the board is the same shape either way.
+func TestInitDeclinedReviewDropsThePassNotAQueue(t *testing.T) {
 	dir := t.TempDir()
 	answers := strings.NewReader("\nn\n\n\n")
-	if _, err := Init(context.Background(), &fakeBoard{existing: linearDefaults}, io.Discard, answers, dir, "LERP", ""); err != nil {
+	b := &fakeBoard{existing: linearDefaults}
+	if _, err := Init(context.Background(), b, io.Discard, answers, dir, "LERP", ""); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(dir, config.RepoConfigFile)
@@ -248,17 +249,28 @@ func TestInitDeclinedReviewRewiresImplement(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, ok := c.Queues["review"]; ok {
-		t.Error("declined review queue was written anyway")
+		t.Error("a review queue was written: review runs inside implement")
 	}
 	if got := c.Queues["implement"].OnSuccess; got != "In Review" {
-		t.Errorf("implement.on_success = %q, want the review exit In Review", got)
+		t.Errorf("implement.on_success = %q, want the exit In Review", got)
+	}
+	if strings.Contains(c.Queues["implement"].Prompt, "three rounds") {
+		t.Error("implement prompt still reviews its own work after the pass was declined")
+	}
+	// The declined pass costs the board nothing: no status disappears with it.
+	want := []linear.StateSpec{
+		{Name: "Implementing", Type: "started"},
+		{Name: "In Review", Type: "started"},
+		{Name: "Needs Attention", Type: "started"},
+		{Name: "Plan Review", Type: "started"},
+		{Name: "Planning", Type: "started"},
+	}
+	if !reflect.DeepEqual(b.states, want) {
+		t.Errorf("states = %+v, want %+v", b.states, want)
 	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if strings.Contains(string(raw), "[queues.review]") {
-		t.Error("written file still contains the review queue section")
 	}
 	// The explanatory comments are part of the product and must survive
 	// assembly, as must the prompts' run-time placeholders.
@@ -286,8 +298,8 @@ func TestInitDeclinedPlanningDropsPlanQueue(t *testing.T) {
 	if _, ok := c.Queues["plan"]; ok {
 		t.Error("declined plan queue was written anyway")
 	}
-	if got := c.Queues["implement"].OnSuccess; got != "Agent Review" {
-		t.Errorf("implement.on_success = %q, want Agent Review", got)
+	if got := c.Queues["implement"].OnSuccess; got != "In Review" {
+		t.Errorf("implement.on_success = %q, want In Review", got)
 	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -297,7 +309,6 @@ func TestInitDeclinedPlanningDropsPlanQueue(t *testing.T) {
 		t.Error("written file still contains the plan queue section")
 	}
 	want := []linear.StateSpec{
-		{Name: "Agent Review", Type: "started"},
 		{Name: "Implementing", Type: "started"},
 		{Name: "In Review", Type: "started"},
 		{Name: "Needs Attention", Type: "started"},
@@ -325,8 +336,8 @@ func TestInitNonInteractiveStockAnswers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(c.Queues) != 3 {
-		t.Errorf("queues = %d, want the full stock pipeline of 3", len(c.Queues))
+	if len(c.Queues) != 2 {
+		t.Errorf("queues = %d, want the full stock pipeline of 2", len(c.Queues))
 	}
 	for name, r := range c.Runners {
 		if strings.Contains(r.Command, "bypassPermissions") {
@@ -336,7 +347,7 @@ func TestInitNonInteractiveStockAnswers(t *testing.T) {
 	if strings.Contains(out.String(), "?") {
 		t.Errorf("non-interactive init asked a question:\n%s", out.String())
 	}
-	if !strings.Contains(out.String(), "creating on team LERP: Agent Review, Implementing, In Review, Needs Attention, Plan Review, Planning") {
+	if !strings.Contains(out.String(), "creating on team LERP: Implementing, In Review, Needs Attention, Plan Review, Planning") {
 		t.Errorf("no loud created report:\n%s", out.String())
 	}
 }

@@ -383,11 +383,11 @@ func TestQueueExpandPrompt(t *testing.T) {
 	q := Queue{
 		Status:    "Implementing",
 		Prompt:    "Work {{ticket}} in {{status}}; done goes to {{on_success}}, trouble to {{on_failure}}. Close {{ticket}}.",
-		OnSuccess: "Agent Review",
+		OnSuccess: "In Review",
 		OnFailure: "Needs Attention",
 	}
 	got := q.ExpandPrompt("LERP-42")
-	want := "Work LERP-42 in Implementing; done goes to Agent Review, trouble to Needs Attention. Close LERP-42."
+	want := "Work LERP-42 in Implementing; done goes to In Review, trouble to Needs Attention. Close LERP-42."
 	if got != want {
 		t.Errorf("ExpandPrompt = %q, want %q", got, want)
 	}
@@ -444,11 +444,13 @@ func TestStockVariants(t *testing.T) {
 		stock            Stock
 		queues           []string
 		implementSuccess string
+		reviewPass       bool // the implement prompt reviews its own work
 	}{
 		"full": {
 			stock:            Stock{Teams: []string{"LERP"}, Plan: true, Review: true},
-			queues:           []string{"implement", "plan", "review"},
-			implementSuccess: StockReviewStatus,
+			queues:           []string{"implement", "plan"},
+			implementSuccess: StockExitStatus,
+			reviewPass:       true,
 		},
 		"no review": {
 			stock:            Stock{Teams: []string{"LERP"}, Plan: true},
@@ -457,8 +459,9 @@ func TestStockVariants(t *testing.T) {
 		},
 		"no planning": {
 			stock:            Stock{Teams: []string{"LERP"}, Review: true},
-			queues:           []string{"implement", "review"},
-			implementSuccess: StockReviewStatus,
+			queues:           []string{"implement"},
+			implementSuccess: StockExitStatus,
+			reviewPass:       true,
 		},
 		"implement only": {
 			stock:            Stock{Teams: []string{"LERP"}},
@@ -472,13 +475,14 @@ func TestStockVariants(t *testing.T) {
 				ImplementStatus: "Todo",
 				ExitStatus:      "Ready to Merge", AttentionStatus: "Stuck",
 			},
-			queues:           []string{"implement", "plan", "review"},
-			implementSuccess: StockReviewStatus,
+			queues:           []string{"implement", "plan"},
+			implementSuccess: "Ready to Merge",
+			reviewPass:       true,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			rendered := tc.stock.Render()
-			for _, leftover := range []string{"#{{", "_status}}", "{{implement_success}}", "{{teams}}"} {
+			for _, leftover := range []string{"#{{", "_status}}", "{{teams}}"} {
 				if strings.Contains(rendered, leftover) {
 					t.Errorf("rendered config leaks template plumbing %q", leftover)
 				}
@@ -505,6 +509,13 @@ func TestStockVariants(t *testing.T) {
 				if got := c.Queues["implement"].Status; got != tc.stock.ImplementStatus {
 					t.Errorf("implement.status = %q, want %q", got, tc.stock.ImplementStatus)
 				}
+			}
+			// Declining the review pass is the only thing that distinguishes
+			// two otherwise identical renderings, and it shows up as prose
+			// inside one prompt rather than as a queue of its own. "three
+			// rounds" is the cap that paragraph puts on the fix loop.
+			if got := strings.Contains(c.Queues["implement"].Prompt, "three rounds"); got != tc.reviewPass {
+				t.Errorf("implement prompt reviews its own work = %v, want %v", got, tc.reviewPass)
 			}
 			// A finished plan lands on the approval gate, never straight in
 			// implement: the planning stage is worth running only if a human
@@ -588,9 +599,10 @@ func TestExampleConfigIsUsable(t *testing.T) {
 	}
 
 	// The chain: planning hands off to a status no queue watches — the
-	// approval gate, where a human reads the plan and promotes it — and from
-	// implementing on, to review, which hands off to a status no queue
-	// watches again.
+	// approval gate, where a human reads the plan and promotes it — and
+	// implementing hands off to a status no queue watches again, where a
+	// human merges. Two queues, two gates, and no cycle: every hop on this
+	// board is a decision somebody makes.
 	plan, ok := byStatus["Planning"]
 	if !ok {
 		t.Fatal("no queue watches Planning")
@@ -602,11 +614,7 @@ func TestExampleConfigIsUsable(t *testing.T) {
 	if !ok {
 		t.Fatal("no queue watches Implementing")
 	}
-	review, ok := byStatus[implement.OnSuccess]
-	if !ok {
-		t.Fatalf("Implementing hands off to %q, which no queue watches", implement.OnSuccess)
-	}
-	if _, watched := byStatus[review.OnSuccess]; watched {
-		t.Errorf("review hands off to %q, which a queue picks up: work never reaches a human", review.OnSuccess)
+	if _, watched := byStatus[implement.OnSuccess]; watched {
+		t.Errorf("Implementing hands off to %q, which a queue picks up: work never reaches a human", implement.OnSuccess)
 	}
 }

@@ -32,27 +32,32 @@ const (
 	StockPlanStatus       = "Planning"
 	StockPlanReviewStatus = "Plan Review"
 	StockImplementStatus  = "Implementing"
-	StockReviewStatus     = "Agent Review"
 	StockExitStatus       = "In Review"
 	StockAttentionStatus  = "Needs Attention"
 )
 
 // Stock describes one rendering of the stock lerp.toml: which optional
-// queues it includes, the statuses the pipeline maps onto, and whether the
+// parts it includes, the statuses the pipeline maps onto, and whether the
 // stock runner keeps its bypassPermissions grant. The implement queue is
 // always present. Empty status fields take the Stock* names; lerp init
 // fills them from the operator's answers.
+//
+// Review is not a queue. Reviewing is iteration, and iteration is not a
+// decision: a review stage of its own turns review-and-fix into a cycle on
+// the board that nothing can bound, since counting the rounds would be state
+// outside Linear or an `if` about the process. So the review pass lives
+// inside the implement prompt, where the round count is the agent's own
+// context — and declining it drops those paragraphs, nothing else.
 type Stock struct {
 	Teams  []string
 	Bypass bool
 	Plan   bool // include the plan queue
-	Review bool // include the review queue; declining wires implement straight to ExitStatus
+	Review bool // include the review pass in the implement prompt
 
 	PlanStatus       string
 	PlanReviewStatus string // where a finished plan waits for a human to approve it
 	ImplementStatus  string
-	ReviewStatus     string
-	ExitStatus       string // where clean runs leave the automated path
+	ExitStatus       string // where finished work leaves the automated path
 	AttentionStatus  string // where failures wait for a human
 }
 
@@ -135,19 +140,12 @@ func (s Stock) Render() string {
 	for i, team := range s.Teams {
 		quoted[i] = fmt.Sprintf("%q", team)
 	}
-	// With no review queue, implement's success is the pipeline exit.
-	implementSuccess := orStock(s.ReviewStatus, StockReviewStatus)
-	if !s.Review {
-		implementSuccess = orStock(s.ExitStatus, StockExitStatus)
-	}
 	rendered := renderSections(stockRepo, map[string]bool{"plan": s.Plan, "review": s.Review})
 	rendered = strings.NewReplacer(
 		"{{teams}}", strings.Join(quoted, ", "),
 		"{{plan_status}}", orStock(s.PlanStatus, StockPlanStatus),
 		"{{plan_review_status}}", orStock(s.PlanReviewStatus, StockPlanReviewStatus),
 		"{{implement_status}}", orStock(s.ImplementStatus, StockImplementStatus),
-		"{{implement_success}}", implementSuccess,
-		"{{review_status}}", orStock(s.ReviewStatus, StockReviewStatus),
 		"{{exit_status}}", orStock(s.ExitStatus, StockExitStatus),
 		"{{attention_status}}", orStock(s.AttentionStatus, StockAttentionStatus),
 	).Replace(rendered)

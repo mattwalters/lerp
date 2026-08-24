@@ -1,7 +1,6 @@
-# The stock lerp.toml, as `lerp init` writes it into a repo's root (with the
-# bypassPermissions grant accepted; init asks). Check the real one in: it is
-# the pipeline everyone working on the repo runs, and it contains the
-# permissions you grant the agents. Review it like code.
+# lerp.toml — this repository's lerp configuration, written by `lerp init`.
+# Check this file in: it is the pipeline everyone working on this repo runs,
+# and it contains the permissions you grant the agents. Review it like code.
 #
 # This file is the opinion; the engine has none. Lerp does not know that
 # planning comes before implementing: that order exists only in the
@@ -49,9 +48,10 @@ command = "claude -p {{prompt}} --session-id {{session}} --output-format stream-
 resume = "claude --resume {{session}}"
 
 # The agent needs its own Linear access — lerp passes only the ticket
-# identifier, never the ticket body, and stage artifacts (plan comments,
-# review verdicts) are written by the agent, not by lerp. Configure the
-# Linear MCP server in Claude Code before expecting these prompts to work.
+# identifier, never the ticket body, and stage artifacts (the plan in the
+# ticket, the pull request, the note a run leaves behind) are written by the
+# agent, not by lerp. Configure the Linear MCP server in Claude Code before
+# expecting these prompts to work.
 
 # --------------------------------------------------------------------------
 # Queues
@@ -74,9 +74,15 @@ prompt = """
 You are planning {{ticket}}, nothing more. Do not write code.
 
 Read {{ticket}} in Linear, read SCOPE.md and AGENTS.md if this repository has
-them, and explore enough of the code to know what the change touches. Then
-post a plan as a Linear comment on {{ticket}}: what you will change, which
-files, and how you will know it worked.
+them, and explore enough of the code to know what the change touches.
+
+Write the plan into the ticket's own description, not into a comment: a
+`## Plan` heading, then what you will change, which files, and how you will
+know it worked. Leave everything above that heading alone — it is what a
+human asked for. If the description already has a `## Plan` section, replace
+that section and nothing else. The description is the first thing the board
+shows, so the plan reads as the ticket rather than as something filed under
+it, and whoever meets it at "{{on_success}}" can edit it before promoting.
 
 If the ticket is too vague to plan, or big enough that it should be several
 tickets, say so in a comment and move {{ticket}} to {{on_failure}} instead of
@@ -86,17 +92,24 @@ guessing.
 [queues.implement]
 status = "Implementing"
 runner = "claude"
-on_success = "Agent Review"
+on_success = "In Review"
 on_failure = "Needs Attention"
 prompt = """
-Implement {{ticket}}. Establish the brief first, in this order: the newest
-review comment on {{ticket}} that asks for changes and has not been answered
-yet, if there is one — then address exactly what it raises and nothing else;
-otherwise the plan comment; otherwise the ticket's description. All three are
-real entry paths: a small fix routed straight here never had a plan, and a
-ticket sent back after a review has a verdict to answer. A review whose
-pull request already carries the commits answering it has been answered
-already — the brief is then whatever sent {{ticket}} back this time.
+Implement {{ticket}}. Establish the brief first — the first of these that
+exists is the brief, and the rest are not:
+
+1. Unresolved review threads on the pull request for {{ticket}} that no later
+   commit has answered, a human's before an agent's. Address exactly what
+   they raise and nothing else, and reply to each thread saying what you did.
+2. The newest comment on {{ticket}} asking for changes, if nothing since has
+   answered it.
+3. The ticket's description — its `## Plan` section if it has one, otherwise
+   the whole of it.
+
+All three are real entry paths: a small fix routed straight here never had a
+plan, and a ticket sent back to this queue has something to answer. Work
+whose pull request already carries the commits answering it has been answered
+already; the brief is then whatever sent {{ticket}} back this time.
 
 A pull request for {{ticket}} may already exist; look with `gh`. If one does,
 this is rework: add commits to its branch rather than starting again, and
@@ -110,30 +123,36 @@ worktree holds that branch, which is the ordinary case for a ticket a human
 has just been reading. Push with `git push origin HEAD:<branch>`.
 
 Make the tests and whatever this repository uses as its check pass before you
-push. Open a pull request with `gh` if there is not one already.
+push. If there is no pull request yet, open one as a draft
+(`gh pr create --draft`). It stays a draft until the work is ready for a
+human — which also keeps a pull-request automation on your Linear team from
+moving {{ticket}} out from under this run while you are still working.
 
-The pull request is the artifact — do not paste diffs or transcripts into
-Linear. If the brief turns out to be wrong or missing, move {{ticket}} to
+Now review what you built, before a human has to. Read the diff with fresh
+eyes: hand it to a subagent that gets the brief and the diff and none of
+your reasoning, if your runner has subagents — otherwise read it back
+deliberately as the reviewer rather than the author. Check it against the
+brief and against this repository's own conventions, and rate what you find
+high, medium or low. Concrete failure scenarios only — no style essays.
+
+Post the findings on the pull request, as review comments on the lines they
+concern. Then fix them, push, and answer each thread. Review the result
+again. Stop when a round turns up nothing high or medium, or after three
+rounds — whichever comes first. A round that finds nothing is a good round;
+do not invent work to justify one.
+
+If three rounds leave something high or medium standing, this stops being
+yours: leave the pull request a draft, comment on {{ticket}} with what is
+still wrong and what you tried, and move it to {{on_failure}}.
+
+When the work is ready for a human, mark the pull request ready for review
+(`gh pr ready`) and leave one short comment on {{ticket}}: what changed,
+anything you know is still weak, and the pull request's link. That comment is
+the whole of what Linear gets — the pull request is the artifact, so never
+paste diffs or transcripts into a ticket.
+
+If the brief turns out to be wrong or missing, move {{ticket}} to
 {{on_failure}} and say why in a comment rather than inventing your own.
-"""
-
-[queues.review]
-status = "Agent Review"
-runner = "claude"
-on_success = "In Review"
-on_failure = "Needs Attention"
-prompt = """
-Review the pull request for {{ticket}} as a careful senior engineer.
-
-Find it with `gh`, read the diff, and check it against the plan comment on
-{{ticket}} and against this repository's own conventions. Post your verdict as
-a Linear comment: what you checked, and anything real you found. Concrete
-failure scenarios only — no style essays.
-
-Do not merge, and do not fix the code yourself. If it needs changes, move
-{{ticket}} to {{on_failure}} with your findings in the comment, so a human
-can send the work back through implementation. A clean review leaves
-{{ticket}} for a human to merge.
 """
 
 # A status no queue watches is how this pipeline waits for a human: the
@@ -142,11 +161,12 @@ can send the work back through implementation. A clean review leaves
 #
 # "Plan Review" is the first such gate. A plan is worth writing only if
 # someone reads it, so a finished plan stops here instead of flowing straight
-# into "Implementing". Read the plan comment and press `p` to promote the
-# ticket: to "Implementing" to build it, back to "Planning" to re-plan,
-# or to "Needs Attention" to let it sit — that promote is the approval.
-# Work that needs no plan never enters "Planning" and never meets this gate —
-# routing is placement.
+# into "Implementing". The plan is the ticket's description, so it is the
+# first thing the board shows you: edit it where you disagree, then press `p` to
+# promote the ticket — to "Implementing" to build it, back to
+# "Planning" to re-plan, or to "Needs Attention" to let it sit. That
+# promote is the approval. Work that needs no plan never enters "Planning"
+# and never meets this gate — routing is placement.
 #
 # "In Review" is where work leaves the automated path: a ticket that
 # lands there on success waits for a human to merge the pull request — and
@@ -154,7 +174,13 @@ can send the work back through implementation. A clean review leaves
 #
 # "Needs Attention" is the same idea for failures: no queue watches it,
 # so a ticket that lands there waits for you rather than being retried
-# forever. It is also where a review that found something parks its verdict,
-# and that is a loop rather than a dead end: promote the ticket back to
-# "Implementing" and the next run reads the newest review comment as its
-# brief and adds commits to the pull request that already exists.
+# forever.
+#
+# There is deliberately no queue for reviewing. Review is iteration, and
+# iteration is not a decision — a review that ping-pongs across the board
+# leaves a trail of hops nobody read, and nothing on a board can count them.
+# So "Implementing" reviews and fixes its own work inside one run,
+# where the round count is the agent's own context and costs the board
+# nothing. What reaches "Needs Attention" is only what three rounds could
+# not settle: say what you want on the pull request, promote the ticket back
+# to "Implementing", and the next run reads your threads as its brief.
