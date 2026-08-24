@@ -290,10 +290,7 @@ func (r *Reconciler) attention(ctx context.Context) {
 		r.fail(fmt.Errorf("attention: read viewer: %w", err))
 		return
 	}
-	served := make(map[string]bool, len(r.o.Repo.Queues))
-	for _, q := range r.o.Repo.Queues {
-		served[q.Status] = true
-	}
+	served := servedStatuses(r.o.Repo)
 	var toRoute, parked []AttentionItem
 	for _, team := range r.o.Repo.Teams {
 		unassigned, err := r.o.Client.ListUnassignedIssues(ctx, team)
@@ -689,7 +686,7 @@ func (r *Reconciler) provisionAndRun(ctx context.Context, lr *laneRun, c candida
 	// The move rule: on_success on a clean exit, on_failure otherwise, and
 	// only if the agent didn't move the ticket itself. A move failure rides
 	// on the exit event; the ticket stays claimed for a human to settle.
-	moveErr := conclude(ctx, r.o.Client, issue, c.queue, result.ExitCode, r.o.Log)
+	moveErr := conclude(ctx, r.o.Client, issue, c.queue, servedStatuses(r.o.Repo), result.ExitCode, r.o.Log)
 	return Event{Type: EventExited, RunID: record.RunID, Lane: lr.lane, TicketID: issue.ID,
 		Ticket: issue.Identifier, Queue: c.name, LogPath: record.LogPath,
 		ExitCode: result.ExitCode, Err: moveErr}, false, true

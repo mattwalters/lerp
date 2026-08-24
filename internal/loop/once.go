@@ -118,17 +118,36 @@ func Once(ctx context.Context, o OnceOptions) (bool, error) {
 	if err != nil {
 		return true, fmt.Errorf("run issue %s: %w", issue.ID, err)
 	}
-	if err := conclude(ctx, o.Client, issue, queue, result.ExitCode, o.Log); err != nil {
+	if err := conclude(ctx, o.Client, issue, queue, servedStatuses(o.Repo), result.ExitCode, o.Log); err != nil {
 		return true, err
 	}
 	return true, nil
 }
 
-// conclude applies the queue's move rule after a run exited: a clean exit
-// moves the ticket to OnSuccess, a non-zero exit to OnFailure when
-// configured. In either case, the transition happens only when the ticket
-// remains in the queue status; an agent or human move wins.
-func conclude(ctx context.Context, client linear.Client, issue linear.Issue, queue config.Queue, exitCode int, log io.Writer) error {
+// servedStatuses is the set of Linear statuses some configured queue picks up
+// from. Two decisions turn on it: which tickets the attention view calls
+// waiting on a human, and whether a concluded run releases its claim.
+func servedStatuses(repo *config.RepoConfig) map[string]bool {
+	served := make(map[string]bool, len(repo.Queues))
+	for _, q := range repo.Queues {
+		served[q.Status] = true
+	}
+	return served
+}
+
+// conclude applies the queue's move rule after a run exited, then settles the
+// claim. A clean exit moves the ticket to OnSuccess, a non-zero exit to
+// OnFailure when configured; either move happens only while the ticket remains
+// in the queue status, so an agent or human move wins.
+//
+// The claim is released exactly when the ticket comes to rest somewhere a queue
+// picks up from — whether lerp moved it there or the agent did. An assigned
+// ticket is never eligible, so a ticket still holding its claim in a served
+// status is stranded there permanently: no later pass can pick it up, and
+// nothing reports an error. Coming to rest in a status no queue serves keeps
+// the claim on purpose, because that is what parks the ticket on the operator
+// in the needs-you view.
+func conclude(ctx context.Context, client linear.Client, issue linear.Issue, queue config.Queue, served map[string]bool, exitCode int, log io.Writer) error {
 	target := queue.OnFailure
 	if exitCode == 0 {
 		target = queue.OnSuccess
@@ -150,11 +169,18 @@ func conclude(ctx context.Context, client linear.Client, issue linear.Issue, que
 	if err != nil {
 		return fmt.Errorf("read completed issue %s: %w", issue.ID, err)
 	}
-	if current.Status != queue.Status {
+	final := current.Status
+	if final == queue.Status {
+		if err := client.MoveIssue(ctx, issue.ID, target); err != nil {
+			return fmt.Errorf("move issue %s to %q: %w", issue.ID, target, err)
+		}
+		final = target
+	}
+	if !served[final] {
 		return nil
 	}
-	if err := client.MoveIssue(ctx, issue.ID, target); err != nil {
-		return fmt.Errorf("move issue %s to %q: %w", issue.ID, target, err)
+	if err := client.UnassignIssue(ctx, issue.ID); err != nil {
+		return fmt.Errorf("release issue %s in %q: %w", issue.ID, final, err)
 	}
 	return nil
 }
