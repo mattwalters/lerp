@@ -270,6 +270,9 @@ func TestKillSafetyRunEvidenceDeletedUnderLiveAgent(t *testing.T) {
 	h.rec.Tick(ctx)
 	h.rec.Tick(ctx)
 	for _, ev := range h.drainEvents() {
+		if ev.Type == EventQueues {
+			continue // every pass publishes its queue snapshot; not a board action
+		}
 		t.Errorf("tick over deleted evidence emitted %s: %+v", ev.Type, ev)
 	}
 	if got := h.issue(t, "two"); got.Status != "Todo" || got.AssigneeID != "" {
@@ -309,6 +312,9 @@ func TestKillSafetyRunEvidenceDeletedUnderLiveAgent(t *testing.T) {
 	h2.rec.Tick(ctx)
 	h2.rec.Tick(ctx)
 	for _, ev := range h2.drainEvents() {
+		if ev.Type == EventQueues {
+			continue // every pass publishes its queue snapshot; not a board action
+		}
 		t.Errorf("restarted lerp emitted %s over the orphan's ticket: %+v", ev.Type, ev)
 	}
 	if got := h2.issue(t, "claimed"); got.Status != "Todo" || got.AssigneeID != "fake-viewer" {
@@ -396,6 +402,9 @@ func TestKillSafetyDuplicateClaimRace(t *testing.T) {
 	// The loser walked away silently: no run, no events, no leftover record,
 	// and — critically — no unassign of the claim it lost.
 	for _, ev := range ha.drainEvents() {
+		if ev.Type == EventQueues {
+			continue // every pass publishes its queue snapshot; not a board action
+		}
 		t.Errorf("losing lerp emitted %s: %+v", ev.Type, ev)
 	}
 	if got := aRan(); len(got) != 0 {

@@ -47,7 +47,34 @@ const (
 	// surfacing. The loop keeps ticking; whatever still needs repair is
 	// retried on a later pass.
 	EventError EventType = "error"
+	// EventQueues reports what the pass saw in the configured queues before
+	// filling lanes: every ticket sitting in each queue's status, in pickup
+	// order, with its eligibility. Emitted once per pass, whether or not any
+	// lane was free, so the queue view always mirrors exactly the listing the
+	// loop fills from.
+	EventQueues EventType = "queues"
 )
+
+// QueueTicket is one ticket as a queue snapshot saw it, with why it will or
+// will not be picked up. An eligible ticket runs, in listed order, as soon as
+// a lane is free; the rest are gated by a blocker or an existing claim.
+type QueueTicket struct {
+	ID         string
+	Identifier string // human identifier, e.g. LERP-42
+	Title      string
+	Eligible   bool
+	Assigned   bool     // claimed by someone; an assigned ticket is never eligible
+	BlockedBy  []string // identifiers of the unfinished blockers, when blocked
+}
+
+// QueueSnapshot is one configured queue's listing for one team, tickets in
+// pickup order.
+type QueueSnapshot struct {
+	Team    string
+	Name    string // queue name
+	Status  string // the queue's Linear status
+	Tickets []QueueTicket
+}
 
 // Event is one observation from the loop. Fields beyond Type are filled as
 // far as they are known: an adopted or reaped run is known only from its
@@ -64,7 +91,8 @@ type Event struct {
 	// that is the original start under a previous process, not the adoption.
 	// Zero when no run exists yet.
 	StartedAt time.Time
-	ExitCode  int // meaningful only for EventExited
+	ExitCode  int             // meaningful only for EventExited
+	Queues    []QueueSnapshot // meaningful only for EventQueues
 	Err       error
 }
 
@@ -339,20 +367,24 @@ func (r *Reconciler) releaseDead(ctx context.Context, record evidence.Record) er
 	return nil
 }
 
-// fill starts eligible tickets into free lanes, up to N agents at once.
+// fill lists the configured queues, publishes what it saw, and starts
+// eligible tickets into free lanes, up to N agents at once. The listing
+// happens even when every lane is full: the queue view promises to show, on
+// every pass, exactly what the loop would pick next, and the only listing
+// that keeps that literally true is the loop's own. The cost is the same
+// ListIssues calls a filling pass makes — polling is the design, and no new
+// Linear API surface is involved.
 func (r *Reconciler) fill(ctx context.Context) {
-	lanes := r.freeLanes()
-	if len(lanes) == 0 {
-		return
-	}
-	cands, err := candidates(ctx, r.o.Client, r.o.Repo)
+	listings, err := listQueues(ctx, r.o.Client, r.o.Repo)
 	if err != nil {
 		// Partial listings still fill lanes: one broken queue must not starve
 		// the others while its outage lasts. The failure is reported and the
 		// broken queue retried next pass.
 		r.fail(err)
 	}
-	for _, c := range cands {
+	r.emit(Event{Type: EventQueues, Queues: snapshotQueues(listings)})
+	lanes := r.freeLanes()
+	for _, c := range candidatesFrom(listings) {
 		if len(lanes) == 0 {
 			return
 		}
@@ -366,6 +398,28 @@ func (r *Reconciler) fill(ctx context.Context) {
 		r.wg.Add(1)
 		go r.runLane(ctx, lr, c)
 	}
+}
+
+// snapshotQueues converts raw listings into the queue event's payload,
+// computing per ticket why it will or will not be picked up — the same
+// Eligible check, on the same issues, that candidatesFrom applies.
+func snapshotQueues(listings []queueListing) []QueueSnapshot {
+	snaps := make([]QueueSnapshot, 0, len(listings))
+	for _, l := range listings {
+		snap := QueueSnapshot{Team: l.team, Name: l.name, Status: l.queue.Status}
+		for _, issue := range l.issues {
+			snap.Tickets = append(snap.Tickets, QueueTicket{
+				ID:         issue.ID,
+				Identifier: issue.Identifier,
+				Title:      issue.Title,
+				Eligible:   Eligible(issue, map[string]bool{l.queue.Status: true}),
+				Assigned:   issue.AssigneeID != "",
+				BlockedBy:  issue.BlockedBy,
+			})
+		}
+		snaps = append(snaps, snap)
+	}
+	return snaps
 }
 
 // runLane settles one claimed lane from start to finish, then frees the lane

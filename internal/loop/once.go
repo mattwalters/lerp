@@ -184,21 +184,31 @@ type candidate struct {
 	queue config.Queue
 }
 
-// candidates lists every eligible ticket across the repo's teams and queues,
-// in a deterministic order: configured team order, then queue name, then
-// whatever order Linear lists issues in.
+// queueListing is one team+queue's raw slice of the board: every ticket
+// sitting in the queue's status, eligible or not, in Linear's listing order.
+// The fill path narrows it to candidates; the queue view shows all of it.
+type queueListing struct {
+	team   string
+	name   string // queue name
+	queue  config.Queue
+	issues []linear.Issue
+}
+
+// listQueues lists every configured queue across the repo's teams, in a
+// deterministic order: configured team order, then queue name, then whatever
+// order Linear lists issues in.
 //
-// A listing that fails does not discard the rest: the tickets that were
-// listed are returned alongside the joined errors, so one broken queue cannot
-// starve every lane while the outage lasts. Callers act on what was found and
-// report the error.
-func candidates(ctx context.Context, client linear.Client, repo *config.RepoConfig) ([]candidate, error) {
+// A listing that fails does not discard the rest: the queues that were listed
+// are returned alongside the joined errors, so one broken queue cannot starve
+// every lane while the outage lasts. Callers act on what was found and report
+// the error.
+func listQueues(ctx context.Context, client linear.Client, repo *config.RepoConfig) ([]queueListing, error) {
 	queueNames := make([]string, 0, len(repo.Queues))
 	for name := range repo.Queues {
 		queueNames = append(queueNames, name)
 	}
 	sort.Strings(queueNames)
-	var cands []candidate
+	var listings []queueListing
 	var errs []error
 	for _, team := range repo.Teams {
 		for _, name := range queueNames {
@@ -208,12 +218,30 @@ func candidates(ctx context.Context, client linear.Client, repo *config.RepoConf
 				errs = append(errs, fmt.Errorf("list %s queue for team %s: %w", queue.Status, team, err))
 				continue
 			}
-			for _, issue := range issues {
-				if Eligible(issue, map[string]bool{queue.Status: true}) {
-					cands = append(cands, candidate{issue: issue, name: name, queue: queue})
-				}
+			listings = append(listings, queueListing{team: team, name: name, queue: queue, issues: issues})
+		}
+	}
+	return listings, errors.Join(errs...)
+}
+
+// candidates lists every eligible ticket across the repo's teams and queues,
+// in listQueues's deterministic order.
+func candidates(ctx context.Context, client linear.Client, repo *config.RepoConfig) ([]candidate, error) {
+	listings, err := listQueues(ctx, client, repo)
+	return candidatesFrom(listings), err
+}
+
+// candidatesFrom narrows raw listings to the tickets a queue could pick up
+// right now, preserving the listings' order. The queue view and the fill path
+// must agree on what runs next, so both derive from the same listing.
+func candidatesFrom(listings []queueListing) []candidate {
+	var cands []candidate
+	for _, l := range listings {
+		for _, issue := range l.issues {
+			if Eligible(issue, map[string]bool{l.queue.Status: true}) {
+				cands = append(cands, candidate{issue: issue, name: l.name, queue: l.queue})
 			}
 		}
 	}
-	return cands, errors.Join(errs...)
+	return cands
 }

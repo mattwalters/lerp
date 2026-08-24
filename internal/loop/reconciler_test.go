@@ -351,6 +351,8 @@ func TestTickAdoptsLiveOrphans(t *testing.T) {
 			if !ev.StartedAt.Equal(started) {
 				t.Errorf("adopted event StartedAt = %v, want the run's original start %v", ev.StartedAt, started)
 			}
+		case EventQueues:
+			// Every pass publishes its queue snapshot, full lanes or not.
 		case EventError:
 			t.Fatalf("unexpected error event: %v", ev.Err)
 		default:
@@ -475,6 +477,9 @@ func TestRunAnnouncesProvisioningBeforeStart(t *testing.T) {
 			if ev.Type == EventError {
 				t.Fatalf("unexpected error event: %v", ev.Err)
 			}
+			if ev.Type == EventQueues {
+				continue // the per-pass snapshot is not part of the run's sequence
+			}
 			seq = append(seq, ev)
 		case <-deadline:
 			t.Fatalf("timed out waiting for the run to finish; events so far: %+v", seq)
@@ -557,6 +562,68 @@ func TestRunPollsUntilCancelled(t *testing.T) {
 	if got := h.issue(t, "one"); got.Status != "Done" {
 		t.Errorf("ticket status = %q, want Done", got.Status)
 	}
+}
+
+// Done-when: every pass publishes a queue snapshot — the raw listing with
+// eligibility per ticket, blocked ones carrying their blockers — and the
+// lane fills with the snapshot's first eligible ticket, so what the view
+// shows is literally what the loop picks next.
+func TestTickPublishesQueueSnapshotEveryPass(t *testing.T) {
+	execute, release, _ := blockingExecute(t, "")
+	h := newHarness(t, 1, execute)
+	h.fake.AddIssue("LERP", linear.Issue{ID: "t1", Identifier: "LERP-1", Title: "first up", Status: "Todo"})
+	h.fake.AddIssue("LERP", linear.Issue{ID: "t2", Identifier: "LERP-2", Title: "second", Status: "Todo"})
+	h.fake.AddIssue("LERP", linear.Issue{ID: "t3", Identifier: "LERP-3", Title: "gated", Status: "Todo"})
+	h.fake.Block("t3", "t1")
+	ctx := context.Background()
+
+	h.rec.Tick(ctx)
+	snap := h.waitEvents(t, EventQueues, 1)[0]
+	if len(snap.Queues) != 1 {
+		t.Fatalf("snapshot has %d queues, want 1: %+v", len(snap.Queues), snap.Queues)
+	}
+	q := snap.Queues[0]
+	if q.Team != "LERP" || q.Name != "todo" || q.Status != "Todo" {
+		t.Errorf("queue = %+v, want team LERP, queue todo, status Todo", q)
+	}
+	if len(q.Tickets) != 3 {
+		t.Fatalf("queue lists %d tickets, want all 3: %+v", len(q.Tickets), q.Tickets)
+	}
+	for i, want := range []QueueTicket{
+		{ID: "t1", Identifier: "LERP-1", Title: "first up", Eligible: true},
+		{ID: "t2", Identifier: "LERP-2", Title: "second", Eligible: true},
+		{ID: "t3", Identifier: "LERP-3", Title: "gated", BlockedBy: []string{"LERP-1"}},
+	} {
+		got := q.Tickets[i]
+		if got.ID != want.ID || got.Eligible != want.Eligible || got.Title != want.Title ||
+			!slices.Equal(got.BlockedBy, want.BlockedBy) {
+			t.Errorf("ticket %d = %+v, want %+v", i, got, want)
+		}
+	}
+
+	// The only lane fills with the snapshot's first eligible ticket.
+	started := h.waitEvents(t, EventStarted, 1)
+	if started[0].TicketID != q.Tickets[0].ID {
+		t.Errorf("started %s, want the snapshot's first eligible ticket %s",
+			started[0].TicketID, q.Tickets[0].ID)
+	}
+
+	// A pass with every lane full still publishes, now showing the running
+	// ticket claimed and therefore ineligible.
+	h.rec.Tick(ctx)
+	snap = h.waitEvents(t, EventQueues, 1)[0]
+	var running QueueTicket
+	for _, tk := range snap.Queues[0].Tickets {
+		if tk.ID == "t1" {
+			running = tk
+		}
+	}
+	if running.ID != "t1" || !running.Assigned || running.Eligible {
+		t.Errorf("running ticket in the full-lane snapshot = %+v, want claimed and ineligible", running)
+	}
+
+	release()
+	h.waitEvents(t, EventExited, 1)
 }
 
 func TestNewReconcilerValidatesOptions(t *testing.T) {

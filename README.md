@@ -269,10 +269,15 @@ The Board view shows one row per lane — ticket, queue, and runner
 state: provisioning, running, or adopted, each with the run's elapsed
 time (an adopted run shows its true age, not the moment it was
 adopted) — and a live tail of the selected lane's log, with
-scrollback that survives the run's exit. Keys: `1`/`2`/`3` choose a
-view and `tab` cycles — the Attention and Queue views are empty shells
-until their own tickets (LERP-13, LERP-12) land. `↑`/`↓` pick a lane,
-`pgup`/`pgdn` scroll the log, `end` resumes following, `q` quits.
+scrollback that survives the run's exit. The Queue view shows what
+runs next: each configured queue with every ticket sitting in its
+status, in the loop's own pickup order, refreshed on every pass —
+eligible tickets run as lanes free up, and blocked or claimed ones are
+shown faint with the reason. It is read-only; to change what runs
+next, move tickets in Linear. Keys: `1`/`2`/`3` choose a view and
+`tab` cycles — the Attention view is an empty shell until its own
+ticket (LERP-13) lands. `↑`/`↓` pick a lane, `pgup`/`pgdn` scroll the
+log, `end` resumes following, `q` quits.
 
 Quitting (`q` or `ctrl+c`) closes the screen, stops future passes, and
 waits briefly for a pass already in flight to settle. The agents are
