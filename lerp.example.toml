@@ -8,7 +8,7 @@
 # `on_success` pointers below. Rewrite them into a different shape, or delete
 # queues entirely, and no lerp code changes.
 #
-# Tickets enter by where a human puts them. A big feature is blessed into
+# Tickets enter by where a human puts them. A big feature is promoted into
 # Planning; a small fix goes straight to Implementing. That placement is the
 # routing decision — there is no syntax for it here.
 

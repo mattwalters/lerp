@@ -137,7 +137,7 @@ its existence.
 
 Three views, one per question an operator actually has:
 
-1. **Attention** — what is blocked on me: tickets to bless into a
+1. **Attention** — what is blocked on me: tickets to promote into a
    queue, reviews to read, questions agents have raised.
 2. **Board** — what is running now, which queue each lane's agent is
    in, and its live log stream.
