@@ -27,17 +27,41 @@ func TestVerifyStatusesNamesEveryMiss(t *testing.T) {
 	}
 	msg := err.Error()
 	for _, want := range []string{
-		// Precision per problem: team, missing name, queue and config key.
-		`team LERP has no status "Done" (queue "todo", on_success)`,
-		`team LERP has no status "Needs Help" (queue "todo", on_failure)`,
+		// The lead line counts the misses (plural).
+		"team LERP is missing 2 statuses referenced by lerp.toml:",
+		// One line per missing status, naming the reference that points at it.
+		`"Done" (todo.on_success)`,
+		`"Needs Help" (todo.on_failure)`,
 		// The team's actual names, so the operator sees the near-miss.
-		"it has: Backlog, Todo, Doen, Halp",
+		"team LERP has: Backlog, Todo, Doen, Halp",
 		// The way out.
 		"edit lerp.toml or run `lerp init`",
 	} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("error %q\nmissing %q", msg, want)
 		}
+	}
+}
+
+func TestVerifyStatusesGroupsReferencesByMissingStatus(t *testing.T) {
+	fake := linear.NewFake()
+	// Two queues point at the same missing status; the report gets one line
+	// for it listing both references, and the team's status list once.
+	fake.SetTeamStates("LERP", "Todo", "Done")
+	repo := testRepo()
+	review := repo.Queues["todo"]
+	review.Status = "Done"
+	repo.Queues["review"] = review
+	err := VerifyStatuses(context.Background(), fake, repo)
+	if err == nil {
+		t.Fatal("VerifyStatuses = nil, want an error")
+	}
+	msg := err.Error()
+	if want := `"Needs Help" (review.on_failure, todo.on_failure)`; !strings.Contains(msg, want) {
+		t.Errorf("error %q\nmissing %q", msg, want)
+	}
+	if got := strings.Count(msg, "team LERP has: Todo, Done"); got != 1 {
+		t.Errorf("status list printed %d times, want once\nerror %q", got, msg)
 	}
 }
 
@@ -48,8 +72,14 @@ func TestVerifyStatusesReportsMissingQueueStatus(t *testing.T) {
 	if err == nil {
 		t.Fatal("VerifyStatuses = nil, want an error")
 	}
-	if want := `team LERP has no status "Todo" (queue "todo", status)`; !strings.Contains(err.Error(), want) {
-		t.Errorf("error %q\nmissing %q", err, want)
+	for _, want := range []string{
+		// A single miss reads singular and still names its reference.
+		"team LERP is missing 1 status referenced by lerp.toml:",
+		`"Todo" (todo.status)`,
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q\nmissing %q", err, want)
+		}
 	}
 }
 
