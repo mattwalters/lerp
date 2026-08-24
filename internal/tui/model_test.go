@@ -208,8 +208,8 @@ func TestExitedEventReportsASkippedHop(t *testing.T) {
 	if !strings.Contains(m.View(), "the on_success hop") {
 		t.Fatalf("view does not report the skipped hop:\n%s", m.View())
 	}
-	if m.lastInfo != note || !m.lastInfoWarn {
-		t.Errorf("status note = (%q, warn %v), want (%q, warn true)", m.lastInfo, m.lastInfoWarn, note)
+	if len(m.notes) != 1 || m.notes[0].text != note || !m.notes[0].warn {
+		t.Errorf("status notes = %+v, want one warning note %q", m.notes, note)
 	}
 	if strings.Contains(m.View(), "✓ LERP-42 left") {
 		t.Errorf("a skipped hop is reported as a success:\n%s", m.View())
@@ -1730,4 +1730,126 @@ func TestHostileErrorTextCannotRepaintTheStatusBar(t *testing.T) {
 	escapeFree(t, "status bar", m.View())
 	m = update(t, m, promotedMsg{ticket: "LERP-1", status: "Planning", err: errors.New(hostile)})
 	escapeFree(t, "status bar", m.View())
+}
+
+// Running and pending rows are adjacent in one list now, so stepping past a
+// pending ticket and back is constant motion rather than a rare one. It must
+// not cost the operator the place they scrolled back to: one viewport serves
+// both lenses, and zeroing it on the way out used to leave the log at the top
+// on the way in.
+func TestScrollPositionSurvivesADetourThroughAPendingRow(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "one.log")
+	var body []byte
+	for i := 0; i < 200; i++ {
+		body = append(body, []byte(fmt.Sprintf("line %d\n", i))...)
+	}
+	writeLog(t, logPath, body)
+
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
+			{ID: "t1", Identifier: "LERP-1", Title: "running", Assigned: true},
+			{ID: "t2", Identifier: "LERP-2", Title: "waiting", Eligible: true},
+		}},
+	}}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		TicketID: "t1", Ticket: "LERP-1", Queue: "implement", LogPath: logPath}})
+	m = update(t, m, keyMsg("2"))
+
+	// Scroll back into the log, which turns following off.
+	m = update(t, m, keyMsg("pgup"))
+	m = update(t, m, keyMsg("pgup"))
+	if m.follow {
+		t.Fatal("scrolling up left follow on, so this test is not exercising the case")
+	}
+	want := m.vp.YOffset
+	if want == 0 {
+		t.Fatal("scrolling up did not move the viewport")
+	}
+
+	m = update(t, m, keyMsg("down")) // the pending ticket, which has no log
+	m = update(t, m, keyMsg("up"))   // back to the run
+
+	if !m.showingLog() {
+		t.Fatal("the log lens did not come back")
+	}
+	if got := m.vp.YOffset; got != want {
+		t.Errorf("offset after the detour = %d, want %d — the operator lost their place", got, want)
+	}
+}
+
+// With N lanes, two runs settling inside one interval is routine. One note
+// slot dropped the first of them silently, which is the whole reason the
+// status bar was chosen as the home for how a run ended.
+func TestBothOutcomesInOneIntervalReachTheStatusBar(t *testing.T) {
+	m, _, _ := newTestModel(t, 2)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		TicketID: "t1", Ticket: "LERP-1", Queue: "implement"}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r2", Lane: 2,
+		TicketID: "t2", Ticket: "LERP-2", Queue: "implement"}})
+
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventExited, RunID: "r1", Lane: 1,
+		TicketID: "t1", Ticket: "LERP-1", Queue: "implement", ExitCode: 1}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventExited, RunID: "r2", Lane: 2,
+		TicketID: "t2", Ticket: "LERP-2", Queue: "implement", ExitCode: 0}})
+
+	view := m.View()
+	for _, want := range []string{"LERP-1 exited 1", "LERP-2 exited 0"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("status bar lost %q:\n%s", want, view)
+		}
+	}
+}
+
+// A pass error used to take the whole line, so an outcome set during the same
+// pass never reached the screen — and with the lane rows gone there is no
+// other surface that would have carried it.
+func TestAPassErrorDoesNotHideHowARunEnded(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		TicketID: "t1", Ticket: "LERP-1", Queue: "implement"}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventExited, RunID: "r1", Lane: 1,
+		TicketID: "t1", Ticket: "LERP-1", Queue: "implement", ExitCode: 1}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventError,
+		Err: errors.New("list queue implement: boom")}})
+
+	view := m.View()
+	if !strings.Contains(view, "list queue implement: boom") {
+		t.Errorf("the pass error is missing:\n%s", view)
+	}
+	if !strings.Contains(view, "LERP-1 exited 1") {
+		t.Errorf("the pass error hid how the run ended:\n%s", view)
+	}
+}
+
+// The off-board group exists so an inherited run does not vanish. A second
+// one from the same queue belongs under the first one's header.
+func TestOffBoardRunsFromOneQueueShareAHeader(t *testing.T) {
+	m, _, _ := newTestModel(t, 2)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Team: "LERP", Name: "plan", Status: "Planning"},
+	}}})
+	for i, lane := range []int{1, 2} {
+		m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAdopted, RunID: fmt.Sprintf("r%d", i),
+			Lane: lane, TicketID: fmt.Sprintf("gone-%d", i), Queue: "implement"}})
+	}
+	var off int
+	for _, g := range m.workGroups() {
+		if g.offBoard {
+			off++
+			if len(g.rows) != 2 {
+				t.Errorf("off-board group %q holds %d rows, want both runs", g.name, len(g.rows))
+			}
+		}
+	}
+	if off != 1 {
+		t.Errorf("off-board groups = %d, want 1:\n%s", off, m.View())
+	}
+	view := m.View()
+	for _, want := range []string{"gone-0", "gone-1"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("adopted run %q vanished:\n%s", want, view)
+		}
+	}
 }

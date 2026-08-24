@@ -328,10 +328,20 @@ type model struct {
 	inFlight bool
 	lastPass time.Time
 
-	lastErr      string
-	lastInfo     string // transient note, e.g. a promote's outcome; cleared at the next pass
-	lastInfoWarn bool   // the note reports something that went unhandled, not something that worked
-	passHadErr   bool   // an error event arrived during the pass now in flight
+	lastErr string
+	// notes are this interval's transient reports — run outcomes, a
+	// promote's result — in arrival order, cleared at the next pass. A
+	// single slot could not hold them: with N lanes, two runs settling
+	// inside one interval is routine, and the second silently overwrote the
+	// first. The status bar renders them all, and renders them alongside
+	// lastErr rather than behind it, so a broken queue listing cannot hide
+	// the fact that a run failed.
+	notes      []note
+	passHadErr bool // an error event arrived during the pass now in flight
+	// logOffset parks the log pane's scroll position while the selection is
+	// on a row that has no log, so walking past a pending ticket and back
+	// returns to where the operator was rather than to the top.
+	logOffset int
 
 	// passes counts in-flight reconciliation passes; Run waits on it after
 	// the program exits, so quitting never severs a pass mid-mutation.
@@ -400,12 +410,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKey(msg)
 	case tickMsg:
 		m.passHadErr = false
-		m.lastInfo, m.lastInfoWarn = "", false // a new pass starting is the "transient" in transient note
+		m.notes = nil // a new pass starting is the "transient" in transient note
 		m.inFlight = true
 		return m, m.runTick()
 	case tickedMsg:
 		// A pass that produced no error supersedes whatever error line an
-		// earlier one left; lane-level failures stay visible as lane notes.
+		// earlier one left. Run outcomes are notes, not errors, and are
+		// cleared by the next pass starting rather than by this one ending.
 		if !m.passHadErr {
 			m.lastErr = ""
 		}
@@ -437,7 +448,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.lastErr = clean(fmt.Sprintf("promote %s to %s: %v", msg.ticket, msg.status, msg.err))
 		} else {
-			m.lastInfo, m.lastInfoWarn = fmt.Sprintf("promoted %s to %s", msg.ticket, msg.status), false
+			m.note(fmt.Sprintf("promoted %s to %s", msg.ticket, msg.status), false)
 		}
 		return m, nil
 	}
@@ -626,12 +637,24 @@ func (m *model) moveSelection(delta int) {
 		if len(rows) == 0 {
 			return
 		}
+		// A detour through a row with no log must not cost the operator the
+		// place they had scrolled back to: one viewport serves both lenses,
+		// so leaving parks the offset and arriving puts it back. Following
+		// needs nothing parked — refreshLog pins it to the bottom.
+		if m.showingLog() && !m.follow {
+			m.logOffset = m.vp.YOffset
+		}
 		m.workPos = clampIndex(m.workPos+delta, len(rows))
 		m.workSel = rows[m.workPos].ticketID
 		m.retarget()
 		m.refreshMain()
-		if !m.showingLog() {
+		switch {
+		case !m.showingLog():
 			m.vp.GotoTop()
+		case !m.follow:
+			// retarget leaves follow on for a log it just switched to, so
+			// this only restores a log the operator was already reading.
+			m.vp.SetYOffset(m.logOffset)
 		}
 	case panelAttention:
 		m.attnSel = clampIndex(m.attnSel+delta, len(m.shown))
@@ -715,20 +738,29 @@ func (m *model) apply(ev loop.Event) {
 		if ev.Err != nil {
 			note += " (move failed)"
 		}
-		m.lastInfo, m.lastInfoWarn = note, ev.ExitCode != 0 || ev.Err != nil
+		warn := ev.ExitCode != 0 || ev.Err != nil
 		if ev.Note != "" {
 			// A hop the loop skipped is the larger story — a stage of the
-			// operator's pipeline did not run — so it wins the line.
-			m.lastInfo, m.lastInfoWarn = ev.Note, true
+			// operator's pipeline did not run — so it replaces the plain
+			// outcome rather than crowding the line beside it.
+			note, warn = ev.Note, true
 		}
+		m.note(note, warn)
 		m.settle(ev)
 		changed = panelWork
 	case loop.EventReaped:
-		m.lastInfo, m.lastInfoWarn = "reaped a dead run", true
+		m.note(reapedNote(ev), true)
 		m.settle(ev)
 		changed = panelWork
 	case loop.EventError:
 		if ev.Lane > 0 {
+			// A lane's failure used to sit on its row as a note until the
+			// lane was reused. The rows are gone, and lastErr alone names the
+			// ticket by its Linear id rather than its identifier — so record
+			// the identifier too, or the operator cannot tell whose run died.
+			if ev.Ticket != "" {
+				m.note(ev.Ticket+": run failed, see its log", true)
+			}
 			m.settle(ev)
 			changed = panelWork
 		}
@@ -792,7 +824,9 @@ func (m *model) settle(ev loop.Event) {
 		delete(m.lanes, ev.Lane) // the lane existed only for an adopted run
 		return
 	}
-	m.lanes[ev.Lane] = &lane{state: laneIdle, logPath: logPath}
+	// The idle lane keeps no log path: workGroups skips idle lanes, so no row
+	// can point at one. lastLog above is where a finished run's log lives now.
+	m.lanes[ev.Lane] = &lane{state: laneIdle}
 }
 
 // eventSince prefers the loop's own start time, so an adopted run's elapsed
@@ -948,7 +982,10 @@ func (m *model) workGroups() []workGroup {
 			row.assigned, row.blockedBy = tk.Assigned, tk.BlockedBy
 			gi = qi
 		} else {
-			gi = slices.IndexFunc(groups, func(g workGroup) bool { return !g.offBoard && g.name == ln.queue })
+			// An off-board group already opened for this queue counts: the
+			// second inherited run from one queue belongs under the first
+			// one's header, not under a duplicate of it.
+			gi = slices.IndexFunc(groups, func(g workGroup) bool { return g.name == ln.queue })
 		}
 		if gi < 0 {
 			groups = append(groups, workGroup{name: ln.queue, offBoard: true})
@@ -1889,18 +1926,51 @@ func (m model) workDetail() string {
 // needs-you count, keys. A pass error — or a transient note like a
 // promote's outcome — takes over the whole line; a truncated error is not
 // actionable, so nothing else competes with it for the width.
-func (m model) statusBar() string {
-	switch {
-	case m.lastErr != "":
-		return ansi.Truncate(styleErr.Render("✗ "+m.lastErr), m.width, "…")
-	case m.lastInfo != "":
-		// A promote worked; a skipped hop did not. Reporting both with the
-		// same green tick would read as "all is well" either way.
+// note is one transient report on the status bar. warn marks something that
+// went unhandled rather than something that worked, so a promote's success
+// and a run's non-zero exit never read the same.
+type note struct {
+	text string
+	warn bool
+}
+
+// note records one, in arrival order.
+func (m *model) note(text string, warn bool) {
+	m.notes = append(m.notes, note{text: text, warn: warn})
+}
+
+// reapedNote names the ticket when the record knew it, because "reaped a
+// dead run" told the operator nothing about which run.
+func reapedNote(ev loop.Event) string {
+	if ev.Ticket != "" {
+		return ev.Ticket + ": reaped a dead run"
+	}
+	return "reaped a dead run"
+}
+
+// noteLine is the status bar while anything transient is pending: the pass
+// error first when there is one, then every note this interval collected.
+// A truncated line is not actionable, so nothing else competes for the
+// width — but the notes compete with each other rather than overwriting,
+// since losing that a run failed is worse than a crowded line.
+func (m model) noteLine() string {
+	var segs []string
+	if m.lastErr != "" {
+		segs = append(segs, styleErr.Render("✗ "+m.lastErr))
+	}
+	for _, n := range m.notes {
 		mark, style := "✓ ", styleRunning
-		if m.lastInfoWarn {
+		if n.warn {
 			mark, style = "! ", styleAttention
 		}
-		return ansi.Truncate(style.Render(mark+m.lastInfo), m.width, "…")
+		segs = append(segs, style.Render(mark+n.text))
+	}
+	return strings.Join(segs, "  ")
+}
+
+func (m model) statusBar() string {
+	if line := m.noteLine(); line != "" {
+		return ansi.Truncate(line, m.width, "…")
 	}
 	badgeColor := colorFocus
 	if m.focus == panelAttention {
