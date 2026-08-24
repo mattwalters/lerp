@@ -1588,6 +1588,33 @@ func TestTicketDetailEmptyTicket(t *testing.T) {
 	}
 }
 
+// Done-when: the pane shows the ticket, not its source — the plan in the
+// body and the verdict in a comment render the same way, as markdown.
+func TestTicketDetailRendersMarkdown(t *testing.T) {
+	m, _, reader := newReadingTestModel(t)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+
+	m = selectAndRead(t, m, 0, linear.IssueDetail{
+		Body: "## Plan\n\n* touch `internal/tui/model.go`",
+		Comments: []linear.Comment{
+			{Author: "lerp", Body: "**shipped** it", CreatedAt: time.Now()},
+		},
+	}, nil, reader)
+
+	view := m.View()
+	for _, want := range []string{"Plan", "• touch internal/tui/model.go", "shipped it"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("main pane is missing %q:\n%s", want, view)
+		}
+	}
+	for _, bad := range []string{"## Plan", "* touch", "**shipped**", "`internal"} {
+		if strings.Contains(view, bad) {
+			t.Fatalf("main pane still shows the markdown source %q:\n%s", bad, view)
+		}
+	}
+}
+
 // Done-when: a body carrying escape sequences renders inert, and one
 // carrying Linear's inline issue tags renders as bare identifiers.
 func TestTicketDetailRendersHostileBodyInert(t *testing.T) {

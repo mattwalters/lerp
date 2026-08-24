@@ -1823,8 +1823,8 @@ func (m model) attentionDetail(width int) string {
 // then the comments oldest first — so lerp's last stage-boundary artifact,
 // the verdict that parked the ticket, is where the eye lands. Read-only and
 // flat: nothing here is selectable, no thread is followed, no other ticket
-// is reachable from it. Markdown is rendered as the plain text it is; `o` is
-// the answer to anything that wants more.
+// is reachable from it. Markdown is rendered (see markdown.go); `o` is the
+// answer to anything that wants more.
 func (m model) ticketLines(ticketID string, width int) []string {
 	d := m.details[ticketID]
 	switch {
@@ -1837,7 +1837,7 @@ func (m model) ticketLines(ticketID string, width int) []string {
 	}
 	lines := []string{""}
 	if body := strings.TrimSpace(d.body); body != "" {
-		lines = append(lines, wrapText(body, width)...)
+		lines = append(lines, renderMarkdown(body, width)...)
 	} else {
 		lines = append(lines, styleFaint.Render("(no description)"))
 	}
@@ -1846,7 +1846,7 @@ func (m model) ticketLines(ticketID string, width int) []string {
 	}
 	for _, c := range d.comments {
 		lines = append(lines, "", styleFaint.Render(commentHead(c)))
-		lines = append(lines, wrapText(strings.TrimSpace(c.Body), width)...)
+		lines = append(lines, renderMarkdown(strings.TrimSpace(c.Body), width)...)
 	}
 	return lines
 }
@@ -1873,13 +1873,6 @@ func age(t time.Time) string {
 	default:
 		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
 	}
-}
-
-// wrapText word-wraps prose to the pane's inner width. panelBox truncates
-// its rows instead of wrapping — right for a one-line list row, wrong for a
-// ticket body, where it would throw away everything past the first line.
-func wrapText(s string, width int) []string {
-	return strings.Split(ansi.Wrap(s, max(8, width), "-"), "\n")
 }
 
 // workDetail is the lens on a selected ticket no run has a log for: where
