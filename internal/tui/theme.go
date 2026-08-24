@@ -91,6 +91,23 @@ func panelLine(title string, w int) string {
 	return ansi.Truncate(" "+title, max(0, w), "…")
 }
 
+// splitRow lays one list row out as left content and a right-hand column
+// that survives a narrow panel: the left is truncated (ANSI-aware) to
+// whatever the right does not need, so the trailing fact — a clock, a
+// priority — is never the thing that falls off the edge.
+func splitRow(left, right string, width int) string {
+	leftMax := width - lipgloss.Width(right)
+	if right != "" {
+		leftMax--
+	}
+	left = ansi.Truncate(left, max(0, leftMax), "…")
+	if right == "" {
+		return left
+	}
+	pad := strings.Repeat(" ", max(0, leftMax-lipgloss.Width(left)))
+	return left + pad + " " + right
+}
+
 // windowRows slides rows so the row at sel stays visible within ih lines,
 // standing in for the spans cut at either edge with a faint "⋯ n more".
 // panelBox's own cut covers unfocused panels; this is the focused variant,

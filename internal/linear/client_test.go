@@ -84,11 +84,16 @@ func TestListIssues(t *testing.T) {
 				"pageInfo":{"hasNextPage":true,"endCursor":"cur-1"},
 				"nodes":[{
 					"id":"iss-1","identifier":"LERP-1","title":"First","state":{"name":"Todo"},
-					"assignee":{"id":"user-9"},
+					"assignee":{"id":"user-9"},"priority":2,
 					"inverseRelations":{"nodes":[
 						{"type":"blocks","issue":{"identifier":"LERP-5","state":{"type":"started"}}},
 						{"type":"blocks","issue":{"identifier":"LERP-6","state":{"type":"completed"}}},
 						{"type":"related","issue":{"identifier":"LERP-7","state":{"type":"started"}}}
+					]},
+					"relations":{"nodes":[
+						{"type":"blocks","relatedIssue":{"identifier":"LERP-8","state":{"type":"unstarted"}}},
+						{"type":"blocks","relatedIssue":{"identifier":"LERP-9","state":{"type":"canceled"}}},
+						{"type":"related","relatedIssue":{"identifier":"LERP-10","state":{"type":"started"}}}
 					]}
 				}]
 			}}`)
@@ -100,8 +105,9 @@ func TestListIssues(t *testing.T) {
 				"pageInfo":{"hasNextPage":false,"endCursor":""},
 				"nodes":[{
 					"id":"iss-2","identifier":"LERP-2","title":"Second","state":{"name":"Todo"},
-					"assignee":null,
-					"inverseRelations":{"nodes":[]}
+					"assignee":null,"priority":0,
+					"inverseRelations":{"nodes":[]},
+					"relations":{"nodes":[]}
 				}]
 			}}`)
 		default:
@@ -115,7 +121,8 @@ func TestListIssues(t *testing.T) {
 	}
 	want := []Issue{
 		{ID: "iss-1", Identifier: "LERP-1", Title: "First", Status: "Todo",
-			AssigneeID: "user-9", Blocked: true, BlockedBy: []string{"LERP-5"}},
+			AssigneeID: "user-9", Blocked: true, BlockedBy: []string{"LERP-5"},
+			Blocks: []string{"LERP-8"}, Priority: 2},
 		{ID: "iss-2", Identifier: "LERP-2", Title: "Second", Status: "Todo"},
 	}
 	if !reflect.DeepEqual(issues, want) {

@@ -292,8 +292,12 @@ shown faint with the reason. It is read-only; to change what runs
 next, move tickets in Linear. The Needs-you view lists what waits on a
 human in two groups: unclaimed tickets sitting in a status no queue
 serves (to route), and the operator's own claimed tickets sitting the
-same way (parked on them) — each with the reason and a link. Select
-one and press `p` to promote it: pick a target from the configured
+same way (parked on them) — each with the reason and a link. To route
+is ordered by leverage: how many other listed tickets promoting this
+one would transitively unblock, then priority, then identifier — so
+the promote worth making is the top row. Every row carries that count,
+its priority, and whether something still blocks it. Select one and
+press `p` to promote it: pick a target from the configured
 queue statuses or a pipeline exit, and lerp moves it there. That
 MoveIssue is the only write any view makes; everything else about a
 ticket still happens in Linear. Keys: `1`/`2`/`3` choose a view and

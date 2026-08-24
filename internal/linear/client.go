@@ -26,6 +26,15 @@ type Issue struct {
 	URL        string // Linear's own web URL for the issue
 	Blocked    bool   // true when any incomplete issue blocks this one
 	BlockedBy  []string
+	// Blocks names the unfinished issues this one blocks — the other half
+	// of the same relation, read forward. It is what makes leverage
+	// ("promoting this frees three others") visible without walking the
+	// board.
+	Blocks []string
+	// Priority is Linear's own scale: 0 none, 1 urgent, 2 high, 3 medium,
+	// 4 low. Lerp never acts on it; it is carried so a human choosing what
+	// to route can see it.
+	Priority int
 }
 
 // Client is the operation surface lerp needs from Linear — exactly these,

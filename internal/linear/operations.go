@@ -17,6 +17,8 @@ type issueNode struct {
 	Assignee *struct {
 		ID string `json:"id"`
 	} `json:"assignee"`
+	// Linear types priority as a Float, so it decodes as one.
+	Priority         float64 `json:"priority"`
 	InverseRelations struct {
 		Nodes []struct {
 			Type  string `json:"type"`
@@ -28,6 +30,17 @@ type issueNode struct {
 			} `json:"issue"`
 		} `json:"nodes"`
 	} `json:"inverseRelations"`
+	Relations struct {
+		Nodes []struct {
+			Type         string `json:"type"`
+			RelatedIssue struct {
+				Identifier string `json:"identifier"`
+				State      struct {
+					Type string `json:"type"`
+				} `json:"state"`
+			} `json:"relatedIssue"`
+		} `json:"nodes"`
+	} `json:"relations"`
 }
 
 func (n issueNode) toIssue() Issue {
@@ -37,6 +50,7 @@ func (n issueNode) toIssue() Issue {
 		Title:      n.Title,
 		URL:        n.URL,
 		Status:     n.State.Name,
+		Priority:   int(n.Priority),
 	}
 	if n.Assignee != nil {
 		is.AssigneeID = n.Assignee.ID
@@ -55,6 +69,18 @@ func (n issueNode) toIssue() Issue {
 		is.BlockedBy = append(is.BlockedBy, r.Issue.Identifier)
 	}
 	is.Blocked = len(is.BlockedBy) > 0
+	// The same relation read forward: this issue's own "blocks" relations
+	// name the issues it holds up. A finished issue is no longer held up by
+	// anything, so it does not count.
+	for _, r := range n.Relations.Nodes {
+		if r.Type != "blocks" {
+			continue
+		}
+		if t := r.RelatedIssue.State.Type; t == "completed" || t == "canceled" {
+			continue
+		}
+		is.Blocks = append(is.Blocks, r.RelatedIssue.Identifier)
+	}
 	return is
 }
 
@@ -80,10 +106,17 @@ query ListIssues($team: String!, $state: String!, $after: String) {
       url
       state { name }
       assignee { id }
+      priority
       inverseRelations(first: 50) {
         nodes {
           type
           issue { identifier state { type } }
+        }
+      }
+      relations(first: 50) {
+        nodes {
+          type
+          relatedIssue { identifier state { type } }
         }
       }
     }
@@ -119,10 +152,17 @@ query ListAssignedIssues($team: String!, $assignee: ID!, $after: String) {
       url
       state { name }
       assignee { id }
+      priority
       inverseRelations(first: 50) {
         nodes {
           type
           issue { identifier state { type } }
+        }
+      }
+      relations(first: 50) {
+        nodes {
+          type
+          relatedIssue { identifier state { type } }
         }
       }
     }
@@ -159,10 +199,17 @@ query ListUnassignedIssues($team: String!, $after: String) {
       url
       state { name }
       assignee { id }
+      priority
       inverseRelations(first: 50) {
         nodes {
           type
           issue { identifier state { type } }
+        }
+      }
+      relations(first: 50) {
+        nodes {
+          type
+          relatedIssue { identifier state { type } }
         }
       }
     }
@@ -225,10 +272,17 @@ query GetIssue($id: String!) {
     url
     state { name }
     assignee { id }
+    priority
     inverseRelations(first: 50) {
       nodes {
         type
         issue { identifier state { type } }
+      }
+    }
+    relations(first: 50) {
+      nodes {
+        type
+        relatedIssue { identifier state { type } }
       }
     }
   }

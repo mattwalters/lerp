@@ -677,11 +677,18 @@ const (
 func (m *model) geometry() geometry {
 	g := geometry{bodyH: max(4, m.height-1)}
 	g.wide = m.width >= narrowWidth
+	// Widths first: the row builders lay their rows out to the panel width,
+	// and the wants are counted from those very rows.
+	g.sideW, g.mainW = m.width, m.width
+	if g.wide {
+		g.sideW = max(28, m.width/3)
+		g.mainW = m.width - g.sideW
+	}
 
 	// Wants come from the same row builders the panels draw with, so the
 	// counts can never drift from what lands on screen. The panel constants
 	// are the stack's order, so a panel doubles as its index.
-	attnRows, _ := m.attentionRows()
+	attnRows, _ := m.attentionRows(g.sideW - 2)
 	nextRows, _ := m.nextListRows()
 	want := []int{
 		m.panelWant(panelAttention, len(attnRows)),
@@ -691,8 +698,6 @@ func (m *model) geometry() geometry {
 	floor := []int{panelFloor, panelFloor, panelFloor}
 
 	if g.wide {
-		g.sideW = max(28, m.width/3)
-		g.mainW = m.width - g.sideW
 		// The main pane has the other column to itself, so it fits its own
 		// content and never competes with the stack.
 		g.mainH = min(g.bodyH, m.mainWant(g.bodyH))
@@ -701,7 +706,6 @@ func (m *model) geometry() geometry {
 		return g
 	}
 	// Stacked, the main pane is one more claimant on the same body.
-	g.sideW, g.mainW = m.width, m.width
 	h := fitPanels(append(want, m.mainWant(g.bodyH)), append(floor, mainFloor), g.bodyH, int(m.focus))
 	g.attnH, g.lanesH, g.nextH, g.mainH = h[0], h[1], h[2], h[3]
 	return g
@@ -865,9 +869,9 @@ func marker(on bool) string {
 }
 
 // attentionRows builds the needs-you panel's rows — group headers above
-// their tickets; sel is the selected row's index (-1 with nothing to
-// select), for the focus window.
-func (m *model) attentionRows() ([]string, int) {
+// their tickets, each row width columns wide; sel is the selected row's
+// index (-1 with nothing to select), for the focus window.
+func (m *model) attentionRows(width int) ([]string, int) {
 	switch {
 	case !m.attentionSeen:
 		return []string{styleFaint.Render("reading the board…")}, -1
@@ -875,6 +879,12 @@ func (m *model) attentionRows() ([]string, int) {
 		return []string{styleFaint.Render("nothing needs you")}, -1
 	}
 	focused := m.focus == panelAttention
+	// Identifiers are padded to the widest one on the list so the leverage
+	// markers line up as a column worth scanning.
+	idW := 0
+	for _, it := range m.attention {
+		idW = max(idW, lipgloss.Width(it.Ticket))
+	}
 	var rows []string
 	sel := -1
 	group := loop.AttentionGroup("")
@@ -886,10 +896,53 @@ func (m *model) attentionRows() ([]string, int) {
 		if i == m.attnSel {
 			sel = len(rows)
 		}
-		rows = append(rows, marker(focused && i == m.attnSel)+
-			styleAttention.Render("● ")+styleTicket.Render(it.Ticket)+" "+it.Title)
+		rows = append(rows, attentionRow(it, focused && i == m.attnSel, idW, width))
 	}
 	return rows, sel
+}
+
+// attentionRow is one waiting ticket on one line: leverage and blocked-ness
+// beside the identifier, priority in the right-hand column. The three facts
+// the operator chooses a promote by are all readable without selecting the
+// row — which is the whole point of the panel.
+func attentionRow(it loop.AttentionItem, selected bool, idW, width int) string {
+	id := styleTicket.Render(it.Ticket) + strings.Repeat(" ", max(0, idW-lipgloss.Width(it.Ticket)))
+	left := marker(selected) + styleAttention.Render("● ") +
+		id + " " + leverageCell(it) + " " + it.Title
+	return splitRow(left, priorityCell(it.Priority), width)
+}
+
+// leverageCell says what routing this ticket would free, in a fixed-width
+// cell so the titles line up: ⊘ for a ticket something still blocks, ↓n for
+// the count it transitively unblocks. Bold marks the ones with downstream —
+// shape and weight, not color alone.
+func leverageCell(it loop.AttentionItem) string {
+	if len(it.BlockedBy) > 0 {
+		return styleAttention.Render("⊘") + "  "
+	}
+	cell := fmt.Sprintf("↓%d", it.Unblocks)
+	pad := strings.Repeat(" ", max(0, 3-lipgloss.Width(cell)))
+	if it.Unblocks > 0 {
+		return styleTicket.Render(cell) + pad
+	}
+	return styleFaint.Render(cell) + pad
+}
+
+// priorityCell renders Linear's priority scale as its own words. An unset
+// priority is a dash: saying "none" would read as a rank of its own.
+func priorityCell(p int) string {
+	label, style := "—", styleFaint
+	switch p {
+	case 1:
+		label, style = "Urgent", styleAttention
+	case 2:
+		label = "High"
+	case 3:
+		label = "Medium"
+	case 4:
+		label = "Low"
+	}
+	return style.Render(label)
 }
 
 func (m model) attentionPanel(w, h int) string {
@@ -904,7 +957,7 @@ func (m model) attentionPanel(w, h int) string {
 		}
 		return panelLine(panelTitle(1, "needs you", focused, extra), w)
 	}
-	rows, sel := m.attentionRows()
+	rows, sel := m.attentionRows(w - 2)
 	if focused && sel >= 0 {
 		rows = windowRows(rows, sel, h-2)
 	}
@@ -980,16 +1033,7 @@ func (m model) laneRow(number, width int) string {
 	}
 	left := fmt.Sprintf("%s%s %s %s%s",
 		marker(number == m.selected), styleFaint.Render(fmt.Sprintf("%d", number)), dot, name, desc)
-	leftMax := width - lipgloss.Width(right)
-	if right != "" {
-		leftMax--
-	}
-	left = ansi.Truncate(left, max(0, leftMax), "…")
-	pad := strings.Repeat(" ", max(0, leftMax-lipgloss.Width(left)))
-	if right == "" {
-		return left
-	}
-	return left + pad + " " + right
+	return splitRow(left, right, width)
 }
 
 // nextListRows builds the up-next panel's rows — each queue header, then its
