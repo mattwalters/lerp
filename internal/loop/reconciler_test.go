@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -231,8 +232,9 @@ func TestTickAdoptsLiveOrphans(t *testing.T) {
 		return run.Result{ExitCode: 0}, nil
 	}
 	h := newHarness(t, 1, execute)
+	started := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
 	record, err := h.evidence.Create(evidence.Record{
-		Lane: 1, TicketID: "orphan", Queue: "todo", StartingStatus: "Todo",
+		Lane: 1, TicketID: "orphan", Queue: "todo", StartingStatus: "Todo", StartedAt: started,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -253,6 +255,9 @@ func TestTickAdoptsLiveOrphans(t *testing.T) {
 			adopted++
 			if ev.RunID != record.RunID || ev.Lane != 1 || ev.LogPath != record.LogPath {
 				t.Errorf("adopted event = %+v, want the orphan's record with its log path", ev)
+			}
+			if !ev.StartedAt.Equal(started) {
+				t.Errorf("adopted event StartedAt = %v, want the run's original start %v", ev.StartedAt, started)
 			}
 		case EventError:
 			t.Fatalf("unexpected error event: %v", ev.Err)
@@ -371,6 +376,46 @@ func TestReapLeavesOtherPeoplesBoardStateAlone(t *testing.T) {
 	}
 	if got := h.issue(t, "theirs"); got.Status != "Todo" || got.AssigneeID != "somebody-else" {
 		t.Errorf("someone else's claim = %+v, want untouched", got)
+	}
+}
+
+// Done-when: a claimed lane announces provisioning before its agent starts,
+// both events name the same run, and the started event carries the record's
+// start time for subscribers' elapsed clocks.
+func TestRunAnnouncesProvisioningBeforeStart(t *testing.T) {
+	h := newHarness(t, 1, nil)
+	h.fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Todo"})
+
+	h.rec.Tick(context.Background())
+	deadline := time.After(5 * time.Second)
+	var seq []Event
+	for len(seq) == 0 || seq[len(seq)-1].Type != EventExited {
+		select {
+		case ev := <-h.events:
+			if ev.Type == EventError {
+				t.Fatalf("unexpected error event: %v", ev.Err)
+			}
+			seq = append(seq, ev)
+		case <-deadline:
+			t.Fatalf("timed out waiting for the run to finish; events so far: %+v", seq)
+		}
+	}
+	types := make([]EventType, len(seq))
+	for i, ev := range seq {
+		types[i] = ev.Type
+	}
+	if want := []EventType{EventProvisioning, EventStarted, EventExited}; !slices.Equal(types, want) {
+		t.Fatalf("event sequence = %v, want %v", types, want)
+	}
+	prov, started := seq[0], seq[1]
+	if prov.RunID == "" || prov.RunID != started.RunID {
+		t.Errorf("provisioning names run %q, started names %q; want one shared non-empty ID", prov.RunID, started.RunID)
+	}
+	if prov.Lane != 1 || prov.TicketID != "one" || prov.Ticket != "LERP-1" || prov.Queue != "todo" {
+		t.Errorf("provisioning event = %+v, want lane 1's claim of LERP-1", prov)
+	}
+	if started.StartedAt.IsZero() {
+		t.Error("started event carries no start time")
 	}
 }
 

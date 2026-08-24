@@ -26,6 +26,9 @@ const DefaultInterval = 12 * time.Second
 type EventType string
 
 const (
+	// EventProvisioning reports that this process claimed a ticket and is
+	// preparing its workspace: the lane is occupied, but no agent runs yet.
+	EventProvisioning EventType = "provisioning"
 	// EventStarted reports that this process claimed a ticket and started an
 	// agent in a lane.
 	EventStarted EventType = "started"
@@ -57,8 +60,12 @@ type Event struct {
 	Ticket   string // human identifier, e.g. LERP-42
 	Queue    string
 	LogPath  string
-	ExitCode int // meaningful only for EventExited
-	Err      error
+	// StartedAt is when the run began, from its record — for an adopted run
+	// that is the original start under a previous process, not the adoption.
+	// Zero when no run exists yet.
+	StartedAt time.Time
+	ExitCode  int // meaningful only for EventExited
+	Err       error
 }
 
 // ReconcilerOptions configures the loop. Client, Repo, RepoDir, Evidence, and
@@ -262,12 +269,14 @@ func (r *Reconciler) adopt(record evidence.Record) {
 	})
 	r.mu.Unlock()
 	r.emit(Event{Type: EventAdopted, RunID: record.RunID, Lane: record.Lane,
-		TicketID: record.TicketID, Queue: record.Queue, LogPath: record.LogPath})
+		TicketID: record.TicketID, Queue: record.Queue, LogPath: record.LogPath,
+		StartedAt: record.StartedAt})
 }
 
-// reapDisposeTimeout bounds the dispose command run while reaping. Reaps run
-// on the tick loop itself, so a dispose that hangs would otherwise stall
-// every later pass — and shutdown — indefinitely.
+// reapDisposeTimeout bounds every dispose command the loop runs. Reaps run on
+// the tick loop itself, so a dispose that hangs would otherwise stall every
+// later pass — and shutdown — indefinitely; on the normal exit path it would
+// wedge the lane, its terminal event never emitted.
 const reapDisposeTimeout = 2 * time.Minute
 
 // reap cleans up after a run whose process is dead: dispose the workspace,
@@ -401,7 +410,10 @@ func (r *Reconciler) executeLane(ctx context.Context, lr *laneRun, c candidate) 
 		// Keep the record: if the assign landed before the protocol failed
 		// and its best-effort release did not stick, the next pass reaps the
 		// dead record and releases the claim — the same repair a crash gets.
-		return fail(err)
+		// The run exists now, so the failure names it.
+		ev, ok := fail(err)
+		ev.RunID = record.RunID
+		return ev, ok
 	}
 	if !won {
 		if err := r.o.Evidence.Remove(record.RunID); err != nil {
@@ -409,6 +421,12 @@ func (r *Reconciler) executeLane(ctx context.Context, lr *laneRun, c candidate) 
 		}
 		return Event{}, false
 	}
+
+	// The claim is won but no agent runs while the workspace is prepared;
+	// announce it so a subscriber shows the lane occupied, not idle.
+	r.emit(Event{Type: EventProvisioning, RunID: record.RunID, Lane: lr.lane,
+		TicketID: issue.ID, Ticket: issue.Identifier, Queue: c.name,
+		LogPath: record.LogPath, StartedAt: record.StartedAt})
 
 	ev, keepRecord, ok := r.provisionAndRun(ctx, lr, c, record, viewerID)
 	if !keepRecord {
@@ -429,8 +447,14 @@ func (r *Reconciler) provisionAndRun(ctx context.Context, lr *laneRun, c candida
 	// Registered before provisioning, not after: a provision command that
 	// created its workspace and then failed partway must still be cleaned up,
 	// or the next attempt collides with what it left behind. Dispose reports
-	// its own failures to the log and never blocks the caller.
-	defer r.o.Dispose(context.WithoutCancel(ctx), r.o.RepoDir, r.o.Repo.Dispose, id, r.o.Log)
+	// its own failures to the log; it is bounded by the same timeout as the
+	// reap path, so a hung dispose command cannot wedge the lane — occupied,
+	// its terminal event unemitted — forever.
+	defer func() {
+		dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), reapDisposeTimeout)
+		defer cancel()
+		r.o.Dispose(dctx, r.o.RepoDir, r.o.Repo.Dispose, id, r.o.Log)
+	}()
 
 	fail := func(err error) (Event, bool, bool) {
 		return Event{Type: EventError, RunID: record.RunID, Lane: lr.lane, TicketID: issue.ID,
@@ -448,7 +472,8 @@ func (r *Reconciler) provisionAndRun(ctx context.Context, lr *laneRun, c candida
 	}
 
 	r.emit(Event{Type: EventStarted, RunID: record.RunID, Lane: lr.lane, TicketID: issue.ID,
-		Ticket: issue.Identifier, Queue: c.name, LogPath: record.LogPath})
+		Ticket: issue.Identifier, Queue: c.name, LogPath: record.LogPath,
+		StartedAt: record.StartedAt})
 
 	result, err := r.o.Execute(ctx, run.Invocation{
 		Runner:  r.o.Repo.Runners[c.queue.Runner],

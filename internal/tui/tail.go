@@ -26,6 +26,7 @@ type tail struct {
 	path   string
 	offset int64 // next byte to read; negative until the first read
 	buf    []byte
+	chunk  []byte // scratch for reads, reused across polls
 }
 
 func newTail(path string) tail {
@@ -34,17 +35,16 @@ func newTail(path string) tail {
 
 // read pulls newly appended bytes into the scrollback and reports whether the
 // buffer changed. The first read attaches near the end of an existing file; a
-// file that shrank was truncated and rewritten, so the tail starts over.
+// file that shrank was truncated and rewritten, so the tail starts over. A
+// file the same size is assumed unchanged — log files are append-only per
+// run and paths are never reused, so a same-size rewrite cannot happen.
 func (t *tail) read() bool {
 	if t.path == "" {
 		return false
 	}
-	f, err := os.Open(t.path)
-	if err != nil {
-		return false
-	}
-	defer f.Close()
-	info, err := f.Stat()
+	// Stat first: most polls find nothing new, and every poll paying an open
+	// for that answer would be waste.
+	info, err := os.Stat(t.path)
 	if err != nil {
 		return false
 	}
@@ -54,18 +54,25 @@ func (t *tail) read() bool {
 		t.offset = max(0, size-tailScrollback)
 	case size < t.offset:
 		t.offset = 0
-		t.buf = nil
+		t.buf = t.buf[:0]
 	}
 	if size <= t.offset {
 		return false
 	}
-	chunk := make([]byte, min(size-t.offset, tailChunk))
-	n, _ := f.ReadAt(chunk, t.offset)
+	f, err := os.Open(t.path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	if t.chunk == nil {
+		t.chunk = make([]byte, tailChunk)
+	}
+	n, _ := f.ReadAt(t.chunk[:min(size-t.offset, tailChunk)], t.offset)
 	if n == 0 {
 		return false
 	}
 	t.offset += int64(n)
-	t.buf = append(t.buf, chunk[:n]...)
+	t.buf = append(t.buf, t.chunk[:n]...)
 	t.trim()
 	return true
 }
@@ -80,7 +87,8 @@ func (t *tail) trim() {
 	if i := bytes.IndexByte(t.buf[cut:], '\n'); i >= 0 {
 		cut += i + 1
 	}
-	t.buf = append([]byte(nil), t.buf[cut:]...)
+	n := copy(t.buf, t.buf[cut:])
+	t.buf = t.buf[:n]
 }
 
 func (t *tail) content() string {

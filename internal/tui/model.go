@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/charmbracelet/bubbles/viewport"
@@ -65,9 +66,10 @@ func (v view) String() string {
 type laneState int
 
 const (
-	laneIdle    laneState = iota // no agent; note says how the last run ended
-	laneRunning                  // an agent this process started
-	laneAdopted                  // a live agent inherited from a previous process
+	laneIdle         laneState = iota // no agent; note says how the last run ended
+	laneProvisioning                  // claimed; the workspace is being prepared
+	laneRunning                       // an agent this process started
+	laneAdopted                       // a live agent inherited from a previous process
 )
 
 // lane is one board row, maintained purely from loop events.
@@ -105,13 +107,18 @@ type model struct {
 
 	lanes    map[int]*lane
 	order    []int // lane numbers, sorted; adopted runs may sit above N
-	selected int   // index into order
+	selected int   // the selected lane's NUMBER, not its position (see reorder)
 
 	vp     viewport.Model
 	tail   tail
 	follow bool
 
-	lastErr string
+	lastErr    string
+	passHadErr bool // an error event arrived during the pass now in flight
+
+	// passes counts in-flight reconciliation passes; Run waits on it after
+	// the program exits, so quitting never severs a pass mid-mutation.
+	passes *sync.WaitGroup
 }
 
 func newModel(ctx context.Context, o Options) model {
@@ -119,7 +126,7 @@ func newModel(ctx context.Context, o Options) model {
 		o.Interval = loop.DefaultInterval
 	}
 	m := model{o: o, ctx: ctx, view: viewBoard, lanes: make(map[int]*lane),
-		vp: viewport.New(0, 0), follow: true}
+		vp: viewport.New(0, 0), follow: true, passes: &sync.WaitGroup{}}
 	for n := 1; n <= o.Lanes; n++ {
 		m.lanes[n] = &lane{}
 	}
@@ -133,9 +140,13 @@ func (m model) Init() tea.Cmd {
 
 // runTick runs one reconciliation pass off the render loop. The context is
 // the loop's, not the program's: quitting the TUI never cancels a pass or
-// kills an agent.
+// kills an agent — Run waits (bounded) for the pass to finish instead. The
+// WaitGroup is incremented here, on the render loop, so a quit racing the
+// command's goroutine still sees the pass as in flight.
 func (m model) runTick() tea.Cmd {
+	m.passes.Add(1)
 	return func() tea.Msg {
+		defer m.passes.Done()
 		m.o.Ticker.Tick(m.ctx)
 		return tickedMsg{}
 	}
@@ -166,8 +177,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	case tickMsg:
+		m.passHadErr = false
 		return m, m.runTick()
 	case tickedMsg:
+		// A pass that produced no error supersedes whatever error line an
+		// earlier one left; lane-level failures stay visible as lane notes.
+		if !m.passHadErr {
+			m.lastErr = ""
+		}
 		return m, tea.Tick(m.o.Interval, func(time.Time) tea.Msg { return tickMsg{} })
 	case eventMsg:
 		m.apply(msg.ev)
@@ -196,14 +213,18 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "tab":
 		m.view = (m.view + 1) % 3
 	case "up", "k":
-		if m.view == viewBoard && m.selected > 0 {
-			m.selected--
-			m.retarget()
+		if m.view == viewBoard {
+			if i := slices.Index(m.order, m.selected); i > 0 {
+				m.selected = m.order[i-1]
+				m.retarget()
+			}
 		}
 	case "down", "j":
-		if m.view == viewBoard && m.selected < len(m.order)-1 {
-			m.selected++
-			m.retarget()
+		if m.view == viewBoard {
+			if i := slices.Index(m.order, m.selected); i >= 0 && i < len(m.order)-1 {
+				m.selected = m.order[i+1]
+				m.retarget()
+			}
 		}
 	case "pgup", "b":
 		m.vp.ViewUp()
@@ -226,14 +247,18 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m *model) apply(ev loop.Event) {
 	if ev.Err != nil {
 		m.lastErr = ev.Err.Error()
+		m.passHadErr = true
 	}
 	switch ev.Type {
+	case loop.EventProvisioning:
+		m.lanes[ev.Lane] = &lane{state: laneProvisioning, runID: ev.RunID, ticketID: ev.TicketID,
+			ticket: ev.Ticket, queue: ev.Queue, logPath: ev.LogPath, since: eventSince(ev)}
 	case loop.EventStarted:
 		m.lanes[ev.Lane] = &lane{state: laneRunning, runID: ev.RunID, ticketID: ev.TicketID,
-			ticket: ev.Ticket, queue: ev.Queue, logPath: ev.LogPath, since: time.Now()}
+			ticket: ev.Ticket, queue: ev.Queue, logPath: ev.LogPath, since: eventSince(ev)}
 	case loop.EventAdopted:
 		m.lanes[ev.Lane] = &lane{state: laneAdopted, runID: ev.RunID, ticketID: ev.TicketID,
-			queue: ev.Queue, logPath: ev.LogPath, since: time.Now()}
+			queue: ev.Queue, logPath: ev.LogPath, since: eventSince(ev)}
 	case loop.EventExited:
 		note := fmt.Sprintf("%s exited %d", ev.Ticket, ev.ExitCode)
 		if ev.Err != nil {
@@ -274,14 +299,31 @@ func (m *model) settle(ev loop.Event, note string) {
 	m.lanes[ev.Lane] = &lane{state: laneIdle, note: note, logPath: logPath}
 }
 
+// eventSince prefers the loop's own start time, so an adopted run's elapsed
+// clock shows the run's true age, not the moment this process learned of it.
+func eventSince(ev loop.Event) time.Time {
+	if !ev.StartedAt.IsZero() {
+		return ev.StartedAt
+	}
+	return time.Now()
+}
+
+// reorder rebuilds the row order. The selection follows the lane's number,
+// not its position: adopted rows appearing or vanishing above the selected
+// lane must not silently move the selection — and with it the tail — to a
+// different lane. Only when the selected row itself is gone does the
+// selection fall back to the nearest remaining row.
 func (m *model) reorder() {
 	m.order = m.order[:0]
 	for n := range m.lanes {
 		m.order = append(m.order, n)
 	}
 	slices.Sort(m.order)
-	if m.selected >= len(m.order) {
-		m.selected = len(m.order) - 1
+	if len(m.order) == 0 {
+		return
+	}
+	if i, ok := slices.BinarySearch(m.order, m.selected); !ok {
+		m.selected = m.order[min(i, len(m.order)-1)]
 	}
 }
 
@@ -310,10 +352,7 @@ func (m *model) refreshLog() {
 }
 
 func (m *model) selectedLane() *lane {
-	if m.selected < 0 || m.selected >= len(m.order) {
-		return nil
-	}
-	return m.lanes[m.order[m.selected]]
+	return m.lanes[m.selected]
 }
 
 // layout gives the log pane whatever height the fixed chrome leaves over.
@@ -372,8 +411,8 @@ func (m model) header() string {
 
 func (m model) board() string {
 	var b strings.Builder
-	for i, n := range m.order {
-		b.WriteString(m.laneRow(i, n))
+	for _, n := range m.order {
+		b.WriteString(m.laneRow(n))
 		b.WriteString("\n")
 	}
 	b.WriteString(m.logTitle())
@@ -383,14 +422,14 @@ func (m model) board() string {
 	return b.String()
 }
 
-func (m model) laneRow(index, number int) string {
+func (m model) laneRow(number int) string {
 	ln := m.lanes[number]
 	marker := "  "
-	if index == m.selected {
+	if number == m.selected {
 		marker = "▸ "
 	}
 	row := fmt.Sprintf("%s%2d  %-12s %-12s %s", marker, number, ln.name(), ln.queueName(), ln.status())
-	if index == m.selected {
+	if number == m.selected {
 		return selectedStyle.Render(row)
 	}
 	if ln.state == laneIdle {
@@ -423,6 +462,8 @@ func (ln *lane) queueName() string {
 
 func (ln *lane) status() string {
 	switch ln.state {
+	case laneProvisioning:
+		return "provisioning " + elapsed(ln.since)
 	case laneRunning:
 		return "running " + elapsed(ln.since)
 	case laneAdopted:
@@ -446,7 +487,7 @@ func (m model) logTitle() string {
 		case ln.logPath == "":
 			label = "no log yet"
 		case ln.state == laneIdle:
-			label = "last log of lane " + fmt.Sprint(m.order[m.selected])
+			label = "last log of lane " + fmt.Sprint(m.selected)
 		default:
 			label = fmt.Sprintf("log: %s", ln.name())
 		}

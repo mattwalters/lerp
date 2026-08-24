@@ -85,6 +85,28 @@ func TestBoardShowsLaneLifecycle(t *testing.T) {
 	}
 }
 
+func TestProvisioningLaneIsOccupied(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventProvisioning, RunID: "r1", Lane: 1,
+		TicketID: "id-9", Ticket: "LERP-9", Queue: "plan", StartedAt: time.Now()}})
+	view := m.View()
+	if !strings.Contains(view, "provisioning") || !strings.Contains(view, "LERP-9") {
+		t.Fatalf("provisioning lane not on the board:\n%s", view)
+	}
+	if strings.Contains(view, "idle") {
+		t.Fatalf("provisioning lane still reads idle:\n%s", view)
+	}
+}
+
+func TestAdoptedRowShowsTrueRunAge(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAdopted, RunID: "r1", Lane: 1,
+		TicketID: "id-1", Queue: "plan", StartedAt: time.Now().Add(-2 * time.Hour)}})
+	if view := m.View(); !strings.Contains(view, "adopted 2h") {
+		t.Fatalf("adopted row does not show the run's true age:\n%s", view)
+	}
+}
+
 func TestAdoptedRunOccupiesAndFreesItsRow(t *testing.T) {
 	m, _, _ := newTestModel(t, 2)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAdopted, RunID: "r9", Lane: 5,
@@ -218,5 +240,80 @@ func TestErrorsSurfaceOnTheStatusLine(t *testing.T) {
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventError, Err: errors.New("linear is down")}})
 	if !strings.Contains(m.View(), "linear is down") {
 		t.Fatalf("loop error not surfaced:\n%s", m.View())
+	}
+
+	// A pass that itself errors keeps the line.
+	m = update(t, m, tickMsg{})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventError, Err: errors.New("still down")}})
+	m = update(t, m, tickedMsg{})
+	if !strings.Contains(m.View(), "still down") {
+		t.Fatalf("erroring pass cleared the status line:\n%s", m.View())
+	}
+
+	// A clean pass supersedes the stale error; lane-level outcomes live on as
+	// lane notes, not here.
+	m = update(t, m, tickMsg{})
+	m = update(t, m, tickedMsg{})
+	if strings.Contains(m.View(), "still down") {
+		t.Fatalf("clean pass left a stale error on the status line:\n%s", m.View())
+	}
+}
+
+// Selection is by lane number, not row position: rows appearing or vanishing
+// above the selected lane must not silently move the selection — and with it
+// the tail — to a different lane's log.
+func TestSelectionFollowsLaneAcrossReorders(t *testing.T) {
+	dir := t.TempDir()
+	seven := filepath.Join(dir, "seven.log")
+	writeLog(t, seven, []byte("lane seven speaking\n"))
+
+	m, _, _ := newTestModel(t, 2)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAdopted, RunID: "r7", Lane: 7,
+		TicketID: "t7", Queue: "review", LogPath: seven}})
+	m = update(t, m, keyMsg("down"))
+	m = update(t, m, keyMsg("down"))
+	if m.selected != 7 {
+		t.Fatalf("selected lane = %d, want 7", m.selected)
+	}
+
+	// A second adopted run slots in between the fixed lanes and lane 7.
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAdopted, RunID: "r5", Lane: 5,
+		TicketID: "t5", Queue: "review", LogPath: filepath.Join(dir, "five.log")}})
+	if m.selected != 7 {
+		t.Fatalf("selected lane after a row appeared above = %d, want still 7", m.selected)
+	}
+	if m.tail.path != seven {
+		t.Fatalf("tail retargeted to %q, want lane 7's log", m.tail.path)
+	}
+
+	// Only the selected row itself vanishing moves the selection: it falls
+	// back to the nearest remaining row.
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventReaped, RunID: "r7", Lane: 7,
+		TicketID: "t7", Queue: "review"}})
+	if m.selected != 5 {
+		t.Fatalf("selected lane after its row vanished = %d, want the fallback 5", m.selected)
+	}
+}
+
+// Quitting must not sever an in-flight pass: runTick marks the pass in flight
+// before its command runs, and clears it when the pass returns, so Run can
+// await it before the caller releases the clone lock.
+func TestQuitAwaitsTheInFlightPass(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	cmd := m.runTick()
+	waited := make(chan struct{})
+	go func() { m.passes.Wait(); close(waited) }()
+	select {
+	case <-waited:
+		t.Fatal("a scheduled pass is not tracked as in flight")
+	case <-time.After(20 * time.Millisecond):
+	}
+	if _, ok := cmd().(tickedMsg); !ok {
+		t.Fatal("runTick did not report the pass done")
+	}
+	select {
+	case <-waited:
+	case <-time.After(time.Second):
+		t.Fatal("a finished pass is still tracked as in flight")
 	}
 }

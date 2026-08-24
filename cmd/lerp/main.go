@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/mattwalters/lerp/internal/config"
 	"github.com/mattwalters/lerp/internal/evidence"
@@ -38,6 +39,12 @@ func main() {
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
 		fs := flag.NewFlagSet("lerp", flag.ExitOnError)
 		lanes := fs.Int("lanes", defaultLanes, "how many agents may run at once")
+		// -h shows the whole surface, not just the flags: the subcommands are
+		// undiscoverable otherwise.
+		fs.Usage = func() {
+			fmt.Fprint(os.Stderr, usage+"\nflags:\n")
+			fs.PrintDefaults()
+		}
 		fs.Parse(args)
 		if fs.NArg() != 0 {
 			fmt.Fprint(os.Stderr, usage)
@@ -45,6 +52,14 @@ func main() {
 		}
 		if *lanes < 1 {
 			fmt.Fprintln(os.Stderr, "lerp: -lanes must be at least 1")
+			os.Exit(2)
+		}
+		// A bare `lerp` in a pipe or a command substitution must not quietly
+		// grab /dev/tty (Bubble Tea's fallback for a non-terminal stdin) and
+		// start claiming tickets: an engine run is an operator's decision,
+		// made at a terminal.
+		if !isTerminal(os.Stdin) || !isTerminal(os.Stdout) {
+			fmt.Fprint(os.Stderr, "lerp: the TUI needs a terminal\n\n"+usage)
 			os.Exit(2)
 		}
 		if err := openTUI(context.Background(), *lanes); err != nil {
@@ -98,15 +113,18 @@ func openTUI(ctx context.Context, lanes int) error {
 	defer lock.Close()
 
 	// The loop's diagnostic stream — provision, dispose, and runner output —
-	// is ephemeral process detail: a local file, overwritten each session,
-	// discarded without ceremony (SCOPE invariant 7). Agent output itself
-	// goes to each run's own log, which the board tails.
+	// is ephemeral process detail: a local file, discarded without ceremony
+	// (SCOPE invariant 7). Agent output itself goes to each run's own log,
+	// which the board tails. Append rather than truncate: a session that dies
+	// at launch must not have already destroyed the previous session's crash
+	// diagnostics. The marker line keeps sessions distinguishable.
 	loopLog, err := os.OpenFile(filepath.Join(repoDir, ".lerp", "loop.log"),
-		os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+		os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return fmt.Errorf("open loop log: %w", err)
 	}
 	defer loopLog.Close()
+	fmt.Fprintf(loopLog, "=== lerp session started %s ===\n", time.Now().Format(time.RFC3339))
 
 	// Buffered so the loop rarely waits on a render; the model always keeps a
 	// receive pending, so the channel drains for as long as the TUI is open.
@@ -124,9 +142,11 @@ func openTUI(ctx context.Context, lanes int) error {
 		return err
 	}
 
-	// ctx is never cancelled on quit: quitting closes the screen and stops
-	// the ticking, while the agents — their own process groups, with run
-	// evidence on disk — keep working. The next lerp adopts them.
+	// ctx is never cancelled on quit: quitting closes the screen, stops the
+	// ticking, and waits (bounded — see tui.Run) for a pass already in flight
+	// to settle before the lock and log above are released, while the agents —
+	// their own process groups, with run evidence on disk — keep working. The
+	// next lerp adopts them.
 	return tui.Run(ctx, tui.Options{
 		Ticker:   rec,
 		Interval: loop.DefaultInterval,
@@ -236,6 +256,17 @@ func confirmBypass() bool {
 		return true
 	}
 	return false
+}
+
+// isTerminal reports whether f is a character device — a terminal, as far as
+// Stat can tell. A file that cannot be stat'd is given the benefit of the
+// doubt; the guard exists to stop scripts, not to fight exotic ttys.
+func isTerminal(f *os.File) bool {
+	info, err := f.Stat()
+	if err != nil {
+		return true
+	}
+	return info.Mode()&os.ModeCharDevice != 0
 }
 
 func gitRoot() (string, error) {
