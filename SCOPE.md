@@ -151,7 +151,11 @@ has, beside a main pane that details whichever panel has focus:
    filter syntax; filtering that changed *which* tickets were fetched
    would not be. Select a ticket and press `p` to promote it: pick a
    target from the configured queue statuses or a pipeline exit, and
-   lerp calls MoveIssue. This is the one write the TUI makes anywhere.
+   lerp moves it there. A promote into a status some queue serves also
+   releases the claim the parked ticket was holding — an assigned ticket
+   is never eligible, so keeping it would strand the ticket in a queue
+   that could never pick it up. That release is invariant 4's protocol,
+   not a second capability. This is the only write the TUI makes anywhere.
 2. **Running** — what is running now, which queue each lane's agent is
    in, and its live log stream.
 3. **Up-next** — what runs next against the free lanes.
@@ -186,12 +190,13 @@ that wants a scheduler wants a different product.
 - Not a database. See invariant 1.
 - Not an agent framework. Runners are command templates, not SDKs.
 - Not a Linear client, with one narrow exception: needs-you lists
-  unassigned tickets in statuses no queue serves, promote is one
-  MoveIssue on a ticket the operator selected, and the main pane reads
-  that selected ticket's body and comments — lerp's own stage-boundary
-  artifacts — read-only, never composing or replying, never navigating
-  on to another ticket. Everything else — create, edit, comment,
-  assign outside the claim protocol — stays in Linear.
+  unassigned tickets in statuses no queue serves, promote moves a ticket
+  the operator selected and settles its claim by the same rule a finished
+  run uses, and the main pane reads that selected ticket's body and
+  comments — lerp's own stage-boundary artifacts — read-only, never
+  composing or replying, never navigating on to another ticket.
+  Everything else — create, edit, comment, assign outside the claim
+  protocol — stays in Linear.
 - Not infrastructure for any other product to depend on. It is a
   standalone tool.
 

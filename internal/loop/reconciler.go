@@ -447,13 +447,36 @@ func countUnblocks(items []AttentionItem) {
 	}
 }
 
-// Promote is the TUI's one write action, the SCOPE amendment this ticket
-// makes: move a selected ticket straight into a status by calling the same
-// client the loop reads with. It touches no lane, claim, or evidence — the
-// next pass simply finds the ticket wherever this left it, exactly as it
-// would find a move a human made in Linear.
+// Promote is the TUI's write action: move a selected ticket into a status,
+// then settle the claim by the same rule conclude uses. A ticket parked in a
+// status no queue serves keeps its claim — that is what parks it on the
+// operator — so promoting it back into a queue has to release that claim, or
+// the ticket lands in the queue's status still assigned, where Eligible
+// skips it on every pass. No run, no error, nothing: the promote would look
+// like it worked and do nothing at all.
+//
+// Promoting into a status no queue serves is the other half, and leaves the
+// claim exactly where it is: that is how a ticket gets parked deliberately.
+//
+// Unlike conclude, which releases a claim it just won and ran, promote acts
+// on a ticket the operator merely selected — so the release goes through
+// releaseClaim, which verifies the assignee is the operating user first and
+// leaves a colleague's claim alone.
 func (r *Reconciler) Promote(ctx context.Context, ticketID, status string) error {
-	return r.o.Client.MoveIssue(ctx, ticketID, status)
+	if err := r.o.Client.MoveIssue(ctx, ticketID, status); err != nil {
+		return err
+	}
+	if !servedStatuses(r.o.Repo)[status] {
+		return nil
+	}
+	viewerID, err := r.o.Client.Viewer(ctx)
+	if err != nil {
+		return fmt.Errorf("promote %s: read viewer: %w", ticketID, err)
+	}
+	if err := releaseClaim(ctx, r.o.Client, ticketID, viewerID); err != nil {
+		return fmt.Errorf("promote %s: %w", ticketID, err)
+	}
+	return nil
 }
 
 // IssueDetail reads the selected ticket's body and its comments for the
