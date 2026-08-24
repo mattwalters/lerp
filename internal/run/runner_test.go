@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -13,6 +14,26 @@ import (
 
 	"github.com/mattwalters/lerp/internal/config"
 )
+
+// Version 4, RFC 4122 variant: the shape --session-id will accept.
+var uuidPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+
+func TestSessionIDsAreDistinctUUIDs(t *testing.T) {
+	seen := map[string]bool{}
+	for range 100 {
+		id, err := newSessionID()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !uuidPattern.MatchString(id) {
+			t.Fatalf("newSessionID = %q, want a version 4 UUID", id)
+		}
+		if seen[id] {
+			t.Fatalf("newSessionID repeated %q", id)
+		}
+		seen[id] = true
+	}
+}
 
 func TestExecuteWritesCombinedLogAndReportsExit(t *testing.T) {
 	dir := t.TempDir()
@@ -41,8 +62,10 @@ exit 7
 	if result.Duration <= 0 {
 		t.Errorf("Duration = %s, want positive", result.Duration)
 	}
-	if len(result.SessionID) != 32 {
-		t.Errorf("SessionID = %q, want 32 hex characters", result.SessionID)
+	// Agent CLIs that take a caller-chosen session id require a real UUID:
+	// Claude Code's --session-id rejects anything else.
+	if !uuidPattern.MatchString(result.SessionID) {
+		t.Errorf("SessionID = %q, want a version 4 UUID", result.SessionID)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "should-not-exist")); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("prompt was interpreted by shell: stat error = %v", err)

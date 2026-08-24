@@ -390,3 +390,55 @@ func TestGlobalPath(t *testing.T) {
 		}
 	})
 }
+
+// The shipped example is what a new operator copies into place, so it has to
+// load and validate like any other config — and its topology has to actually
+// connect.
+func TestExampleConfigIsUsable(t *testing.T) {
+	path := filepath.Join("..", "..", "config.example.toml")
+	g, err := LoadGlobal(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.Lanes < 1 {
+		t.Errorf("lanes = %d, want a positive default", g.Lanes)
+	}
+
+	byStatus := map[string]Queue{}
+	for _, q := range g.Queues {
+		byStatus[q.Status] = q
+	}
+	for name, q := range g.Queues {
+		// A prompt that never names its ticket reaches every agent as the same
+		// anonymous instruction, and lerp would still advance the ticket.
+		if !strings.Contains(q.Prompt, "{{ticket}}") {
+			t.Errorf("queue %q prompt does not name {{ticket}}", name)
+		}
+		if _, ok := g.Runners[q.Runner]; !ok {
+			t.Errorf("queue %q names undefined runner %q", name, q.Runner)
+		}
+		// Failures must land somewhere no queue watches, or a ticket that fails
+		// every time is retried forever.
+		if _, watched := byStatus[q.OnFailure]; q.OnFailure != "" && watched {
+			t.Errorf("queue %q routes failures to %q, which another queue picks up", name, q.OnFailure)
+		}
+	}
+
+	// The chain: planning hands off to implementing, which hands off to review,
+	// which hands off to a status no queue watches — a human.
+	plan, ok := byStatus["Planning"]
+	if !ok {
+		t.Fatal("no queue watches Planning")
+	}
+	implement, ok := byStatus[plan.OnSuccess]
+	if !ok {
+		t.Fatalf("Planning hands off to %q, which no queue watches", plan.OnSuccess)
+	}
+	review, ok := byStatus[implement.OnSuccess]
+	if !ok {
+		t.Fatalf("Implementing hands off to %q, which no queue watches", implement.OnSuccess)
+	}
+	if _, watched := byStatus[review.OnSuccess]; watched {
+		t.Errorf("review hands off to %q, which a queue picks up: work never reaches a human", review.OnSuccess)
+	}
+}
