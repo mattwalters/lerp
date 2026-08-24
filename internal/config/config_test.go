@@ -302,6 +302,24 @@ on_success = "Done"
 			wantErr: `queue "plan": runner "codex" is not defined under [runners]`,
 		},
 		{
+			name: "prompt references on_failure without one configured",
+			toml: `
+teams = ["LERP"]
+provision = "p"
+dispose = "d"
+
+[runners.claude]
+command = "claude"
+
+[queues.plan]
+status = "Planning"
+prompt = "On trouble move {{ticket}} to {{on_failure}}."
+runner = "claude"
+on_success = "Done"
+`,
+			wantErr: `queue "plan": prompt references {{on_failure}} but on_failure is not set`,
+		},
+		{
 			name: "two queues share a status",
 			toml: `
 teams = ["LERP"]
@@ -340,6 +358,22 @@ on_success = "Done"
 				t.Errorf("error %q does not carry the file path %q", err, path)
 			}
 		})
+	}
+}
+
+// Prompts follow the configured statuses: a queue's own pointers expand into
+// its prose, so renaming a status in config renames it in the instructions.
+func TestQueueExpandPrompt(t *testing.T) {
+	q := Queue{
+		Status:    "Implementing",
+		Prompt:    "Work {{ticket}} in {{status}}; done goes to {{on_success}}, trouble to {{on_failure}}. Close {{ticket}}.",
+		OnSuccess: "Agent Review",
+		OnFailure: "Needs Attention",
+	}
+	got := q.ExpandPrompt("LERP-42")
+	want := "Work LERP-42 in Implementing; done goes to Agent Review, trouble to Needs Attention. Close LERP-42."
+	if got != want {
+		t.Errorf("ExpandPrompt = %q, want %q", got, want)
 	}
 }
 
@@ -428,6 +462,25 @@ func TestExampleConfigIsUsable(t *testing.T) {
 		// every time is retried forever.
 		if _, watched := byStatus[q.OnFailure]; q.OnFailure != "" && watched {
 			t.Errorf("queue %q routes failures to %q, which another queue picks up", name, q.OnFailure)
+		}
+	}
+
+	// Prompts reference statuses through their queue's placeholders, never by
+	// name: a literal status in the prose would survive a rename and send
+	// agents to a status that no longer exists.
+	names := map[string]bool{}
+	for _, q := range c.Queues {
+		for _, s := range []string{q.Status, q.OnSuccess, q.OnFailure} {
+			if s != "" {
+				names[s] = true
+			}
+		}
+	}
+	for name, q := range c.Queues {
+		for status := range names {
+			if strings.Contains(q.Prompt, status) {
+				t.Errorf("queue %q prompt hardcodes status %q", name, status)
+			}
 		}
 	}
 

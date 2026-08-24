@@ -229,6 +229,13 @@ Notes:
   know which ticket it was started for — while lerp will still advance
   that ticket on a clean exit. Write `prompt = "Implement {{ticket}}
   ..."`, not `prompt = "Implement the ticket ..."`.
+- **Name statuses by placeholder, not by name.** A prompt may also use
+  `{{status}}`, `{{on_success}}`, and `{{on_failure}}`, expanded from
+  its own queue's fields — no other queue's, and nothing more. Prose
+  like "move {{ticket}} to {{on_failure}}" then follows a status rename
+  or remap, where a literal name would silently point agents at a
+  status that no longer exists. Referencing `{{on_failure}}` in a queue
+  that does not set `on_failure` is a config error.
 
 Every ticket must resolve to exactly one working directory: one repo
 may serve several teams, but two repos may never claim the same team.
@@ -297,9 +304,9 @@ rewriting them into a different shape needs no code change.
 | Backlog / Todo | you | promote a ticket into Planning, or into Implementing if it is small |
 | Planning | agent | posts a plan comment → Implementing |
 | Implementing | agent | commits, pushes, opens a PR with `gh` → Agent Review |
-| Agent Review | agent | posts a review verdict → In Review, or back to Implementing |
+| Agent Review | agent | posts a review verdict → In Review, or to Needs Attention with findings |
 | In Review | you | merge the PR; Linear's GitHub integration moves it to Done |
-| Needs Attention | you | where a failed run parks; no queue watches it, so nothing retries it |
+| Needs Attention | you | where failed runs and review findings park; no queue watches it, so nothing retries it |
 
 Which ticket enters where is the only routing decision, and it is made by
 moving a ticket, not by configuration.

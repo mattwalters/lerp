@@ -602,7 +602,7 @@ func (r *Reconciler) provisionAndRun(ctx context.Context, lr *laneRun, c candida
 
 	result, err := r.o.Execute(ctx, run.Invocation{
 		Runner:  r.o.Repo.Runners[c.queue.Runner],
-		Prompt:  c.queue.Prompt,
+		Queue:   c.queue,
 		Ticket:  issue.Identifier,
 		Workdir: record.Workspace,
 		LogPath: record.LogPath,

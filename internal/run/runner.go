@@ -29,11 +29,12 @@ type Result struct {
 // environment than interpolate {{ticket}}.
 const TicketEnv = "LERP_TICKET"
 
-// Invocation is one runner call: the configured command, the queue's prompt,
+// Invocation is one runner call: the configured command, the queue this run
+// executes for (its prompt and the status pointers the prompt may reference),
 // and the ticket and paths this run belongs to.
 type Invocation struct {
 	Runner  config.Runner
-	Prompt  string
+	Queue   config.Queue
 	Ticket  string // human identifier, e.g. LERP-42
 	Workdir string
 	LogPath string
@@ -49,10 +50,12 @@ type Invocation struct {
 // runner's combined stdout and stderr to inv.LogPath.
 //
 // {{ticket}}, {{prompt}}, {{workdir}} and {{session}} are shell-escaped before
-// substitution into the command. {{ticket}} is also expanded inside the prompt,
-// so a queue prompt can name the ticket it is about; without that, every ticket
-// in a queue would reach its agent as the same anonymous instruction. The same
-// identifier is exported as TicketEnv.
+// substitution into the command. The prompt itself is expanded first, by
+// config.Queue.ExpandPrompt: {{ticket}} names the ticket the run is about —
+// without that, every ticket in a queue would reach its agent as the same
+// anonymous instruction — and {{status}}, {{on_success}}, and {{on_failure}}
+// carry the queue's own configured statuses into the prose. The ticket
+// identifier is also exported as TicketEnv.
 //
 // A session ID is generated and returned only when the command uses
 // {{session}}.
@@ -75,9 +78,9 @@ func Execute(ctx context.Context, inv Invocation) (Result, error) {
 		result.SessionID = sessionID
 	}
 
-	// The ticket goes into the prompt unquoted: expand shell-escapes the whole
-	// prompt when it substitutes it into the command.
-	prompt := strings.ReplaceAll(inv.Prompt, "{{ticket}}", inv.Ticket)
+	// Placeholder values go into the prompt unquoted: expand shell-escapes the
+	// whole prompt when it substitutes it into the command.
+	prompt := inv.Queue.ExpandPrompt(inv.Ticket)
 	command := expand(inv.Runner.Command, prompt, inv.Ticket, inv.Workdir, sessionID)
 	log, err := os.OpenFile(inv.LogPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	if err != nil {

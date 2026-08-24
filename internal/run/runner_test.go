@@ -48,7 +48,7 @@ exit 7
 
 	result, err := Execute(context.Background(), Invocation{
 		Runner:  config.Runner{Command: shellQuote(script) + " {{prompt}} {{workdir}} {{session}}"},
-		Prompt:  prompt,
+		Queue:   config.Queue{Prompt: prompt},
 		Ticket:  "LERP-1",
 		Workdir: dir,
 		LogPath: logPath,
@@ -87,7 +87,7 @@ func TestExecuteDoesNotCreateSessionWithoutPlaceholder(t *testing.T) {
 
 	result, err := Execute(context.Background(), Invocation{
 		Runner:  config.Runner{Command: shellQuote(script)},
-		Prompt:  "prompt",
+		Queue:   config.Queue{Prompt: "prompt"},
 		Ticket:  "LERP-1",
 		Workdir: dir,
 		LogPath: filepath.Join(dir, "runner.log"),
@@ -105,8 +105,10 @@ func TestExecuteDoesNotCreateSessionWithoutPlaceholder(t *testing.T) {
 
 // The agent has to be told which ticket it is working on: the prompt is shared
 // by every ticket in a queue, so {{ticket}} in the prompt and the environment
-// variable are the only things that name the work.
-func TestExecuteCarriesTicketIntoPromptAndEnvironment(t *testing.T) {
+// variable are the only things that name the work. The queue's own statuses
+// reach the prompt the same way — {{status}}, {{on_success}}, {{on_failure}} —
+// so movement instructions follow the config rather than hardcoded names.
+func TestExecuteExpandsPromptFromTicketAndQueue(t *testing.T) {
 	dir := t.TempDir()
 	script := writeScript(t, dir, "runner.sh", `
 printf 'prompt=%s\n' "$1"
@@ -116,8 +118,13 @@ printf 'env=%s\n' "$LERP_TICKET"
 	logPath := filepath.Join(dir, "runner.log")
 
 	if _, err := Execute(context.Background(), Invocation{
-		Runner:  config.Runner{Command: shellQuote(script) + " {{prompt}} {{ticket}}"},
-		Prompt:  "Implement {{ticket}} per its plan comment.",
+		Runner: config.Runner{Command: shellQuote(script) + " {{prompt}} {{ticket}}"},
+		Queue: config.Queue{
+			Status:    "Implementing",
+			Prompt:    "Implement {{ticket}}, now in {{status}}; done work goes to {{on_success}}, trouble to {{on_failure}}.",
+			OnSuccess: "Agent Review",
+			OnFailure: "Needs Attention",
+		},
 		Ticket:  "LERP-42",
 		Workdir: dir,
 		LogPath: logPath,
@@ -129,7 +136,8 @@ printf 'env=%s\n' "$LERP_TICKET"
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "prompt=Implement LERP-42 per its plan comment.\nticket=LERP-42\nenv=LERP-42\n"
+	want := "prompt=Implement LERP-42, now in Implementing; done work goes to Agent Review, trouble to Needs Attention.\n" +
+		"ticket=LERP-42\nenv=LERP-42\n"
 	if string(got) != want {
 		t.Errorf("log = %q, want %q", got, want)
 	}
@@ -143,7 +151,7 @@ func TestExecuteReportsPIDOnceStarted(t *testing.T) {
 	var pid int
 	if _, err := Execute(context.Background(), Invocation{
 		Runner:  config.Runner{Command: shellQuote(script)},
-		Prompt:  "prompt",
+		Queue:   config.Queue{Prompt: "prompt"},
 		Ticket:  "LERP-1",
 		Workdir: dir,
 		LogPath: filepath.Join(dir, "runner.log"),
@@ -160,7 +168,7 @@ func TestExecuteRequiresATicket(t *testing.T) {
 	dir := t.TempDir()
 	_, err := Execute(context.Background(), Invocation{
 		Runner:  config.Runner{Command: "true"},
-		Prompt:  "prompt",
+		Queue:   config.Queue{Prompt: "prompt"},
 		Workdir: dir,
 		LogPath: filepath.Join(dir, "runner.log"),
 	})
@@ -186,7 +194,7 @@ wait
 	go func() {
 		result, err := Execute(ctx, Invocation{
 			Runner:  config.Runner{Command: shellQuote(script) + " {{prompt}}"},
-			Prompt:  childPIDPath,
+			Queue:   config.Queue{Prompt: childPIDPath},
 			Ticket:  "LERP-1",
 			Workdir: dir,
 			LogPath: logPath,

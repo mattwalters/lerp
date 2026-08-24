@@ -24,7 +24,7 @@ func TestOnceRunsOneEligibleTicketEndToEnd(t *testing.T) {
 	var gotInvocation run.Invocation
 	ran, err := Once(context.Background(), onceOptions(fake, func(_ context.Context, inv run.Invocation) (run.Result, error) {
 		gotInvocation = inv
-		if inv.Prompt != "do the work" || inv.Workdir != "/work/one" || inv.LogPath == "" {
+		if inv.Queue.Prompt != "do the work" || inv.Workdir != "/work/one" || inv.LogPath == "" {
 			t.Fatalf("Execute invocation = %+v", inv)
 		}
 		return run.Result{ExitCode: 0}, nil
