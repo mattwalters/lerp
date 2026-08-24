@@ -133,9 +133,13 @@ func initCommand(args []string) {
 	if err != nil {
 		fatal(err)
 	}
-	global, err := config.LoadGlobal(globalPath)
+	global, created, err := config.LoadOrCreateGlobal(globalPath)
 	if err != nil {
 		fatal(fmt.Errorf("load global config: %w", err))
+	}
+	if created {
+		fmt.Printf("created global config at %s from Lerp's stock pipeline\n", globalPath)
+		fmt.Fprintln(os.Stderr, "review it before running agents: the stock Claude runner grants broad workspace permissions")
 	}
 	repoRoot, err := gitRoot()
 	if err != nil {

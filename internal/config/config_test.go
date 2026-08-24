@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -83,6 +84,57 @@ on_success = "Implementing"
 	}
 	if g.Lanes != 5 {
 		t.Errorf("Lanes = %d, want default 5", g.Lanes)
+	}
+}
+
+func TestLoadOrCreateGlobal(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "lerp", "config.toml")
+	g, created, err := LoadOrCreateGlobal(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created {
+		t.Error("created = false, want true")
+	}
+	if g.Runners["claude"].Command == "" || len(g.Queues) == 0 {
+		t.Errorf("stock global = %+v, want Claude runner and queues", g)
+	}
+
+	contents := "[runners.mine]\ncommand = \"mine\"\n"
+	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, created, err = LoadOrCreateGlobal(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created {
+		t.Error("created = true, want false for existing config")
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != contents {
+		t.Errorf("existing config changed to %q", got)
+	}
+}
+
+func TestStockGlobalMatchesExample(t *testing.T) {
+	stockPath := filepath.Join(t.TempDir(), "config.toml")
+	if _, err := WriteStockGlobal(stockPath); err != nil {
+		t.Fatal(err)
+	}
+	stock, err := LoadGlobal(stockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	example, err := LoadGlobal(filepath.Join("..", "..", "config.example.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(stock, example) {
+		t.Error("embedded stock config differs from config.example.toml")
 	}
 }
 

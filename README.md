@@ -26,13 +26,10 @@ not a shrug.
 Location: `$XDG_CONFIG_HOME/lerp/config.toml`, falling back to
 `~/.config/lerp/config.toml`.
 
-[config.example.toml](config.example.toml) is a working starting point —
-the planning → implementing → review pipeline, with prompts you can read
-and argue with. Copy it and edit:
-
-```bash
-mkdir -p ~/.config/lerp && cp config.example.toml ~/.config/lerp/config.toml
-```
+[config.example.toml](config.example.toml) is the stock planning →
+implementing → review pipeline, with prompts you can read and argue with.
+On first use, `lerp init --team KEY` creates it at the global config location
+for you and never overwrites an existing file.
 
 Read it before you run it. It grants the agent broad permissions and it
 assumes your runner can reach Linear; both are explained in the file and
