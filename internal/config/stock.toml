@@ -92,15 +92,26 @@ runner = "claude"
 on_success = "{{implement_success}}"
 on_failure = "{{attention_status}}"
 prompt = """
-Implement {{ticket}}, following the plan comment on it in Linear.
+Implement {{ticket}}. Establish the brief first, in this order: the newest
+review comment on {{ticket}} that asks for changes, if there is one — then
+address exactly what it raises and nothing else; otherwise the plan comment;
+otherwise the ticket's description. All three are real entry paths: a small
+fix routed straight here never had a plan, and a ticket sent back after a
+review has a verdict to answer.
 
-You are in a disposable workspace for this ticket alone. Work here, commit,
-push a branch, and open a pull request with `gh`. Make the tests and whatever
-this repository uses as its check pass before you open it.
+A pull request for {{ticket}} may already exist; look with `gh`. If one does,
+this is rework: check out its branch and add your commits there. Never open a
+second pull request for the same ticket. Your workspace is disposable and
+yours alone, a fresh detached worktree at the default branch — the ticket's
+branch is on the remote and not yet in front of you, so go and get it.
+
+Work here, commit, and push. Make the tests and whatever this repository uses
+as its check pass before you push. Open a pull request with `gh` if there is
+not one already.
 
 The pull request is the artifact — do not paste diffs or transcripts into
-Linear. If the plan turns out to be wrong or missing, move {{ticket}} to
-{{on_failure}} and say why in a comment rather than inventing a new plan.
+Linear. If the brief turns out to be wrong or missing, move {{ticket}} to
+{{on_failure}} and say why in a comment rather than inventing your own.
 """
 
 #{{review}}
@@ -144,4 +155,7 @@ can send the work back through implementation. A clean review leaves
 #
 # "{{attention_status}}" is the same idea for failures: no queue watches it,
 # so a ticket that lands there waits for you rather than being retried
-# forever.
+# forever. It is also where a review that found something parks its verdict,
+# and that is a loop rather than a dead end: promote the ticket back to
+# "{{implement_status}}" and the next run reads the newest review comment as
+# its brief and adds commits to the pull request that already exists.
