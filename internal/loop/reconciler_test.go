@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -794,6 +795,59 @@ func TestReconcilerPromote(t *testing.T) {
 	}
 	if got := h.issue(t, "loose"); got.Status != "Todo" {
 		t.Errorf("status after Promote = %q, want Todo", got.Status)
+	}
+}
+
+// countingDetailClient counts the detail reads made through it — the
+// mechanical form of "no per-item comment query entered attention()".
+type countingDetailClient struct {
+	linear.Client
+	details atomic.Int64
+}
+
+func (c *countingDetailClient) GetIssueDetail(ctx context.Context, issueID string) (linear.IssueDetail, error) {
+	c.details.Add(1)
+	return c.Client.GetIssueDetail(ctx, issueID)
+}
+
+func TestReconcilerIssueDetail(t *testing.T) {
+	h := newHarness(t, 1, nil)
+	h.fake.AddIssue("LERP", linear.Issue{ID: "loose", Identifier: "LERP-4", Status: "Backlog"})
+	h.fake.SetDescription("loose", "the body")
+	ctx := context.Background()
+	if err := h.fake.CommentOnIssue(ctx, "loose", "the verdict"); err != nil {
+		t.Fatalf("CommentOnIssue: %v", err)
+	}
+
+	detail, err := h.rec.IssueDetail(ctx, "loose")
+	if err != nil {
+		t.Fatalf("IssueDetail: %v", err)
+	}
+	if detail.Body != "the body" {
+		t.Errorf("body = %q, want %q", detail.Body, "the body")
+	}
+	if len(detail.Comments) != 1 || detail.Comments[0].Body != "the verdict" {
+		t.Errorf("comments = %+v, want the one verdict", detail.Comments)
+	}
+}
+
+// The pane\'s read is issued on selection, never by a pass: a board full of
+// needs-you items must cost the same queries it always did.
+func TestPassNeverReadsTicketDetail(t *testing.T) {
+	fake := linear.NewFake()
+	client := &countingDetailClient{Client: fake}
+	h := newHarnessWith(t, 1, nil, fake, client)
+	for _, id := range []string{"a", "b", "c"} {
+		fake.AddIssue("LERP", linear.Issue{ID: id, Identifier: "LERP-" + id, Status: "Backlog"})
+		fake.SetDescription(id, "a body nobody selected")
+	}
+
+	h.rec.Tick(context.Background())
+	if items := h.waitEvents(t, EventAttention, 1)[0].Attention; len(items) != 3 {
+		t.Fatalf("attention listed %d items, want 3", len(items))
+	}
+	if n := client.details.Load(); n != 0 {
+		t.Errorf("a pass made %d detail reads, want 0", n)
 	}
 }
 

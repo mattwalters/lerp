@@ -301,14 +301,20 @@ same way (parked on them) — each with the reason and a link. To route
 is ordered by leverage: how many other listed tickets promoting this
 one would transitively unblock, then priority, then identifier — so
 the promote worth making is the top row. Every row carries that count,
-its priority, and whether something still blocks it. Select one and
-press `p` to promote it: pick a target from the configured
+its priority, and whether something still blocks it. Selecting a row
+reads the ticket itself into the main pane: its body, and the comments
+on it — the plan, the review verdict, the note a failed run left — so
+a parked ticket can be decided from that one screen. That is a read
+and stays one: nothing composes, replies, or navigates on to another
+ticket, and `o` opens the ticket in Linear for everything else. Select
+one and press `p` to promote it: pick a target from the configured
 queue statuses or a pipeline exit, and lerp moves it there. That
 MoveIssue is the only write any view makes; everything else about a
 ticket still happens in Linear. Keys: `1`/`2`/`3` choose a view and
-`tab` cycles. `↑`/`↓` pick a lane or a needs-you item, `pgup`/`pgdn`
-scroll the log, `end` resumes following, `q` quits (or backs out of
-the promote picker).
+`tab` cycles. `↑`/`↓` pick a lane or a needs-you item, `o` opens the
+selected ticket in Linear, `pgup`/`pgdn` scroll the log or the ticket,
+`end` resumes following, `q` quits (or backs out of the promote
+picker).
 
 Quitting (`q` or `ctrl+c`) closes the screen, stops future passes, and
 waits briefly for a pass already in flight to settle. The agents are

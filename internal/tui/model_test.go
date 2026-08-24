@@ -15,6 +15,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/mattwalters/lerp/internal/linear"
 	"github.com/mattwalters/lerp/internal/loop"
 )
 
@@ -56,13 +57,43 @@ func (p *recordingPromoter) last() promoteCall {
 	return p.calls[len(p.calls)-1]
 }
 
+// recordingReader stands in for the reconciler's one read beyond the pass.
+// It records every ticket it was asked for — so a test can prove that
+// walking the list does not fire a fetch per row — and hands back whatever
+// detail or error is set on it.
+type recordingReader struct {
+	mu     sync.Mutex
+	calls  []string
+	detail linear.IssueDetail
+	err    error
+}
+
+func (r *recordingReader) IssueDetail(_ context.Context, ticketID string) (linear.IssueDetail, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls = append(r.calls, ticketID)
+	return r.detail, r.err
+}
+
+func (r *recordingReader) fetched() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.calls...)
+}
+
+func (r *recordingReader) returns(detail linear.IssueDetail, err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.detail, r.err = detail, err
+}
+
 // defaultTestStatuses are the promote picker's options in tests that do not
 // care which ones — two, so up/down has somewhere to go.
 var defaultTestStatuses = []string{"Planning", "Implementing"}
 
 func newTestModel(t *testing.T, lanes int) (model, *countingTicker, chan loop.Event) {
 	t.Helper()
-	m, ticker, events, _ := newPromoteTestModel(t, lanes, defaultTestStatuses)
+	m, ticker, events := newTestModelWith(t, lanes, defaultTestStatuses, &recordingPromoter{}, &recordingReader{})
 	return m, ticker, events
 }
 
@@ -70,25 +101,49 @@ func newTestModel(t *testing.T, lanes int) (model, *countingTicker, chan loop.Ev
 // that drive the promote picker and need to see what it sent.
 func newPromoteTestModel(t *testing.T, lanes int, statuses []string) (model, *countingTicker, chan loop.Event, *recordingPromoter) {
 	t.Helper()
-	ticker := &countingTicker{}
 	promoter := &recordingPromoter{}
+	m, ticker, events := newTestModelWith(t, lanes, statuses, promoter, &recordingReader{})
+	return m, ticker, events, promoter
+}
+
+// newReadingTestModel is newTestModel plus the recording reader, for tests
+// that drive the needs-you pane's read of the selected ticket.
+func newReadingTestModel(t *testing.T) (model, chan loop.Event, *recordingReader) {
+	t.Helper()
+	reader := &recordingReader{}
+	m, _, events := newTestModelWith(t, 1, defaultTestStatuses, &recordingPromoter{}, reader)
+	return m, events, reader
+}
+
+func newTestModelWith(t *testing.T, lanes int, statuses []string, promoter *recordingPromoter, reader *recordingReader) (model, *countingTicker, chan loop.Event) {
+	t.Helper()
+	ticker := &countingTicker{}
 	events := make(chan loop.Event, 8)
 	m := newModel(context.Background(), Options{
 		Ticker:   ticker,
 		Promoter: promoter,
+		Reader:   reader,
 		Statuses: statuses,
 		Interval: time.Millisecond,
 		Lanes:    lanes,
 		Events:   events,
 	})
 	resized, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
-	return resized.(model), ticker, events, promoter
+	return resized.(model), ticker, events
 }
 
 func update(t *testing.T, m model, msg tea.Msg) model {
 	t.Helper()
 	next, _ := m.Update(msg)
 	return next.(model)
+}
+
+// updateCmd is update for the messages whose command is the assertion — the
+// detail fetch, which either fires or does not.
+func updateCmd(t *testing.T, m model, msg tea.Msg) (model, tea.Cmd) {
+	t.Helper()
+	next, cmd := m.Update(msg)
+	return next.(model), cmd
 }
 
 func keyMsg(s string) tea.KeyMsg {
@@ -922,6 +977,214 @@ func TestQuitAwaitsTheInFlightPass(t *testing.T) {
 	case <-waited:
 	case <-time.After(time.Second):
 		t.Fatal("a finished pass is still tracked as in flight")
+	}
+}
+
+// threeWaiting is a needs-you board with room to walk: three items, three
+// ticket IDs.
+func threeWaiting() loop.Event {
+	return loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Group: loop.ToRoute, Ticket: "LERP-1", TicketID: "id-1", Title: "First",
+			Status: "Backlog", Reason: "unclaimed", URL: "https://linear.app/acme/issue/LERP-1"},
+		{Group: loop.ToRoute, Ticket: "LERP-2", TicketID: "id-2", Title: "Second",
+			Status: "Backlog", Reason: "unclaimed", URL: "https://linear.app/acme/issue/LERP-2"},
+		{Group: loop.ToRoute, Ticket: "LERP-3", TicketID: "id-3", Title: "Third",
+			Status: "Backlog", Reason: "unclaimed", URL: "https://linear.app/acme/issue/LERP-3"},
+	}}
+}
+
+// selectAndRead walks to the row at index sel and delivers the debounce for
+// it, returning the model with the read already applied.
+func selectAndRead(t *testing.T, m model, sel int, detail linear.IssueDetail, err error, reader *recordingReader) model {
+	t.Helper()
+	for i := 0; i < sel; i++ {
+		m = update(t, m, keyMsg("j"))
+	}
+	reader.returns(detail, err)
+	id := m.attention[sel].TicketID
+	m, cmd := updateCmd(t, m, detailDueMsg{ticketID: id})
+	if cmd == nil {
+		t.Fatalf("settling on %s scheduled no fetch", id)
+	}
+	return update(t, m, cmd())
+}
+
+// Done-when: walking the list with j does not fire a fetch per row. Every
+// row schedules a debounce; only the one the selection settled on reads.
+func TestTicketDetailFetchesOnceTheSelectionSettles(t *testing.T) {
+	m, _, reader := newReadingTestModel(t)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+	m = update(t, m, keyMsg("j"))
+	m = update(t, m, keyMsg("j"))
+
+	if got := reader.fetched(); len(got) != 0 {
+		t.Fatalf("walking the list fetched %v before any selection settled", got)
+	}
+	// The debounces scheduled on the way down fire against a selection that
+	// has moved on, and must do nothing at all.
+	for _, stale := range []string{"id-1", "id-2"} {
+		var cmd tea.Cmd
+		m, cmd = updateCmd(t, m, detailDueMsg{ticketID: stale})
+		if cmd != nil {
+			t.Fatalf("a stale debounce for %s fired a fetch", stale)
+		}
+	}
+	m, cmd := updateCmd(t, m, detailDueMsg{ticketID: "id-3"})
+	if cmd == nil {
+		t.Fatal("the settled selection fired no fetch")
+	}
+	m = update(t, m, cmd())
+	if got := reader.fetched(); len(got) != 1 || got[0] != "id-3" {
+		t.Fatalf("fetched %v, want one read of id-3", got)
+	}
+
+	// Revisiting a ticket already read is instant: the cache is the whole
+	// refresh story, so no second fetch is issued.
+	m = update(t, m, keyMsg("k"))
+	m = update(t, m, keyMsg("j"))
+	if _, cmd := updateCmd(t, m, detailDueMsg{ticketID: "id-3"}); cmd != nil {
+		t.Fatal("re-selecting a cached ticket fetched it again")
+	}
+}
+
+// Done-when: selecting a needs-you item shows its body and its comments in
+// the main pane, oldest comment first, without leaving lerp.
+func TestTicketDetailShowsBodyAndComments(t *testing.T) {
+	m, _, reader := newReadingTestModel(t)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+
+	now := time.Now()
+	m = selectAndRead(t, m, 0, linear.IssueDetail{
+		Body: "the ticket body",
+		Comments: []linear.Comment{
+			{Author: "lerp", Body: "the plan", CreatedAt: now.Add(-3 * time.Hour)},
+			{Author: "reviewer", Body: "the verdict", CreatedAt: now.Add(-5 * time.Minute)},
+		},
+	}, nil, reader)
+
+	view := m.View()
+	for _, want := range []string{"the ticket body", "lerp · 3h ago", "the plan", "reviewer · 5m ago", "the verdict"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("main pane is missing %q:\n%s", want, view)
+		}
+	}
+	// Chronological: the verdict is the last thing written and the last
+	// thing on the pane, which is where the eye lands.
+	if strings.Index(view, "the plan") > strings.Index(view, "the verdict") {
+		t.Fatalf("comments are not in chronological order:\n%s", view)
+	}
+	// The lines the pass produced still come first, and o is still offered.
+	if strings.Index(view, "unclaimed") > strings.Index(view, "the ticket body") {
+		t.Fatalf("the pass's own lines no longer render first:\n%s", view)
+	}
+	if !strings.Contains(view, "o opens it in Linear") {
+		t.Fatalf("the o hint is gone:\n%s", view)
+	}
+}
+
+// Done-when: a comments fetch that fails never blanks the lines that work
+// today, and still points at Linear.
+func TestTicketDetailFailureKeepsThePaneThatWorks(t *testing.T) {
+	m, _, reader := newReadingTestModel(t)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+
+	// In flight, the pane says so — and still shows everything the pass knows.
+	m, cmd := updateCmd(t, m, detailDueMsg{ticketID: "id-1"})
+	if cmd == nil {
+		t.Fatal("the selected ticket fired no fetch")
+	}
+	view := m.View()
+	if !strings.Contains(view, "reading the ticket…") {
+		t.Fatalf("the pane does not say the read is in flight:\n%s", view)
+	}
+	for _, want := range []string{"LERP-1", "Backlog", "unclaimed", "https://linear.app/acme/issue/LERP-1"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("in flight, the pane lost %q:\n%s", want, view)
+		}
+	}
+
+	reader.returns(linear.IssueDetail{}, errors.New("linear: rate limited"))
+	m = update(t, m, cmd())
+	view = m.View()
+	if !strings.Contains(view, "couldn't read the ticket") || !strings.Contains(view, "rate limited") {
+		t.Fatalf("the pane does not say the read failed:\n%s", view)
+	}
+	for _, want := range []string{"LERP-1", "Backlog", "unclaimed", "https://linear.app/acme/issue/LERP-1", "o opens it in Linear"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("a failed read cost the pane %q:\n%s", want, view)
+		}
+	}
+}
+
+// A ticket with nothing on it still reads as answered, not as still loading.
+func TestTicketDetailEmptyTicket(t *testing.T) {
+	m, _, reader := newReadingTestModel(t)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+	m = selectAndRead(t, m, 0, linear.IssueDetail{}, nil, reader)
+
+	view := m.View()
+	if !strings.Contains(view, "(no description)") || !strings.Contains(view, "(no comments)") {
+		t.Fatalf("an empty ticket does not read as empty:\n%s", view)
+	}
+}
+
+// Done-when: a body carrying escape sequences renders inert, and one
+// carrying Linear's inline issue tags renders as bare identifiers.
+func TestTicketDetailRendersHostileBodyInert(t *testing.T) {
+	m, _, reader := newReadingTestModel(t)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+	m = selectAndRead(t, m, 0, linear.IssueDetail{
+		Body: hostile + ` blocked by <issue id="u-1" href="https://linear.app/acme/issue/LERP-36">LERP-36</issue>`,
+		Comments: []linear.Comment{
+			{Author: "agent" + hostile, Body: hostile + " verdict", CreatedAt: time.Now()},
+		},
+	}, nil, reader)
+
+	view := m.View()
+	escapeFree(t, "needs-you detail", view)
+	if !strings.Contains(view, "blocked by LERP-36") || strings.Contains(view, "<issue") {
+		t.Fatalf("issue tags did not reduce to identifiers:\n%s", view)
+	}
+	for i, line := range strings.Split(view, "\n") {
+		if got := lipgloss.Width(line); got > m.width {
+			t.Fatalf("line %d is %d cells wide in a %d-column window:\n%s", i, got, m.width, view)
+		}
+	}
+}
+
+// Prose is wrapped to the pane, not truncated at it: a body longer than one
+// row is readable past its first line.
+func TestTicketDetailWrapsProse(t *testing.T) {
+	m, _, reader := newReadingTestModel(t)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+	body := strings.TrimSpace(strings.Repeat("wrap me please ", 12))
+	m = selectAndRead(t, m, 0, linear.IssueDetail{Body: body}, nil, reader)
+
+	view := m.View()
+	if !strings.Contains(view, "wrap me please wrap") {
+		t.Fatalf("the body is not on the pane at all:\n%s", view)
+	}
+	// A body too long for one row occupies several — the difference between
+	// wrapping it and truncating it at the panel's edge.
+	rows := 0
+	for _, line := range strings.Split(view, "\n") {
+		if strings.Contains(line, "wrap me") {
+			rows++
+		}
+	}
+	if rows < 2 {
+		t.Fatalf("the body was truncated rather than wrapped (%d rows):\n%s", rows, view)
+	}
+	for i, line := range strings.Split(view, "\n") {
+		if got := lipgloss.Width(line); got > m.width {
+			t.Fatalf("line %d is %d cells wide in a %d-column window:\n%s", i, got, m.width, view)
+		}
 	}
 }
 

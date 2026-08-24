@@ -3,6 +3,8 @@ package linear
 import (
 	"context"
 	"fmt"
+	"sort"
+	"time"
 )
 
 // issueNode is the shape shared by every query that reads an issue.
@@ -301,6 +303,81 @@ func (c *HTTP) GetIssue(ctx context.Context, issueID string) (Issue, error) {
 		return Issue{}, fmt.Errorf("get issue %s: %w", issueID, ErrNotFound)
 	}
 	return resp.Issue.toIssue(), nil
+}
+
+const issueDetailQuery = `
+query IssueDetail($id: String!) {
+  issue(id: $id) {
+    description
+    comments(first: 50) {
+      nodes {
+        body
+        createdAt
+        user { displayName }
+        botActor { name }
+      }
+    }
+  }
+}`
+
+// GetIssueDetail reads one issue's body and comments — the needs-you pane's
+// read (see Client). It is deliberately its own query rather than fields on
+// issueNode: that struct is shared by the three list queries every pass
+// runs, and hanging a description or a comment connection off it would grow
+// the payload of the passes this read is meant to stay out of. Fifty
+// comments is past the point where a pane is the right way to read a
+// thread; `o` is the answer to a longer one.
+func (c *HTTP) GetIssueDetail(ctx context.Context, issueID string) (IssueDetail, error) {
+	var resp struct {
+		Issue *struct {
+			Description string `json:"description"`
+			Comments    struct {
+				Nodes []commentNode `json:"nodes"`
+			} `json:"comments"`
+		} `json:"issue"`
+	}
+	if err := c.do(ctx, issueDetailQuery, map[string]any{"id": issueID}, &resp); err != nil {
+		return IssueDetail{}, fmt.Errorf("get issue detail: %w", err)
+	}
+	if resp.Issue == nil {
+		return IssueDetail{}, fmt.Errorf("get issue detail %s: %w", issueID, ErrNotFound)
+	}
+	detail := IssueDetail{Body: resp.Issue.Description}
+	for _, n := range resp.Issue.Comments.Nodes {
+		detail.Comments = append(detail.Comments, n.toComment())
+	}
+	// Oldest first, whatever order the connection came back in: the pane
+	// reads chronologically, so the verdict written last is the last thing
+	// on screen.
+	sort.SliceStable(detail.Comments, func(i, j int) bool {
+		return detail.Comments[i].CreatedAt.Before(detail.Comments[j].CreatedAt)
+	})
+	return detail, nil
+}
+
+// commentNode is one node of the comments connection.
+type commentNode struct {
+	Body      string    `json:"body"`
+	CreatedAt time.Time `json:"createdAt"`
+	User      *struct {
+		DisplayName string `json:"displayName"`
+	} `json:"user"`
+	BotActor *struct {
+		Name string `json:"name"`
+	} `json:"botActor"`
+}
+
+func (n commentNode) toComment() Comment {
+	// Lerp's own artifacts arrive under the API key's user; agents working
+	// Linear-side post as bot actors, with no user at all.
+	author := "unknown"
+	switch {
+	case n.User != nil && n.User.DisplayName != "":
+		author = n.User.DisplayName
+	case n.BotActor != nil && n.BotActor.Name != "":
+		author = n.BotActor.Name
+	}
+	return Comment{Author: author, Body: n.Body, CreatedAt: n.CreatedAt}
 }
 
 const issueStatesQuery = `

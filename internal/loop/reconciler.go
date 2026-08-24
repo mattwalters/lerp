@@ -445,6 +445,17 @@ func (r *Reconciler) Promote(ctx context.Context, ticketID, status string) error
 	return r.o.Client.MoveIssue(ctx, ticketID, status)
 }
 
+// IssueDetail reads the selected ticket's body and its comments for the
+// TUI's needs-you pane — the read SCOPE's "not a Linear client" bullet
+// licenses. Like Promote it is a passthrough to the client, touching no
+// lane, claim, or evidence; unlike Promote it writes nothing at all.
+// Nothing in a pass calls it: attention() lists boards, and a per-ticket
+// comment query in there would be N extra reads every interval for tickets
+// nobody selected.
+func (r *Reconciler) IssueDetail(ctx context.Context, ticketID string) (linear.IssueDetail, error) {
+	return r.o.Client.GetIssueDetail(ctx, ticketID)
+}
+
 // reconcileEvidence converges the lanes with .lerp/runs: every record either
 // belongs to a run this process is settling itself, or names a live process
 // to adopt, or is the residue of a dead one to reap. It reports whether the

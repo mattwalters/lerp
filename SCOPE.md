@@ -181,10 +181,12 @@ that wants a scheduler wants a different product.
 - Not a database. See invariant 1.
 - Not an agent framework. Runners are command templates, not SDKs.
 - Not a Linear client, with one narrow exception: needs-you lists
-  unassigned tickets in statuses no queue serves, and promote is one
-  MoveIssue on a ticket the operator selected. Everything else —
-  create, edit, comment, assign outside the claim protocol — stays in
-  Linear.
+  unassigned tickets in statuses no queue serves, promote is one
+  MoveIssue on a ticket the operator selected, and the main pane reads
+  that selected ticket's body and comments — lerp's own stage-boundary
+  artifacts — read-only, never composing or replying, never navigating
+  on to another ticket. Everything else — create, edit, comment,
+  assign outside the claim protocol — stays in Linear.
 - Not infrastructure for any other product to depend on. It is a
   standalone tool.
 

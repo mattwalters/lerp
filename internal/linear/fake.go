@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"time"
 )
 
 // Fake is an in-memory Client for driving loop tests. State is plain
@@ -14,7 +15,7 @@ type Fake struct {
 	mu           sync.Mutex
 	viewerID     string
 	issues       map[string]*fakeIssue
-	comments     map[string][]string
+	comments     map[string][]Comment
 	doneStatuses map[string]bool
 	teamStates   map[string][]string
 }
@@ -22,6 +23,7 @@ type Fake struct {
 type fakeIssue struct {
 	issue    Issue
 	team     string
+	body     string   // the description GetIssueDetail reads
 	blockers []string // issue IDs blocking this issue
 }
 
@@ -33,7 +35,7 @@ func NewFake() *Fake {
 	return &Fake{
 		viewerID:     "fake-viewer",
 		issues:       map[string]*fakeIssue{},
-		comments:     map[string][]string{},
+		comments:     map[string][]Comment{},
 		doneStatuses: map[string]bool{"Done": true, "Canceled": true},
 		teamStates:   map[string][]string{},
 	}
@@ -98,11 +100,26 @@ func (f *Fake) SetDoneStatuses(names ...string) {
 	}
 }
 
-// Comments returns the comments posted on an issue, oldest first.
+// Comments returns the bodies of the comments posted on an issue, oldest
+// first — what the loop tests assert on. GetIssueDetail is the reading
+// counterpart, with authors and times.
 func (f *Fake) Comments(issueID string) []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return append([]string(nil), f.comments[issueID]...)
+	bodies := make([]string, 0, len(f.comments[issueID]))
+	for _, c := range f.comments[issueID] {
+		bodies = append(bodies, c.Body)
+	}
+	return bodies
+}
+
+// SetDescription sets the body GetIssueDetail reads back for an issue.
+func (f *Fake) SetDescription(issueID, body string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if fi, ok := f.issues[issueID]; ok {
+		fi.body = body
+	}
 }
 
 // view materializes the caller-visible Issue, computing Blocked from the
@@ -194,6 +211,18 @@ func (f *Fake) GetIssue(_ context.Context, issueID string) (Issue, error) {
 	return f.view(fi), nil
 }
 
+// GetIssueDetail mirrors the real read: the issue's body and its comments,
+// oldest first.
+func (f *Fake) GetIssueDetail(_ context.Context, issueID string) (IssueDetail, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	fi, ok := f.issues[issueID]
+	if !ok {
+		return IssueDetail{}, fmt.Errorf("get issue detail %s: %w", issueID, ErrNotFound)
+	}
+	return IssueDetail{Body: fi.body, Comments: append([]Comment(nil), f.comments[issueID]...)}, nil
+}
+
 func (f *Fake) MoveIssue(_ context.Context, issueID, statusName string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -233,7 +262,8 @@ func (f *Fake) CommentOnIssue(_ context.Context, issueID, bodyMarkdown string) e
 	if _, ok := f.issues[issueID]; !ok {
 		return fmt.Errorf("comment on issue %s: %w", issueID, ErrNotFound)
 	}
-	f.comments[issueID] = append(f.comments[issueID], bodyMarkdown)
+	f.comments[issueID] = append(f.comments[issueID],
+		Comment{Author: f.viewerID, Body: bodyMarkdown, CreatedAt: time.Now()})
 	return nil
 }
 
