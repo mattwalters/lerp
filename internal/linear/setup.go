@@ -48,7 +48,7 @@ func (c *HTTP) EnsureTeam(ctx context.Context, key, name string) error {
 
 const teamStatesByKeyQuery = `
 query TeamStates($key: String!) {
-  teams(filter: { key: { eq: $key } }, first: 1) { nodes { id states(first: 100) { nodes { name } } } }
+  teams(filter: { key: { eq: $key } }, first: 1) { nodes { id states(first: 100) { nodes { name type } } } }
 }`
 
 const workflowStateCreateMutation = `
@@ -66,17 +66,19 @@ const defaultStateColor = "#6b7280"
 //
 // The category matters beyond cosmetics. Linear reports an issue as blocking
 // its dependents until the blocker's state type is completed or canceled (see
-// how Issue.Blocked is derived), so a status that ends work must be created as
-// a completed category. Created as "started", it would leave every dependent
-// ticket permanently ineligible.
+// how Issue.Blocked is derived), so which category a status carries decides
+// when dependent tickets become eligible. That judgment belongs to the
+// caller; this method only carries it out.
 type StateSpec struct {
 	Name string
 	Type string
 }
 
 // EnsureWorkflowStates adds any absent state in states, in its requested
-// category. Existing states are left exactly as the operator has them.
-func (c *HTTP) EnsureWorkflowStates(ctx context.Context, teamKey string, states []StateSpec) error {
+// category, and reports the category of every state the team then has —
+// existing states as Linear categorises them, created ones as requested.
+// Existing states are left exactly as the operator has them.
+func (c *HTTP) EnsureWorkflowStates(ctx context.Context, teamKey string, states []StateSpec) (map[string]string, error) {
 	var found struct {
 		Teams struct {
 			Nodes []struct {
@@ -84,30 +86,31 @@ func (c *HTTP) EnsureWorkflowStates(ctx context.Context, teamKey string, states 
 				States struct {
 					Nodes []struct {
 						Name string `json:"name"`
+						Type string `json:"type"`
 					} `json:"nodes"`
 				} `json:"states"`
 			} `json:"nodes"`
 		} `json:"teams"`
 	}
 	if err := c.do(ctx, teamStatesByKeyQuery, map[string]any{"key": teamKey}, &found); err != nil {
-		return err
+		return nil, err
 	}
 	if len(found.Teams.Nodes) == 0 {
-		return fmt.Errorf("team %q: %w", teamKey, ErrNotFound)
+		return nil, fmt.Errorf("team %q: %w", teamKey, ErrNotFound)
 	}
 	team := found.Teams.Nodes[0]
-	existing := map[string]bool{}
+	categories := map[string]string{}
 	for _, state := range team.States.Nodes {
-		existing[state.Name] = true
+		categories[state.Name] = state.Type
 	}
 	states = append([]StateSpec(nil), states...)
 	slices.SortFunc(states, func(a, b StateSpec) int { return strings.Compare(a.Name, b.Name) })
 	for _, state := range states {
-		if existing[state.Name] {
+		if _, ok := categories[state.Name]; ok {
 			continue
 		}
 		if state.Type == "" {
-			return fmt.Errorf("workflow state %q: no state category requested", state.Name)
+			return nil, fmt.Errorf("workflow state %q: no state category requested", state.Name)
 		}
 		var created struct {
 			WorkflowStateCreate struct {
@@ -121,11 +124,12 @@ func (c *HTTP) EnsureWorkflowStates(ctx context.Context, teamKey string, states 
 			"color":  defaultStateColor,
 		}
 		if err := c.do(ctx, workflowStateCreateMutation, vars, &created); err != nil {
-			return fmt.Errorf("create workflow state %q: %w", state.Name, err)
+			return nil, fmt.Errorf("create workflow state %q: %w", state.Name, err)
 		}
 		if !created.WorkflowStateCreate.Success {
-			return fmt.Errorf("linear reported failure creating workflow state %q", state.Name)
+			return nil, fmt.Errorf("linear reported failure creating workflow state %q", state.Name)
 		}
+		categories[state.Name] = state.Type
 	}
-	return nil
+	return categories, nil
 }

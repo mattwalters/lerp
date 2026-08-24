@@ -125,7 +125,7 @@ func initCommand(args []string) {
 	if err != nil {
 		fatal(err)
 	}
-	created, err := initcmd.Init(context.Background(), linear.New(os.Getenv("LINEAR_API_KEY"), nil), filepath.Clean(repoRoot), *team, *name, confirmBypass)
+	created, err := initcmd.Init(context.Background(), linear.New(os.Getenv("LINEAR_API_KEY"), nil), os.Stdout, filepath.Clean(repoRoot), *team, *name, confirmBypass)
 	if err != nil {
 		fatal(fmt.Errorf("lerp init: %w", err))
 	}
