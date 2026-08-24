@@ -3,11 +3,11 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,10 +24,10 @@ import (
 )
 
 const usage = `usage:
-  lerp [-lanes N]       open the TUI; the loop runs while it is open
-  lerp version          print the version
-  lerp init --team KEY  create missing Linear structure and this repo's lerp.toml
-  lerp once             run one eligible ticket through its queue
+  lerp [-lanes N]               open the TUI; the loop runs while it is open
+  lerp version                  print the version
+  lerp init --team KEY [--yes]  map lerp's queues onto the team's board and write this repo's lerp.toml
+  lerp once                     run one eligible ticket through its queue
 `
 
 // defaultLanes is how many agents run at once unless -lanes says otherwise.
@@ -224,6 +224,7 @@ func initCommand(args []string) {
 	fs := flag.NewFlagSet("lerp init", flag.ExitOnError)
 	team := fs.String("team", "", "Linear team key to set up")
 	name := fs.String("team-name", "", "name to use if the Linear team must be created")
+	yes := fs.Bool("yes", false, "take the stock answer to every question")
 	fs.Parse(args)
 	if *team == "" {
 		fmt.Fprintln(os.Stderr, "lerp init: --team is required")
@@ -236,7 +237,13 @@ func initCommand(args []string) {
 	if err != nil {
 		fatal(err)
 	}
-	created, err := initcmd.Init(context.Background(), linear.New(os.Getenv("LINEAR_API_KEY"), nil), os.Stdout, filepath.Clean(repoRoot), *team, *name, confirmBypass)
+	// The init conversation needs a terminal on both ends; a piped init takes
+	// the stock answers, exactly as --yes does.
+	var answers io.Reader
+	if !*yes && isTerminal(os.Stdin) && isTerminal(os.Stdout) {
+		answers = os.Stdin
+	}
+	created, err := initcmd.Init(context.Background(), linear.New(os.Getenv("LINEAR_API_KEY"), nil), os.Stdout, answers, filepath.Clean(repoRoot), *team, *name)
 	if err != nil {
 		fatal(fmt.Errorf("lerp init: %w", err))
 	}
@@ -244,28 +251,6 @@ func initCommand(args []string) {
 		fmt.Printf("wrote %s with Lerp's stock pipeline — review it and check it in\n", config.RepoConfigFile)
 	}
 	fmt.Printf("initialized %s for Linear team %s\n", repoRoot, *team)
-}
-
-// confirmBypass asks the operator whether the stock runner keeps its
-// bypassPermissions grant. Anything but an explicit yes — including EOF, so a
-// piped or scripted init — declines.
-func confirmBypass() bool {
-	fmt.Println("The stock Claude runner can include --permission-mode bypassPermissions,")
-	fmt.Println("letting agents edit files and run commands unattended with your full user")
-	fmt.Println("account. Declining writes a runner without the flag; unattended runs will")
-	fmt.Println("fail at the first tool they are not allowed to use until you widen it in")
-	fmt.Println(config.RepoConfigFile + ", in review, deliberately.")
-	fmt.Print("Include --permission-mode bypassPermissions? [y/N] ")
-	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
-	if err != nil && line == "" {
-		fmt.Println()
-		return false
-	}
-	switch strings.ToLower(strings.TrimSpace(line)) {
-	case "y", "yes":
-		return true
-	}
-	return false
 }
 
 // isTerminal reports whether f is a character device — a terminal, as far as

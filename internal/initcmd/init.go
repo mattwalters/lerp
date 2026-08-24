@@ -3,12 +3,16 @@
 package initcmd
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
+	"strings"
 
 	"github.com/mattwalters/lerp/internal/config"
 	"github.com/mattwalters/lerp/internal/linear"
@@ -19,22 +23,30 @@ import (
 // after the call, keyed by state name.
 type Board interface {
 	EnsureTeam(ctx context.Context, key, name string) error
+	TeamStates(ctx context.Context, teamKey string) ([]string, error)
 	EnsureWorkflowStates(ctx context.Context, teamKey string, states []linear.StateSpec) (map[string]string, error)
 }
 
-// Init creates the board structure this repo's config requires, writing the
-// stock config first when the repo has none. Repeating it verifies the
-// existing config rather than replacing a user's choices.
+// Init fits lerp onto the team's existing board, writing this repo's config
+// when it has none. Repeating it verifies the existing config rather than
+// replacing the operator's choices.
 //
-// When lerp.toml is absent, confirmBypass is consulted exactly once: it
-// decides whether the stock runner keeps its bypassPermissions grant (nil
-// declines). The file is written only after the board calls succeed, so a
-// failed init leaves nothing behind; created reports whether this invocation
-// wrote it. The file lands uncommitted in the working tree, where the grant
+// When lerp.toml is absent, init is a short conversation on out/answers:
+// orient on the team's statuses, choose the optional stages, map the
+// pipeline onto the board, then decide the stock runner's bypassPermissions
+// grant. answers is where it reads — os.Stdin at a terminal, a scripted
+// reader in tests, nil for the stock answer to everything (the full
+// pipeline, stock status names, bypass declined). Either way init reports
+// loudly which statuses it creates and which existing ones it uses; existing
+// statuses are never modified.
+//
+// The file is written only after the board calls succeed, so a failed init
+// leaves nothing behind; created reports whether this invocation wrote it.
+// The file lands uncommitted in the working tree, where any grant it carries
 // is reviewed and checked in like any other code.
 //
-// out receives the pipeline-exit report (see reportExits); nil discards it.
-func Init(ctx context.Context, board Board, out io.Writer, repoRoot, teamKey, teamName string, confirmBypass func() bool) (created bool, err error) {
+// out receives the whole conversation and report; nil discards it.
+func Init(ctx context.Context, board Board, out io.Writer, answers io.Reader, repoRoot, teamKey, teamName string) (created bool, err error) {
 	if teamKey == "" {
 		return false, fmt.Errorf("team key must not be empty")
 	}
@@ -45,43 +57,45 @@ func Init(ctx context.Context, board Board, out io.Writer, repoRoot, teamKey, te
 		out = io.Discard
 	}
 	path := filepath.Join(repoRoot, config.RepoConfigFile)
-	cfg, stock, err := planRepoConfig(path, teamKey, confirmBypass)
-	if err != nil {
-		return false, err
+	var cfg *config.RepoConfig
+	fresh := false
+	if _, statErr := os.Stat(path); statErr == nil {
+		if cfg, err = loadFor(path, teamKey); err != nil {
+			return false, err
+		}
+	} else if !os.IsNotExist(statErr) {
+		return false, fmt.Errorf("check repo config: %w", statErr)
+	} else {
+		fresh = true
 	}
 	if err := board.EnsureTeam(ctx, teamKey, teamName); err != nil {
 		return false, fmt.Errorf("ensure team %q: %w", teamKey, err)
 	}
+	existing, err := board.TeamStates(ctx, teamKey)
+	if err != nil {
+		return false, fmt.Errorf("read statuses of team %q: %w", teamKey, err)
+	}
+	stock := ""
+	if fresh {
+		choices := converse(out, answers, teamKey, existing)
+		stock = choices.Render()
+		// Parsing what we are about to install catches a broken assembly here —
+		// a declined stage, a mapping that folds two queues onto one status —
+		// not on the operator's first run.
+		if cfg, err = config.ParseRepoConfig(stock, path); err != nil {
+			return false, fmt.Errorf("assembled repo config: %w", err)
+		}
+	}
+	reportStatuses(out, teamKey, cfg, existing)
 	categories, err := board.EnsureWorkflowStates(ctx, teamKey, stateSpecs(cfg))
 	if err != nil {
 		return false, fmt.Errorf("ensure workflow states for %q: %w", teamKey, err)
 	}
 	reportExits(out, cfg, categories)
-	if stock == "" {
+	if !fresh {
 		return false, nil
 	}
 	return writeRepoConfig(path, teamKey, stock)
-}
-
-// planRepoConfig loads an existing lerp.toml and verifies it serves teamKey,
-// or renders the stock config to be written later. stock is empty when the
-// file already exists.
-func planRepoConfig(path, teamKey string, confirmBypass func() bool) (cfg *config.RepoConfig, stock string, err error) {
-	if _, err := os.Stat(path); err == nil {
-		cfg, err := loadFor(path, teamKey)
-		return cfg, "", err
-	} else if !os.IsNotExist(err) {
-		return nil, "", fmt.Errorf("check repo config: %w", err)
-	}
-	bypass := confirmBypass != nil && confirmBypass()
-	stock = config.StockRepoConfig([]string{teamKey}, bypass)
-	// Parsing what we are about to install catches a broken stock template
-	// here, not on the operator's first run.
-	cfg, err = config.ParseRepoConfig(stock, path)
-	if err != nil {
-		return nil, "", fmt.Errorf("stock repo config: %w", err)
-	}
-	return cfg, stock, nil
 }
 
 func loadFor(path, teamKey string) (*config.RepoConfig, error) {
@@ -97,7 +111,7 @@ func loadFor(path, teamKey string) (*config.RepoConfig, error) {
 
 func writeRepoConfig(path, teamKey, stock string) (created bool, err error) {
 	// O_EXCL makes creation race-safe and, importantly, never overwrites a
-	// configuration that appeared since planRepoConfig looked.
+	// configuration that appeared since Init looked.
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		if os.IsExist(err) {
@@ -115,6 +129,245 @@ func writeRepoConfig(path, teamKey, stock string) (created bool, err error) {
 		return false, fmt.Errorf("close repo config: %w", closeErr)
 	}
 	return true, nil
+}
+
+// converse runs the short init conversation and returns the choices it
+// collected. A nil answers reader — a piped init, or --yes — takes the stock
+// answer to everything: every stage included, stock status names, bypass
+// declined. EOF mid-conversation answers the remaining questions the same
+// way each question's default would.
+func converse(out io.Writer, answers io.Reader, teamKey string, existing []string) config.Stock {
+	s := config.Stock{Teams: []string{teamKey}, Plan: true, Review: true}
+	if len(existing) == 0 {
+		fmt.Fprintf(out, "team %s has no statuses yet\n", teamKey)
+	} else {
+		fmt.Fprintf(out, "team %s has: %s\n", teamKey, strings.Join(existing, ", "))
+	}
+	if answers == nil {
+		return s
+	}
+	in := bufio.NewReader(answers)
+	s.Plan = askYesNo(out, in, "Include a planning stage?", true)
+	s.Review = askYesNo(out, in, "Include an agent review stage?", true)
+	mapStatuses(out, in, teamKey, existing, &s)
+	s.Bypass = askBypass(out, in)
+	return s
+}
+
+// slot is one status the chosen pipeline references: where a queue runs, or
+// where it exits. Each maps onto an existing status or creates its stock
+// name.
+type slot struct {
+	label string  // "implement runs in"
+	stock string  // the stock status name, created when no existing one is chosen
+	dest  *string // the config.Stock field this slot fills
+}
+
+// pipelineSlots lists the statuses s's stages reference, in pipeline order.
+func pipelineSlots(s *config.Stock) []slot {
+	slots := []slot{}
+	if s.Plan {
+		slots = append(slots, slot{"plan runs in", config.StockPlanStatus, &s.PlanStatus})
+	}
+	slots = append(slots, slot{"implement runs in", config.StockImplementStatus, &s.ImplementStatus})
+	if s.Review {
+		slots = append(slots, slot{"review runs in", config.StockReviewStatus, &s.ReviewStatus})
+	}
+	return append(slots,
+		slot{"finished work exits to", config.StockExitStatus, &s.ExitStatus},
+		slot{"failures exit to", config.StockAttentionStatus, &s.AttentionStatus},
+	)
+}
+
+// mapStatuses maps the chosen pipeline onto the board: the fast path accepts
+// the stock names in one answer, customize picks per referenced status.
+func mapStatuses(out io.Writer, in *bufio.Reader, teamKey string, existing []string, s *config.Stock) {
+	slots := pipelineSlots(s)
+	has := map[string]bool{}
+	for _, name := range existing {
+		has[name] = true
+	}
+	names := make([]string, len(slots))
+	missing := 0
+	for i, sl := range slots {
+		names[i] = sl.stock
+		if has[sl.stock] {
+			names[i] += " (exists)"
+		} else {
+			missing++
+		}
+	}
+	fmt.Fprintf(out, "the pipeline references: %s\n", strings.Join(names, ", "))
+	var question string
+	switch {
+	case missing == len(slots):
+		question = fmt.Sprintf("Create these %d statuses on team %s?", missing, teamKey)
+	case missing == 1:
+		question = fmt.Sprintf("Create the missing status on team %s?", teamKey)
+	case missing > 1:
+		question = fmt.Sprintf("Create the %d missing statuses on team %s?", missing, teamKey)
+	default:
+		question = fmt.Sprintf("Use these existing statuses on team %s?", teamKey)
+	}
+	for {
+		fmt.Fprintf(out, "%s [Y]es / [c]ustomize ", question)
+		answer, eof := readAnswer(out, in)
+		switch answer {
+		case "", "y", "yes":
+			return // the stock names; Render fills them in
+		case "c", "customize":
+			for _, sl := range slots {
+				*sl.dest = pickStatus(out, in, sl, existing)
+			}
+			return
+		}
+		if eof {
+			return
+		}
+	}
+}
+
+// pickStatus asks where one referenced status lands: a numbered existing
+// status, or create the stock name. When the stock name already exists on
+// the board it is the default pick, and there is nothing to create.
+func pickStatus(out io.Writer, in *bufio.Reader, sl slot, existing []string) string {
+	var menu strings.Builder
+	fmt.Fprintf(&menu, "%s: ", sl.label)
+	def := "c"
+	for i, name := range existing {
+		fmt.Fprintf(&menu, " %d) %s ", i+1, name)
+		if name == sl.stock {
+			def = strconv.Itoa(i + 1)
+		}
+	}
+	if def == "c" {
+		fmt.Fprintf(&menu, " c) create %q ", sl.stock)
+	}
+	fmt.Fprintf(&menu, " [%s] ", def)
+	for {
+		fmt.Fprint(out, menu.String())
+		answer, eof := readAnswer(out, in)
+		if answer == "" {
+			answer = def
+		}
+		if answer == "c" && def == "c" {
+			return sl.stock
+		}
+		if n, err := strconv.Atoi(answer); err == nil && n >= 1 && n <= len(existing) {
+			return existing[n-1]
+		}
+		if eof {
+			return sl.stock
+		}
+	}
+}
+
+// askYesNo asks a yes/no question whose empty answer (or EOF) means def.
+func askYesNo(out io.Writer, in *bufio.Reader, question string, def bool) bool {
+	hint := "[Y/n]"
+	if !def {
+		hint = "[y/N]"
+	}
+	for {
+		fmt.Fprintf(out, "%s %s ", question, hint)
+		answer, eof := readAnswer(out, in)
+		switch answer {
+		case "y", "yes":
+			return true
+		case "n", "no":
+			return false
+		case "":
+			return def
+		}
+		if eof {
+			return def
+		}
+	}
+}
+
+// askBypass asks whether the stock runner keeps its bypassPermissions grant,
+// now that the operator has heard what init will do to the board. Anything
+// but an explicit yes — including EOF — declines.
+func askBypass(out io.Writer, in *bufio.Reader) bool {
+	fmt.Fprintln(out, "The stock Claude runner can include --permission-mode bypassPermissions,")
+	fmt.Fprintln(out, "letting agents edit files and run commands unattended with your full user")
+	fmt.Fprintln(out, "account. Declining writes a runner without the flag; unattended runs will")
+	fmt.Fprintln(out, "fail at the first tool they are not allowed to use until you widen it in")
+	fmt.Fprintln(out, config.RepoConfigFile+", in review, deliberately.")
+	fmt.Fprint(out, "Include --permission-mode bypassPermissions? [y/N] ")
+	answer, _ := readAnswer(out, in)
+	return answer == "y" || answer == "yes"
+}
+
+// readAnswer reads one lowercased answer line. EOF is reported so callers
+// stop re-asking; it also ends the prompt's line on out, since no echoed
+// Enter will.
+func readAnswer(out io.Writer, in *bufio.Reader) (answer string, eof bool) {
+	line, err := in.ReadString('\n')
+	answer = strings.ToLower(strings.TrimSpace(line))
+	if err != nil {
+		fmt.Fprintln(out)
+		return answer, true
+	}
+	return answer, false
+}
+
+// reportStatuses says what init is about to do to the board — created vs
+// found, never silent (SCOPE invariant 6 discipline: create deliberately,
+// touch nothing silently). Existing statuses are annotated with their part
+// in the pipeline; created ones are the names the operator just chose.
+func reportStatuses(out io.Writer, teamKey string, cfg *config.RepoConfig, existing []string) {
+	roles := statusRoles(cfg)
+	has := map[string]bool{}
+	for _, name := range existing {
+		has[name] = true
+	}
+	var create, use []string
+	for _, name := range slices.Sorted(maps.Keys(roles)) {
+		if has[name] {
+			use = append(use, fmt.Sprintf("%s (%s)", name, strings.Join(roles[name], ", ")))
+		} else {
+			create = append(create, name)
+		}
+	}
+	switch {
+	case len(use) == 0:
+		fmt.Fprintf(out, "creating on team %s: %s\n", teamKey, strings.Join(create, ", "))
+	case len(create) == 0:
+		fmt.Fprintf(out, "using existing on team %s: %s\n", teamKey, strings.Join(use, ", "))
+	default:
+		fmt.Fprintf(out, "creating on team %s: %s  ·  using existing: %s\n",
+			teamKey, strings.Join(create, ", "), strings.Join(use, ", "))
+	}
+}
+
+// statusRoles names each referenced status's part in the pipeline: the queue
+// that runs in it, "<queue> exit" for an on_success no queue watches, and
+// "failure exit" for an on_failure no queue watches.
+func statusRoles(cfg *config.RepoConfig) map[string][]string {
+	watched := map[string]bool{}
+	for _, q := range cfg.Queues {
+		watched[q.Status] = true
+	}
+	roles := map[string][]string{}
+	add := func(name, role string) {
+		if !slices.Contains(roles[name], role) {
+			roles[name] = append(roles[name], role)
+		}
+	}
+	for _, qname := range slices.Sorted(maps.Keys(cfg.Queues)) {
+		add(cfg.Queues[qname].Status, qname)
+	}
+	for _, qname := range slices.Sorted(maps.Keys(cfg.Queues)) {
+		q := cfg.Queues[qname]
+		if !watched[q.OnSuccess] {
+			add(q.OnSuccess, qname+" exit")
+		}
+		if q.OnFailure != "" && !watched[q.OnFailure] {
+			add(q.OnFailure, "failure exit")
+		}
+	}
+	return roles
 }
 
 // stateSpecs names every status the queues reference, all in Linear's

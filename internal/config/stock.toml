@@ -7,9 +7,12 @@
 # `on_success` pointers below. Rewrite them into a different shape, or delete
 # queues entirely, and no lerp code changes.
 #
-# Tickets enter by where a human puts them. A big feature is promoted into
-# Planning; a small fix goes straight to Implementing. That placement is the
-# routing decision — there is no syntax for it here.
+# Tickets enter by where a human puts them; that placement is the routing
+# decision — there is no syntax for it here.
+#{{plan}}
+# A big feature is promoted into "{{plan_status}}"; a small fix goes straight
+# to "{{implement_status}}".
+#{{/plan}}
 
 # Linear team keys this repo serves. One repo may serve several teams (the
 # monorepo case); two repos may never claim the same team.
@@ -59,11 +62,12 @@ resume = "claude --resume {{session}}"
 # expanded at run time — so the prose follows the configured statuses
 # through any rename or remap.
 
+#{{plan}}
 [queues.plan]
-status = "Planning"
+status = "{{plan_status}}"
 runner = "claude"
-on_success = "Implementing"
-on_failure = "Needs Attention"
+on_success = "{{implement_status}}"
+on_failure = "{{attention_status}}"
 prompt = """
 You are planning {{ticket}}, nothing more. Do not write code.
 
@@ -77,11 +81,12 @@ tickets, say so in a comment and move {{ticket}} to {{on_failure}} instead of
 guessing.
 """
 
+#{{/plan}}
 [queues.implement]
-status = "Implementing"
+status = "{{implement_status}}"
 runner = "claude"
-on_success = "Agent Review"
-on_failure = "Needs Attention"
+on_success = "{{implement_success}}"
+on_failure = "{{attention_status}}"
 prompt = """
 Implement {{ticket}}, following the plan comment on it in Linear.
 
@@ -94,11 +99,12 @@ Linear. If the plan turns out to be wrong or missing, move {{ticket}} to
 {{on_failure}} and say why in a comment rather than inventing a new plan.
 """
 
+#{{review}}
 [queues.review]
-status = "Agent Review"
+status = "{{review_status}}"
 runner = "claude"
-on_success = "In Review"
-on_failure = "Needs Attention"
+on_success = "{{exit_status}}"
+on_failure = "{{attention_status}}"
 prompt = """
 Review the pull request for {{ticket}} as a careful senior engineer.
 
@@ -113,9 +119,11 @@ can send the work back through implementation. A clean review leaves
 {{ticket}} for a human to merge.
 """
 
-# On a clean review the ticket lands in "In Review" — a status no queue
-# watches, which is how work leaves the automated path. A human merges the
-# pull request, and Linear's GitHub integration moves the ticket to Done.
+#{{/review}}
+# "{{exit_status}}" is where work leaves the automated path: no queue watches
+# it, so a ticket that lands there on success waits for a human to merge the
+# pull request — and Linear's GitHub integration moves it to Done.
 #
-# "Needs Attention" is the same idea for failures: no queue watches it, so a
-# ticket that lands there waits for you rather than being retried forever.
+# "{{attention_status}}" is the same idea for failures: no queue watches it,
+# so a ticket that lands there waits for you rather than being retried
+# forever.

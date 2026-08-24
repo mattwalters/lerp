@@ -65,19 +65,27 @@ must be created. Check the key against Linear before you run: a key
 that matches no existing team exactly is not an error, it quietly
 creates a new team under that key.
 
-This creates the Linear team if it is missing, adds the statuses your
-config's queues name — the stock pipeline's, on a first run — and
-writes `lerp.toml` — the
-[stock planning → implementing → review pipeline](#stock-pipeline) —
-at the repository root, uncommitted, for you to review and check in.
-When it writes a new file, init asks one question: whether the stock
-Claude runner should include `--permission-mode bypassPermissions`.
-The default is no — saying yes is a real grant (see
-[Stock pipeline](#stock-pipeline)), and the diff you commit is where
-that decision gets reviewed. Declining has a cost too: a headless run
-then fails at the first tool the agent is not allowed to use, unless
-you curate an `--allowedTools` list — also under
-[Stock pipeline](#stock-pipeline).
+This creates the Linear team if it is missing and, on a first run,
+holds a short conversation to fit the
+[stock planning → implementing → review pipeline](#stock-pipeline)
+onto the board the team already has: it shows the team's existing
+statuses, asks whether to include the optional planning and
+agent-review stages, and offers to create the stock statuses the chosen
+pipeline references — or, on customize, to map each one onto a status
+you already have. Existing statuses are never modified, and init says
+which statuses it creates and which it reuses before it acts. It then
+writes `lerp.toml` at the repository root, uncommitted, for you to
+review and check in.
+
+The conversation's last question is whether the stock Claude runner
+should include `--permission-mode bypassPermissions`. The default is no
+— saying yes is a real grant (see [Stock pipeline](#stock-pipeline)),
+and the diff you commit is where that decision gets reviewed. Declining
+has a cost too: a headless run then fails at the first tool the agent
+is not allowed to use, unless you curate an `--allowedTools` list —
+also under [Stock pipeline](#stock-pipeline). Piped input or `--yes`
+skips the conversation and takes the stock answers: the full pipeline,
+stock status names, no bypass grant.
 
 `lerp init` is safe to repeat: it creates only missing Linear
 structure and never replaces an existing `lerp.toml` — it verifies

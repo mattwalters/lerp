@@ -8,9 +8,10 @@
 # `on_success` pointers below. Rewrite them into a different shape, or delete
 # queues entirely, and no lerp code changes.
 #
-# Tickets enter by where a human puts them. A big feature is promoted into
-# Planning; a small fix goes straight to Implementing. That placement is the
-# routing decision — there is no syntax for it here.
+# Tickets enter by where a human puts them; that placement is the routing
+# decision — there is no syntax for it here.
+# A big feature is promoted into "Planning"; a small fix goes straight
+# to "Implementing".
 
 # Linear team keys this repo serves. One repo may serve several teams (the
 # monorepo case); two repos may never claim the same team.
@@ -114,9 +115,10 @@ can send the work back through implementation. A clean review leaves
 {{ticket}} for a human to merge.
 """
 
-# On a clean review the ticket lands in "In Review" — a status no queue
-# watches, which is how work leaves the automated path. A human merges the
-# pull request, and Linear's GitHub integration moves the ticket to Done.
+# "In Review" is where work leaves the automated path: no queue watches
+# it, so a ticket that lands there on success waits for a human to merge the
+# pull request — and Linear's GitHub integration moves it to Done.
 #
-# "Needs Attention" is the same idea for failures: no queue watches it, so a
-# ticket that lands there waits for you rather than being retried forever.
+# "Needs Attention" is the same idea for failures: no queue watches it,
+# so a ticket that lands there waits for you rather than being retried
+# forever.
