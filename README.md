@@ -26,6 +26,18 @@ not a shrug.
 Location: `$XDG_CONFIG_HOME/lerp/config.toml`, falling back to
 `~/.config/lerp/config.toml`.
 
+[config.example.toml](config.example.toml) is a working starting point —
+the planning → implementing → review pipeline, with prompts you can read
+and argue with. Copy it and edit:
+
+```bash
+mkdir -p ~/.config/lerp && cp config.example.toml ~/.config/lerp/config.toml
+```
+
+Read it before you run it. It grants the agent broad permissions and it
+assumes your runner can reach Linear; both are explained in the file and
+under [Stock pipeline](#stock-pipeline) below.
+
 ```toml
 # Max concurrent agents across all lanes. Optional; defaults to 5.
 lanes = 5
@@ -146,3 +158,35 @@ matters beyond appearances — Linear reports an issue as blocking its
 dependents until its status is a completed one, so a finished ticket in a
 status lerp had marked as in-progress would block everything waiting on it.
 Statuses that already exist are left exactly as you have them.
+
+## Stock pipeline
+
+[config.example.toml](config.example.toml) ships one opinion. Lerp holds
+none: the order below exists only in the config's `on_success` pointers, and
+rewriting them into a different shape needs no code change.
+
+| Status | Who acts | Then |
+| --- | --- | --- |
+| Backlog / Todo | you | bless a ticket into Planning, or into Implementing if it is small |
+| Planning | agent | posts a plan comment → Implementing |
+| Implementing | agent | commits, pushes, opens a PR with `gh` → Agent Review |
+| Agent Review | agent | posts a review verdict → In Review, or back to Implementing |
+| In Review | you | merge the PR; Linear's GitHub integration moves it to Done |
+| Needs Attention | you | where a failed run parks; no queue watches it, so nothing retries it |
+
+Which ticket enters where is the only routing decision, and it is made by
+moving a ticket, not by configuration.
+
+Two things the stock config assumes, both worth a deliberate look before you
+run it:
+
+- **The agent needs its own Linear access.** Lerp passes the ticket
+  identifier and nothing else — never the ticket body — and every durable
+  artifact (the plan comment, the review verdict) is written by the agent,
+  not by lerp. For Claude Code that means configuring its Linear MCP server.
+- **The agent runs with permissions.** An unattended agent that cannot run
+  `git`, `gh`, or your tests just fails, so the stock runner uses
+  `--permission-mode bypassPermissions`. That grant is bounded by whatever
+  workspace your repo's `provision` builds — a throwaway worktree, with the
+  stock provisioning — but it is a real grant. Narrow it with
+  `--allowedTools` if you would rather.
