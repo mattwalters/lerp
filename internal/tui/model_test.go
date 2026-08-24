@@ -164,7 +164,7 @@ func TestQueueViewShowsWhatRunsNext(t *testing.T) {
 		"LERP-1", "ship the thing",
 		"blocked by LERP-1, LERP-9",
 		"LERP-3", "claimed",
-		"review", "In Review", `empty — tickets enter when moved to "In Review"`,
+		"review", `empty — tickets enter when moved to "In Review"`,
 	} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("queue view is missing %q:\n%s", want, view)
@@ -182,6 +182,35 @@ func TestQueueViewShowsWhatRunsNext(t *testing.T) {
 	}
 	if !strings.Contains(view, `empty — tickets enter when moved to "Todo"`) {
 		t.Fatalf("emptied queue does not read empty:\n%s", view)
+	}
+}
+
+// Narrow terminals truncate the explanatory empty states instead of letting
+// them soft-wrap, which would defeat the height cap's line accounting.
+func TestNarrowWidthTruncatesEmptyStates(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, tea.WindowSizeMsg{Width: 40, Height: 30})
+
+	m = update(t, m, keyMsg("3"))
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Team: "LERP", Name: "review", Status: "A Status With A Very Long Name"},
+	}}})
+	view := m.View()
+	if strings.Contains(view, `moved to "A Status With A Very Long Name"`) {
+		t.Fatalf("empty-queue line was not truncated at narrow width:\n%s", view)
+	}
+	if !strings.Contains(view, "…") {
+		t.Fatalf("truncated empty-queue line shows no ellipsis:\n%s", view)
+	}
+
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention}})
+	view = m.View()
+	if strings.Contains(view, "no queue serves)") {
+		t.Fatalf("attention hint was not truncated at narrow width:\n%s", view)
+	}
+	if !strings.Contains(view, "…") {
+		t.Fatalf("truncated attention hint shows no ellipsis:\n%s", view)
 	}
 }
 

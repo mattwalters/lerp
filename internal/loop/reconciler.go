@@ -245,6 +245,11 @@ func (r *Reconciler) Tick(ctx context.Context) {
 	r.attention(ctx)
 }
 
+// AttentionDefinition is the operator-facing one-line description of the
+// rule attention implements, rendered by the TUI's empty state. It lives
+// here, next to the rule, so the two change in the same hunk.
+const AttentionDefinition = "your claimed tickets sitting in statuses no queue serves"
+
 // attention recomputes what is blocked on the operator and emits it as one
 // EventAttention carrying the whole list.
 //
