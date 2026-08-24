@@ -15,6 +15,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/mattwalters/lerp/internal/linear"
 	"github.com/mattwalters/lerp/internal/loop"
@@ -970,11 +971,11 @@ func fillBoard(t *testing.T, m model, n int) model {
 	}}})
 }
 
-// Every panel asks for the rows it will render and the focused one absorbs
-// the slack: with 15 items waiting and every queue empty, needs-you gets the
-// whole column and renders all 15. Moving focus moves the space — there is
-// no expand key, only focus.
-func TestFocusedPanelTakesTheSlack(t *testing.T) {
+// Needs-you gets the room: with 15 items waiting and every queue empty, it
+// takes what work does not, work asks only for the rows it renders — and
+// none of that moves when focus does. The geometry is the same screen
+// whichever panel the operator is working in.
+func TestNeedsYouTakesTheRoomAndFocusDoesNotMoveIt(t *testing.T) {
 	m, _, _ := newTestModel(t, 3)
 	resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	m = resized.(model)
@@ -995,8 +996,12 @@ func TestFocusedPanelTakesTheSlack(t *testing.T) {
 	if got := g.attnH + g.workH; got != g.bodyH {
 		t.Fatalf("stack is %d lines in a %d-line body", got, g.bodyH)
 	}
-	if g.workH != collapsedH {
-		t.Fatalf("an empty work panel reserved a body: %d lines", g.workH)
+	rows, _ := m.workListRows(g.sideW - 2)
+	if g.workH != len(rows)+2 {
+		t.Fatalf("work is %d lines for %d rows it renders", g.workH, len(rows))
+	}
+	if g.attnH != g.bodyH-g.workH {
+		t.Fatalf("needs-you is %d lines, want the other %d", g.attnH, g.bodyH-g.workH)
 	}
 	view := m.View()
 	for i := 1; i <= 15; i++ {
@@ -1008,23 +1013,20 @@ func TestFocusedPanelTakesTheSlack(t *testing.T) {
 		t.Fatalf("needs-you cut its list with room left over:\n%s", view)
 	}
 
-	// Focus moves, and the slack moves with it: needs-you falls back to the
-	// rows it renders, work takes what is left.
+	// Focus moves and the stack does not: work never grows past its share
+	// just because it is the panel being worked in. (The main pane still
+	// fits its own content, and focus changes which row that content is.)
 	m = update(t, m, keyMsg("2"))
-	g2 := m.geometry()
-	rows, _ := m.attentionRows(g2.sideW - 2)
-	if g2.attnH != len(rows)+2 {
-		t.Fatalf("unfocused needs-you is %d lines for %d rows", g2.attnH, len(rows))
-	}
-	if g2.workH <= g.workH || g2.workH != g.bodyH-g2.attnH {
-		t.Fatalf("work did not take the slack on focus: %d lines", g2.workH)
+	if g2 := m.geometry(); g2.attnH != g.attnH || g2.workH != g.workH {
+		t.Fatalf("focus moved the stack: needs-you %d→%d, work %d→%d",
+			g.attnH, g2.attnH, g.workH, g2.workH)
 	}
 }
 
-// A panel with nothing to show costs one line — its own title row — and
-// takes its body back the moment the operator focuses it. Content drives
-// this; no toggle.
-func TestEmptyPanelsCostOneLine(t *testing.T) {
+// A quiet work panel is still a panel: empty, unfocused, or both, it keeps
+// its border and enough rows to read as a box rather than a stray line
+// above the status bar.
+func TestQuietWorkPanelKeepsItsBox(t *testing.T) {
 	m, _, _ := newTestModel(t, 3)
 	resized, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 30})
 	m = resized.(model)
@@ -1034,55 +1036,66 @@ func TestEmptyPanelsCostOneLine(t *testing.T) {
 	}}})
 
 	m = update(t, m, keyMsg("1"))
+	g := m.geometry()
+	if g.workH < panelFloor {
+		t.Fatalf("an empty unfocused work panel is %d lines, under the floor", g.workH)
+	}
 	view := m.View()
-	if want := "[2] work · 0/3 running — nothing queued"; !strings.Contains(view, want) {
-		t.Fatalf("collapsed panel is missing %q:\n%s", want, view)
-	}
-	if strings.Contains(view, "plan · Planning") {
-		t.Fatalf("collapsed work panel still reserved a body:\n%s", view)
-	}
-
-	// Focusing a collapsed panel opens it: the queue is back, empty and
-	// named, so the operator can see what would have to move to fill it.
-	m = update(t, m, keyMsg("2"))
-	view = m.View()
-	if strings.Contains(view, "nothing queued") {
-		t.Fatalf("focused work panel stayed collapsed:\n%s", view)
-	}
 	if !strings.Contains(view, "plan · Planning · LERP · empty") {
-		t.Fatalf("focused work panel does not show its queues:\n%s", view)
+		t.Fatalf("empty work panel does not show its queues:\n%s", view)
+	}
+	if strings.Count(view, "╭") != 3 {
+		t.Fatalf("a panel lost its border with nothing to show:\n%s", view)
+	}
+	m = update(t, m, keyMsg("2"))
+	if g2 := m.geometry(); g2.workH != g.workH {
+		t.Fatalf("focusing the empty work panel resized it: %d then %d lines",
+			g.workH, g2.workH)
 	}
 }
 
-// When the two panels want more than the body between them, the unfocused
-// one is squeezed to the floor before the panel being worked in gives up a
-// row — and the stack still fits, so the status bar stays on screen.
-func TestOverflowSqueezesTheUnfocusedPanelFirst(t *testing.T) {
+// Work is capped at about a third of the column however long its list is,
+// so a full board still leaves needs-you the other two thirds. The overflow
+// is the focus window's job: the selection stays on screen as it walks past
+// the bottom of the capped panel.
+func TestWorkIsCappedAndScrollsUnderTheCap(t *testing.T) {
 	m, _, _ := newTestModel(t, 6)
-	resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
+	resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	m = resized.(model)
 	m = fillBoard(t, m, 40)
 
-	m = update(t, m, keyMsg("1"))
+	m = update(t, m, keyMsg("2"))
 	g := m.geometry()
 	if got := g.attnH + g.workH; got != g.bodyH {
 		t.Fatalf("overflowing stack is %d lines in a %d-line body", got, g.bodyH)
 	}
-	if g.workH != panelFloor {
-		t.Fatalf("the unfocused panel is not at the floor: %d lines", g.workH)
+	if want := g.bodyH / 3; g.workH != want {
+		t.Fatalf("work is %d lines of a %d-line body, want its %d-line share",
+			g.workH, g.bodyH, want)
 	}
-	if want := g.bodyH - panelFloor; g.attnH != want {
-		t.Fatalf("focused needs-you is %d lines, want %d", g.attnH, want)
+	if g.attnH < 2*g.bodyH/3 {
+		t.Fatalf("needs-you is %d lines of a %d-line body, under its two thirds",
+			g.attnH, g.bodyH)
 	}
-	if lines := strings.Count(m.View(), "\n") + 1; lines > 24 {
-		t.Fatalf("view is %d lines tall in a 24-line window", lines)
+	if lines := strings.Count(m.View(), "\n") + 1; lines > 40 {
+		t.Fatalf("view is %d lines tall in a 40-line window", lines)
 	}
 
-	// The squeeze follows focus, like the slack does.
-	m = update(t, m, keyMsg("2"))
-	g = m.geometry()
-	if g.attnH != panelFloor || g.workH != g.bodyH-panelFloor {
-		t.Fatalf("focus did not move the squeeze: needs-you %d, work %d", g.attnH, g.workH)
+	// Walking the selection down a list longer than the cap keeps it on
+	// screen: the panel scrolls around it rather than growing.
+	for i := 0; i < 30; i++ {
+		m = update(t, m, keyMsg("down"))
+	}
+	if g2 := m.geometry(); g2.workH != g.workH {
+		t.Fatalf("work grew as the selection walked: %d then %d lines", g.workH, g2.workH)
+	}
+	rows, sel := m.workListRows(g.sideW - 2)
+	if sel < 0 {
+		t.Fatal("work has no selection to keep on screen")
+	}
+	want := strings.TrimRight(ansi.Strip(rows[sel]), " ")
+	if !strings.Contains(ansi.Strip(m.View()), want) {
+		t.Fatalf("the selected row walked off the capped panel:\n%s", m.View())
 	}
 }
 
