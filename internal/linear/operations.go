@@ -20,7 +20,12 @@ type issueNode struct {
 		ID string `json:"id"`
 	} `json:"assignee"`
 	// Linear types priority as a Float, so it decodes as one.
-	Priority         float64 `json:"priority"`
+	Priority float64 `json:"priority"`
+	// Project is requested only by the two queries the attention pass runs;
+	// it decodes as nil everywhere else, which is the same as no project.
+	Project *struct {
+		Name string `json:"name"`
+	} `json:"project"`
 	InverseRelations struct {
 		Nodes []struct {
 			Type  string `json:"type"`
@@ -53,6 +58,9 @@ func (n issueNode) toIssue() Issue {
 		URL:        n.URL,
 		Status:     n.State.Name,
 		Priority:   int(n.Priority),
+	}
+	if n.Project != nil {
+		is.Project = n.Project.Name
 	}
 	if n.Assignee != nil {
 		is.AssigneeID = n.Assignee.ID
@@ -155,6 +163,7 @@ query ListAssignedIssues($team: String!, $assignee: ID!, $after: String) {
       state { name }
       assignee { id }
       priority
+      project { name }
       inverseRelations(first: 50) {
         nodes {
           type
@@ -172,8 +181,9 @@ query ListAssignedIssues($team: String!, $assignee: ID!, $after: String) {
 }`
 
 // ListAssignedIssues returns the team's unfinished issues assigned to the
-// user, in any workflow state — the read behind the attention view (see
-// Client). Completed and canceled issues are filtered out server-side.
+// user, in any workflow state — the other half of the read behind the
+// needs-you view (see Client). Completed and canceled issues are filtered
+// out server-side.
 func (c *HTTP) ListAssignedIssues(ctx context.Context, teamKey, assigneeID string) ([]Issue, error) {
 	issues, err := c.listIssues(ctx, listAssignedIssuesQuery, map[string]any{"team": teamKey, "assignee": assigneeID})
 	if err != nil {
@@ -202,6 +212,7 @@ query ListUnassignedIssues($team: String!, $after: String) {
       state { name }
       assignee { id }
       priority
+      project { name }
       inverseRelations(first: 50) {
         nodes {
           type
@@ -219,7 +230,7 @@ query ListUnassignedIssues($team: String!, $after: String) {
 }`
 
 // ListUnassignedIssues returns the team's unclaimed issues, in any workflow
-// state — the read behind needs-you's "to route" group (see Client).
+// state — half of the read behind the needs-you view (see Client).
 // Completed and canceled issues are filtered out server-side.
 func (c *HTTP) ListUnassignedIssues(ctx context.Context, teamKey string) ([]Issue, error) {
 	issues, err := c.listIssues(ctx, listUnassignedIssuesQuery, map[string]any{"team": teamKey})

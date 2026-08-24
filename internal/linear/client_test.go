@@ -141,12 +141,18 @@ func TestListAssignedIssues(t *testing.T) {
 		if !strings.Contains(req.Query, `nin: ["completed", "canceled"]`) {
 			t.Errorf("query does not exclude finished states: %q", req.Query)
 		}
+		// The needs-you table has a project column, so this is one of the
+		// two queries that asks for one.
+		if !strings.Contains(req.Query, "project { name }") {
+			t.Errorf("query does not read the project: %q", req.Query)
+		}
 		writeData(t, w, `{"issues":{
 			"pageInfo":{"hasNextPage":false,"endCursor":""},
 			"nodes":[{
 				"id":"iss-1","identifier":"LERP-1","title":"First","state":{"name":"Needs Help"},
 				"url":"https://linear.app/acme/issue/LERP-1/first",
 				"assignee":{"id":"user-9"},
+				"project":{"name":"Open-source readiness"},
 				"inverseRelations":{"nodes":[]}
 			}]
 		}}`)
@@ -158,7 +164,8 @@ func TestListAssignedIssues(t *testing.T) {
 	}
 	want := []Issue{
 		{ID: "iss-1", Identifier: "LERP-1", Title: "First", Status: "Needs Help",
-			AssigneeID: "user-9", URL: "https://linear.app/acme/issue/LERP-1/first"},
+			AssigneeID: "user-9", URL: "https://linear.app/acme/issue/LERP-1/first",
+			Project: "Open-source readiness"},
 	}
 	if !reflect.DeepEqual(issues, want) {
 		t.Errorf("issues = %+v, want %+v", issues, want)
@@ -177,12 +184,18 @@ func TestListUnassignedIssues(t *testing.T) {
 		if !strings.Contains(req.Query, `nin: ["completed", "canceled"]`) {
 			t.Errorf("query does not exclude finished states: %q", req.Query)
 		}
+		if !strings.Contains(req.Query, "project { name }") {
+			t.Errorf("query does not read the project: %q", req.Query)
+		}
+		// A ticket in no project decodes as a null, which is the empty
+		// name the table draws as a dash.
 		writeData(t, w, `{"issues":{
 			"pageInfo":{"hasNextPage":false,"endCursor":""},
 			"nodes":[{
 				"id":"iss-1","identifier":"LERP-1","title":"First","state":{"name":"Backlog"},
 				"url":"https://linear.app/acme/issue/LERP-1/first",
 				"assignee":null,
+				"project":null,
 				"inverseRelations":{"nodes":[]}
 			}]
 		}}`)

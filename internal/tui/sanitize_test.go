@@ -174,8 +174,8 @@ func TestCleanEventScrubsEveryLinearString(t *testing.T) {
 			}},
 		}},
 		Attention: []loop.AttentionItem{{
-			Group: loop.AttentionGroup(hostile), Ticket: hostile, TicketID: hostile,
-			Title: hostile, Status: hostile, Reason: hostile, URL: hostile,
+			Ticket: hostile, TicketID: hostile, Title: hostile, Status: hostile,
+			Project: hostile, Reason: hostile, URL: hostile,
 		}},
 	})
 
@@ -186,9 +186,9 @@ func TestCleanEventScrubsEveryLinearString(t *testing.T) {
 		"Tickets.ID": tk.ID, "Tickets.Identifier": tk.Identifier,
 		"Tickets.Title": tk.Title, "Tickets.URL": tk.URL,
 		"Tickets.BlockedBy": tk.BlockedBy[0],
-		"Attention.Group":   string(it.Group), "Attention.Ticket": it.Ticket,
-		"Attention.TicketID": it.TicketID, "Attention.Title": it.Title,
-		"Attention.Status": it.Status, "Attention.Reason": it.Reason,
+		"Attention.Ticket":  it.Ticket, "Attention.TicketID": it.TicketID,
+		"Attention.Title": it.Title, "Attention.Status": it.Status,
+		"Attention.Project": it.Project, "Attention.Reason": it.Reason,
 		"Attention.URL": it.URL,
 	} {
 		if got != "gotcha " {

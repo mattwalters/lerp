@@ -225,9 +225,9 @@ func cleanEvent(ev loop.Event) loop.Event {
 	ev.Attention = slices.Clone(ev.Attention)
 	for i := range ev.Attention {
 		it := &ev.Attention[i]
-		it.Group = loop.AttentionGroup(clean(string(it.Group)))
 		it.Ticket, it.TicketID = clean(it.Ticket), clean(it.TicketID)
 		it.Title, it.Status = clean(it.Title), clean(it.Status)
+		it.Project = clean(it.Project)
 		it.Reason, it.URL = clean(it.Reason), clean(it.URL)
 	}
 	return ev

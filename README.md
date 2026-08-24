@@ -301,13 +301,23 @@ status, in the loop's own pickup order, refreshed on every pass —
 eligible tickets run as lanes free up, and blocked or claimed ones are
 shown faint with the reason. It is read-only; to change what runs
 next, move tickets in Linear. The Needs-you view lists what waits on a
-human in two groups: unclaimed tickets sitting in a status no queue
-serves (to route), and the operator's own claimed tickets sitting the
-same way (parked on them) — each with the reason and a link. To route
-is ordered by leverage: how many other listed tickets promoting this
-one would transitively unblock, then priority, then identifier — so
-the promote worth making is the top row. Every row carries that count,
-its priority, and whether something still blocks it. Selecting a row
+human: unclaimed tickets, and the operator's own claimed tickets,
+sitting in a status no queue serves. It is a table, one row per
+ticket, carrying the identifier, the leverage, the title, the real
+Linear status, the project and the priority — the vocabulary is
+Linear's own, never a category invented by lerp. A status the
+configured pipeline never names — neither a queue's status nor any
+`on_success` or `on_failure` target — is marked, because that is the
+fingerprint of a ticket that left the pipeline. Rows are ordered by
+leverage by default: how many other listed tickets promoting this one
+would transitively unblock, then priority, then identifier — so the
+promote worth making is the top row. `s` cycles that to priority,
+status or project; the two grouping modes draw a header per group, and
+the status order is derived from the pipeline itself — where runs
+fail, then where they finish, then the statuses it never names. `P`
+scopes the panel to one project and cycles back to all. Both are
+session-only: no saved views, no filter syntax, and neither changes
+which tickets are fetched. Selecting a row
 reads the ticket itself into the main pane: its body, and the comments
 on it — the plan, the review verdict, the note a failed run left — so
 a parked ticket can be decided from that one screen. That is a read
@@ -317,10 +327,11 @@ one and press `p` to promote it: pick a target from the configured
 queue statuses or a pipeline exit, and lerp moves it there. That
 MoveIssue is the only write any view makes; everything else about a
 ticket still happens in Linear. Keys: `1`/`2`/`3` choose a view and
-`tab` cycles. `↑`/`↓` pick a lane or a needs-you item, `o` opens the
-selected ticket in Linear, `pgup`/`pgdn` scroll the log or the ticket,
-`end` resumes following, `r` shows the raw log, `q` quits (or backs out
-of the promote picker).
+`tab` cycles. `↑`/`↓` pick a lane or a needs-you item, `s` sorts
+needs-you and `P` scopes it to a project, `o` opens the selected ticket
+in Linear, `pgup`/`pgdn` scroll the log or the ticket, `end` resumes
+following, `r` shows the raw log, `q` quits (or backs out of the
+promote picker).
 
 Quitting (`q` or `ctrl+c`) closes the screen, stops future passes, and
 waits briefly for a pass already in flight to settle. The agents are

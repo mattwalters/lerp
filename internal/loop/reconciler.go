@@ -83,39 +83,78 @@ type QueueSnapshot struct {
 	Tickets []QueueTicket
 }
 
-// AttentionGroup names which half of the needs-you view an item belongs to.
-type AttentionGroup string
+// StatusRelevance is what the configured pipeline says about the status a
+// waiting ticket rests in, derived from lerp.toml and nothing else. It is
+// the needs-you table's status ordering, and the reason a ticket that left
+// the pipeline is worth marking on sight.
+type StatusRelevance int
 
 const (
-	// ToRoute is unclaimed work sitting in a status no queue serves: nobody
-	// has put it on the board yet.
-	ToRoute AttentionGroup = "to route"
-	// Parked is a ticket the operator claimed that sits in a status no
-	// queue serves — parked there deliberately, or landed there by a failed
-	// run's on_failure move.
-	Parked AttentionGroup = "parked on you"
+	// StatusUnknown is the zero value: nothing has said what the pipeline
+	// makes of this status. attention() sets a real rank on every item, so
+	// an item carrying this is a bug — it sorts first and says so, rather
+	// than impersonating a failed run the way the zero value used to.
+	StatusUnknown StatusRelevance = iota
+	// StatusFailed is a status some queue's on_failure points at: a run
+	// failed here.
+	StatusFailed
+	// StatusFinished is an on_success target no queue serves: a run
+	// finished here, and the next move is a human's.
+	StatusFinished
+	// StatusUnnamed is a status the pipeline never names — neither a
+	// queue's own status nor any on_success or on_failure target. It is the
+	// fingerprint of a ticket that left the pipeline: an external
+	// automation moved it, or a human dragged it.
+	StatusUnnamed
+	// StatusOther is a status the pipeline serves. A waiting ticket is
+	// never in one, since attention lists only unserved statuses; the rank
+	// exists so the ordering is total for any status handed to it.
+	StatusOther
 )
+
+// Note is the short phrase the needs-you table prints beside a status
+// header, so an ordering derived from config still explains itself.
+func (r StatusRelevance) Note() string {
+	switch r {
+	case StatusFailed:
+		return "a run failed here"
+	case StatusFinished:
+		return "a run finished here"
+	case StatusUnnamed:
+		return "the pipeline never names it"
+	case StatusOther:
+		return "a queue serves it"
+	}
+	return "relevance unknown"
+}
 
 // AttentionItem is one ticket waiting on the operator: what it is, why it
 // needs a human, and Linear's URL for it. TicketID is Linear's internal id —
 // what Promote and MoveIssue take; Ticket is the human identifier shown on
 // screen.
 type AttentionItem struct {
-	Group    AttentionGroup
 	Ticket   string // human identifier, e.g. LERP-42
 	TicketID string
 	Title    string
-	Status   string
-	Reason   string
-	URL      string
+	Status   string // the real Linear status name, never a synonym
+	// Project is Linear's own project for the ticket, empty when it has
+	// none — a column on the row and the one thing the table's filter
+	// scopes to.
+	Project string
+	// Relevance is what the pipeline says about Status. Nothing in the loop
+	// acts on it; it is carried so the table can order and mark statuses
+	// without a second reading of the config.
+	Relevance StatusRelevance
+	Reason    string
+	URL       string
 	// Priority is Linear's own scale: 0 none, 1 urgent, 2 high, 3 medium,
-	// 4 low. It orders the to-route group under leverage and is shown on
-	// the row; nothing in the loop acts on it.
+	// 4 low. It is a sort key and a column on the row; nothing in the loop
+	// acts on it.
 	Priority int
 	// BlockedBy names every unfinished ticket holding this one up, listed
 	// or not; Blocks names the unfinished tickets it holds up. Unblocks is
 	// how many other listed tickets it transitively frees — the leverage of
-	// routing it, and the to-route group's first sort key.
+	// routing it, and the table's default sort key.
 	BlockedBy []string
 	Blocks    []string
 	Unblocks  int
@@ -284,18 +323,24 @@ func (r *Reconciler) Tick(ctx context.Context) {
 const AttentionDefinition = "unclaimed tickets, and your claimed tickets, sitting in statuses no queue serves"
 
 // attention recomputes what needs the operator and emits it as one
-// EventAttention carrying the whole list, to-route items before parked ones.
+// EventAttention carrying the whole list, in identifier order. Ordering is
+// display and belongs to the view that offers the operator a choice of it;
+// what the pass owes the table is the facts each row is sorted, grouped and
+// filtered by — leverage, priority, project, and what the pipeline says
+// about the status.
 //
 // The v0 definition of "needs you", in full: a ticket needs the operator
-// when it sits in a status no queue serves, and is either unassigned (to
-// route — nobody has put it on the board yet) or assigned to the operating
-// user (parked on them — deliberately, or landed there by a failed run's
-// on_failure move). Deliberately out of v0: a claimed ticket sitting in a
-// queue status with no live run in a lane (a failed run whose queue has no
-// on_failure route). From one Linear read that state is indistinguishable
-// from a live run under the same user on another machine, so v0 leaves it to
-// the log line conclude writes. This is a reading of the board plus a place
-// to route from, not a general inbox; resist growing it further.
+// when it sits in a status no queue serves, and is either unassigned —
+// nobody has put it on the board yet — or assigned to the operating user,
+// resting there deliberately or landed there by a failed run's on_failure
+// move. That split is a fact of the two queries and never a heading: the
+// status the ticket is actually in says far more about what to do with it.
+// Deliberately out of v0: a claimed ticket sitting in a queue status with
+// no live run in a lane (a failed run whose queue has no on_failure route).
+// From one Linear read that state is indistinguishable from a live run
+// under the same user on another machine, so v0 leaves it to the log line
+// conclude writes. This is a reading of the board plus a place to route
+// from, not a general inbox; resist growing it further.
 //
 // A pass that could not list every team emits nothing: the failure is
 // reported and the subscriber keeps its last full list, because a partial
@@ -307,7 +352,29 @@ func (r *Reconciler) attention(ctx context.Context) {
 		return
 	}
 	served := servedStatuses(r.o.Repo)
-	var toRoute, parked []AttentionItem
+	relevance := statusRelevance(r.o.Repo)
+	var items []AttentionItem
+	// claim is how the ticket came to rest here — the difference between the
+	// two queries, kept where it belongs: in the sentence explaining one row.
+	add := func(issue linear.Issue, claim string) {
+		if served[issue.Status] {
+			return
+		}
+		rel := relevance(issue.Status)
+		items = append(items, AttentionItem{
+			Ticket:    issue.Identifier,
+			TicketID:  issue.ID,
+			Title:     issue.Title,
+			Status:    issue.Status,
+			Project:   issue.Project,
+			Relevance: rel,
+			Reason:    fmt.Sprintf("%s in %q — %s", claim, issue.Status, rel.Note()),
+			URL:       issue.URL,
+			Priority:  issue.Priority,
+			BlockedBy: issue.BlockedBy,
+			Blocks:    issue.Blocks,
+		})
+	}
 	for _, team := range r.o.Repo.Teams {
 		unassigned, err := r.o.Client.ListUnassignedIssues(ctx, team)
 		if err != nil {
@@ -315,21 +382,7 @@ func (r *Reconciler) attention(ctx context.Context) {
 			return
 		}
 		for _, issue := range unassigned {
-			if served[issue.Status] {
-				continue
-			}
-			toRoute = append(toRoute, AttentionItem{
-				Group:     ToRoute,
-				Ticket:    issue.Identifier,
-				TicketID:  issue.ID,
-				Title:     issue.Title,
-				Status:    issue.Status,
-				Reason:    fmt.Sprintf("unassigned in %q — no queue serves it", issue.Status),
-				URL:       issue.URL,
-				Priority:  issue.Priority,
-				BlockedBy: issue.BlockedBy,
-				Blocks:    issue.Blocks,
-			})
+			add(issue, "unassigned")
 		}
 
 		assigned, err := r.o.Client.ListAssignedIssues(ctx, team, viewerID)
@@ -338,59 +391,12 @@ func (r *Reconciler) attention(ctx context.Context) {
 			return
 		}
 		for _, issue := range assigned {
-			if served[issue.Status] {
-				continue
-			}
-			parked = append(parked, AttentionItem{
-				Group:     Parked,
-				Ticket:    issue.Identifier,
-				TicketID:  issue.ID,
-				Title:     issue.Title,
-				Status:    issue.Status,
-				Reason:    fmt.Sprintf("claimed in %q — no queue serves it", issue.Status),
-				URL:       issue.URL,
-				Priority:  issue.Priority,
-				BlockedBy: issue.BlockedBy,
-				Blocks:    issue.Blocks,
-			})
+			add(issue, "claimed")
 		}
 	}
-	items := make([]AttentionItem, 0, len(toRoute)+len(parked))
-	items = append(items, toRoute...)
-	items = append(items, parked...)
 	countUnblocks(items)
-	route, park := items[:len(toRoute)], items[len(toRoute):]
-	// To route is ordered by leverage: what frees the most other listed
-	// tickets first, so the promote worth making is the top row. Parked
-	// keeps its identifier order — nothing is waiting on those.
-	sort.Slice(route, func(i, j int) bool {
-		a, b := route[i], route[j]
-		// A blocked ticket cannot usefully be routed anywhere yet, so it
-		// sorts below every ticket that can be — however much it would
-		// unblock once its own blocker clears.
-		if ablocked, bblocked := len(a.BlockedBy) > 0, len(b.BlockedBy) > 0; ablocked != bblocked {
-			return bblocked
-		}
-		if a.Unblocks != b.Unblocks {
-			return a.Unblocks > b.Unblocks
-		}
-		if ra, rb := priorityRank(a.Priority), priorityRank(b.Priority); ra != rb {
-			return ra < rb
-		}
-		return a.Ticket < b.Ticket
-	})
-	sort.Slice(park, func(i, j int) bool { return park[i].Ticket < park[j].Ticket })
+	sort.Slice(items, func(i, j int) bool { return items[i].Ticket < items[j].Ticket })
 	r.emit(Event{Type: EventAttention, Attention: items})
-}
-
-// priorityRank turns Linear's priority into a sort key. The scale runs
-// urgent (1) to low (4) but puts "no priority" at 0, which would otherwise
-// sort ahead of urgent; unset means unranked, so it goes last.
-func priorityRank(p int) int {
-	if p == 0 {
-		return 5
-	}
-	return p
 }
 
 // countUnblocks fills in Unblocks: how many other items each one transitively

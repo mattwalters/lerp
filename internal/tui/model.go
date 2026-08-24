@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"os/exec"
@@ -90,6 +91,52 @@ func (p panel) String() string {
 	default:
 		return "up next"
 	}
+}
+
+// sortMode is the needs-you table's one control. Sorting is grouping: the
+// mode picks the row order and, with it, whether the table draws headers —
+// two flat modes for working a list top-down, two grouped ones for reading
+// the board by the column they sort on. Deliberately not behind it: a sort
+// builder, secondary sort keys, per-column toggles.
+type sortMode int
+
+const (
+	sortLeverage sortMode = iota
+	sortPriority
+	sortStatus
+	sortProject
+	sortModes // the count, so one key can cycle them
+)
+
+func (s sortMode) String() string {
+	switch s {
+	case sortPriority:
+		return "priority"
+	case sortStatus:
+		return "status"
+	case sortProject:
+		return "project"
+	}
+	return "leverage"
+}
+
+// grouped reports whether the mode draws a header above each run of rows.
+func (s sortMode) grouped() bool { return s == sortStatus || s == sortProject }
+
+// header is the group an item belongs to under this mode, and the short
+// derived note that says why that group sits where it does. The flat modes
+// return nothing and draw no headers.
+func (s sortMode) header(it loop.AttentionItem) (string, string) {
+	switch s {
+	case sortStatus:
+		return it.Status, it.Relevance.Note()
+	case sortProject:
+		if it.Project == "" {
+			return "no project", ""
+		}
+		return it.Project, ""
+	}
+	return "", ""
 }
 
 // laneState is the runner state a lane row shows.
@@ -198,9 +245,19 @@ type model struct {
 	// attention is the loop's latest full list of what waits on the operator;
 	// attentionSeen separates "no pass has reported yet" from the goal state,
 	// so an empty panel never claims "nothing needs you" before it is known.
+	// shown is that list under the current sort and filter — what the panel
+	// actually renders, and what attnSel indexes.
 	attention     []loop.AttentionItem
 	attentionSeen bool
-	attnSel       int // index into attention; the promote target
+	shown         []loop.AttentionItem
+	attnSel       int // index into shown; the promote target
+
+	// sortMode and project are the table's two session-only controls: one
+	// key cycles the order, another scopes the rows to a single Linear
+	// project ("" is every project). Neither is saved anywhere — they are a
+	// way to read one list the pass already fetched, not a view to keep.
+	sortMode sortMode
+	project  string
 
 	// details is what the Reader has returned, keyed by ticket ID and kept
 	// for the process's lifetime: a stale body is a view of Linear, not
@@ -375,9 +432,20 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Down):
 		m.moveSelection(1)
 	case key.Matches(msg, m.keys.Promote):
-		if m.focus == panelAttention && len(m.attention) > 0 && len(m.o.Statuses) > 0 {
+		if m.focus == panelAttention && len(m.shown) > 0 && len(m.o.Statuses) > 0 {
 			m.promoting = true
 			m.promoteSel = 0
+		}
+	case key.Matches(msg, m.keys.Sort):
+		if m.focus == panelAttention {
+			m.sortMode = (m.sortMode + 1) % sortModes
+			m.resort()
+			m.refreshMain()
+		}
+	case key.Matches(msg, m.keys.Project):
+		if m.focus == panelAttention {
+			m.cycleProject()
+			m.refreshMain()
 		}
 	// The scroll keys move whatever the main pane shows; follow is the log's
 	// state alone, so a detour through a detail lens can never freeze the tail.
@@ -526,7 +594,7 @@ func (m *model) moveSelection(delta int) {
 			}
 		}
 	case panelAttention:
-		m.attnSel = clampIndex(m.attnSel+delta, len(m.attention))
+		m.attnSel = clampIndex(m.attnSel+delta, len(m.shown))
 		m.refreshMain()
 		m.vp.GotoTop()
 	case panelNext:
@@ -625,11 +693,17 @@ func (m *model) apply(ev loop.Event) {
 	case loop.EventAttention:
 		m.attention = ev.Attention
 		m.attentionSeen = true
+		// The filter is a choice about the list that was on screen. When the
+		// pass no longer has that project, the choice would hide the whole
+		// panel behind a name nothing waits in, so it resets to all.
+		if m.project != "" && !slices.Contains(m.projects(), m.project) {
+			m.project = ""
+		}
 		// A pass mid-picker may shrink or empty the list out from under it;
-		// clamp the selection and close the picker rather than index a
-		// ticket that is no longer there.
-		m.attnSel = clampIndex(m.attnSel, len(m.attention))
-		if len(m.attention) == 0 {
+		// resort clamps the selection, and the picker closes rather than
+		// promote a ticket that is no longer there.
+		m.resort()
+		if len(m.shown) == 0 {
 			m.promoting = false
 		}
 		changed = panelAttention
@@ -779,14 +853,150 @@ func (m *model) nextTicket() *loop.QueueTicket {
 	return &m.queues[r.qi].Tickets[r.ti]
 }
 
-// selectedAttention is the needs-you selection, nil when the list is empty —
+// selectedAttention is the needs-you selection, nil when nothing is shown —
 // the one place that owns the empty case, like nextTicket for the other
-// panel.
+// panel. It points into the sorted-and-filtered list, so the selection is
+// always the row under the cursor rather than a position in the pass's own
+// order.
 func (m *model) selectedAttention() *loop.AttentionItem {
-	if len(m.attention) == 0 {
+	if len(m.shown) == 0 {
 		return nil
 	}
-	return &m.attention[clampIndex(m.attnSel, len(m.attention))]
+	return &m.shown[clampIndex(m.attnSel, len(m.shown))]
+}
+
+// resort rebuilds the shown list under the current mode and filter. The
+// selection follows its ticket across the rebuild: pressing the sort key
+// moves the rows, never the cursor.
+func (m *model) resort() {
+	selected := ""
+	if it := m.selectedAttention(); it != nil {
+		selected = it.Ticket
+	}
+	m.shown = sortAttention(filterAttention(m.attention, m.project), m.sortMode)
+	i := slices.IndexFunc(m.shown, func(it loop.AttentionItem) bool { return it.Ticket == selected })
+	if selected == "" || i < 0 {
+		m.attnSel = clampIndex(m.attnSel, len(m.shown))
+		return
+	}
+	m.attnSel = i
+}
+
+// filterAttention scopes the list to one Linear project. There is no filter
+// syntax and no second query behind this: it is the project column, matched
+// whole, or every project.
+func filterAttention(items []loop.AttentionItem, project string) []loop.AttentionItem {
+	if project == "" {
+		return items
+	}
+	out := make([]loop.AttentionItem, 0, len(items))
+	for _, it := range items {
+		if it.Project == project {
+			out = append(out, it)
+		}
+	}
+	return out
+}
+
+// sortAttention orders a copy of items for the mode. Every mode falls
+// through to leverage and then to the identifier, so no two rows are ever
+// in an arbitrary order and no mode needs a second sort key configured.
+func sortAttention(items []loop.AttentionItem, mode sortMode) []loop.AttentionItem {
+	out := slices.Clone(items)
+	slices.SortFunc(out, func(a, b loop.AttentionItem) int {
+		switch mode {
+		case sortPriority:
+			if c := cmp.Compare(priorityRank(a.Priority), priorityRank(b.Priority)); c != 0 {
+				return c
+			}
+		case sortStatus:
+			// Pipeline-relevance first, so the statuses a run left a ticket
+			// in sort above the ones the pipeline never named.
+			if c := cmp.Compare(a.Relevance, b.Relevance); c != 0 {
+				return c
+			}
+			if c := strings.Compare(a.Status, b.Status); c != 0 {
+				return c
+			}
+		case sortProject:
+			if c := compareProject(a.Project, b.Project); c != 0 {
+				return c
+			}
+		}
+		return compareLeverage(a, b)
+	})
+	return out
+}
+
+// compareProject orders two project names, with a ticket in no project
+// last — "none" is not a name to file under, the same reason an unset
+// priority ranks below Low rather than above Urgent.
+func compareProject(a, b string) int {
+	if (a == "") != (b == "") {
+		if a == "" {
+			return 1
+		}
+		return -1
+	}
+	return strings.Compare(a, b)
+}
+
+// compareLeverage is the default order and every other mode's tiebreak:
+// what routing a ticket would free, then priority, then the identifier.
+func compareLeverage(a, b loop.AttentionItem) int {
+	// A blocked ticket cannot usefully be routed anywhere yet, so it sorts
+	// below every ticket that can be — however much it would unblock once
+	// its own blocker clears.
+	if ablocked, bblocked := len(a.BlockedBy) > 0, len(b.BlockedBy) > 0; ablocked != bblocked {
+		if ablocked {
+			return 1
+		}
+		return -1
+	}
+	if c := cmp.Compare(b.Unblocks, a.Unblocks); c != 0 {
+		return c
+	}
+	if c := cmp.Compare(priorityRank(a.Priority), priorityRank(b.Priority)); c != 0 {
+		return c
+	}
+	return strings.Compare(a.Ticket, b.Ticket)
+}
+
+// priorityRank turns Linear's priority into a sort key. The scale runs
+// urgent (1) to low (4) but puts "no priority" at 0, which would otherwise
+// sort ahead of urgent; unset means unranked, so it goes last.
+func priorityRank(p int) int {
+	if p == 0 {
+		return 5
+	}
+	return p
+}
+
+// projects lists the Linear projects present in the pass's list, in name
+// order — the filter's cycle. A ticket filed under none is not a project
+// and is not a stop on it.
+func (m *model) projects() []string {
+	var names []string
+	for _, it := range m.attention {
+		if it.Project != "" && !slices.Contains(names, it.Project) {
+			names = append(names, it.Project)
+		}
+	}
+	slices.Sort(names)
+	return names
+}
+
+// cycleProject advances the filter one stop: every project, then each
+// project present, then back to every project.
+func (m *model) cycleProject() {
+	names := m.projects()
+	switch i := slices.Index(names, m.project); {
+	case i+1 >= len(names):
+		m.project = ""
+	default:
+		m.project = names[i+1]
+	}
+	m.resort()
 }
 
 // geometry is the screen's arithmetic. One rule: every panel asks for the
@@ -823,7 +1033,10 @@ func (m *model) geometry() geometry {
 	// and the wants are counted from those very rows.
 	g.sideW, g.mainW = m.width, m.width
 	if g.wide {
-		g.sideW = max(28, m.width/3)
+		// Four columns need the room: a third of the terminal truncated the
+		// status column out of a real backlog. No resize key — the split is
+		// a proportion of the window, and the window is the knob.
+		g.sideW = max(28, m.width*45/100)
 		g.mainW = m.width - g.sideW
 	}
 
@@ -1010,48 +1223,115 @@ func marker(on bool) string {
 	return "  "
 }
 
-// attentionRows builds the needs-you panel's rows — group headers above
-// their tickets, each row width columns wide; sel is the selected row's
-// index (-1 with nothing to select), for the focus window.
+// attentionRows builds the needs-you table's rows — under a grouping mode,
+// a header above each run of them; sel is the selected row's index (-1 with
+// nothing to select), for the focus window.
 func (m *model) attentionRows(width int) ([]string, int) {
 	switch {
 	case !m.attentionSeen:
 		return []string{styleFaint.Render("reading the board…")}, -1
 	case len(m.attention) == 0:
 		return []string{styleFaint.Render("nothing needs you")}, -1
+	case len(m.shown) == 0:
+		return []string{styleFaint.Render("nothing needs you in " + m.project)}, -1
 	}
 	focused := m.focus == panelAttention
-	// Identifiers are padded to the widest one on the list so the leverage
-	// markers line up as a column worth scanning.
-	idW := 0
-	for _, it := range m.attention {
+	// Every column is padded to the widest cell on the list, so the four of
+	// them line up as columns worth scanning rather than as ragged text.
+	idW, statusW, projW := 0, 0, 0
+	for _, it := range m.shown {
 		idW = max(idW, lipgloss.Width(it.Ticket))
+		statusW = max(statusW, lipgloss.Width(it.Status))
+		projW = max(projW, lipgloss.Width(projectName(it.Project)))
 	}
 	var rows []string
 	sel := -1
-	group := loop.AttentionGroup("")
-	for i, it := range m.attention {
-		if it.Group != group {
-			group = it.Group
-			rows = append(rows, styleTicket.Render(string(group)))
+	header := ""
+	for i, it := range m.shown {
+		if m.sortMode.grouped() {
+			if h, note := m.sortMode.header(it); h != header {
+				header = h
+				row := styleTicket.Render(h)
+				if note != "" {
+					row += styleFaint.Render(" — " + note)
+				}
+				rows = append(rows, row)
+			}
 		}
 		if i == m.attnSel {
 			sel = len(rows)
 		}
-		rows = append(rows, attentionRow(it, focused && i == m.attnSel, idW, width))
+		rows = append(rows, attentionRow(it, focused && i == m.attnSel, idW, statusW, projW, width))
 	}
 	return rows, sel
 }
 
-// attentionRow is one waiting ticket on one line: leverage and blocked-ness
-// beside the identifier, priority in the right-hand column. The three facts
-// the operator chooses a promote by are all readable without selecting the
-// row — which is the whole point of the panel.
-func attentionRow(it loop.AttentionItem, selected bool, idW, width int) string {
+// titleFloor is how much of a title has to survive for the project column
+// to earn its width. Below it the project drops out of the row entirely and
+// the title takes the space back — a title cut shorter than this has stopped
+// being a title, and the project is the one column a routing decision can
+// most often do without.
+const titleFloor = 20
+
+// attentionRow is one waiting ticket as a table row: identifier, leverage
+// and title, then status, project and priority as right-hand columns. Every
+// fact a routing decision needs is on the line, so the choice can be made
+// without selecting the row — which is the whole point of the panel.
+//
+// Columns elide from the right: the title truncates first, and the project
+// drops out before the status column would ever be squeezed. The identifier,
+// the leverage and the real Linear status survive any width.
+func attentionRow(it loop.AttentionItem, selected bool, idW, statusW, projW, width int) string {
 	id := styleTicket.Render(it.Ticket) + strings.Repeat(" ", max(0, idW-lipgloss.Width(it.Ticket)))
-	left := marker(selected) + styleAttention.Render("● ") +
-		id + " " + leverageCell(it) + " " + it.Title
-	return splitRow(left, priorityCell(it.Priority), width)
+	head := marker(selected) + id + " " + leverageCell(it) + " "
+	status := statusCell(it, statusW)
+	right := status + "  " + priorityCell(it.Priority)
+	full := status + "  " + projectCell(it.Project, projW) + "  " + priorityCell(it.Priority)
+	switch {
+	case width-lipgloss.Width(full) >= lipgloss.Width(head)+titleFloor:
+		right = full
+	case width-lipgloss.Width(right) < lipgloss.Width(head):
+		// Narrower than even the title-less row: the priority goes too, so
+		// the identifier, the leverage and the status are the last three
+		// things standing. Every row measures the same head and the same
+		// columns, so the whole panel elides together.
+		right = status
+	}
+	return splitRow(head+it.Title, right, width)
+}
+
+// statusCell is the row's status column: the real Linear status name — the
+// vocabulary the operator already chose, never a synonym invented here —
+// and a mark for a status the configured pipeline never names. That mark is
+// the fingerprint of a ticket that left the pipeline, worth seeing without
+// selecting the row.
+func statusCell(it loop.AttentionItem, w int) string {
+	cell := it.Status
+	if it.Relevance == loop.StatusUnnamed {
+		cell += " " + styleAttention.Render("⚠")
+	}
+	return cell + strings.Repeat(" ", max(0, w+2-lipgloss.Width(cell)))
+}
+
+// projectCell is the row's project column, a dash for a ticket filed under
+// no project.
+func projectCell(project string, w int) string {
+	name := projectName(project)
+	cell := name
+	if project == "" {
+		cell = styleFaint.Render(name)
+	}
+	return cell + strings.Repeat(" ", max(0, w-lipgloss.Width(name)))
+}
+
+// projectName is how a project reads in a row: its name, or a dash. Saying
+// "none" would read as a project of its own, the same reason priorityCell
+// draws an unset priority as a dash.
+func projectName(project string) string {
+	if project == "" {
+		return "—"
+	}
+	return project
 }
 
 // leverageCell says what routing this ticket would free, in a fixed-width
@@ -1071,7 +1351,9 @@ func leverageCell(it loop.AttentionItem) string {
 }
 
 // priorityCell renders Linear's priority scale as its own words. An unset
-// priority is a dash: saying "none" would read as a rank of its own.
+// priority is a dash: saying "none" would read as a rank of its own. The
+// cell is padded to the widest label so the columns to its left stay put
+// from row to row.
 func priorityCell(p int) string {
 	label, style := "—", styleFaint
 	switch p {
@@ -1084,14 +1366,25 @@ func priorityCell(p int) string {
 	case 4:
 		label = "Low"
 	}
-	return style.Render(label)
+	return style.Render(label) + strings.Repeat(" ", max(0, len("Urgent")-lipgloss.Width(label)))
 }
 
 func (m model) attentionPanel(w, h int) string {
 	focused := m.focus == panelAttention
 	extra := ""
 	if len(m.attention) > 0 {
-		extra = styleAttention.Render(fmt.Sprintf(" ● %d", len(m.attention)))
+		// The sort mode and the project filter live in the title because
+		// they are the only two things about this panel a key changed, and
+		// a table sorted differently than the operator remembers is worse
+		// than one that says how it is sorted.
+		count := fmt.Sprintf(" ● %d", len(m.attention))
+		if m.project != "" {
+			count = fmt.Sprintf(" ● %d/%d", len(m.shown), len(m.attention))
+		}
+		extra = styleAttention.Render(count) + styleFaint.Render(" · by "+m.sortMode.String())
+		if m.project != "" {
+			extra += styleFaint.Render(" · " + m.project)
+		}
 	}
 	if h <= collapsedH {
 		if m.panelEmpty(panelAttention) {
@@ -1314,19 +1607,29 @@ func (m model) attentionDetail(width int) string {
 		return styleFaint.Render("nothing needs you — the empty list is the goal state") + "\n" +
 			styleFaint.Render("(shows "+loop.AttentionDefinition+")")
 	}
+	if len(m.shown) == 0 {
+		return styleFaint.Render("nothing needs you in "+m.project) + "\n" +
+			styleFaint.Render("(P cycles the project filter back to all)")
+	}
 	it := m.selectedAttention()
+	status := it.Status
+	if it.Relevance == loop.StatusUnnamed {
+		status += " " + styleAttention.Render("⚠")
+	}
 	// These lines come from the pass and always render first, whatever the
 	// read of the ticket itself is doing: a failed fetch must never cost the
 	// operator the pane that works today.
 	lines := []string{
 		styleTicket.Render(it.Ticket) + " " + it.Title,
 		"",
-		styleFaint.Render("group   ") + string(it.Group),
-		styleFaint.Render("status  ") + it.Status,
+		styleFaint.Render("status  ") + status,
+		styleFaint.Render("project ") + projectName(it.Project),
 		styleFaint.Render("why     ") + it.Reason,
 		styleFaint.Render("linear  ") + it.URL,
 		"",
-		styleFaint.Render("p promotes it into a queue · o opens it in Linear"),
+		// Short enough to survive the pane: the hint that gets truncated is
+		// the hint that was not there.
+		styleFaint.Render("p promote · s sort · P project · o open in Linear"),
 	}
 	return strings.Join(append(lines, m.ticketLines(it.TicketID, width)...), "\n")
 }

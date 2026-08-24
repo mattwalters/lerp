@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -401,51 +402,258 @@ func TestNeedsYouListsWhatWaits(t *testing.T) {
 	}
 }
 
-// needs-you widens attention into two groups: unclaimed work to route, and
-// the operator's own claimed tickets parked outside every queue. The panel
-// renders each group heading above its tickets, in the loop's order.
-func TestNeedsYouGroupsToRouteAndParked(t *testing.T) {
+// board is a needs-you list with everything the table sorts, groups, marks
+// and filters by: two projects and one ticket in none, three statuses, and
+// a chain that gives the top ticket its leverage.
+func board() loop.Event {
+	return loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-1", TicketID: "id-1", Title: "Fix the build", Status: "Needs Attention",
+			Project: "Open-source readiness", Relevance: loop.StatusFailed, Priority: 3,
+			Reason: `claimed in "Needs Attention" — a run failed here`},
+		{Ticket: "LERP-22", TicketID: "id-22", Title: "GoReleaser: tagged releases", Status: "Backlog",
+			Project: "Open-source readiness", Relevance: loop.StatusUnnamed, Priority: 2,
+			Unblocks: 2, Blocks: []string{"LERP-23"}},
+		{Ticket: "LERP-23", TicketID: "id-23", Title: "curl install", Status: "Backlog",
+			Project: "Open-source readiness", Relevance: loop.StatusUnnamed, Priority: 3,
+			Unblocks: 1, BlockedBy: []string{"LERP-22"}},
+		{Ticket: "LERP-48", TicketID: "id-48", Title: "Read the ticket in the TUI", Status: "In Review",
+			Project: "TUI redesign", Relevance: loop.StatusFinished, Priority: 1},
+		{Ticket: "LERP-60", TicketID: "id-60", Title: "Unfiled work", Status: "Backlog",
+			Relevance: loop.StatusUnnamed, Priority: 4},
+		// Priority 0 is Linear's "No priority", not its highest: it must sort
+		// below Low, never above Urgent. This is the only fixture carrying it,
+		// and the order assertions below are what guard priorityRank.
+		{Ticket: "LERP-70", TicketID: "id-70", Title: "Unprioritized work", Status: "Backlog",
+			Relevance: loop.StatusUnnamed, Priority: 0},
+	}}
+}
+
+// rowOf returns the panel line carrying the ticket, for the assertions that
+// are about one row rather than about the order of several.
+func rowOf(t *testing.T, panel, ticket string) string {
+	t.Helper()
+	for _, line := range strings.Split(panel, "\n") {
+		if strings.Contains(line, ticket+" ") {
+			return line
+		}
+	}
+	t.Fatalf("no row for %s:\n%s", ticket, panel)
+	return ""
+}
+
+// order returns the tickets in the order the panel renders them.
+func order(panel string, tickets ...string) []string {
+	var got []string
+	for _, line := range strings.Split(panel, "\n") {
+		for _, ticket := range tickets {
+			if strings.Contains(line, ticket+" ") {
+				got = append(got, ticket)
+			}
+		}
+	}
+	return got
+}
+
+// Done-when: no row and no header anywhere says "to route" or "parked on
+// you". The status column carries Linear's own name for where the ticket
+// rests, and a status the configured pipeline never names is marked as one
+// — the fingerprint of a ticket that left the pipeline, readable without
+// selecting the row.
+func TestNeedsYouRowsCarryTheRealStatus(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: board()})
+
+	panel := m.attentionPanel(96, 14)
+	view := m.View()
+	for _, gone := range []string{"to route", "parked on you"} {
+		if strings.Contains(view, gone) {
+			t.Fatalf("the view still says %q:\n%s", gone, view)
+		}
+	}
+	for _, want := range []string{"Needs Attention", "Backlog", "In Review"} {
+		if !strings.Contains(panel, want) {
+			t.Fatalf("needs-you panel is missing the status %q:\n%s", want, panel)
+		}
+	}
+	// Backlog is named by no queue and by no on_success or on_failure
+	// target, so every ticket resting in one is marked; the statuses the
+	// pipeline does name are not.
+	if !strings.Contains(rowOf(t, panel, "LERP-22"), "⚠") {
+		t.Fatalf("a status the pipeline never names is unmarked:\n%s", panel)
+	}
+	for _, named := range []string{"LERP-1", "LERP-48"} {
+		if strings.Contains(rowOf(t, panel, named), "⚠") {
+			t.Fatalf("%s rests in a status the pipeline names, but the row marks it:\n%s", named, panel)
+		}
+	}
+	// Every column on one line, no selection required.
+	row := rowOf(t, panel, "LERP-1")
+	for _, want := range []string{"LERP-1", "↓0", "Fix the build", "Needs Attention", "Open-source readiness", "Medium"} {
+		if !strings.Contains(row, want) {
+			t.Fatalf("the LERP-1 row is missing %q:\n%s", want, row)
+		}
+	}
+	if got := rowOf(t, panel, "LERP-60"); !strings.Contains(got, "—") {
+		t.Fatalf("a ticket in no project does not read as one:\n%s", got)
+	}
+}
+
+// Done-when: four sort modes cycle on one key, the two grouped ones draw
+// headers and the two flat ones do not, and the panel title says which is
+// in force. Sorting is the only grouping control there is.
+func TestNeedsYouSortModesCycle(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: board()})
+
+	// Leverage is the default: what promoting frees first, then priority,
+	// then the identifier — and a blocked ticket below every routable one.
+	panel := m.attentionPanel(96, 14)
+	want := []string{"LERP-22", "LERP-48", "LERP-1", "LERP-60", "LERP-70", "LERP-23"}
+	if got := order(panel, want...); !slices.Equal(got, want) {
+		t.Fatalf("leverage order = %v, want %v:\n%s", got, want, panel)
+	}
+	if !strings.Contains(panel, "by leverage") {
+		t.Fatalf("the panel title does not name the sort mode:\n%s", panel)
+	}
+
+	// Priority, then leverage.
+	m = update(t, m, keyMsg("s"))
+	panel = m.attentionPanel(96, 14)
+	// Priority is the primary key here, so the blocked LERP-23 outranks the
+	// routable LERP-60 that leverage put above it.
+	want = []string{"LERP-48", "LERP-22", "LERP-1", "LERP-23", "LERP-60", "LERP-70"}
+	if got := order(panel, want...); !slices.Equal(got, want) {
+		t.Fatalf("priority order = %v, want %v:\n%s", got, want, panel)
+	}
+	if !strings.Contains(panel, "by priority") {
+		t.Fatalf("the panel title does not name the sort mode:\n%s", panel)
+	}
+
+	// Status: pipeline-relevance first — a failure route, then where a
+	// clean run comes to rest, then the statuses the pipeline never names —
+	// with a header per status carrying the note that explains the rank.
+	m = update(t, m, keyMsg("s"))
+	panel = m.attentionPanel(96, 16)
+	want = []string{"LERP-1", "LERP-48", "LERP-22", "LERP-60", "LERP-70", "LERP-23"}
+	if got := order(panel, want...); !slices.Equal(got, want) {
+		t.Fatalf("status order = %v, want %v:\n%s", got, want, panel)
+	}
+	for _, note := range []string{"a run failed here", "a run finished here", "the pipeline never names it"} {
+		if !strings.Contains(panel, note) {
+			t.Fatalf("status headers do not carry %q:\n%s", note, panel)
+		}
+	}
+
+	// Project, alphabetically, with the unfiled ticket last.
+	m = update(t, m, keyMsg("s"))
+	panel = m.attentionPanel(96, 14)
+	want = []string{"LERP-22", "LERP-1", "LERP-23", "LERP-48", "LERP-60", "LERP-70"}
+	if got := order(panel, want...); !slices.Equal(got, want) {
+		t.Fatalf("project order = %v, want %v:\n%s", got, want, panel)
+	}
+	if !strings.Contains(panel, "TUI redesign") || !strings.Contains(panel, "no project") {
+		t.Fatalf("project mode draws no project headers:\n%s", panel)
+	}
+
+	// One more press is back to the flat default, headers and all.
+	m = update(t, m, keyMsg("s"))
+	panel = m.attentionPanel(96, 14)
+	if !strings.Contains(panel, "by leverage") {
+		t.Fatalf("the sort key does not cycle back to the default:\n%s", panel)
+	}
+	if strings.Contains(panel, "a run failed here") || strings.Contains(panel, "no project") {
+		t.Fatalf("a flat mode still draws headers:\n%s", panel)
+	}
+}
+
+// Done-when: the sort key moves the rows, not the cursor. The selection is
+// a ticket, so re-sorting keeps the operator on the one they were reading.
+func TestSortKeepsTheSelectedTicket(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: board()})
+	m = update(t, m, keyMsg("j")) // LERP-48, second under leverage
+
+	if got := m.selectedAttention().Ticket; got != "LERP-48" {
+		t.Fatalf("selection = %s, want LERP-48", got)
+	}
+	m = update(t, m, keyMsg("s"))
+	if got := m.selectedAttention().Ticket; got != "LERP-48" {
+		t.Fatalf("selection after sorting = %s, want the same LERP-48", got)
+	}
+}
+
+// Done-when: one key scopes the panel to a single project and cycles back
+// to all, and a pass that no longer has the scoped project resets the
+// filter rather than leaving the panel hidden behind a stale choice.
+func TestNeedsYouProjectFilter(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: board()})
+
+	// Projects cycle in name order: OSS readiness, then TUI redesign, then
+	// back to every project. A ticket in no project is not a stop.
+	m = update(t, m, keyMsg("P"))
+	panel := m.attentionPanel(96, 14)
+	if m.project != "Open-source readiness" {
+		t.Fatalf("filter = %q, want the first project by name", m.project)
+	}
+	if strings.Contains(panel, "LERP-48") || strings.Contains(panel, "LERP-60") {
+		t.Fatalf("the filter kept tickets from other projects:\n%s", panel)
+	}
+	if !strings.Contains(panel, "LERP-22") {
+		t.Fatalf("the filter dropped a ticket in the scoped project:\n%s", panel)
+	}
+	if !strings.Contains(panel, "3/6") || !strings.Contains(panel, "Open-source readiness") {
+		t.Fatalf("the panel title does not say what it is scoped to:\n%s", panel)
+	}
+
+	m = update(t, m, keyMsg("P"))
+	if m.project != "TUI redesign" {
+		t.Fatalf("filter = %q, want the next project by name", m.project)
+	}
+	if got := len(m.shown); got != 1 {
+		t.Fatalf("the TUI redesign filter shows %d rows, want 1", got)
+	}
+
+	m = update(t, m, keyMsg("P"))
+	if m.project != "" || len(m.shown) != 6 {
+		t.Fatalf("the filter did not cycle back to every project: %q, %d rows", m.project, len(m.shown))
+	}
+
+	// A pass without the scoped project resets the filter; the panel is
+	// never hidden behind a name nothing waits in.
+	m = update(t, m, keyMsg("P"))
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
-		{Group: loop.ToRoute, Ticket: "LERP-4", TicketID: "loose", Title: "Nobody's routed this", Status: "Backlog",
-			Reason: `unassigned in "Backlog" — no queue serves it`},
-		{Group: loop.Parked, Ticket: "LERP-1", TicketID: "help", Title: "Fix the build", Status: "Needs Help",
-			Reason: `claimed in "Needs Help" — no queue serves it`},
+		{Ticket: "LERP-9", TicketID: "id-9", Title: "Something else", Status: "Backlog",
+			Project: "Another project", Relevance: loop.StatusUnnamed},
 	}}})
-	// Assert on the panel itself: in the full view the lens also names the
-	// selected ticket, which would shadow the ordering check.
-	panel := m.attentionPanel(40, 8)
-	toRoute := strings.Index(panel, "to route")
-	parked := strings.Index(panel, "parked on you")
-	lerp4 := strings.Index(panel, "LERP-4")
-	lerp1 := strings.Index(panel, "LERP-1")
-	if toRoute < 0 || parked < 0 || lerp4 < 0 || lerp1 < 0 {
-		t.Fatalf("panel is missing a group heading or ticket:\n%s", panel)
+	if m.project != "" {
+		t.Fatalf("filter = %q after its project left the list, want every project", m.project)
 	}
-	if !(toRoute < lerp4 && lerp4 < parked && parked < lerp1) {
-		t.Fatalf("groups are not rendered to-route-then-parked, each above its ticket:\n%s", panel)
-	}
-	if !strings.Contains(m.View(), string(loop.ToRoute)) {
-		t.Fatalf("group heading missing from the full view:\n%s", m.View())
+	if !strings.Contains(m.attentionPanel(96, 14), "LERP-9") {
+		t.Fatalf("a stale filter hid the whole panel:\n%s", m.attentionPanel(96, 14))
 	}
 }
 
 // Done-when: leverage, priority and blocked-ness are readable on the row
-// itself, without selecting it — and on a narrow panel the title is what
-// gets truncated, not the facts the operator chooses a promote by.
+// itself, without selecting it — and the columns elide from the right, so a
+// narrow panel truncates the title first, then drops the project, and never
+// costs the identifier, the leverage or the status.
 func TestNeedsYouRowsCarryLeverageAndPriority(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
-		{Group: loop.ToRoute, Ticket: "LERP-22", Title: "GoReleaser: tagged releases", Priority: 2,
-			Unblocks: 3, Blocks: []string{"LERP-23", "LERP-38"}},
-		{Group: loop.ToRoute, Ticket: "LERP-36", Title: "Sanitize control characters", Priority: 1},
-		{Group: loop.ToRoute, Ticket: "LERP-23", Title: "curl install", Priority: 3,
+		{Ticket: "LERP-22", Title: "GoReleaser: tagged releases", Priority: 2, Status: "Backlog",
+			Project: "Open-source readiness", Unblocks: 3, Blocks: []string{"LERP-23", "LERP-38"}},
+		{Ticket: "LERP-36", Title: "Sanitize control characters", Priority: 1, Status: "Backlog"},
+		{Ticket: "LERP-23", Title: "curl install", Priority: 3, Status: "Backlog",
 			Unblocks: 1, BlockedBy: []string{"LERP-22"}},
 	}}})
 
-	panel := m.attentionPanel(60, 8)
+	panel := m.attentionPanel(70, 8)
 	for _, want := range []string{"↓3", "↓0", "⊘", "High", "Urgent", "Medium"} {
 		if !strings.Contains(panel, want) {
 			t.Fatalf("needs-you row is missing %q:\n%s", want, panel)
@@ -453,27 +661,42 @@ func TestNeedsYouRowsCarryLeverageAndPriority(t *testing.T) {
 	}
 	// The selection sits on the first row, so the second row's Urgent and
 	// the third row's ⊘ are both facts no selection revealed.
-	lines := strings.Split(panel, "\n")
 	for _, want := range []struct{ ticket, mark string }{
 		{"LERP-22", "↓3"}, {"LERP-36", "Urgent"}, {"LERP-23", "⊘"},
 	} {
-		found := false
-		for _, line := range lines {
-			if strings.Contains(line, want.ticket) && strings.Contains(line, want.mark) {
-				found = true
-			}
-		}
-		if !found {
-			t.Fatalf("no row carries both %s and %s:\n%s", want.ticket, want.mark, panel)
+		if got := rowOf(t, panel, want.ticket); !strings.Contains(got, want.mark) {
+			t.Fatalf("the %s row does not carry %s:\n%s", want.ticket, want.mark, panel)
 		}
 	}
 
-	narrow := m.attentionPanel(30, 8)
-	if !strings.Contains(narrow, "Urgent") || !strings.Contains(narrow, "↓3") {
-		t.Fatalf("a narrow panel dropped the leverage or the priority:\n%s", narrow)
+	// Narrow enough that the project no longer fits: it goes, the title is
+	// cut, and the three columns a routing decision starts from survive.
+	narrow := m.attentionPanel(44, 8)
+	if strings.Contains(narrow, "Open-source readiness") {
+		t.Fatalf("a narrow panel kept the project column:\n%s", narrow)
+	}
+	for _, want := range []string{"Urgent", "↓3", "Backlog", "LERP-22"} {
+		if !strings.Contains(narrow, want) {
+			t.Fatalf("a narrow panel dropped %q:\n%s", want, narrow)
+		}
 	}
 	if strings.Contains(narrow, "GoReleaser: tagged releases") {
 		t.Fatalf("a narrow panel did not truncate the title:\n%s", narrow)
+	}
+
+	// Narrower than a title-less row: the priority goes too, and the three
+	// columns a routing decision cannot start without are the last things
+	// standing.
+	tiny := m.attentionPanel(30, 8)
+	for _, want := range []string{"LERP-22", "↓3", "Backlog"} {
+		if !strings.Contains(tiny, want) {
+			t.Fatalf("the narrowest panel dropped %q:\n%s", want, tiny)
+		}
+	}
+	for _, gone := range []string{"Urgent", "High"} {
+		if strings.Contains(tiny, gone) {
+			t.Fatalf("the narrowest panel kept the priority column at the cost of %q:\n%s", gone, tiny)
+		}
 	}
 }
 
@@ -485,7 +708,7 @@ func TestPromotePicker(t *testing.T) {
 	m, _, _, promoter := newPromoteTestModel(t, 1, []string{"Planning", "Implementing"})
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
-		{Group: loop.ToRoute, Ticket: "LERP-4", TicketID: "loose", Title: "Nobody's routed this", Status: "Backlog"},
+		{Ticket: "LERP-4", TicketID: "loose", Title: "Nobody's routed this", Status: "Backlog"},
 	}}})
 
 	// esc backs out without promoting.
@@ -542,7 +765,7 @@ func TestPromotePickerClosesWhenTheListEmpties(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
-		{Group: loop.ToRoute, Ticket: "LERP-4", TicketID: "loose", Title: "Nobody's routed this"},
+		{Ticket: "LERP-4", TicketID: "loose", Title: "Nobody's routed this"},
 	}}})
 	m = update(t, m, keyMsg("p"))
 	if !m.promoting {
@@ -594,7 +817,7 @@ func fillBoard(t *testing.T, m model, n int) model {
 	items := make([]loop.AttentionItem, n)
 	tickets := make([]loop.QueueTicket, n)
 	for i := range items {
-		items[i] = loop.AttentionItem{Group: loop.ToRoute, Ticket: fmt.Sprintf("LERP-%d", i+1),
+		items[i] = loop.AttentionItem{Ticket: fmt.Sprintf("LERP-%d", i+1),
 			Title: "something waits", Status: "Backlog", Reason: "no queue serves it"}
 		tickets[i] = loop.QueueTicket{ID: fmt.Sprintf("t%d", i),
 			Identifier: fmt.Sprintf("QUEUED-%d", i+1), Title: "work", Eligible: true}
@@ -615,7 +838,7 @@ func TestFocusedPanelTakesTheSlack(t *testing.T) {
 	m = resized.(model)
 	items := make([]loop.AttentionItem, 15)
 	for i := range items {
-		items[i] = loop.AttentionItem{Group: loop.ToRoute, Ticket: fmt.Sprintf("LERP-%d", i+1),
+		items[i] = loop.AttentionItem{Ticket: fmt.Sprintf("LERP-%d", i+1),
 			Title: "something waits", Status: "Backlog"}
 	}
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: items}})
@@ -1049,11 +1272,11 @@ func TestQuitAwaitsTheInFlightPass(t *testing.T) {
 // ticket IDs.
 func threeWaiting() loop.Event {
 	return loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
-		{Group: loop.ToRoute, Ticket: "LERP-1", TicketID: "id-1", Title: "First",
+		{Ticket: "LERP-1", TicketID: "id-1", Title: "First",
 			Status: "Backlog", Reason: "unclaimed", URL: "https://linear.app/acme/issue/LERP-1"},
-		{Group: loop.ToRoute, Ticket: "LERP-2", TicketID: "id-2", Title: "Second",
+		{Ticket: "LERP-2", TicketID: "id-2", Title: "Second",
 			Status: "Backlog", Reason: "unclaimed", URL: "https://linear.app/acme/issue/LERP-2"},
-		{Group: loop.ToRoute, Ticket: "LERP-3", TicketID: "id-3", Title: "Third",
+		{Ticket: "LERP-3", TicketID: "id-3", Title: "Third",
 			Status: "Backlog", Reason: "unclaimed", URL: "https://linear.app/acme/issue/LERP-3"},
 	}}
 }
@@ -1066,7 +1289,7 @@ func selectAndRead(t *testing.T, m model, sel int, detail linear.IssueDetail, er
 		m = update(t, m, keyMsg("j"))
 	}
 	reader.returns(detail, err)
-	id := m.attention[sel].TicketID
+	id := m.shown[sel].TicketID
 	m, cmd := updateCmd(t, m, detailDueMsg{ticketID: id})
 	if cmd == nil {
 		t.Fatalf("settling on %s scheduled no fetch", id)
@@ -1144,7 +1367,7 @@ func TestTicketDetailShowsBodyAndComments(t *testing.T) {
 	if strings.Index(view, "unclaimed") > strings.Index(view, "the ticket body") {
 		t.Fatalf("the pass's own lines no longer render first:\n%s", view)
 	}
-	if !strings.Contains(view, "o opens it in Linear") {
+	if !strings.Contains(view, "o open in Linear") {
 		t.Fatalf("the o hint is gone:\n%s", view)
 	}
 }
@@ -1268,7 +1491,7 @@ func TestHostileTitlesRenderInert(t *testing.T) {
 		m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 			TicketID: title, Ticket: title, Queue: title, LogPath: "/dev/null"}})
 		m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
-			{Group: loop.ToRoute, Ticket: title, TicketID: title, Title: title,
+			{Ticket: title, TicketID: title, Title: title,
 				Status: title, Reason: title, URL: title},
 		}}})
 		return update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{

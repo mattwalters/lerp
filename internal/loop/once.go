@@ -135,6 +135,42 @@ func servedStatuses(repo *config.RepoConfig) map[string]bool {
 	return served
 }
 
+// statusRelevance reads the configured pipeline for what each status means
+// to a ticket resting in it: on_failure targets are where runs fail,
+// on_success targets are where they finish, a queue's own status is served,
+// and a status the config never names at all is one the pipeline did not
+// put the ticket in. It is derived, never declared — there is no new key in
+// lerp.toml, and rewriting the on_success pointers rewrites this with them.
+func statusRelevance(repo *config.RepoConfig) func(string) StatusRelevance {
+	rank := make(map[string]StatusRelevance, len(repo.Queues)*3)
+	// The worse news wins: a status that is one queue's exit and another's
+	// failure route is somewhere a run failed.
+	set := func(status string, r StatusRelevance) {
+		if status == "" {
+			return
+		}
+		if prev, ok := rank[status]; ok && prev <= r {
+			return
+		}
+		rank[status] = r
+	}
+	for _, q := range repo.Queues {
+		set(q.OnFailure, StatusFailed)
+		set(q.OnSuccess, StatusFinished)
+	}
+	// A queue's own status outranks whatever points at it: the pipeline
+	// serves it, so a ticket there is not resting anywhere.
+	for _, q := range repo.Queues {
+		rank[q.Status] = StatusOther
+	}
+	return func(status string) StatusRelevance {
+		if r, ok := rank[status]; ok {
+			return r
+		}
+		return StatusUnnamed
+	}
+}
+
 // conclude applies the queue's move rule after a run exited, then settles the
 // claim. A clean exit moves the ticket to OnSuccess, a non-zero exit to
 // OnFailure when configured; either move happens only while the ticket remains
