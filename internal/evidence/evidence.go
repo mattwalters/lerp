@@ -93,6 +93,12 @@ func (e *Evidence) Create(record Record) (Record, error) {
 
 	runPath := e.runPath(record.RunID)
 	record.LogPath = filepath.Join(runPath, "run.log")
+	if record.Workspace == "" {
+		// Unless the caller has its own placement policy, the workspace lives
+		// inside the run directory: a run's whole local footprint is then one
+		// directory, and Remove sweeps up anything dispose left behind.
+		record.Workspace = filepath.Join(runPath, "workspace")
+	}
 	log, err := os.OpenFile(filepath.Join(staging, "run.log"), os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o600)
 	if err != nil {
 		return record, fmt.Errorf("creating run log: %w", err)

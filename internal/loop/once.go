@@ -25,8 +25,8 @@ type ProvisionFunc func(context.Context, string, string, workspace.Identity, io.
 type DisposeFunc func(context.Context, string, string, workspace.Identity, io.Writer)
 
 // OnceOptions supplies the one lane used by Once. Workspace and LogPath are
-// intentionally caller-owned: durable run evidence belongs to the later run
-// record implementation, not this vertical slice.
+// intentionally caller-owned: run evidence belongs to the reconciler, not
+// this vertical slice.
 type OnceOptions struct {
 	Client       linear.Client
 	Repo         *config.RepoConfig
@@ -44,8 +44,8 @@ type OnceOptions struct {
 
 // Once runs at most one eligible ticket through claim, provision, execution,
 // disposal, and its configured queue transition. It is a narrow development
-// harness for the single-lane vertical slice; the reconciler will later own
-// lane selection and durable run evidence.
+// harness for the single-lane vertical slice; the reconciler owns lane
+// selection and run evidence.
 //
 // A clean runner exit moves the ticket to OnSuccess, and a non-zero exit moves
 // it to OnFailure when configured. In either case, the transition happens only
@@ -64,41 +64,18 @@ func Once(ctx context.Context, o OnceOptions) (bool, error) {
 		o.Dispose = workspace.Dispose
 	}
 
-	issue, queue, found, err := next(ctx, o.Client, o.Repo)
-	if err != nil || !found {
-		return false, err
-	}
-
-	won, err := Claim(ctx, o.Client, issue.ID)
+	cands, err := candidates(ctx, o.Client, o.Repo)
 	if err != nil {
 		return false, err
 	}
-	if !won {
+	if len(cands) == 0 {
 		return false, nil
 	}
+	issue, queue := cands[0].issue, cands[0].queue
 
-	// A move may have raced the claim. Do not provision or run a ticket which
-	// has left this queue.
-	claimed, err := o.Client.GetIssue(ctx, issue.ID)
-	if err != nil {
-		return false, fmt.Errorf("read claimed issue %s: %w", issue.ID, err)
-	}
-	viewerID, err := o.Client.Viewer(ctx)
-	if err != nil {
-		return false, fmt.Errorf("read claimed viewer: %w", err)
-	}
-	if claimed.AssigneeID != viewerID {
-		// Someone else owns it now. Leave their claim alone.
-		return false, nil
-	}
-	if claimed.Status != queue.Status {
-		// The ticket left this queue while we were claiming it. Release the
-		// claim: an assigned ticket is never eligible, so keeping it would
-		// strand the ticket wherever it now sits until a human intervenes.
-		if err := o.Client.UnassignIssue(ctx, issue.ID); err != nil {
-			return false, fmt.Errorf("release moved issue %s: %w", issue.ID, err)
-		}
-		return false, nil
+	viewerID, won, err := claimForQueue(ctx, o.Client, issue.ID, queue.Status)
+	if err != nil || !won {
+		return false, err
 	}
 
 	workdir := o.Workspace
@@ -122,14 +99,8 @@ func Once(ctx context.Context, o OnceOptions) (bool, error) {
 	if err := o.Provision(ctx, o.RepoDir, o.Repo.Provision, id, o.Log); err != nil {
 		// Provisioning never starts a lane. Release our claim so the queued
 		// ticket remains eligible for a later attempt.
-		current, readErr := o.Client.GetIssue(ctx, issue.ID)
-		if readErr != nil {
-			return false, fmt.Errorf("provision issue %s: %w (verify claim before release: %v)", issue.ID, err, readErr)
-		}
-		if current.AssigneeID == viewerID {
-			if unassignErr := o.Client.UnassignIssue(ctx, issue.ID); unassignErr != nil {
-				return false, fmt.Errorf("provision issue %s: %w (release claim: %v)", issue.ID, err, unassignErr)
-			}
+		if releaseErr := releaseClaim(ctx, o.Client, issue.ID, viewerID); releaseErr != nil {
+			return false, fmt.Errorf("provision issue %s: %w (%v)", issue.ID, err, releaseErr)
 		}
 		return false, fmt.Errorf("provision issue %s: %w", issue.ID, err)
 	}
@@ -144,9 +115,19 @@ func Once(ctx context.Context, o OnceOptions) (bool, error) {
 	if err != nil {
 		return true, fmt.Errorf("run issue %s: %w", issue.ID, err)
 	}
+	if err := conclude(ctx, o.Client, issue, queue, result.ExitCode, o.Log); err != nil {
+		return true, err
+	}
+	return true, nil
+}
 
+// conclude applies the queue's move rule after a run exited: a clean exit
+// moves the ticket to OnSuccess, a non-zero exit to OnFailure when
+// configured. In either case, the transition happens only when the ticket
+// remains in the queue status; an agent or human move wins.
+func conclude(ctx context.Context, client linear.Client, issue linear.Issue, queue config.Queue, exitCode int, log io.Writer) error {
 	target := queue.OnFailure
-	if result.ExitCode == 0 {
+	if exitCode == 0 {
 		target = queue.OnSuccess
 	}
 	if target == "" {
@@ -155,24 +136,24 @@ func Once(ctx context.Context, o OnceOptions) (bool, error) {
 		// ticket that fails every time would be re-run on every pass, spending
 		// agent compute forever and starving the lane. Holding the claim stops
 		// the spin and leaves the ticket visibly waiting on a human.
-		if o.Log != nil {
-			fmt.Fprintf(o.Log, "%s exited %d and its queue has no on_failure route: leaving it claimed for a human\n",
-				issue.Identifier, result.ExitCode)
+		if log != nil {
+			fmt.Fprintf(log, "%s exited %d and its queue has no on_failure route: leaving it claimed for a human\n",
+				issue.Identifier, exitCode)
 		}
-		return true, nil
+		return nil
 	}
 
-	current, err := o.Client.GetIssue(ctx, issue.ID)
+	current, err := client.GetIssue(ctx, issue.ID)
 	if err != nil {
-		return true, fmt.Errorf("read completed issue %s: %w", issue.ID, err)
+		return fmt.Errorf("read completed issue %s: %w", issue.ID, err)
 	}
 	if current.Status != queue.Status {
-		return true, nil
+		return nil
 	}
-	if err := o.Client.MoveIssue(ctx, issue.ID, target); err != nil {
-		return true, fmt.Errorf("move issue %s to %q: %w", issue.ID, target, err)
+	if err := client.MoveIssue(ctx, issue.ID, target); err != nil {
+		return fmt.Errorf("move issue %s to %q: %w", issue.ID, target, err)
 	}
-	return true, nil
+	return nil
 }
 
 func (o OnceOptions) validate() error {
@@ -193,25 +174,36 @@ func (o OnceOptions) validate() error {
 	return nil
 }
 
-func next(ctx context.Context, client linear.Client, repo *config.RepoConfig) (linear.Issue, config.Queue, bool, error) {
+// candidate is one ticket a queue could pick up right now.
+type candidate struct {
+	issue linear.Issue
+	name  string // queue name, for events and run records
+	queue config.Queue
+}
+
+// candidates lists every eligible ticket across the repo's teams and queues,
+// in a deterministic order: configured team order, then queue name, then
+// whatever order Linear lists issues in.
+func candidates(ctx context.Context, client linear.Client, repo *config.RepoConfig) ([]candidate, error) {
 	queueNames := make([]string, 0, len(repo.Queues))
 	for name := range repo.Queues {
 		queueNames = append(queueNames, name)
 	}
 	sort.Strings(queueNames)
+	var cands []candidate
 	for _, team := range repo.Teams {
 		for _, name := range queueNames {
 			queue := repo.Queues[name]
 			issues, err := client.ListIssues(ctx, team, queue.Status)
 			if err != nil {
-				return linear.Issue{}, config.Queue{}, false, fmt.Errorf("list %s queue for team %s: %w", queue.Status, team, err)
+				return nil, fmt.Errorf("list %s queue for team %s: %w", queue.Status, team, err)
 			}
 			for _, issue := range issues {
 				if Eligible(issue, map[string]bool{queue.Status: true}) {
-					return issue, queue, true, nil
+					cands = append(cands, candidate{issue: issue, name: name, queue: queue})
 				}
 			}
 		}
 	}
-	return linear.Issue{}, config.Queue{}, false, nil
+	return cands, nil
 }

@@ -1,0 +1,532 @@
+package loop
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"sync"
+	"time"
+
+	"github.com/mattwalters/lerp/internal/config"
+	"github.com/mattwalters/lerp/internal/evidence"
+	"github.com/mattwalters/lerp/internal/linear"
+	"github.com/mattwalters/lerp/internal/run"
+	"github.com/mattwalters/lerp/internal/workspace"
+)
+
+// DefaultInterval is how often the reconciler polls when the caller does not
+// choose an interval. Polling is the design: no webhooks, and nothing listens
+// on a port.
+const DefaultInterval = 12 * time.Second
+
+// EventType names what the reconciler just did.
+type EventType string
+
+const (
+	// EventStarted reports that this process claimed a ticket and started an
+	// agent in a lane.
+	EventStarted EventType = "started"
+	// EventAdopted reports that a run left behind by a previous process is
+	// still alive, and now occupies a lane here. The event carries the log
+	// path so a subscriber can reattach its tail.
+	EventAdopted EventType = "adopted"
+	// EventReaped reports that a recorded run's process is dead: its
+	// workspace was disposed and its record removed. The ticket is left
+	// wherever Linear says it is.
+	EventReaped EventType = "reaped"
+	// EventExited reports that a run this process started finished and the
+	// queue's move rule was applied.
+	EventExited EventType = "exited"
+	// EventError reports a pass or a run that failed in a way worth
+	// surfacing. The loop keeps ticking; whatever still needs repair is
+	// retried on a later pass.
+	EventError EventType = "error"
+)
+
+// Event is one observation from the loop. Fields beyond Type are filled as
+// far as they are known: an adopted or reaped run is known only from its
+// local record, which carries the ticket's ID but not its human identifier.
+type Event struct {
+	Type     EventType
+	RunID    string
+	Lane     int
+	TicketID string
+	Ticket   string // human identifier, e.g. LERP-42
+	Queue    string
+	LogPath  string
+	ExitCode int // meaningful only for EventExited
+	Err      error
+}
+
+// ReconcilerOptions configures the loop. Client, Repo, RepoDir, Evidence, and
+// Lanes are required. Execute, Provision, Dispose, and Alive default to the
+// real implementations; they are injectable so the loop can be tested against
+// the fake Linear client with stub runners and processes.
+type ReconcilerOptions struct {
+	Client   linear.Client
+	Repo     *config.RepoConfig
+	RepoDir  string
+	Evidence *evidence.Evidence
+	Lanes    int           // N: at most this many agents at once
+	Interval time.Duration // polling interval for Run; DefaultInterval when zero
+
+	// Events, when set, receives every Event the loop emits. It is called
+	// from the loop's goroutines and must be safe for concurrent use; a
+	// subscriber that can block should hand events off to its own channel.
+	Events func(Event)
+	// Log receives human-readable diagnostics, including provision and
+	// dispose output. May be nil.
+	Log io.Writer
+
+	Execute   ExecuteFunc
+	Provision ProvisionFunc
+	Dispose   DisposeFunc
+	Alive     func(evidence.Record) bool
+}
+
+// Reconciler is the loop — there is exactly one. Desired state is the board,
+// actual state is the agent processes on this machine; every pass compares
+// the two and starts, adopts, or reaps until they match. It does not care who
+// moved a ticket: humans, agents, and Linear automations are all legitimate.
+//
+// The caller owns the clone lock (evidence.AcquireLock); two loops
+// reconciling one clone would fight over its lanes.
+type Reconciler struct {
+	o ReconcilerOptions
+
+	mu     sync.Mutex
+	active []*laneRun
+	wg     sync.WaitGroup
+}
+
+// laneRun is one occupied lane: either a run this process started or a live
+// run adopted from a previous process.
+type laneRun struct {
+	lane     int
+	ticketID string
+	adopted  bool
+	record   evidence.Record // adopted runs only; started runs settle their own records
+}
+
+// NewReconciler validates o and returns a loop ready to Run or Tick.
+func NewReconciler(o ReconcilerOptions) (*Reconciler, error) {
+	switch {
+	case o.Client == nil:
+		return nil, fmt.Errorf("reconciler: client is required")
+	case o.Repo == nil:
+		return nil, fmt.Errorf("reconciler: repo config is required")
+	case o.RepoDir == "":
+		return nil, fmt.Errorf("reconciler: repo directory is required")
+	case o.Evidence == nil:
+		return nil, fmt.Errorf("reconciler: run evidence is required")
+	case o.Lanes < 1:
+		return nil, fmt.Errorf("reconciler: lanes must be at least 1")
+	}
+	if o.Interval <= 0 {
+		o.Interval = DefaultInterval
+	}
+	if o.Execute == nil {
+		o.Execute = run.Execute
+	}
+	if o.Provision == nil {
+		o.Provision = workspace.Provision
+	}
+	if o.Dispose == nil {
+		o.Dispose = workspace.Dispose
+	}
+	if o.Alive == nil {
+		o.Alive = evidence.Alive
+	}
+	return &Reconciler{o: o}, nil
+}
+
+// Run ticks until ctx is cancelled, waits for the runs this process started
+// to wind down (cancellation kills their agents, see run.Execute), and
+// returns ctx's error. Adopted processes are not children of this process and
+// keep running; the next loop adopts them again.
+func (r *Reconciler) Run(ctx context.Context) error {
+	ticker := time.NewTicker(r.o.Interval)
+	defer ticker.Stop()
+	for {
+		r.Tick(ctx)
+		select {
+		case <-ctx.Done():
+			r.wg.Wait()
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+// Tick runs one reconciliation pass: read the local run evidence, adopt live
+// runs and reap dead ones, then start eligible tickets into free lanes.
+// Started runs proceed in their own goroutines, so a tick never blocks on an
+// agent. A failed pass is reported as an EventError, never returned: the loop
+// repairs drift, and a pass that could not finish is just drift for the next
+// one.
+func (r *Reconciler) Tick(ctx context.Context) {
+	r.reconcileEvidence(ctx)
+	r.fill(ctx)
+}
+
+// reconcileEvidence converges the lanes with .lerp/runs: every record either
+// belongs to a run this process is settling itself, or names a live process
+// to adopt, or is the residue of a dead one to reap.
+func (r *Reconciler) reconcileEvidence(ctx context.Context) {
+	records, err := r.o.Evidence.List()
+	if err != nil {
+		r.fail(fmt.Errorf("list run evidence: %w", err))
+		return
+	}
+	seen := make(map[string]bool, len(records))
+	for _, record := range records {
+		seen[record.RunID] = true
+		if r.ownsTicket(record.TicketID) {
+			// A run this process started; its own goroutine settles the
+			// ticket and the record when the agent exits.
+			continue
+		}
+		if r.o.Alive(record) {
+			r.adopt(record)
+			continue
+		}
+		r.forget(record.RunID)
+		r.reap(ctx, record)
+	}
+	// An adopted run whose record was deleted out from under it — local
+	// evidence is disposable — is still a live process occupying a lane. Keep
+	// watching the remembered record, and reap from it when the process dies.
+	for _, record := range r.adoptedRecords() {
+		if !seen[record.RunID] && !r.o.Alive(record) {
+			r.forget(record.RunID)
+			r.reap(ctx, record)
+		}
+	}
+}
+
+// adopt takes ownership of a previous process's live run: the lane is marked
+// occupied and the run's log path is announced so a subscriber can reattach
+// its tail. The agent itself is untouched — adopting is remembering, not
+// restarting.
+func (r *Reconciler) adopt(record evidence.Record) {
+	r.mu.Lock()
+	for _, lr := range r.active {
+		if lr.adopted && lr.record.RunID == record.RunID {
+			r.mu.Unlock()
+			return
+		}
+	}
+	r.active = append(r.active, &laneRun{
+		lane:     record.Lane,
+		ticketID: record.TicketID,
+		adopted:  true,
+		record:   record,
+	})
+	r.mu.Unlock()
+	r.emit(Event{Type: EventAdopted, RunID: record.RunID, Lane: record.Lane,
+		TicketID: record.TicketID, Queue: record.Queue, LogPath: record.LogPath})
+}
+
+// reap cleans up after a run whose process is dead: dispose the workspace,
+// release the dead run's claim when the board still shows it, and remove the
+// local record. The ticket's status is left wherever Linear says it is — a
+// crash is drift, and re-running the stage repairs it (SCOPE invariant 3).
+//
+// A reap that cannot finish keeps the record, so the next pass retries it.
+func (r *Reconciler) reap(ctx context.Context, record evidence.Record) {
+	// The process is gone, so the workspace is garbage whether or not the
+	// provision command ever finished building it. Dispose reports its own
+	// failures to the log and never blocks the reap.
+	id := workspace.Identity{Lane: record.Lane, TicketID: record.TicketID, Workspace: record.Workspace}
+	r.o.Dispose(context.WithoutCancel(ctx), r.o.RepoDir, r.o.Repo.Dispose, id, r.o.Log)
+	if err := r.releaseDead(ctx, record); err != nil {
+		r.fail(fmt.Errorf("reap run %s: %w", record.RunID, err))
+		return
+	}
+	if err := r.o.Evidence.Remove(record.RunID); err != nil {
+		r.fail(fmt.Errorf("reap run %s: %w", record.RunID, err))
+		return
+	}
+	r.emit(Event{Type: EventReaped, RunID: record.RunID, Lane: record.Lane,
+		TicketID: record.TicketID, Queue: record.Queue, LogPath: record.LogPath})
+}
+
+// releaseDead releases a dead run's claim so its ticket becomes eligible
+// again — but only when the board still looks exactly as the run left it:
+// same status the run started from, still assigned to this operating user.
+// Anything else means a human, an agent, or an automation acted since, and
+// the loop leaves their work alone.
+func (r *Reconciler) releaseDead(ctx context.Context, record evidence.Record) error {
+	if record.TicketID == "" {
+		return nil
+	}
+	issue, err := r.o.Client.GetIssue(ctx, record.TicketID)
+	if errors.Is(err, linear.ErrNotFound) {
+		return nil // the ticket itself is gone; nothing to release
+	}
+	if err != nil {
+		return fmt.Errorf("read ticket %s: %w", record.TicketID, err)
+	}
+	if issue.Status != record.StartingStatus {
+		return nil
+	}
+	viewerID, err := r.o.Client.Viewer(ctx)
+	if err != nil {
+		return fmt.Errorf("read viewer: %w", err)
+	}
+	if issue.AssigneeID != viewerID {
+		return nil
+	}
+	if err := r.o.Client.UnassignIssue(ctx, record.TicketID); err != nil {
+		return fmt.Errorf("release ticket %s: %w", record.TicketID, err)
+	}
+	return nil
+}
+
+// fill starts eligible tickets into free lanes, up to N agents at once.
+func (r *Reconciler) fill(ctx context.Context) {
+	lanes := r.freeLanes()
+	if len(lanes) == 0 {
+		return
+	}
+	cands, err := candidates(ctx, r.o.Client, r.o.Repo)
+	if err != nil {
+		r.fail(err)
+		return
+	}
+	for _, c := range cands {
+		if len(lanes) == 0 {
+			return
+		}
+		lr, ok := r.register(lanes[0], c.issue.ID)
+		if !ok {
+			// This ticket is already occupying a lane — typically a run whose
+			// claim Linear had not reflected when the board was listed.
+			continue
+		}
+		lanes = lanes[1:]
+		r.wg.Add(1)
+		go r.runLane(ctx, lr, c)
+	}
+}
+
+// runLane settles one claimed lane from start to finish, then frees the lane
+// before emitting the terminal event: a subscriber reacting to the event must
+// find the lane free and the ticket settled.
+func (r *Reconciler) runLane(ctx context.Context, lr *laneRun, c candidate) {
+	defer r.wg.Done()
+	ev, ok := r.executeLane(ctx, lr, c)
+	r.unregister(lr)
+	if ok {
+		r.emit(ev)
+	}
+}
+
+// executeLane is one run: claim, record, provision, execute, move. It mirrors
+// Once's single-lane flow with run evidence added around the agent.
+func (r *Reconciler) executeLane(ctx context.Context, lr *laneRun, c candidate) (Event, bool) {
+	issue := c.issue
+	fail := func(err error) (Event, bool) {
+		return Event{Type: EventError, Lane: lr.lane, TicketID: issue.ID,
+			Ticket: issue.Identifier, Queue: c.name, Err: err}, true
+	}
+
+	viewerID, won, err := claimForQueue(ctx, r.o.Client, issue.ID, c.queue.Status)
+	if err != nil {
+		return fail(err)
+	}
+	if !won {
+		return Event{}, false
+	}
+
+	record, err := r.o.Evidence.Create(evidence.Record{
+		Lane:           lr.lane,
+		StartedAt:      time.Now().UTC(),
+		TicketID:       issue.ID,
+		Queue:          c.name,
+		StartingStatus: c.queue.Status,
+	})
+	if err != nil {
+		err = fmt.Errorf("record run for issue %s: %w", issue.ID, err)
+		if releaseErr := releaseClaim(ctx, r.o.Client, issue.ID, viewerID); releaseErr != nil {
+			err = fmt.Errorf("%w (%v)", err, releaseErr)
+		}
+		return fail(err)
+	}
+
+	ev, keepRecord, ok := r.provisionAndRun(ctx, lr, c, record, viewerID)
+	if !keepRecord {
+		if err := r.o.Evidence.Remove(record.RunID); err != nil {
+			r.fail(fmt.Errorf("remove run record %s: %w", record.RunID, err))
+		}
+	}
+	return ev, ok
+}
+
+// provisionAndRun is the part of a run that owns a workspace. The deferred
+// dispose runs when this function returns, before the caller discards the run
+// record — the workspace lives inside the run directory, so dispose has to
+// see it before Remove sweeps the directory away.
+func (r *Reconciler) provisionAndRun(ctx context.Context, lr *laneRun, c candidate, record evidence.Record, viewerID string) (ev Event, keepRecord, ok bool) {
+	issue := c.issue
+	id := workspace.Identity{Lane: lr.lane, TicketID: issue.ID, Workspace: record.Workspace}
+	// Registered before provisioning, not after: a provision command that
+	// created its workspace and then failed partway must still be cleaned up,
+	// or the next attempt collides with what it left behind. Dispose reports
+	// its own failures to the log and never blocks the caller.
+	defer r.o.Dispose(context.WithoutCancel(ctx), r.o.RepoDir, r.o.Repo.Dispose, id, r.o.Log)
+
+	fail := func(err error) (Event, bool, bool) {
+		return Event{Type: EventError, RunID: record.RunID, Lane: lr.lane, TicketID: issue.ID,
+			Ticket: issue.Identifier, Queue: c.name, LogPath: record.LogPath, Err: err}, false, true
+	}
+
+	if err := r.o.Provision(ctx, r.o.RepoDir, r.o.Repo.Provision, id, r.o.Log); err != nil {
+		// Provisioning never starts a lane. Release our claim so the queued
+		// ticket remains eligible for a later attempt.
+		err = fmt.Errorf("provision issue %s: %w", issue.ID, err)
+		if releaseErr := releaseClaim(ctx, r.o.Client, issue.ID, viewerID); releaseErr != nil {
+			err = fmt.Errorf("%w (%v)", err, releaseErr)
+		}
+		return fail(err)
+	}
+
+	r.emit(Event{Type: EventStarted, RunID: record.RunID, Lane: lr.lane, TicketID: issue.ID,
+		Ticket: issue.Identifier, Queue: c.name, LogPath: record.LogPath})
+
+	result, err := r.o.Execute(ctx, run.Invocation{
+		Runner:  r.o.Repo.Runners[c.queue.Runner],
+		Prompt:  c.queue.Prompt,
+		Ticket:  issue.Identifier,
+		Workdir: record.Workspace,
+		LogPath: record.LogPath,
+		Started: func(pid int) {
+			// The PID makes the record adoptable; without it the run would be
+			// reaped by the next process even while the agent is alive.
+			if _, err := r.o.Evidence.Attach(record.RunID, pid); err != nil {
+				r.fail(fmt.Errorf("attach pid of run %s: %w", record.RunID, err))
+			}
+		},
+	})
+	if ctx.Err() != nil {
+		// Shutdown, not failure: the agent was killed along with the loop.
+		// Keep the claim and the record; the next lerp finds a dead run and
+		// reaps it, so a deliberate stop and a crash repair identically.
+		return Event{}, true, false
+	}
+	if err != nil {
+		// The runner could not be executed at all. Keep the claim — releasing
+		// it would retry a broken runner forever — and drop the local record,
+		// which never gained a process worth adopting.
+		return fail(fmt.Errorf("run issue %s: %w", issue.ID, err))
+	}
+
+	// The move rule: on_success on a clean exit, on_failure otherwise, and
+	// only if the agent didn't move the ticket itself. A move failure rides
+	// on the exit event; the ticket stays claimed for a human to settle.
+	moveErr := conclude(ctx, r.o.Client, issue, c.queue, result.ExitCode, r.o.Log)
+	return Event{Type: EventExited, RunID: record.RunID, Lane: lr.lane, TicketID: issue.ID,
+		Ticket: issue.Identifier, Queue: c.name, LogPath: record.LogPath,
+		ExitCode: result.ExitCode, Err: moveErr}, false, true
+}
+
+// freeLanes returns the lane numbers new runs may start in: lanes 1..N not in
+// use, capped so adopted runs on out-of-range lanes still count against N.
+func (r *Reconciler) freeLanes() []int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	used := make(map[int]bool, len(r.active))
+	for _, lr := range r.active {
+		used[lr.lane] = true
+	}
+	capacity := r.o.Lanes - len(r.active)
+	var free []int
+	for lane := 1; lane <= r.o.Lanes && len(free) < capacity; lane++ {
+		if !used[lane] {
+			free = append(free, lane)
+		}
+	}
+	return free
+}
+
+// register occupies a lane for a ticket, refusing tickets already in a lane:
+// a just-claimed run's assignment may not be visible on the board yet.
+func (r *Reconciler) register(lane int, ticketID string) (*laneRun, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, lr := range r.active {
+		if lr.ticketID == ticketID {
+			return nil, false
+		}
+	}
+	lr := &laneRun{lane: lane, ticketID: ticketID}
+	r.active = append(r.active, lr)
+	return lr, true
+}
+
+func (r *Reconciler) unregister(lr *laneRun) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i, other := range r.active {
+		if other == lr {
+			r.active = append(r.active[:i], r.active[i+1:]...)
+			return
+		}
+	}
+}
+
+// forget drops the adopted lane entry for a run, if there is one.
+func (r *Reconciler) forget(runID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i, lr := range r.active {
+		if lr.adopted && lr.record.RunID == runID {
+			r.active = append(r.active[:i], r.active[i+1:]...)
+			return
+		}
+	}
+}
+
+// ownsTicket reports whether a run this process started holds the ticket.
+// Ownership is by ticket, not run ID, because a lane is registered before its
+// evidence exists: a record must never be reaped in the gap between this
+// process creating it and attaching the agent's PID.
+func (r *Reconciler) ownsTicket(ticketID string) bool {
+	if ticketID == "" {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, lr := range r.active {
+		if !lr.adopted && lr.ticketID == ticketID {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *Reconciler) adoptedRecords() []evidence.Record {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var records []evidence.Record
+	for _, lr := range r.active {
+		if lr.adopted {
+			records = append(records, lr.record)
+		}
+	}
+	return records
+}
+
+func (r *Reconciler) emit(ev Event) {
+	if ev.Err != nil && r.o.Log != nil {
+		fmt.Fprintln(r.o.Log, ev.Err)
+	}
+	if r.o.Events != nil {
+		r.o.Events(ev)
+	}
+}
+
+func (r *Reconciler) fail(err error) {
+	r.emit(Event{Type: EventError, Err: err})
+}

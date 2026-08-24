@@ -135,6 +135,27 @@ printf 'env=%s\n' "$LERP_TICKET"
 	}
 }
 
+// Adoption needs the PID of a process that is still alive: Started reports it
+// as soon as the runner is spawned, not after it exits.
+func TestExecuteReportsPIDOnceStarted(t *testing.T) {
+	dir := t.TempDir()
+	script := writeScript(t, dir, "runner.sh", "exit 0")
+	var pid int
+	if _, err := Execute(context.Background(), Invocation{
+		Runner:  config.Runner{Command: shellQuote(script)},
+		Prompt:  "prompt",
+		Ticket:  "LERP-1",
+		Workdir: dir,
+		LogPath: filepath.Join(dir, "runner.log"),
+		Started: func(p int) { pid = p },
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if pid <= 0 {
+		t.Errorf("Started reported PID %d, want the runner's positive PID", pid)
+	}
+}
+
 func TestExecuteRequiresATicket(t *testing.T) {
 	dir := t.TempDir()
 	_, err := Execute(context.Background(), Invocation{
