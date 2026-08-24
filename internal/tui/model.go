@@ -435,7 +435,7 @@ func (m model) attentionList() string {
 	}
 	if len(m.attention) == 0 {
 		return inactiveStyle.Render("nothing needs you") + "\n" +
-			idleStyle.Render("(shows your claimed tickets sitting in statuses no queue serves)") + "\n"
+			inactiveStyle.Render(truncate("(shows "+loop.AttentionDefinition+")", m.width)) + "\n"
 	}
 	var b strings.Builder
 	for _, it := range m.attention {
@@ -538,7 +538,7 @@ func (m model) queueView() string {
 		lines = append(lines, titleStyle.Render(q.Name)+
 			inactiveStyle.Render(fmt.Sprintf("  %s · team %s", q.Status, q.Team)))
 		if len(q.Tickets) == 0 {
-			lines = append(lines, idleStyle.Render(fmt.Sprintf("    empty — tickets enter when moved to %q", q.Status)))
+			lines = append(lines, idleStyle.Render(truncate(fmt.Sprintf(`    empty — tickets enter when moved to "%s"`, q.Status), m.width)))
 			continue
 		}
 		for _, tk := range q.Tickets {
