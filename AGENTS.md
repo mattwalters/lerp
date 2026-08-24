@@ -1,6 +1,6 @@
 # Agent brief
 
-Wand is a small, reliable CLI, written in Go, that orchestrates
+Lerp is a small, reliable CLI, written in Go, that orchestrates
 software work through Linear.
 
 Before proposing or implementing anything, read `SCOPE.md`. It is the
