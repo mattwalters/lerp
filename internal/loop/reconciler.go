@@ -83,7 +83,7 @@ type QueueSnapshot struct {
 }
 
 // AttentionItem is one ticket waiting on the operator: what it is, why it
-// needs a human, and Linear's URL for it — acting on the item (blessing it
+// needs a human, and Linear's URL for it — acting on the item (promoting it
 // into a queue) happens in Linear, never in lerp.
 type AttentionItem struct {
 	Ticket string // human identifier, e.g. LERP-42
@@ -252,7 +252,7 @@ func (r *Reconciler) Tick(ctx context.Context) {
 // when it is assigned to the operating user and sits in a status no queue
 // serves. That one rule covers both halves of the question — a ticket the
 // operator claimed and parked in a human column (Backlog, a review status)
-// waits to be blessed onward, and a failed run's on_failure move lands its
+// waits to be promoted onward, and a failed run's on_failure move lands its
 // ticket, still claimed, in exactly such a status. Deliberately out of v0: a
 // claimed ticket sitting in a queue status with no live run in a lane (a
 // failed run whose queue has no on_failure route). From one Linear read that

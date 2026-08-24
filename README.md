@@ -107,11 +107,11 @@ permitted to do beyond reading tickets is the other half of setup,
 spelled out under [Stock pipeline](#stock-pipeline); read `lerp.toml`
 before you run it.
 
-**3. Bless a ticket.** Routing is done by placing a ticket: in Linear,
+**3. Promote a ticket.** Routing is done by placing a ticket: in Linear,
 move one into Planning (a big feature) or straight into Implementing (a
 small fix). A ticket is eligible for pickup when it sits in a queue's
 status, has no assignee, and is not blocked by an unfinished ticket
-(Linear's `blockedBy`). Blessing is a human act; lerp never invents
+(Linear's `blockedBy`). Promotion is a human act; lerp never invents
 work items of its own.
 
 **4. Run it.**
@@ -294,7 +294,7 @@ rewriting them into a different shape needs no code change.
 
 | Status | Who acts | Then |
 | --- | --- | --- |
-| Backlog / Todo | you | bless a ticket into Planning, or into Implementing if it is small |
+| Backlog / Todo | you | promote a ticket into Planning, or into Implementing if it is small |
 | Planning | agent | posts a plan comment → Implementing |
 | Implementing | agent | commits, pushes, opens a PR with `gh` → Agent Review |
 | Agent Review | agent | posts a review verdict → In Review, or back to Implementing |
