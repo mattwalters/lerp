@@ -13,6 +13,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/mattwalters/lerp/internal/loop"
 )
@@ -107,10 +108,10 @@ func keyMsg(s string) tea.KeyMsg {
 	}
 }
 
-func TestBoardShowsLaneLifecycle(t *testing.T) {
+func TestLanesShowTheRunLifecycle(t *testing.T) {
 	m, _, _ := newTestModel(t, 2)
 	view := m.View()
-	for _, want := range []string{"lerp", "2 running", "idle", "q quit"} {
+	for _, want := range []string{"needs you", "running", "up next", "idle", "q quit"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("initial view is missing %q:\n%s", want, view)
 		}
@@ -119,15 +120,10 @@ func TestBoardShowsLaneLifecycle(t *testing.T) {
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 		TicketID: "id-42", Ticket: "LERP-42", Queue: "implement", LogPath: "/dev/null"}})
 	view = m.View()
-	for _, want := range []string{"LERP-42", "implement"} {
+	for _, want := range []string{"LERP-42", "implement", "1/2 busy"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view after start is missing %q:\n%s", want, view)
 		}
-	}
-	// "running" is also the view tab's own label now, so check the lane's
-	// own row rather than the whole screen.
-	if !strings.Contains(m.laneRow(1), "running") {
-		t.Fatalf("lane 1's row does not show running after start:\n%s", m.laneRow(1))
 	}
 
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventExited, RunID: "r1", Lane: 1,
@@ -136,8 +132,8 @@ func TestBoardShowsLaneLifecycle(t *testing.T) {
 	if !strings.Contains(view, "LERP-42 exited 0") {
 		t.Fatalf("view after exit does not note the outcome:\n%s", view)
 	}
-	if strings.Contains(m.laneRow(1), "running") {
-		t.Fatalf("lane 1's row still shows running after exit:\n%s", m.laneRow(1))
+	if !strings.Contains(view, "0/2 busy") {
+		t.Fatalf("view after exit still counts a busy lane:\n%s", view)
 	}
 }
 
@@ -158,7 +154,8 @@ func TestAdoptedRowShowsTrueRunAge(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAdopted, RunID: "r1", Lane: 1,
 		TicketID: "id-1", Queue: "plan", StartedAt: time.Now().Add(-2 * time.Hour)}})
-	if view := m.View(); !strings.Contains(view, "adopted 2h") {
+	view := m.View()
+	if !strings.Contains(view, "adopted") || !strings.Contains(view, "2h0m") {
 		t.Fatalf("adopted row does not show the run's true age:\n%s", view)
 	}
 }
@@ -168,7 +165,7 @@ func TestAdoptedRunOccupiesAndFreesItsRow(t *testing.T) {
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAdopted, RunID: "r9", Lane: 5,
 		TicketID: "abcdef1234567890", Queue: "review", LogPath: "/dev/null"}})
 	view := m.View()
-	if !strings.Contains(view, "adopted") || !strings.Contains(view, "review") {
+	if !strings.Contains(view, "adopted") {
 		t.Fatalf("adopted run not on the board:\n%s", view)
 	}
 	if len(m.order) != 3 {
@@ -182,32 +179,42 @@ func TestAdoptedRunOccupiesAndFreesItsRow(t *testing.T) {
 	}
 }
 
-func TestViewSwitching(t *testing.T) {
+// Focus moves between panels — every panel stays on screen; the main pane is
+// a lens on whichever one has focus.
+func TestFocusSwitching(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, keyMsg("3"))
+	if m.focus != panelNext {
+		t.Fatalf("key 3 focused %v, want up next", m.focus)
+	}
 	if !strings.Contains(m.View(), "waiting for the first pass") {
-		t.Fatalf("key 3 did not show the queue view:\n%s", m.View())
+		t.Fatalf("empty up-next lens missing its state text:\n%s", m.View())
 	}
 	m = update(t, m, keyMsg("1"))
+	if m.focus != panelAttention {
+		t.Fatalf("key 1 focused %v, want needs you", m.focus)
+	}
 	if !strings.Contains(m.View(), "reading the board") {
-		t.Fatalf("key 1 did not show the attention view:\n%s", m.View())
+		t.Fatalf("needs-you lens before the first pass missing its state text:\n%s", m.View())
 	}
 	m = update(t, m, keyMsg("tab"))
-	if m.view != viewBoard {
-		t.Fatalf("tab from attention landed on %v, want board", m.view)
+	if m.focus != panelLanes {
+		t.Fatalf("tab from needs-you landed on %v, want running", m.focus)
 	}
 }
 
-// The queue view is the loop's own snapshot, verbatim: eligible tickets in
-// pickup order, blocked and claimed ones visibly gated, empty queues named,
-// the whole body replaced on every pass.
-func TestQueueViewShowsWhatRunsNext(t *testing.T) {
+// The up-next panel is the loop's own snapshot, verbatim: eligible tickets
+// in pickup order, blocked and claimed ones visibly gated, empty queues
+// named, the whole body replaced on every pass. The main pane details the
+// selected ticket, including why it will not run.
+func TestUpNextShowsWhatRunsNext(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, keyMsg("3"))
 
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
 		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
-			{ID: "t1", Identifier: "LERP-1", Title: "ship the thing", Eligible: true},
+			{ID: "t1", Identifier: "LERP-1", Title: "ship the thing", Eligible: true,
+				URL: "https://linear.app/acme/issue/LERP-1/ship"},
 			{ID: "t2", Identifier: "LERP-2", Title: "gated work", BlockedBy: []string{"LERP-1", "LERP-9"}},
 			{ID: "t3", Identifier: "LERP-3", Title: "already picked up", Assigned: true},
 		}},
@@ -215,19 +222,30 @@ func TestQueueViewShowsWhatRunsNext(t *testing.T) {
 	}}})
 	view := m.View()
 	for _, want := range []string{
-		"implement", "Todo", "team LERP",
+		"implement", "Todo",
 		"LERP-1", "ship the thing",
-		"blocked by LERP-1, LERP-9",
-		"LERP-3", "claimed",
-		"review", `empty — tickets enter when moved to "In Review"`,
+		"review", "In Review", "empty",
+		"team LERP", "position 1 of 3", // the selected ticket's detail lens
+		"https://linear.app/acme/issue/LERP-1/ship",
 	} {
 		if !strings.Contains(view, want) {
-			t.Fatalf("queue view is missing %q:\n%s", want, view)
+			t.Fatalf("up-next view is missing %q:\n%s", want, view)
 		}
 	}
 
+	// Selection walks the pickup order; the lens explains each gate.
+	m = update(t, m, keyMsg("down"))
+	if view := m.View(); !strings.Contains(view, "blocked by LERP-1, LERP-9") {
+		t.Fatalf("blocked ticket's lens does not name its blockers:\n%s", view)
+	}
+	m = update(t, m, keyMsg("down"))
+	if view := m.View(); !strings.Contains(view, "claimed") {
+		t.Fatalf("claimed ticket's lens does not say so:\n%s", view)
+	}
+
 	// The next pass's snapshot replaces the whole view: a ticket that left
-	// the queue leaves the screen.
+	// the queue leaves the screen, and the emptied board explains how
+	// tickets enter.
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
 		{Team: "LERP", Name: "implement", Status: "Todo"},
 	}}})
@@ -235,43 +253,14 @@ func TestQueueViewShowsWhatRunsNext(t *testing.T) {
 	if strings.Contains(view, "LERP-1") {
 		t.Fatalf("stale ticket survived a refresh:\n%s", view)
 	}
-	if !strings.Contains(view, `empty — tickets enter when moved to "Todo"`) {
-		t.Fatalf("emptied queue does not read empty:\n%s", view)
+	if !strings.Contains(view, `tickets enter when moved to "Todo"`) {
+		t.Fatalf("emptied queue does not explain how tickets enter:\n%s", view)
 	}
 }
 
-// Narrow terminals truncate the explanatory empty states instead of letting
-// them soft-wrap, which would defeat the height cap's line accounting.
-func TestNarrowWidthTruncatesEmptyStates(t *testing.T) {
-	m, _, _ := newTestModel(t, 1)
-	m = update(t, m, tea.WindowSizeMsg{Width: 40, Height: 30})
-
-	m = update(t, m, keyMsg("3"))
-	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
-		{Team: "LERP", Name: "review", Status: "A Status With A Very Long Name"},
-	}}})
-	view := m.View()
-	if strings.Contains(view, `moved to "A Status With A Very Long Name"`) {
-		t.Fatalf("empty-queue line was not truncated at narrow width:\n%s", view)
-	}
-	if !strings.Contains(view, "…") {
-		t.Fatalf("truncated empty-queue line shows no ellipsis:\n%s", view)
-	}
-
-	m = update(t, m, keyMsg("1"))
-	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention}})
-	view = m.View()
-	if strings.Contains(view, "no queue serves)") {
-		t.Fatalf("attention hint was not truncated at narrow width:\n%s", view)
-	}
-	if !strings.Contains(view, "…") {
-		t.Fatalf("truncated attention hint shows no ellipsis:\n%s", view)
-	}
-}
-
-// A backlog deeper than the terminal is capped, not allowed to push the
-// footer off screen.
-func TestQueueViewCapsToTheWindow(t *testing.T) {
+// A backlog deeper than the terminal is capped inside its panel, not allowed
+// to push the status bar off screen.
+func TestUpNextCapsToItsPanel(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, keyMsg("3"))
 	tickets := make([]loop.QueueTicket, 60)
@@ -284,24 +273,24 @@ func TestQueueViewCapsToTheWindow(t *testing.T) {
 	}}})
 	view := m.View()
 	if !strings.Contains(view, "more") {
-		t.Fatalf("overflowing queue view shows no cap line:\n%s", view)
+		t.Fatalf("overflowing up-next panel shows no cap line:\n%s", view)
 	}
 	if got := strings.Count(view, "\n"); got > 30 {
-		t.Fatalf("queue view is %d lines tall in a 30-line window", got)
+		t.Fatalf("view is %d lines tall in a 30-line window", got)
 	}
 	if !strings.Contains(view, "q quit") {
-		t.Fatalf("cap pushed the help line off screen:\n%s", view)
+		t.Fatalf("cap pushed the status bar off screen:\n%s", view)
 	}
 }
 
-// The attention view folds attention events: it lists each waiting ticket
-// with the loop's reason and its Linear URL, and renders the empty list as
-// the goal state — never as a bare blank.
-func TestAttentionViewListsWhatWaits(t *testing.T) {
+// The needs-you panel folds attention events; its lens shows the loop's
+// reason and Linear's URL for the selected item. The empty state is the goal
+// state — but never claimed before the first pass has reported, and it says
+// what would make items appear.
+func TestNeedsYouListsWhatWaits(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, keyMsg("1"))
 
-	// Before the first pass reports, the view must not claim the goal state.
 	if view := m.View(); strings.Contains(view, "nothing needs you") {
 		t.Fatalf("view claims the goal state before any pass reported:\n%s", view)
 	}
@@ -319,7 +308,7 @@ func TestAttentionViewListsWhatWaits(t *testing.T) {
 		"https://linear.app/acme/issue/LERP-42/fix",
 	} {
 		if !strings.Contains(view, want) {
-			t.Fatalf("attention view is missing %q:\n%s", want, view)
+			t.Fatalf("needs-you view is missing %q:\n%s", want, view)
 		}
 	}
 
@@ -327,10 +316,10 @@ func TestAttentionViewListsWhatWaits(t *testing.T) {
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention}})
 	view = m.View()
 	if !strings.Contains(view, "nothing needs you") {
-		t.Fatalf("empty attention list does not read as the goal state:\n%s", view)
+		t.Fatalf("empty needs-you list does not read as the goal state:\n%s", view)
 	}
-	if !strings.Contains(view, "shows unclaimed tickets, and your claimed tickets, sitting in statuses no queue serves") {
-		t.Fatalf("empty attention list does not explain what would make items appear:\n%s", view)
+	if !strings.Contains(view, "shows unclaimed tickets") {
+		t.Fatalf("empty needs-you lens does not explain what would make items appear:\n%s", view)
 	}
 	if strings.Contains(view, "LERP-42") {
 		t.Fatalf("cleared item still rendered:\n%s", view)
@@ -338,8 +327,9 @@ func TestAttentionViewListsWhatWaits(t *testing.T) {
 }
 
 // needs-you widens attention into two groups: unclaimed work to route, and
-// the operator's own claimed tickets parked outside every queue.
-func TestAttentionViewGroupsToRouteAndParked(t *testing.T) {
+// the operator's own claimed tickets parked outside every queue. The panel
+// renders each group heading above its tickets, in the loop's order.
+func TestNeedsYouGroupsToRouteAndParked(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
@@ -348,23 +338,28 @@ func TestAttentionViewGroupsToRouteAndParked(t *testing.T) {
 		{Group: loop.Parked, Ticket: "LERP-1", TicketID: "help", Title: "Fix the build", Status: "Needs Help",
 			Reason: `claimed in "Needs Help" — no queue serves it`},
 	}}})
-	view := m.View()
-	toRoute := strings.Index(view, "to route")
-	parked := strings.Index(view, "parked on you")
-	lerp4 := strings.Index(view, "LERP-4")
-	lerp1 := strings.Index(view, "LERP-1")
+	// Assert on the panel itself: in the full view the lens also names the
+	// selected ticket, which would shadow the ordering check.
+	panel := m.attentionPanel(40, 8)
+	toRoute := strings.Index(panel, "to route")
+	parked := strings.Index(panel, "parked on you")
+	lerp4 := strings.Index(panel, "LERP-4")
+	lerp1 := strings.Index(panel, "LERP-1")
 	if toRoute < 0 || parked < 0 || lerp4 < 0 || lerp1 < 0 {
-		t.Fatalf("view is missing a group heading or ticket:\n%s", view)
+		t.Fatalf("panel is missing a group heading or ticket:\n%s", panel)
 	}
 	if !(toRoute < lerp4 && lerp4 < parked && parked < lerp1) {
-		t.Fatalf("groups are not rendered to-route-then-parked, each above its ticket:\n%s", view)
+		t.Fatalf("groups are not rendered to-route-then-parked, each above its ticket:\n%s", panel)
+	}
+	if !strings.Contains(m.View(), string(loop.ToRoute)) {
+		t.Fatalf("group heading missing from the full view:\n%s", m.View())
 	}
 }
 
-// Selecting a needs-you item and pressing "p" opens the promote picker;
-// choosing a status and confirming calls Promote with the ticket's Linear id
-// and the chosen status, and settles into a transient note. Cancelling
-// touches nothing.
+// Selecting a needs-you item and pressing "p" opens the promote picker in
+// the main pane; choosing a status and confirming calls Promote with the
+// ticket's Linear id and the chosen status, and settles into a transient
+// note on the status bar. Cancelling touches nothing.
 func TestPromotePicker(t *testing.T) {
 	m, _, _, promoter := newPromoteTestModel(t, 1, []string{"Planning", "Implementing"})
 	m = update(t, m, keyMsg("1"))
@@ -389,7 +384,7 @@ func TestPromotePicker(t *testing.T) {
 	// and status.
 	m = update(t, m, keyMsg("p"))
 	view := m.View()
-	for _, want := range []string{"promote LERP-4", "Planning", "Implementing"} {
+	for _, want := range []string{"promote LERP-4", "Planning", "Implementing", "enter promote"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("promote picker is missing %q:\n%s", want, view)
 		}
@@ -435,6 +430,68 @@ func TestPromotePickerClosesWhenTheListEmpties(t *testing.T) {
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention}})
 	if m.promoting {
 		t.Fatal("promote picker stayed open after its item vanished")
+	}
+}
+
+// The status bar carries the heartbeat and the counts; the ? key swaps the
+// main pane for the full keymap.
+func TestStatusBarAndHelp(t *testing.T) {
+	m, _, _ := newTestModel(t, 2)
+	if !strings.Contains(m.View(), "RUNNING") {
+		t.Fatalf("status bar does not name the focused panel:\n%s", m.View())
+	}
+	if !strings.Contains(m.View(), "pass running") {
+		t.Fatalf("status bar hides the in-flight first pass:\n%s", m.View())
+	}
+	m = update(t, m, tickedMsg{})
+	if !strings.Contains(m.View(), "next in") {
+		t.Fatalf("status bar after a pass shows no countdown:\n%s", m.View())
+	}
+
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-1", Title: "one"}, {Ticket: "LERP-2", Title: "two"},
+	}}})
+	if !strings.Contains(m.View(), "2 need you") {
+		t.Fatalf("status bar does not count needs-you:\n%s", m.View())
+	}
+
+	m = update(t, m, keyMsg("?"))
+	view := m.View()
+	if !strings.Contains(view, "open in Linear") || !strings.Contains(view, "next panel") {
+		t.Fatalf("help overlay is missing bindings:\n%s", view)
+	}
+	m = update(t, m, keyMsg("?"))
+	if strings.Contains(m.View(), "next panel") {
+		t.Fatalf("help overlay did not close:\n%s", m.View())
+	}
+}
+
+// No rendered line may overflow the terminal, wide layout or stacked — the
+// long explanatory empty states included.
+func TestViewFitsTheWindow(t *testing.T) {
+	for _, width := range []int{120, 100, 80, 60} {
+		m, _, _ := newTestModel(t, 3)
+		resized, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: 30})
+		m = resized.(model)
+		m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+			TicketID: "id-42", Ticket: "LERP-42", Queue: "implement", LogPath: "/dev/null"}})
+		m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention}})
+		m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+			{Team: "LERP", Name: "review", Status: "A Status With A Very Long Name"},
+		}}})
+		for i, line := range strings.Split(m.View(), "\n") {
+			if got := lipgloss.Width(line); got > width {
+				t.Fatalf("width %d: line %d is %d cells wide:\n%s", width, i, got, line)
+			}
+		}
+	}
+}
+
+// o without a selected URL is a no-op, not a crash or a stray command.
+func TestOpenWithNothingSelected(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	if _, cmd := m.Update(keyMsg("o")); cmd != nil {
+		t.Fatal("o with no URL produced a command")
 	}
 }
 
@@ -531,7 +588,38 @@ func TestSelectingALaneTailsItsLog(t *testing.T) {
 	}
 }
 
-func TestErrorsSurfaceOnTheStatusLine(t *testing.T) {
+// The log keeps tailing while the operator looks elsewhere: appended output
+// gathered during a needs-you detour is on screen the moment the running
+// panel regains focus.
+func TestLogSurvivesAFocusDetour(t *testing.T) {
+	dir := t.TempDir()
+	one := filepath.Join(dir, "one.log")
+	writeLog(t, one, []byte("first line\n"))
+
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		Ticket: "LERP-1", Queue: "plan", LogPath: one}})
+	m = update(t, m, keyMsg("1"))
+	if strings.Contains(m.View(), "first line") {
+		t.Fatalf("needs-you lens still shows the log:\n%s", m.View())
+	}
+
+	f, err := os.OpenFile(one, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("written during the detour\n"); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	m = update(t, m, pollMsg{})
+	m = update(t, m, keyMsg("2"))
+	if !strings.Contains(m.View(), "written during the detour") {
+		t.Fatalf("log output gathered off-focus is missing:\n%s", m.View())
+	}
+}
+
+func TestErrorsSurfaceOnTheStatusBar(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventError, Err: errors.New("linear is down")}})
 	if !strings.Contains(m.View(), "linear is down") {
@@ -543,7 +631,7 @@ func TestErrorsSurfaceOnTheStatusLine(t *testing.T) {
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventError, Err: errors.New("still down")}})
 	m = update(t, m, tickedMsg{})
 	if !strings.Contains(m.View(), "still down") {
-		t.Fatalf("erroring pass cleared the status line:\n%s", m.View())
+		t.Fatalf("erroring pass cleared the status bar:\n%s", m.View())
 	}
 
 	// A clean pass supersedes the stale error; lane-level outcomes live on as
@@ -551,7 +639,7 @@ func TestErrorsSurfaceOnTheStatusLine(t *testing.T) {
 	m = update(t, m, tickMsg{})
 	m = update(t, m, tickedMsg{})
 	if strings.Contains(m.View(), "still down") {
-		t.Fatalf("clean pass left a stale error on the status line:\n%s", m.View())
+		t.Fatalf("clean pass left a stale error on the status bar:\n%s", m.View())
 	}
 }
 

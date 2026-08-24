@@ -135,7 +135,8 @@ the engine — no daemon. Work happens while lerp is open; a headless
 `lerp run` is the same loop without the chrome, if and when it earns
 its existence.
 
-Three views, one per question an operator actually has:
+Three panels on one screen, one per question an operator actually
+has, beside a main pane that details whichever panel has focus:
 
 1. **Needs-you** — what waits on a human, in two groups: unclaimed
    tickets sitting in a status no queue serves (to route), and the
