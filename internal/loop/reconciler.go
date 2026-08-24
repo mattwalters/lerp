@@ -136,7 +136,12 @@ type Event struct {
 	// that is the original start under a previous process, not the adoption.
 	// Zero when no run exists yet.
 	StartedAt time.Time
-	ExitCode  int             // meaningful only for EventExited
+	ExitCode  int // meaningful only for EventExited
+	// Note is a remark about how a run settled, for the operator to read:
+	// today, the on_success or on_failure hop conclude did not make because
+	// the ticket left the queue's status mid-run. Empty when there is
+	// nothing to say, which is the happy path. EventExited only.
+	Note      string
 	Queues    []QueueSnapshot // meaningful only for EventQueues
 	Attention []AttentionItem // EventAttention only: everything waiting on the operator
 	Err       error
@@ -794,11 +799,13 @@ func (r *Reconciler) provisionAndRun(ctx context.Context, lr *laneRun, c candida
 
 	// The move rule: on_success on a clean exit, on_failure otherwise, and
 	// only if the agent didn't move the ticket itself. A move failure rides
-	// on the exit event; the ticket stays claimed for a human to settle.
-	moveErr := conclude(ctx, r.o.Client, issue, c.queue, servedStatuses(r.o.Repo), result.ExitCode, r.o.Log)
+	// on the exit event; the ticket stays claimed for a human to settle. A
+	// move that was skipped because the ticket left mid-run rides along too,
+	// as a note: the run log alone is not somewhere anyone is looking.
+	note, moveErr := conclude(ctx, r.o.Client, issue, c.queue, r.o.Repo, result.ExitCode, r.o.Log)
 	return Event{Type: EventExited, RunID: record.RunID, Lane: lr.lane, TicketID: issue.ID,
 		Ticket: issue.Identifier, Queue: c.name, LogPath: record.LogPath,
-		ExitCode: result.ExitCode, Err: moveErr}, false, true
+		ExitCode: result.ExitCode, Note: note, Err: moveErr}, false, true
 }
 
 // freeLanes returns the lane numbers new runs may start in: lanes 1..N not in

@@ -165,7 +165,7 @@ func TestCleanLogKeepsColorAndNothingElse(t *testing.T) {
 func TestCleanEventScrubsEveryLinearString(t *testing.T) {
 	hostile := "\x1b]0;pwned\x07\x1b[2Jgotcha\r"
 	ev := cleanEvent(loop.Event{
-		Type: loop.EventQueues, Ticket: hostile, TicketID: hostile, Queue: hostile,
+		Type: loop.EventQueues, Ticket: hostile, TicketID: hostile, Queue: hostile, Note: hostile,
 		Queues: []loop.QueueSnapshot{{
 			Team: hostile, Name: hostile, Status: hostile,
 			Tickets: []loop.QueueTicket{{
@@ -181,7 +181,7 @@ func TestCleanEventScrubsEveryLinearString(t *testing.T) {
 
 	q, tk, it := ev.Queues[0], ev.Queues[0].Tickets[0], ev.Attention[0]
 	for name, got := range map[string]string{
-		"Ticket": ev.Ticket, "TicketID": ev.TicketID, "Queue": ev.Queue,
+		"Ticket": ev.Ticket, "TicketID": ev.TicketID, "Queue": ev.Queue, "Note": ev.Note,
 		"Queues.Team": q.Team, "Queues.Name": q.Name, "Queues.Status": q.Status,
 		"Tickets.ID": tk.ID, "Tickets.Identifier": tk.Identifier,
 		"Tickets.Title": tk.Title, "Tickets.URL": tk.URL,

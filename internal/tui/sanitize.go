@@ -206,6 +206,7 @@ func cleanEvent(ev loop.Event) loop.Event {
 	ev.TicketID = clean(ev.TicketID)
 	ev.Ticket = clean(ev.Ticket)
 	ev.Queue = clean(ev.Queue)
+	ev.Note = clean(ev.Note)
 	ev.Queues = slices.Clone(ev.Queues)
 	for i := range ev.Queues {
 		q := &ev.Queues[i]

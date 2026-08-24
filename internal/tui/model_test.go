@@ -192,6 +192,26 @@ func TestLanesShowTheRunLifecycle(t *testing.T) {
 	}
 }
 
+// A skipped hop is the operator's business — a stage of their pipeline did
+// not run — so it rides the exit event onto the status bar, not into the log
+// file alone.
+func TestExitedEventReportsASkippedHop(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	note := `LERP-42 left "Implementing" for "In Progress" during its run — ` +
+		`the on_success hop to "Agent Review" was skipped.`
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventExited, RunID: "r1", Lane: 1,
+		TicketID: "id-42", Ticket: "LERP-42", Queue: "implement", ExitCode: 0, Note: note}})
+	if !strings.Contains(m.View(), "the on_success hop") {
+		t.Fatalf("view does not report the skipped hop:\n%s", m.View())
+	}
+	if m.lastInfo != note || !m.lastInfoWarn {
+		t.Errorf("status note = (%q, warn %v), want (%q, warn true)", m.lastInfo, m.lastInfoWarn, note)
+	}
+	if strings.Contains(m.View(), "✓ LERP-42 left") {
+		t.Errorf("a skipped hop is reported as a success:\n%s", m.View())
+	}
+}
+
 func TestProvisioningLaneIsOccupied(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventProvisioning, RunID: "r1", Lane: 1,
