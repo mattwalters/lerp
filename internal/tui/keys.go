@@ -6,8 +6,7 @@ import "github.com/charmbracelet/bubbles/key"
 // both render from it, so the help can never drift from the keys.
 type keymap struct {
 	Attention key.Binding
-	Lanes     key.Binding
-	UpNext    key.Binding
+	Work      key.Binding
 	NextPanel key.Binding
 	PrevPanel key.Binding
 	Up        key.Binding
@@ -28,8 +27,7 @@ type keymap struct {
 func newKeymap() keymap {
 	return keymap{
 		Attention: key.NewBinding(key.WithKeys("1"), key.WithHelp("1", "needs you")),
-		Lanes:     key.NewBinding(key.WithKeys("2"), key.WithHelp("2", "running")),
-		UpNext:    key.NewBinding(key.WithKeys("3"), key.WithHelp("3", "up next")),
+		Work:      key.NewBinding(key.WithKeys("2"), key.WithHelp("2", "work")),
 		NextPanel: key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next panel")),
 		PrevPanel: key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "prev panel")),
 		Up:        key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "select up")),
@@ -60,7 +58,7 @@ func (k keymap) ShortHelp() []key.Binding {
 // selection — the split reads, and it fits.
 func (k keymap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{k.Attention, k.Lanes, k.UpNext, k.NextPanel, k.PrevPanel,
+		{k.Attention, k.Work, k.NextPanel, k.PrevPanel,
 			k.Up, k.Down, k.PageUp, k.PageDown, k.Top, k.Bottom},
 		{k.Promote, k.Sort, k.Project, k.Open, k.Raw, k.Help, k.Quit},
 	}

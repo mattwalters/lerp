@@ -51,7 +51,7 @@ type Options struct {
 	Reader   Reader
 	Statuses []string      // promote targets: configured queue statuses, plus the pipeline's exits
 	Interval time.Duration // tick cadence; loop.DefaultInterval when zero
-	Lanes    int           // N, for the fixed lane rows
+	Lanes    int           // N: at most this many agents at once
 	Events   <-chan loop.Event
 }
 
@@ -71,26 +71,21 @@ func (o Options) validate() error {
 	return nil
 }
 
-// panel is one of the three side panels — SCOPE's three questions, all on
-// screen at once. Focus decides where selection keys go and what lens the
-// main pane shows.
+// panel is one of the two side panels — SCOPE's two questions, both on
+// screen at once. Focus decides where the selection keys go; the lens the
+// main pane shows is the selected row's, not the panel's.
 type panel int
 
 const (
 	panelAttention panel = iota
-	panelLanes
-	panelNext
+	panelWork
 )
 
 func (p panel) String() string {
-	switch p {
-	case panelAttention:
+	if p == panelAttention {
 		return "needs you"
-	case panelLanes:
-		return "running"
-	default:
-		return "up next"
 	}
+	return "work"
 }
 
 // sortMode is the needs-you table's one control. Sorting is grouping: the
@@ -139,17 +134,19 @@ func (s sortMode) header(it loop.AttentionItem) (string, string) {
 	return "", ""
 }
 
-// laneState is the runner state a lane row shows.
+// laneState is the runner state a lane is in.
 type laneState int
 
 const (
-	laneIdle         laneState = iota // no agent; note says how the last run ended
+	laneIdle         laneState = iota // no agent
 	laneProvisioning                  // claimed; the workspace is being prepared
 	laneRunning                       // an agent this process started
 	laneAdopted                       // a live agent inherited from a previous process
 )
 
-// lane is one board row, maintained purely from loop events.
+// lane is one concurrency slot, maintained purely from loop events. It no
+// longer owns a row of its own: the work panel draws tickets, and a lane is
+// how a ticket's row knows it is running (see workRow).
 type lane struct {
 	state    laneState
 	runID    string
@@ -158,7 +155,6 @@ type lane struct {
 	queue    string
 	logPath  string // survives the run, so the tail outlives the agent
 	since    time.Time
-	note     string // idle lanes: how the last occupant ended
 }
 
 const (
@@ -219,9 +215,41 @@ type ticketDetail struct {
 	err      string
 }
 
-// nextRef addresses one ticket in the queue snapshot: queue index, ticket
-// index. The up-next selection walks these, skipping header rows.
-type nextRef struct{ qi, ti int }
+// workRow is one selectable line of the work panel: a ticket, and the lane
+// running it when one is. Rows are rebuilt from the queue snapshot and the
+// lanes on every pass, so a row is a picture of one moment — it carries what
+// drawing it needs rather than an index into state the next pass replaces.
+type workRow struct {
+	ticketID string
+	ticket   string // human identifier, e.g. LERP-42
+	title    string
+	url      string
+	queue    string // the queue whose group the row sits in
+	status   string // that queue's Linear status; empty off the board
+	team     string
+	// lane is the lane running this ticket, 0 when nothing is; state and
+	// since describe that run.
+	lane  int
+	state laneState
+	since time.Time
+	// The pickup gate, for a ticket that is not running: where it sits in
+	// its queue's order, and what holds it there.
+	pos, of   int
+	assigned  bool
+	blockedBy []string
+	eligible  bool
+}
+
+// workGroup is one queue as the panel draws it: a header, then its rows —
+// what is running in it first, then what runs next.
+type workGroup struct {
+	name, status, team string
+	// offBoard marks a group that is not a configured queue: a live run
+	// whose ticket the pass no longer lists anywhere. The work is real, so
+	// it keeps a group instead of vanishing.
+	offBoard bool
+	rows     []workRow
+}
 
 type model struct {
 	o   Options
@@ -232,15 +260,23 @@ type model struct {
 	ready         bool
 	helpOn        bool
 
-	lanes    map[int]*lane
-	order    []int // lane numbers, sorted; adopted runs may sit above N
-	selected int   // the selected lane's NUMBER, not its position (see reorder)
+	lanes map[int]*lane
+	order []int // lane numbers, sorted; adopted runs may sit above N
+	// lastLog is where a ticket's last finished run wrote its log, kept so
+	// the work panel can still show it once the lane is gone — the run's
+	// row was the only door to it, and that row disappears with the run.
+	lastLog map[string]string
 
 	// queues is the loop's latest queue snapshot, replaced wholesale on every
 	// pass; nil until the first pass reports. It is display state only — the
-	// up-next panel edits nothing (SCOPE: not a Linear client).
-	queues  []loop.QueueSnapshot
-	nextSel int // index into nextRefs()
+	// work panel edits nothing (SCOPE: not a Linear client).
+	queues []loop.QueueSnapshot
+	// The work panel selects a ticket, not a row: workSel is the selected
+	// ticket's ID, and it survives the row moving — to another queue, into a
+	// lane, up or down its group. workPos is where that row last sat, the
+	// fallback for a ticket that has left the panel entirely.
+	workSel string
+	workPos int
 
 	// attention is the loop's latest full list of what waits on the operator;
 	// attentionSeen separates "no pass has reported yet" from the goal state,
@@ -292,10 +328,20 @@ type model struct {
 	inFlight bool
 	lastPass time.Time
 
-	lastErr      string
-	lastInfo     string // transient note, e.g. a promote's outcome; cleared at the next pass
-	lastInfoWarn bool   // the note reports something that went unhandled, not something that worked
-	passHadErr   bool   // an error event arrived during the pass now in flight
+	lastErr string
+	// notes are this interval's transient reports — run outcomes, a
+	// promote's result — in arrival order, cleared at the next pass. A
+	// single slot could not hold them: with N lanes, two runs settling
+	// inside one interval is routine, and the second silently overwrote the
+	// first. The status bar renders them all, and renders them alongside
+	// lastErr rather than behind it, so a broken queue listing cannot hide
+	// the fact that a run failed.
+	notes      []note
+	passHadErr bool // an error event arrived during the pass now in flight
+	// logOffset parks the log pane's scroll position while the selection is
+	// on a row that has no log, so walking past a pending ticket and back
+	// returns to where the operator was rather than to the top.
+	logOffset int
 
 	// passes counts in-flight reconciliation passes; Run waits on it after
 	// the program exits, so quitting never severs a pass mid-mutation.
@@ -308,9 +354,9 @@ func newModel(ctx context.Context, o Options) model {
 	}
 	h := help.New()
 	h.ShowAll = true
-	m := model{o: o, ctx: ctx, focus: panelLanes, lanes: make(map[int]*lane),
-		details: make(map[string]*ticketDetail),
-		vp:      viewport.New(0, 0), follow: true, keys: newKeymap(), help: h,
+	m := model{o: o, ctx: ctx, focus: panelWork, lanes: make(map[int]*lane),
+		details: make(map[string]*ticketDetail), lastLog: make(map[string]string),
+		vp: viewport.New(0, 0), follow: true, keys: newKeymap(), help: h,
 		inFlight: true, // Init starts the first pass immediately
 		passes:   &sync.WaitGroup{}}
 	for n := 1; n <= o.Lanes; n++ {
@@ -364,12 +410,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKey(msg)
 	case tickMsg:
 		m.passHadErr = false
-		m.lastInfo, m.lastInfoWarn = "", false // a new pass starting is the "transient" in transient note
+		m.notes = nil // a new pass starting is the "transient" in transient note
 		m.inFlight = true
 		return m, m.runTick()
 	case tickedMsg:
 		// A pass that produced no error supersedes whatever error line an
-		// earlier one left; lane-level failures stay visible as lane notes.
+		// earlier one left. Run outcomes are notes, not errors, and are
+		// cleared by the next pass starting rather than by this one ending.
 		if !m.passHadErr {
 			m.lastErr = ""
 		}
@@ -385,7 +432,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// The poll is also the clock: elapsed times and the heartbeat
 		// re-render even when the log is quiet.
 		m.frame++
-		if m.tail.read() && m.focus == panelLanes {
+		if m.tail.read() && m.showingLog() {
 			m.refreshLog()
 		}
 		return m, poll()
@@ -401,7 +448,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.lastErr = clean(fmt.Sprintf("promote %s to %s: %v", msg.ticket, msg.status, msg.err))
 		} else {
-			m.lastInfo, m.lastInfoWarn = fmt.Sprintf("promoted %s to %s", msg.ticket, msg.status), false
+			m.note(fmt.Sprintf("promoted %s to %s", msg.ticket, msg.status), false)
 		}
 		return m, nil
 	}
@@ -419,14 +466,12 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.helpOn = !m.helpOn
 	case key.Matches(msg, m.keys.Attention):
 		m.setFocus(panelAttention)
-	case key.Matches(msg, m.keys.Lanes):
-		m.setFocus(panelLanes)
-	case key.Matches(msg, m.keys.UpNext):
-		m.setFocus(panelNext)
+	case key.Matches(msg, m.keys.Work):
+		m.setFocus(panelWork)
 	case key.Matches(msg, m.keys.NextPanel):
-		m.setFocus((m.focus + 1) % 3)
+		m.setFocus((m.focus + 1) % 2)
 	case key.Matches(msg, m.keys.PrevPanel):
-		m.setFocus((m.focus + 2) % 3)
+		m.setFocus((m.focus + 1) % 2)
 	case key.Matches(msg, m.keys.Up):
 		m.moveSelection(-1)
 	case key.Matches(msg, m.keys.Down):
@@ -451,22 +496,22 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// state alone, so a detour through a detail lens can never freeze the tail.
 	case key.Matches(msg, m.keys.PageUp):
 		m.vp.ViewUp()
-		if m.focus == panelLanes {
+		if m.showingLog() {
 			m.follow = m.vp.AtBottom()
 		}
 	case key.Matches(msg, m.keys.PageDown):
 		m.vp.ViewDown()
-		if m.focus == panelLanes {
+		if m.showingLog() {
 			m.follow = m.vp.AtBottom()
 		}
 	case key.Matches(msg, m.keys.Top):
 		m.vp.GotoTop()
-		if m.focus == panelLanes {
+		if m.showingLog() {
 			m.follow = false
 		}
 	case key.Matches(msg, m.keys.Bottom):
 		m.vp.GotoBottom()
-		if m.focus == panelLanes {
+		if m.showingLog() {
 			m.follow = true
 		}
 	case key.Matches(msg, m.keys.Raw):
@@ -575,30 +620,44 @@ func (m model) doPromote(ticketID, ticket, status string) tea.Cmd {
 
 func (m *model) setFocus(p panel) {
 	m.focus = p
+	m.retarget()
 	m.refreshMain()
-	if p != panelLanes {
+	if !m.showingLog() {
 		m.vp.GotoTop()
 	}
 }
 
-// moveSelection moves within the focused panel. The lane selection is by
-// lane number (see reorder); the other two are plain indexes into lists the
-// loop replaces wholesale.
+// moveSelection moves within the focused panel. Neither selection is a
+// position: the work panel's follows its ticket (see retargetWork), the
+// needs-you table's follows its own (see resort).
 func (m *model) moveSelection(delta int) {
 	switch m.focus {
-	case panelLanes:
-		if i := slices.Index(m.order, m.selected); i >= 0 {
-			if j := i + delta; j >= 0 && j < len(m.order) {
-				m.selected = m.order[j]
-				m.retarget()
-			}
+	case panelWork:
+		rows := m.workRows()
+		if len(rows) == 0 {
+			return
+		}
+		// A detour through a row with no log must not cost the operator the
+		// place they had scrolled back to: one viewport serves both lenses,
+		// so leaving parks the offset and arriving puts it back. Following
+		// needs nothing parked — refreshLog pins it to the bottom.
+		if m.showingLog() && !m.follow {
+			m.logOffset = m.vp.YOffset
+		}
+		m.workPos = clampIndex(m.workPos+delta, len(rows))
+		m.workSel = rows[m.workPos].ticketID
+		m.retarget()
+		m.refreshMain()
+		switch {
+		case !m.showingLog():
+			m.vp.GotoTop()
+		case !m.follow:
+			// retarget leaves follow on for a log it just switched to, so
+			// this only restores a log the operator was already reading.
+			m.vp.SetYOffset(m.logOffset)
 		}
 	case panelAttention:
 		m.attnSel = clampIndex(m.attnSel+delta, len(m.shown))
-		m.refreshMain()
-		m.vp.GotoTop()
-	case panelNext:
-		m.nextSel = clampIndex(m.nextSel+delta, len(m.nextRefs()))
 		m.refreshMain()
 		m.vp.GotoTop()
 	}
@@ -608,18 +667,18 @@ func clampIndex(i, n int) int {
 	return max(0, min(i, n-1))
 }
 
-// selectedURL is what `o` opens: Linear's own URL for the selected needs-you
-// item or up-next ticket. Lanes have no URL — a running lane's door is its
-// log, already on screen.
+// selectedURL is what `o` opens: Linear's own URL for the selected item.
+// Every row in either panel is a ticket now, so every row has a door —
+// except a run whose ticket the pass no longer lists.
 func (m *model) selectedURL() string {
 	switch m.focus {
 	case panelAttention:
 		if it := m.selectedAttention(); it != nil {
 			return it.URL
 		}
-	case panelNext:
-		if t := m.nextTicket(); t != nil {
-			return t.URL
+	case panelWork:
+		if r := m.selectedWork(); r != nil {
+			return r.url
 		}
 	}
 	return ""
@@ -663,33 +722,51 @@ func (m *model) apply(ev loop.Event) {
 	case loop.EventProvisioning:
 		m.lanes[ev.Lane] = &lane{state: laneProvisioning, runID: ev.RunID, ticketID: ev.TicketID,
 			ticket: ev.Ticket, queue: ev.Queue, logPath: ev.LogPath, since: eventSince(ev)}
+		changed = panelWork
 	case loop.EventStarted:
 		m.lanes[ev.Lane] = &lane{state: laneRunning, runID: ev.RunID, ticketID: ev.TicketID,
 			ticket: ev.Ticket, queue: ev.Queue, logPath: ev.LogPath, since: eventSince(ev)}
+		changed = panelWork
 	case loop.EventAdopted:
 		m.lanes[ev.Lane] = &lane{state: laneAdopted, runID: ev.RunID, ticketID: ev.TicketID,
 			queue: ev.Queue, logPath: ev.LogPath, since: eventSince(ev)}
+		changed = panelWork
 	case loop.EventExited:
+		// How the run ended goes on the status bar, and only there: see
+		// settle for why the ticket's own row cannot hold it.
 		note := fmt.Sprintf("%s exited %d", ev.Ticket, ev.ExitCode)
 		if ev.Err != nil {
 			note += " (move failed)"
 		}
+		warn := ev.ExitCode != 0 || ev.Err != nil
 		if ev.Note != "" {
-			// A hop the loop skipped is the operator's business, not the log
-			// file's alone: it means a stage of their pipeline did not run.
-			m.lastInfo, m.lastInfoWarn = ev.Note, true
+			// A hop the loop skipped is the larger story — a stage of the
+			// operator's pipeline did not run — so it replaces the plain
+			// outcome rather than crowding the line beside it.
+			note, warn = ev.Note, true
 		}
-		m.settle(ev, note)
+		m.note(note, warn)
+		m.settle(ev)
+		changed = panelWork
 	case loop.EventReaped:
-		m.settle(ev, "reaped a dead run")
+		m.note(reapedNote(ev), true)
+		m.settle(ev)
+		changed = panelWork
 	case loop.EventError:
 		if ev.Lane > 0 {
-			m.settle(ev, "failed; see the log")
+			// A lane's failure used to sit on its row as a note until the
+			// lane was reused. The rows are gone, and lastErr alone names the
+			// ticket by its Linear id rather than its identifier — so record
+			// the identifier too, or the operator cannot tell whose run died.
+			if ev.Ticket != "" {
+				m.note(ev.Ticket+": run failed, see its log", true)
+			}
+			m.settle(ev)
+			changed = panelWork
 		}
 	case loop.EventQueues:
 		m.queues = ev.Queues
-		m.nextSel = clampIndex(m.nextSel, len(m.nextRefs()))
-		changed = panelNext
+		changed = panelWork
 	case loop.EventAttention:
 		m.attention = ev.Attention
 		m.attentionSeen = true
@@ -709,19 +786,26 @@ func (m *model) apply(ev loop.Event) {
 		changed = panelAttention
 	}
 	m.reorder()
+	m.retargetWork()
 	m.layout()
 	m.retarget()
-	// Only the lens this event feeds is re-rendered; the log pane refreshes
-	// through retarget and the poll, never from here.
+	// Only the lens this event feeds is re-rendered; a live log also
+	// refreshes through retarget and the poll.
 	if changed == m.focus {
 		m.refreshMain()
 	}
 }
 
-// settle frees the lane a run just left. An in-range lane goes idle with a
-// note; an out-of-range lane existed only for an adopted run, so its row
-// disappears with it.
-func (m *model) settle(ev loop.Event, note string) {
+// settle frees the lane a run just left. The log outlives the lane: the
+// ticket keeps a pointer to it, so selecting the ticket still shows what the
+// agent did once the run is over and the file may already be gone.
+//
+// How the run *ended* is deliberately not kept here. A finished run has
+// already moved its ticket — to on_success, on_failure, or wherever the
+// agent left it — so a note pinned to the ticket's row would sit in a group
+// the ticket has just left, or on no row at all. The status bar is the one
+// surface that outlives the row, so apply puts the outcome there.
+func (m *model) settle(ev loop.Event) {
 	ln := m.lanes[ev.Lane]
 	if ln == nil {
 		return
@@ -729,15 +813,20 @@ func (m *model) settle(ev loop.Event, note string) {
 	if ev.RunID != "" && ln.runID != "" && ln.runID != ev.RunID {
 		return // a newer occupant already owns the lane
 	}
-	if ev.Lane > m.o.Lanes {
-		delete(m.lanes, ev.Lane)
-		return
-	}
 	logPath := ev.LogPath
 	if logPath == "" {
 		logPath = ln.logPath
 	}
-	m.lanes[ev.Lane] = &lane{state: laneIdle, note: note, logPath: logPath}
+	if ln.ticketID != "" && logPath != "" {
+		m.lastLog[ln.ticketID] = logPath
+	}
+	if ev.Lane > m.o.Lanes {
+		delete(m.lanes, ev.Lane) // the lane existed only for an adopted run
+		return
+	}
+	// The idle lane keeps no log path: workGroups skips idle lanes, so no row
+	// can point at one. lastLog above is where a finished run's log lives now.
+	m.lanes[ev.Lane] = &lane{state: laneIdle}
 }
 
 // eventSince prefers the loop's own start time, so an adopted run's elapsed
@@ -749,34 +838,48 @@ func eventSince(ev loop.Event) time.Time {
 	return time.Now()
 }
 
-// reorder rebuilds the row order. The selection follows the lane's number,
-// not its position: adopted rows appearing or vanishing above the selected
-// lane must not silently move the selection — and with it the tail — to a
-// different lane. Only when the selected row itself is gone does the
-// selection fall back to the nearest remaining row.
+// reorder rebuilds the lane order — the numbers, sorted — so running rows
+// keep a stable order within their group as adopted lanes appear and vanish
+// above them. What the operator selected is a ticket, not a lane number;
+// retargetWork is what keeps that.
 func (m *model) reorder() {
 	m.order = m.order[:0]
 	for n := range m.lanes {
 		m.order = append(m.order, n)
 	}
 	slices.Sort(m.order)
-	if len(m.order) == 0 {
-		return
-	}
-	if i, ok := slices.BinarySearch(m.order, m.selected); !ok {
-		m.selected = m.order[min(i, len(m.order)-1)]
-	}
 }
 
-// retarget points the tail at the selected lane's log. Reattaching only on a
+// retargetWork re-finds the selected ticket after a rebuild. The merged list
+// reorders under the cursor far more than the lane rows ever did — a ticket
+// starts running, finishes, changes queue — so the selection keys on the
+// ticket ID and follows it wherever the row went. Only when the ticket has
+// left the panel does the cursor fall back to the nearest remaining row,
+// which is the rule the lane rows used.
+func (m *model) retargetWork() {
+	rows := m.workRows()
+	if len(rows) == 0 {
+		m.workSel, m.workPos = "", 0
+		return
+	}
+	if m.workSel != "" {
+		if i := slices.IndexFunc(rows, func(r workRow) bool { return r.ticketID == m.workSel }); i >= 0 {
+			m.workPos = i
+			return
+		}
+	}
+	m.workPos = clampIndex(m.workPos, len(rows))
+	m.workSel = rows[m.workPos].ticketID
+}
+
+// retarget points the tail at the selected row's log. Reattaching only on a
 // path change keeps the scrollback across renders and across the run's exit —
 // the buffer is the operator's copy of a log whose file may already be gone.
+// A row with no log detaches nothing: walking through what runs next and back
+// must not cost the operator the tail they were reading.
 func (m *model) retarget() {
-	path := ""
-	if ln := m.selectedLane(); ln != nil {
-		path = ln.logPath
-	}
-	if path == m.tail.path {
+	path := m.selectedLogPath()
+	if path == "" || path == m.tail.path {
 		return
 	}
 	m.tail = newTail(path)
@@ -785,12 +888,33 @@ func (m *model) retarget() {
 	m.refreshLog()
 }
 
-// refreshMain points the main pane's viewport at whatever the focused panel
-// selects: the log tail for running lanes, a detail lens for the other two.
-// Scroll position is the caller's concern — focus and selection changes jump
-// to the top; a data refresh keeps the operator's place.
+// selectedLogPath is the log behind the selected row: the live lane's while a
+// run holds it, then the one that run left behind.
+func (m *model) selectedLogPath() string {
+	r := m.selectedWork()
+	if r == nil {
+		return ""
+	}
+	if r.lane > 0 {
+		if ln := m.lanes[r.lane]; ln != nil && ln.logPath != "" {
+			return ln.logPath
+		}
+	}
+	return m.lastLog[r.ticketID]
+}
+
+// showingLog reports whether the main pane is the log rather than a detail.
+// The lens is the selected row's, not the panel's: a ticket with a log shows
+// it, a ticket without shows what the pass knows about it.
+func (m *model) showingLog() bool {
+	return m.focus == panelWork && m.selectedLogPath() != ""
+}
+
+// refreshMain points the main pane's viewport at whatever the selection asks
+// for. Scroll position is the caller's concern — focus and selection changes
+// jump to the top; a data refresh keeps the operator's place.
 func (m *model) refreshMain() {
-	if m.focus == panelLanes {
+	if m.showingLog() {
 		m.refreshLog()
 		return
 	}
@@ -800,22 +924,22 @@ func (m *model) refreshMain() {
 	m.vp.SetContent(m.detail(m.vp.Width))
 }
 
-// detail is the read-only lens the main pane shows for the two panels that
-// are not the log — and the measure geometry fits the pane's box to. width
-// is the pane's inner width, which the needs-you lens wraps prose to.
+// detail is the read-only lens the main pane shows for a selection with no
+// log — and the measure geometry fits the pane's box to. width is the pane's
+// inner width, which the needs-you lens wraps prose to.
 func (m *model) detail(width int) string {
-	if m.focus == panelNext {
-		return m.nextDetail()
+	if m.focus == panelWork {
+		return m.workDetail()
 	}
 	return m.attentionDetail(width)
 }
 
-// refreshLog points the pane at the selected lane's log: the decoded view of
+// refreshLog points the pane at the selected row's log: the decoded view of
 // what the agent is doing, or — with the raw toggle on — the bytes the runner
 // wrote. Nothing but the rendering differs between the two; the file on disk
 // and the scrollback are the same either way.
 func (m *model) refreshLog() {
-	if m.focus != panelLanes {
+	if !m.showingLog() {
 		return
 	}
 	if m.rawLog {
@@ -828,29 +952,103 @@ func (m *model) refreshLog() {
 	}
 }
 
-func (m *model) selectedLane() *lane {
-	return m.lanes[m.selected]
-}
-
-// nextRefs flattens the queue snapshot into selectable tickets, in the
-// loop's own pickup order.
-func (m *model) nextRefs() []nextRef {
-	var refs []nextRef
-	for qi, q := range m.queues {
-		for ti := range q.Tickets {
-			refs = append(refs, nextRef{qi: qi, ti: ti})
+// workGroups is the merged list: one group per configured queue, in the
+// loop's own order, holding the tickets running in it first — by lane
+// number, which is stable — then what runs next in pickup order. Running and
+// pending are one question about the same tickets, which is why they are one
+// list (SCOPE, the interface).
+func (m *model) workGroups() []workGroup {
+	groups := make([]workGroup, 0, len(m.queues)+1)
+	for _, q := range m.queues {
+		groups = append(groups, workGroup{name: q.Name, status: q.Status, team: q.Team})
+	}
+	running := make(map[string]bool, len(m.order))
+	for _, n := range m.order {
+		ln := m.lanes[n]
+		if ln.state == laneIdle {
+			continue
+		}
+		row := workRow{ticketID: ln.ticketID, ticket: ln.name(), queue: ln.queue,
+			lane: n, state: ln.state, since: ln.since}
+		// A running ticket normally still sits in its queue's listing,
+		// claimed and ineligible: that listing is the group, and it carries
+		// the ticket's title and URL. Failing that, the queue the run started
+		// from; failing that, a group of its own — an adopted run, or one
+		// whose agent moved its own ticket mid-run, must not vanish.
+		gi := -1
+		if qi, ti := m.findQueueTicket(ln.ticketID); qi >= 0 {
+			tk := m.queues[qi].Tickets[ti]
+			row.ticket, row.title, row.url = tk.Identifier, tk.Title, tk.URL
+			row.assigned, row.blockedBy = tk.Assigned, tk.BlockedBy
+			gi = qi
+		} else {
+			// An off-board group already opened for this queue counts: the
+			// second inherited run from one queue belongs under the first
+			// one's header, not under a duplicate of it.
+			gi = slices.IndexFunc(groups, func(g workGroup) bool { return g.name == ln.queue })
+		}
+		if gi < 0 {
+			groups = append(groups, workGroup{name: ln.queue, offBoard: true})
+			gi = len(groups) - 1
+		}
+		row.queue, row.status, row.team = groups[gi].name, groups[gi].status, groups[gi].team
+		groups[gi].rows = append(groups[gi].rows, row)
+		if ln.ticketID != "" {
+			running[ln.ticketID] = true
 		}
 	}
-	return refs
+	for qi, q := range m.queues {
+		var pending []workRow
+		for _, tk := range q.Tickets {
+			if running[tk.ID] {
+				continue // already on screen as a running row
+			}
+			pending = append(pending, workRow{ticketID: tk.ID, ticket: tk.Identifier,
+				title: tk.Title, url: tk.URL, queue: q.Name, status: q.Status, team: q.Team,
+				assigned: tk.Assigned, blockedBy: tk.BlockedBy, eligible: tk.Eligible})
+		}
+		for i := range pending {
+			pending[i].pos, pending[i].of = i+1, len(pending)
+		}
+		groups[qi].rows = append(groups[qi].rows, pending...)
+	}
+	return groups
 }
 
-func (m *model) nextTicket() *loop.QueueTicket {
-	refs := m.nextRefs()
-	if len(refs) == 0 {
+// findQueueTicket locates a ticket in the pass's snapshot: queue index and
+// ticket index, or -1, -1.
+func (m *model) findQueueTicket(ticketID string) (int, int) {
+	if ticketID == "" {
+		return -1, -1
+	}
+	for qi, q := range m.queues {
+		for ti := range q.Tickets {
+			if q.Tickets[ti].ID == ticketID {
+				return qi, ti
+			}
+		}
+	}
+	return -1, -1
+}
+
+// workRows flattens the groups into the selectable rows, in screen order.
+func (m *model) workRows() []workRow {
+	var rows []workRow
+	for _, g := range m.workGroups() {
+		rows = append(rows, g.rows...)
+	}
+	return rows
+}
+
+// selectedWork is the row under the cursor, nil when the panel has no rows —
+// the one place that owns the empty case.
+func (m *model) selectedWork() *workRow {
+	rows := m.workRows()
+	if len(rows) == 0 {
 		return nil
 	}
-	r := refs[clampIndex(m.nextSel, len(refs))]
-	return &m.queues[r.qi].Tickets[r.ti]
+	r := rows[clampIndex(m.workPos, len(rows))]
+	return &r
 }
 
 // selectedAttention is the needs-you selection, nil when nothing is shown —
@@ -1009,18 +1207,18 @@ func (m *model) cycleProject() {
 // before the focused one gives anything up. Heights include borders, and
 // the stack always fits bodyH so the status bar stays on screen.
 type geometry struct {
-	wide                 bool
-	sideW, mainW         int
-	bodyH                int
-	attnH, lanesH, nextH int
-	mainH                int
+	wide         bool
+	sideW, mainW int
+	bodyH        int
+	attnH, workH int
+	mainH        int
 }
 
 const (
 	// panelFloor is the smallest a panel is squeezed to: a border, one row,
 	// a border. mainFloor is the same for the main pane in the stacked
-	// layout, where it shares the body with the three panels. collapsedH is
-	// what a panel with nothing to show costs.
+	// layout, where it shares the body with the panels. collapsedH is what a
+	// panel with nothing to show costs.
 	panelFloor = 3
 	mainFloor  = 5
 	collapsedH = 1
@@ -1044,25 +1242,24 @@ func (m *model) geometry() geometry {
 	// counts can never drift from what lands on screen. The panel constants
 	// are the stack's order, so a panel doubles as its index.
 	attnRows, _ := m.attentionRows(g.sideW - 2)
-	nextRows, _ := m.nextListRows()
+	workRows, _ := m.workListRows(g.sideW - 2)
 	want := []int{
 		m.panelWant(panelAttention, len(attnRows)),
-		m.panelWant(panelLanes, len(m.order)),
-		m.panelWant(panelNext, len(nextRows)),
+		m.panelWant(panelWork, len(workRows)),
 	}
-	floor := []int{panelFloor, panelFloor, panelFloor}
+	floor := []int{panelFloor, panelFloor}
 
 	if g.wide {
 		// The main pane has the other column to itself, so it fits its own
 		// content and never competes with the stack.
 		g.mainH = min(g.bodyH, m.mainWant(g.bodyH, g.mainW-2))
 		h := fitPanels(want, floor, g.bodyH, int(m.focus))
-		g.attnH, g.lanesH, g.nextH = h[0], h[1], h[2]
+		g.attnH, g.workH = h[0], h[1]
 		return g
 	}
 	// Stacked, the main pane is one more claimant on the same body.
 	h := fitPanels(append(want, m.mainWant(g.bodyH, g.mainW-2)), append(floor, mainFloor), g.bodyH, int(m.focus))
-	g.attnH, g.lanesH, g.nextH, g.mainH = h[0], h[1], h[2], h[3]
+	g.attnH, g.workH, g.mainH = h[0], h[1], h[2]
 	return g
 }
 
@@ -1078,21 +1275,14 @@ func (m *model) panelWant(p panel, rows int) int {
 }
 
 // panelEmpty is the content test behind the collapse: nothing waits on the
-// operator, no lane is busy, no queue holds a ticket. Not knowing yet is not
-// empty — a panel no pass has reported on keeps its body and says so.
+// operator, nothing is running and no queue holds a ticket. Not knowing yet
+// is not empty — a panel no pass has reported on keeps its body and says so.
 func (m *model) panelEmpty(p panel) bool {
 	switch p {
 	case panelAttention:
 		return m.attentionSeen && len(m.attention) == 0
-	case panelLanes:
-		for _, ln := range m.lanes {
-			if ln.state != laneIdle {
-				return false
-			}
-		}
-		return true
-	case panelNext:
-		return m.queues != nil && len(m.nextRefs()) == 0
+	case panelWork:
+		return m.queues != nil && len(m.workRows()) == 0
 	}
 	return false
 }
@@ -1101,7 +1291,7 @@ func (m *model) panelEmpty(p panel) bool {
 // for the lines they draw; the log tail, the promote picker and the help
 // overlay ask for the whole body, because what they hold scrolls.
 func (m *model) mainWant(bodyH, width int) int {
-	if m.promoting || m.helpOn || m.focus == panelLanes {
+	if m.promoting || m.helpOn || m.showingLog() {
 		return bodyH
 	}
 	return strings.Count(m.detail(width), "\n") + 3
@@ -1167,7 +1357,7 @@ func (m *model) layout() {
 	// A pane that just changed height holds a scroll position measured
 	// against the old one: re-pin a followed log to the bottom, and clamp
 	// anything else back inside the new box.
-	if m.focus == panelLanes && m.follow {
+	if m.showingLog() && m.follow {
 		m.vp.GotoBottom()
 		return
 	}
@@ -1181,7 +1371,7 @@ func (m model) View() string {
 	// Below every panel's floor plus the status bar — plus the main pane's
 	// floor when the layout stacks — geometry can only produce a screen
 	// taller than the terminal. Say so instead of rendering one.
-	minH := 3*panelFloor + 1
+	minH := 2*panelFloor + 1
 	if m.width < narrowWidth {
 		minH += mainFloor
 	}
@@ -1191,8 +1381,7 @@ func (m model) View() string {
 	g := m.geometry()
 	side := lipgloss.JoinVertical(lipgloss.Left,
 		m.attentionPanel(g.sideW, g.attnH),
-		m.lanesPanel(g.sideW, g.lanesH),
-		m.nextPanel(g.sideW, g.nextH))
+		m.workPanel(g.sideW, g.workH))
 	main := m.mainPanel(g.mainW, g.mainH)
 	var body string
 	if g.wide {
@@ -1412,122 +1601,119 @@ func (m model) busyLanes() int {
 	return busy
 }
 
-func (m model) lanesPanel(w, h int) string {
-	focused := m.focus == panelLanes
-	extra := styleFaint.Render(fmt.Sprintf(" · %d/%d busy", m.busyLanes(), m.o.Lanes))
+func (m model) workPanel(w, h int) string {
+	focused := m.focus == panelWork
+	// Capacity has two homes now that the lane rows are gone: this title and
+	// the status bar. It is the number that says whether anything can start.
+	extra := styleFaint.Render(fmt.Sprintf(" · %d/%d running", m.busyLanes(), m.o.Lanes))
 	if h <= collapsedH {
-		if m.panelEmpty(panelLanes) {
-			extra += styleFaint.Render(" — all lanes idle")
+		if m.panelEmpty(panelWork) {
+			extra += styleFaint.Render(" — nothing queued")
 		}
-		return panelLine(panelTitle(2, "running", focused, extra), w)
+		return panelLine(panelTitle(2, "work", focused, extra), w)
 	}
-	rows := make([]string, 0, len(m.order))
-	for _, n := range m.order {
-		rows = append(rows, m.laneRow(n, w-2))
+	rows, sel := m.workListRows(w - 2)
+	if focused && sel >= 0 {
+		rows = windowRows(rows, sel, h-2)
 	}
-	if focused {
-		if i := slices.Index(m.order, m.selected); i >= 0 {
-			rows = windowRows(rows, i, h-2)
-		}
-	}
-	return panelBox(panelTitle(2, "running", focused, extra), focused, w, h, rows)
+	return panelBox(panelTitle(2, "work", focused, extra), focused, w, h, rows)
 }
 
-// laneRow is one lane, elapsed clock right-aligned so it survives narrow
-// panels; the state is a colored dot plus a label where color alone would
-// be ambiguous (adopted, provisioning, idle).
-func (m model) laneRow(number, width int) string {
-	ln := m.lanes[number]
-	var dot, desc, right string
-	switch ln.state {
-	case laneProvisioning:
-		dot = styleProvisioning.Render(heartbeatFrames[m.frame%len(heartbeatFrames)])
-		desc = styleProvisioning.Render("provisioning")
-		right = styleFaint.Render(elapsed(ln.since))
-	case laneRunning:
-		dot = styleRunning.Render("●")
-		desc = ln.queue
-		right = styleFaint.Render(elapsed(ln.since))
-	case laneAdopted:
-		dot = styleAdopted.Render("●")
-		desc = styleAdopted.Render("adopted") + styleFaint.Render(" · "+ln.queue)
-		right = styleFaint.Render(elapsed(ln.since))
-	default:
-		state := "idle"
-		if ln.note != "" {
-			state += " — " + ln.note
+// workListRows renders the merged list: each queue's header, then its
+// tickets — running first, then what runs next. sel is the selected row's
+// index among the rendered lines (-1 with nothing to select), for the focus
+// window.
+func (m *model) workListRows(width int) ([]string, int) {
+	groups := m.workGroups()
+	if len(groups) == 0 {
+		if m.queues == nil {
+			return []string{styleFaint.Render("waiting for the first pass…")}, -1
 		}
-		dot = styleFaint.Render("○")
-		desc = styleFaint.Render(state)
+		return []string{styleFaint.Render("no queues configured")}, -1
 	}
-	// Idle lanes carry no ticket worth a name column; the note says how the
-	// last occupant ended.
-	name := ""
-	if ln.state != laneIdle {
-		name = styleTicket.Render(ln.name()) + " "
+	n := 0
+	for _, g := range groups {
+		n += len(g.rows)
 	}
-	left := fmt.Sprintf("%s%s %s %s%s",
-		marker(number == m.selected), styleFaint.Render(fmt.Sprintf("%d", number)), dot, name, desc)
-	return splitRow(left, right, width)
-}
-
-// nextListRows builds the up-next panel's rows — each queue header, then its
-// tickets in pickup order; sel is the selected row's index (-1 with nothing
-// to select), for the focus window.
-func (m *model) nextListRows() ([]string, int) {
-	if m.queues == nil {
-		return []string{styleFaint.Render("waiting for the first pass…")}, -1
+	selRow := -1
+	if n > 0 {
+		selRow = clampIndex(m.workPos, n)
 	}
-	focused := m.focus == panelNext
-	selIdx := -1
-	if refs := m.nextRefs(); len(refs) > 0 {
-		selIdx = clampIndex(m.nextSel, len(refs))
-	}
+	focused := m.focus == panelWork
 	var rows []string
-	sel := -1
-	idx := 0
-	for _, q := range m.queues {
-		meta := fmt.Sprintf(" %s · %s · %d", q.Status, q.Team, len(q.Tickets))
-		if len(q.Tickets) == 0 {
-			meta = fmt.Sprintf(" %s · %s · empty", q.Status, q.Team)
-		}
-		rows = append(rows, styleTicket.Render(q.Name)+styleFaint.Render(meta))
-		for _, tk := range q.Tickets {
-			row := marker(focused && idx == selIdx)
-			if tk.Eligible {
-				row += styleTicket.Render(tk.Identifier) + " " + tk.Title
-			} else {
-				row += styleFaint.Render(tk.Identifier + " " + tk.Title)
-			}
-			if idx == selIdx {
+	sel, idx := -1, 0
+	for _, g := range groups {
+		rows = append(rows, groupHeader(g))
+		for _, r := range g.rows {
+			if idx == selRow {
 				sel = len(rows)
 			}
-			rows = append(rows, row)
+			rows = append(rows, m.workRowLine(r, focused && idx == selRow, width))
 			idx++
 		}
 	}
 	return rows, sel
 }
 
-func (m model) nextPanel(w, h int) string {
-	focused := m.focus == panelNext
-	if h <= collapsedH {
-		extra := ""
-		if m.panelEmpty(panelNext) {
-			extra = styleFaint.Render(" — all queues empty")
+// groupHeader is one queue's line: its name, the Linear status a ticket
+// enters it by, its team, and how many rows sit under it.
+func groupHeader(g workGroup) string {
+	if g.offBoard {
+		if g.name == "" {
+			return styleFaint.Render("off the board")
 		}
-		return panelLine(panelTitle(3, "up next", focused, extra), w)
+		return styleTicket.Render(g.name) + styleFaint.Render(" · off the board")
 	}
-	rows, sel := m.nextListRows()
-	if focused && sel >= 0 {
-		rows = windowRows(rows, sel, h-2)
+	count := fmt.Sprintf("%d", len(g.rows))
+	if len(g.rows) == 0 {
+		count = "empty"
 	}
-	return panelBox(panelTitle(3, "up next", focused, ""), focused, w, h, rows)
+	return styleTicket.Render(g.name) +
+		styleFaint.Render(fmt.Sprintf(" · %s · %s · %s", g.status, g.team, count))
+}
+
+// workRowLine is one ticket as a line of the panel: what is running it, or
+// what it waits on. The state and the elapsed clock are right-aligned so the
+// fact that is changing is never the one truncated away; the state is a
+// colored dot plus a word, since color alone would not carry it.
+func (m model) workRowLine(r workRow, selected bool, width int) string {
+	name := styleTicket.Render(r.ticket) + " " + r.title
+	if r.lane == 0 {
+		if !r.eligible {
+			name = styleFaint.Render(r.ticket + " " + r.title)
+		}
+		right := ""
+		switch {
+		case len(r.blockedBy) > 0:
+			right = styleAttention.Render("⊘ blocked by " + strings.Join(r.blockedBy, ", "))
+		case r.assigned:
+			right = styleFaint.Render("claimed")
+		}
+		// Two spaces where a running row draws its dot, so identifiers line
+		// up down the group whether or not a lane holds them.
+		return splitRow(marker(selected)+"  "+name, right, width)
+	}
+	var dot, state string
+	switch r.state {
+	case laneProvisioning:
+		dot = styleProvisioning.Render(heartbeatFrames[m.frame%len(heartbeatFrames)])
+		state = styleProvisioning.Render("provisioning")
+	case laneAdopted:
+		// A run inherited from a previous process stays visibly distinct. It
+		// may sit on a lane above N; the row comes from the lane, so it
+		// appears here without a case of its own.
+		dot = styleAdopted.Render("●")
+		state = styleAdopted.Render("adopted")
+	default:
+		dot = styleRunning.Render("●")
+		state = styleFaint.Render("running")
+	}
+	right := state + " " + styleFaint.Render(elapsed(r.since))
+	return splitRow(marker(selected)+dot+" "+name, right, width)
 }
 
 // mainPanel is the lens: the promote picker while it is open, the ? overlay,
-// otherwise the log for running lanes and a read-only detail for the other
-// panels.
+// otherwise the selected row's log, or a read-only detail when it has none.
 func (m model) mainPanel(w, h int) string {
 	if m.promoting {
 		if it := m.selectedAttention(); it != nil {
@@ -1561,28 +1747,27 @@ func (m model) promotePicker(it loop.AttentionItem, w, h int) string {
 }
 
 func (m model) mainTitle() string {
-	switch m.focus {
-	case panelAttention:
+	if m.focus == panelAttention {
 		if it := m.selectedAttention(); it != nil {
 			return it.Ticket
 		}
 		return "needs you"
-	case panelNext:
-		if t := m.nextTicket(); t != nil {
-			return t.Identifier
-		}
-		return "up next"
 	}
-	ln := m.selectedLane()
+	r := m.selectedWork()
 	switch {
-	case ln == nil:
-		return "no lane selected"
-	case ln.logPath == "":
-		return "no log yet"
-	case ln.state == laneIdle:
-		return fmt.Sprintf("last log%s · lane %d", m.rawSuffix(), m.selected)
+	case r == nil:
+		return "work"
+	case m.selectedLogPath() == "":
+		if r.lane > 0 {
+			return "no log yet"
+		}
+		return r.ticket
+	case r.lane > 0:
+		return fmt.Sprintf("log%s · %s · %s", m.rawSuffix(), r.ticket, r.queue)
 	default:
-		return fmt.Sprintf("log%s · %s · %s · lane %d", m.rawSuffix(), ln.name(), ln.queue, m.selected)
+		// The run is over and its ticket has moved on, but its log is still
+		// the freshest thing anyone knows about the ticket.
+		return fmt.Sprintf("last log%s · %s", m.rawSuffix(), r.ticket)
 	}
 }
 
@@ -1697,38 +1882,41 @@ func wrapText(s string, width int) []string {
 	return strings.Split(ansi.Wrap(s, max(8, width), "-"), "\n")
 }
 
-// nextDetail is the lens on the selected up-next ticket: where it sits in
-// pickup order and what, if anything, gates it. With nothing queued it says
-// how tickets enter each queue instead.
-func (m model) nextDetail() string {
-	if m.queues == nil {
-		return styleFaint.Render("waiting for the first pass…")
-	}
-	refs := m.nextRefs()
-	if len(refs) == 0 {
-		lines := []string{styleFaint.Render("every queue is empty"), ""}
+// workDetail is the lens on a selected ticket no run has a log for: where
+// it sits in pickup order and what, if anything, gates it. With nothing
+// queued it says how tickets enter each queue instead.
+func (m model) workDetail() string {
+	r := m.selectedWork()
+	if r == nil {
+		if m.queues == nil {
+			return styleFaint.Render("waiting for the first pass…")
+		}
+		lines := []string{styleFaint.Render("nothing is running and every queue is empty"), ""}
 		for _, q := range m.queues {
 			lines = append(lines, styleTicket.Render(q.Name)+
 				styleFaint.Render(fmt.Sprintf(` — tickets enter when moved to "%s"`, q.Status)))
 		}
 		return strings.Join(lines, "\n")
 	}
-	r := refs[clampIndex(m.nextSel, len(refs))]
-	q := m.queues[r.qi]
-	tk := q.Tickets[r.ti]
-	gate := styleRunning.Render(fmt.Sprintf("runs when a lane frees — position %d of %d", r.ti+1, len(q.Tickets)))
+	queue := r.queue + styleFaint.Render(" · off the board")
+	if r.status != "" {
+		queue = r.queue + styleFaint.Render(" · "+r.status+" · team "+r.team)
+	}
+	gate := styleRunning.Render(fmt.Sprintf("runs when capacity frees — position %d of %d", r.pos, r.of))
 	switch {
-	case len(tk.BlockedBy) > 0:
-		gate = styleAttention.Render("blocked by " + strings.Join(tk.BlockedBy, ", "))
-	case tk.Assigned:
+	case r.lane > 0:
+		gate = styleRunning.Render("running — " + elapsed(r.since))
+	case len(r.blockedBy) > 0:
+		gate = styleAttention.Render("blocked by " + strings.Join(r.blockedBy, ", "))
+	case r.assigned:
 		gate = styleFaint.Render("claimed — an assigned ticket is never picked up")
 	}
 	return strings.Join([]string{
-		styleTicket.Render(tk.Identifier) + " " + tk.Title,
+		styleTicket.Render(r.ticket) + " " + r.title,
 		"",
-		styleFaint.Render("queue   ") + q.Name + styleFaint.Render(" · "+q.Status+" · team "+q.Team),
+		styleFaint.Render("queue   ") + queue,
 		styleFaint.Render("pickup  ") + gate,
-		styleFaint.Render("linear  ") + tk.URL,
+		styleFaint.Render("linear  ") + r.url,
 		"",
 		styleFaint.Render("o opens it in Linear; to change what runs next, move it there"),
 	}, "\n")
@@ -1738,25 +1926,55 @@ func (m model) nextDetail() string {
 // needs-you count, keys. A pass error — or a transient note like a
 // promote's outcome — takes over the whole line; a truncated error is not
 // actionable, so nothing else competes with it for the width.
-func (m model) statusBar() string {
-	switch {
-	case m.lastErr != "":
-		return ansi.Truncate(styleErr.Render("✗ "+m.lastErr), m.width, "…")
-	case m.lastInfo != "":
-		// A promote worked; a skipped hop did not. Reporting both with the
-		// same green tick would read as "all is well" either way.
+// note is one transient report on the status bar. warn marks something that
+// went unhandled rather than something that worked, so a promote's success
+// and a run's non-zero exit never read the same.
+type note struct {
+	text string
+	warn bool
+}
+
+// note records one, in arrival order.
+func (m *model) note(text string, warn bool) {
+	m.notes = append(m.notes, note{text: text, warn: warn})
+}
+
+// reapedNote names the ticket when the record knew it, because "reaped a
+// dead run" told the operator nothing about which run.
+func reapedNote(ev loop.Event) string {
+	if ev.Ticket != "" {
+		return ev.Ticket + ": reaped a dead run"
+	}
+	return "reaped a dead run"
+}
+
+// noteLine is the status bar while anything transient is pending: the pass
+// error first when there is one, then every note this interval collected.
+// A truncated line is not actionable, so nothing else competes for the
+// width — but the notes compete with each other rather than overwriting,
+// since losing that a run failed is worse than a crowded line.
+func (m model) noteLine() string {
+	var segs []string
+	if m.lastErr != "" {
+		segs = append(segs, styleErr.Render("✗ "+m.lastErr))
+	}
+	for _, n := range m.notes {
 		mark, style := "✓ ", styleRunning
-		if m.lastInfoWarn {
+		if n.warn {
 			mark, style = "! ", styleAttention
 		}
-		return ansi.Truncate(style.Render(mark+m.lastInfo), m.width, "…")
+		segs = append(segs, style.Render(mark+n.text))
+	}
+	return strings.Join(segs, "  ")
+}
+
+func (m model) statusBar() string {
+	if line := m.noteLine(); line != "" {
+		return ansi.Truncate(line, m.width, "…")
 	}
 	badgeColor := colorFocus
-	switch m.focus {
-	case panelAttention:
+	if m.focus == panelAttention {
 		badgeColor = colorAttention
-	case panelNext:
-		badgeColor = colorAdopted
 	}
 	badge := lipgloss.NewStyle().Bold(true).Foreground(colorBadgeText).
 		Background(badgeColor).Render(" " + strings.ToUpper(m.focus.String()) + " ")
@@ -1774,7 +1992,7 @@ func (m model) statusBar() string {
 	}
 
 	left := badge + " " + heart
-	left += "  " + styleFaint.Render(fmt.Sprintf("lanes %d/%d", m.busyLanes(), m.o.Lanes))
+	left += "  " + styleFaint.Render(fmt.Sprintf("%d/%d running", m.busyLanes(), m.o.Lanes))
 	if len(m.attention) > 0 {
 		left += "  " + styleAttention.Render(fmt.Sprintf("● %d need you", len(m.attention)))
 	}

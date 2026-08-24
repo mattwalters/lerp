@@ -24,13 +24,13 @@ import (
 )
 
 const usage = `usage:
-  lerp [-lanes N]               open the TUI; the loop runs while it is open
+  lerp [-concurrency N]         open the TUI; the loop runs while it is open
   lerp version                  print the version
   lerp init --team KEY [--yes]  map lerp's queues onto the team's board and write this repo's lerp.toml
   lerp once                     run one eligible ticket through its queue
 `
 
-// defaultLanes is how many agents run at once unless -lanes says otherwise.
+// defaultLanes is how many agents run at once unless -concurrency says so.
 // SCOPE keeps N small.
 const defaultLanes = 3
 
@@ -38,7 +38,7 @@ func main() {
 	args := os.Args[1:]
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
 		fs := flag.NewFlagSet("lerp", flag.ExitOnError)
-		lanes := fs.Int("lanes", defaultLanes, "how many agents may run at once")
+		lanes := fs.Int("concurrency", defaultLanes, "how many agents may run at once")
 		// -h shows the whole surface, not just the flags: the subcommands are
 		// undiscoverable otherwise.
 		fs.Usage = func() {
@@ -51,7 +51,7 @@ func main() {
 			os.Exit(2)
 		}
 		if *lanes < 1 {
-			fmt.Fprintln(os.Stderr, "lerp: -lanes must be at least 1")
+			fmt.Fprintln(os.Stderr, "lerp: -concurrency must be at least 1")
 			os.Exit(2)
 		}
 		// A bare `lerp` in a pipe or a command substitution must not quietly
