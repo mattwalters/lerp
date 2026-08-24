@@ -272,11 +272,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, poll()
 	case openErrMsg:
-		m.lastErr = msg.err.Error()
+		m.lastErr = clean(msg.err.Error())
 		return m, nil
 	case promotedMsg:
 		if msg.err != nil {
-			m.lastErr = fmt.Sprintf("promote %s to %s: %v", msg.ticket, msg.status, msg.err)
+			m.lastErr = clean(fmt.Sprintf("promote %s to %s: %v", msg.ticket, msg.status, msg.err))
 		} else {
 			m.lastInfo = fmt.Sprintf("promoted %s to %s", msg.ticket, msg.status)
 		}
@@ -455,10 +455,14 @@ func openURL(url string) tea.Cmd {
 	}
 }
 
-// apply folds one loop event into the model.
+// apply folds one loop event into the model. It is also where untrusted
+// text stops being untrusted: every Linear-sourced string on the event is
+// cleaned here, once, so the views below can stay plain string building.
 func (m *model) apply(ev loop.Event) {
+	ev = cleanEvent(ev)
 	if ev.Err != nil {
-		m.lastErr = ev.Err.Error()
+		// Pass errors interpolate Linear's own status and team names.
+		m.lastErr = clean(ev.Err.Error())
 		m.passHadErr = true
 	}
 	changed := panel(-1) // which panel's lens data this event feeds
@@ -602,7 +606,7 @@ func (m *model) refreshLog() {
 	if m.focus != panelLanes {
 		return
 	}
-	m.vp.SetContent(m.tail.content())
+	m.vp.SetContent(cleanLog(m.tail.content()))
 	if m.follow {
 		m.vp.GotoBottom()
 	}
