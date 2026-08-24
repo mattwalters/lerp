@@ -90,9 +90,14 @@ type QueueSnapshot struct {
 type StatusRelevance int
 
 const (
+	// StatusUnknown is the zero value: nothing has said what the pipeline
+	// makes of this status. attention() sets a real rank on every item, so
+	// an item carrying this is a bug — it sorts first and says so, rather
+	// than impersonating a failed run the way the zero value used to.
+	StatusUnknown StatusRelevance = iota
 	// StatusFailed is a status some queue's on_failure points at: a run
 	// failed here.
-	StatusFailed StatusRelevance = iota
+	StatusFailed
 	// StatusFinished is an on_success target no queue serves: a run
 	// finished here, and the next move is a human's.
 	StatusFinished
@@ -117,8 +122,10 @@ func (r StatusRelevance) Note() string {
 		return "a run finished here"
 	case StatusUnnamed:
 		return "the pipeline never names it"
+	case StatusOther:
+		return "a queue serves it"
 	}
-	return "no queue serves it"
+	return "relevance unknown"
 }
 
 // AttentionItem is one ticket waiting on the operator: what it is, why it

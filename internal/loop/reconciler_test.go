@@ -762,6 +762,30 @@ func TestAttentionCarriesLeverageAndRelevance(t *testing.T) {
 // come to rest, then statuses the pipeline never names, then the statuses it
 // serves. Rewriting the on_success pointers rewrites this with them; there
 // is no key in the config that says any of it.
+// Every rank must describe itself truthfully, including the two that are
+// unreachable today: the zero value, which an AttentionItem built without an
+// explicit Relevance carries, and StatusOther, which means a queue *does*
+// serve the status. Both used to claim the opposite of the truth.
+func TestStatusRelevanceNotesAreTrue(t *testing.T) {
+	if StatusUnknown != 0 {
+		t.Fatalf("StatusUnknown = %d, want the zero value so an unset Relevance is not a real rank", StatusUnknown)
+	}
+	if StatusUnknown >= StatusFailed {
+		t.Errorf("the zero value sorts at or after StatusFailed, so an unset item impersonates a failed run")
+	}
+	for rank, want := range map[StatusRelevance]string{
+		StatusUnknown:  "relevance unknown",
+		StatusFailed:   "a run failed here",
+		StatusFinished: "a run finished here",
+		StatusUnnamed:  "the pipeline never names it",
+		StatusOther:    "a queue serves it",
+	} {
+		if got := rank.Note(); got != want {
+			t.Errorf("StatusRelevance(%d).Note() = %q, want %q", rank, got, want)
+		}
+	}
+}
+
 func TestStatusRelevanceIsDerivedFromTheQueues(t *testing.T) {
 	repo := &config.RepoConfig{
 		Teams:     []string{"LERP"},

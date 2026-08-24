@@ -400,6 +400,11 @@ func board() loop.Event {
 			Project: "TUI redesign", Relevance: loop.StatusFinished, Priority: 1},
 		{Ticket: "LERP-60", TicketID: "id-60", Title: "Unfiled work", Status: "Backlog",
 			Relevance: loop.StatusUnnamed, Priority: 4},
+		// Priority 0 is Linear's "No priority", not its highest: it must sort
+		// below Low, never above Urgent. This is the only fixture carrying it,
+		// and the order assertions below are what guard priorityRank.
+		{Ticket: "LERP-70", TicketID: "id-70", Title: "Unprioritized work", Status: "Backlog",
+			Relevance: loop.StatusUnnamed, Priority: 0},
 	}}
 }
 
@@ -439,7 +444,7 @@ func TestNeedsYouRowsCarryTheRealStatus(t *testing.T) {
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: board()})
 
-	panel := m.attentionPanel(96, 12)
+	panel := m.attentionPanel(96, 14)
 	view := m.View()
 	for _, gone := range []string{"to route", "parked on you"} {
 		if strings.Contains(view, gone) {
@@ -484,8 +489,8 @@ func TestNeedsYouSortModesCycle(t *testing.T) {
 
 	// Leverage is the default: what promoting frees first, then priority,
 	// then the identifier — and a blocked ticket below every routable one.
-	panel := m.attentionPanel(96, 12)
-	want := []string{"LERP-22", "LERP-48", "LERP-1", "LERP-60", "LERP-23"}
+	panel := m.attentionPanel(96, 14)
+	want := []string{"LERP-22", "LERP-48", "LERP-1", "LERP-60", "LERP-70", "LERP-23"}
 	if got := order(panel, want...); !slices.Equal(got, want) {
 		t.Fatalf("leverage order = %v, want %v:\n%s", got, want, panel)
 	}
@@ -495,10 +500,10 @@ func TestNeedsYouSortModesCycle(t *testing.T) {
 
 	// Priority, then leverage.
 	m = update(t, m, keyMsg("s"))
-	panel = m.attentionPanel(96, 12)
+	panel = m.attentionPanel(96, 14)
 	// Priority is the primary key here, so the blocked LERP-23 outranks the
 	// routable LERP-60 that leverage put above it.
-	want = []string{"LERP-48", "LERP-22", "LERP-1", "LERP-23", "LERP-60"}
+	want = []string{"LERP-48", "LERP-22", "LERP-1", "LERP-23", "LERP-60", "LERP-70"}
 	if got := order(panel, want...); !slices.Equal(got, want) {
 		t.Fatalf("priority order = %v, want %v:\n%s", got, want, panel)
 	}
@@ -510,8 +515,8 @@ func TestNeedsYouSortModesCycle(t *testing.T) {
 	// clean run comes to rest, then the statuses the pipeline never names —
 	// with a header per status carrying the note that explains the rank.
 	m = update(t, m, keyMsg("s"))
-	panel = m.attentionPanel(96, 14)
-	want = []string{"LERP-1", "LERP-48", "LERP-22", "LERP-60", "LERP-23"}
+	panel = m.attentionPanel(96, 16)
+	want = []string{"LERP-1", "LERP-48", "LERP-22", "LERP-60", "LERP-70", "LERP-23"}
 	if got := order(panel, want...); !slices.Equal(got, want) {
 		t.Fatalf("status order = %v, want %v:\n%s", got, want, panel)
 	}
@@ -524,7 +529,7 @@ func TestNeedsYouSortModesCycle(t *testing.T) {
 	// Project, alphabetically, with the unfiled ticket last.
 	m = update(t, m, keyMsg("s"))
 	panel = m.attentionPanel(96, 14)
-	want = []string{"LERP-22", "LERP-1", "LERP-23", "LERP-48", "LERP-60"}
+	want = []string{"LERP-22", "LERP-1", "LERP-23", "LERP-48", "LERP-60", "LERP-70"}
 	if got := order(panel, want...); !slices.Equal(got, want) {
 		t.Fatalf("project order = %v, want %v:\n%s", got, want, panel)
 	}
@@ -534,7 +539,7 @@ func TestNeedsYouSortModesCycle(t *testing.T) {
 
 	// One more press is back to the flat default, headers and all.
 	m = update(t, m, keyMsg("s"))
-	panel = m.attentionPanel(96, 12)
+	panel = m.attentionPanel(96, 14)
 	if !strings.Contains(panel, "by leverage") {
 		t.Fatalf("the sort key does not cycle back to the default:\n%s", panel)
 	}
@@ -571,7 +576,7 @@ func TestNeedsYouProjectFilter(t *testing.T) {
 	// Projects cycle in name order: OSS readiness, then TUI redesign, then
 	// back to every project. A ticket in no project is not a stop.
 	m = update(t, m, keyMsg("P"))
-	panel := m.attentionPanel(96, 12)
+	panel := m.attentionPanel(96, 14)
 	if m.project != "Open-source readiness" {
 		t.Fatalf("filter = %q, want the first project by name", m.project)
 	}
@@ -581,7 +586,7 @@ func TestNeedsYouProjectFilter(t *testing.T) {
 	if !strings.Contains(panel, "LERP-22") {
 		t.Fatalf("the filter dropped a ticket in the scoped project:\n%s", panel)
 	}
-	if !strings.Contains(panel, "3/5") || !strings.Contains(panel, "Open-source readiness") {
+	if !strings.Contains(panel, "3/6") || !strings.Contains(panel, "Open-source readiness") {
 		t.Fatalf("the panel title does not say what it is scoped to:\n%s", panel)
 	}
 
@@ -594,7 +599,7 @@ func TestNeedsYouProjectFilter(t *testing.T) {
 	}
 
 	m = update(t, m, keyMsg("P"))
-	if m.project != "" || len(m.shown) != 5 {
+	if m.project != "" || len(m.shown) != 6 {
 		t.Fatalf("the filter did not cycle back to every project: %q, %d rows", m.project, len(m.shown))
 	}
 
@@ -608,8 +613,8 @@ func TestNeedsYouProjectFilter(t *testing.T) {
 	if m.project != "" {
 		t.Fatalf("filter = %q after its project left the list, want every project", m.project)
 	}
-	if !strings.Contains(m.attentionPanel(96, 12), "LERP-9") {
-		t.Fatalf("a stale filter hid the whole panel:\n%s", m.attentionPanel(96, 12))
+	if !strings.Contains(m.attentionPanel(96, 14), "LERP-9") {
+		t.Fatalf("a stale filter hid the whole panel:\n%s", m.attentionPanel(96, 14))
 	}
 }
 
