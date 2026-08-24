@@ -27,6 +27,10 @@ go.work.sum
 # env file
 .env
 
+# Locally built binary and lerp's own run evidence
+/lerp
+.lerp/
+
 # Editor/IDE
 # .idea/
 # .vscode/
