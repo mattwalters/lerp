@@ -68,6 +68,7 @@ type QueueTicket struct {
 	ID         string
 	Identifier string // human identifier, e.g. LERP-42
 	Title      string
+	URL        string // Linear's own web URL for the ticket
 	Eligible   bool
 	Assigned   bool     // claimed by someone; an assigned ticket is never eligible
 	BlockedBy  []string // identifiers of the unfinished blockers, when blocked
@@ -483,6 +484,7 @@ func snapshotQueues(listings []queueListing) []QueueSnapshot {
 				ID:         issue.ID,
 				Identifier: issue.Identifier,
 				Title:      issue.Title,
+				URL:        issue.URL,
 				Eligible:   Eligible(issue, map[string]bool{l.queue.Status: true}),
 				Assigned:   issue.AssigneeID != "",
 				BlockedBy:  issue.BlockedBy,

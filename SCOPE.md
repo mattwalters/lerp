@@ -135,13 +135,14 @@ the engine — no daemon. Work happens while lerp is open; a headless
 `lerp run` is the same loop without the chrome, if and when it earns
 its existence.
 
-Three views, one per question an operator actually has:
+Three panels on one screen, one per question an operator actually
+has, beside a main pane that details whichever panel has focus:
 
 1. **Attention** — what is blocked on me: tickets to promote into a
    queue, reviews to read, questions agents have raised.
-2. **Board** — what is running now, which queue each lane's agent is
+2. **Lanes** — what is running now, which queue each lane's agent is
    in, and its live log stream.
-3. **Queue** — what runs next against the free lanes.
+3. **Up next** — what runs next against the free lanes.
 
 One escape hatch: **eject**. Select a lane; lerp stops the agent,
 frees the lane, and hands you the vendor's own resume command
