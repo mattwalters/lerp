@@ -137,11 +137,16 @@ its existence.
 
 Three views, one per question an operator actually has:
 
-1. **Attention** — what is blocked on me: tickets to promote into a
-   queue, reviews to read, questions agents have raised.
-2. **Board** — what is running now, which queue each lane's agent is
+1. **Needs-you** — what waits on a human, in two groups: unclaimed
+   tickets sitting in a status no queue serves (to route), and the
+   operator's own claimed tickets sitting the same way (parked on
+   them) — reviews to read, questions agents have raised, failed runs
+   to retriage. Select a ticket and press `p` to promote it: pick a
+   target from the configured queue statuses or a pipeline exit, and
+   lerp calls MoveIssue. This is the one write the TUI makes anywhere.
+2. **Running** — what is running now, which queue each lane's agent is
    in, and its live log stream.
-3. **Queue** — what runs next against the free lanes.
+3. **Up-next** — what runs next against the free lanes.
 
 One escape hatch: **eject**. Select a lane; lerp stops the agent,
 frees the lane, and hands you the vendor's own resume command
@@ -172,8 +177,11 @@ that wants a scheduler wants a different product.
 - Not a server, daemon, or web service. Nothing listens on a port.
 - Not a database. See invariant 1.
 - Not an agent framework. Runners are command templates, not SDKs.
-- Not a Linear client. Lerp moves tickets through queues; for
-  everything else, use Linear.
+- Not a Linear client, with one narrow exception: needs-you lists
+  unassigned tickets in statuses no queue serves, and promote is one
+  MoveIssue on a ticket the operator selected. Everything else —
+  create, edit, comment, assign outside the claim protocol — stays in
+  Linear.
 - Not infrastructure for any other product to depend on. It is a
   standalone tool.
 

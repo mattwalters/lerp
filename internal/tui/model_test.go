@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -24,18 +25,63 @@ type countingTicker struct {
 
 func (c *countingTicker) Tick(context.Context) { c.ticks.Add(1) }
 
+// recordingPromoter stands in for the reconciler's one write action: it
+// records every Promote call, so a test can assert what the picker sent,
+// and returns whatever err is set to.
+type recordingPromoter struct {
+	mu    sync.Mutex
+	calls []promoteCall
+	err   error
+}
+
+type promoteCall struct {
+	ticketID string
+	status   string
+}
+
+func (p *recordingPromoter) Promote(_ context.Context, ticketID, status string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.calls = append(p.calls, promoteCall{ticketID, status})
+	return p.err
+}
+
+func (p *recordingPromoter) last() promoteCall {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.calls) == 0 {
+		return promoteCall{}
+	}
+	return p.calls[len(p.calls)-1]
+}
+
+// defaultTestStatuses are the promote picker's options in tests that do not
+// care which ones — two, so up/down has somewhere to go.
+var defaultTestStatuses = []string{"Planning", "Implementing"}
+
 func newTestModel(t *testing.T, lanes int) (model, *countingTicker, chan loop.Event) {
 	t.Helper()
+	m, ticker, events, _ := newPromoteTestModel(t, lanes, defaultTestStatuses)
+	return m, ticker, events
+}
+
+// newPromoteTestModel is newTestModel plus the recording promoter, for tests
+// that drive the promote picker and need to see what it sent.
+func newPromoteTestModel(t *testing.T, lanes int, statuses []string) (model, *countingTicker, chan loop.Event, *recordingPromoter) {
+	t.Helper()
 	ticker := &countingTicker{}
+	promoter := &recordingPromoter{}
 	events := make(chan loop.Event, 8)
 	m := newModel(context.Background(), Options{
 		Ticker:   ticker,
+		Promoter: promoter,
+		Statuses: statuses,
 		Interval: time.Millisecond,
 		Lanes:    lanes,
 		Events:   events,
 	})
 	resized, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
-	return resized.(model), ticker, events
+	return resized.(model), ticker, events, promoter
 }
 
 func update(t *testing.T, m model, msg tea.Msg) model {
@@ -52,6 +98,10 @@ func keyMsg(s string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyUp}
 	case "down":
 		return tea.KeyMsg{Type: tea.KeyDown}
+	case "enter":
+		return tea.KeyMsg{Type: tea.KeyEnter}
+	case "esc":
+		return tea.KeyMsg{Type: tea.KeyEsc}
 	default:
 		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
 	}
@@ -60,7 +110,7 @@ func keyMsg(s string) tea.KeyMsg {
 func TestBoardShowsLaneLifecycle(t *testing.T) {
 	m, _, _ := newTestModel(t, 2)
 	view := m.View()
-	for _, want := range []string{"lerp", "2 board", "idle", "q quit"} {
+	for _, want := range []string{"lerp", "2 running", "idle", "q quit"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("initial view is missing %q:\n%s", want, view)
 		}
@@ -69,10 +119,15 @@ func TestBoardShowsLaneLifecycle(t *testing.T) {
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 		TicketID: "id-42", Ticket: "LERP-42", Queue: "implement", LogPath: "/dev/null"}})
 	view = m.View()
-	for _, want := range []string{"LERP-42", "implement", "running"} {
+	for _, want := range []string{"LERP-42", "implement"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view after start is missing %q:\n%s", want, view)
 		}
+	}
+	// "running" is also the view tab's own label now, so check the lane's
+	// own row rather than the whole screen.
+	if !strings.Contains(m.laneRow(1), "running") {
+		t.Fatalf("lane 1's row does not show running after start:\n%s", m.laneRow(1))
 	}
 
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventExited, RunID: "r1", Lane: 1,
@@ -81,8 +136,8 @@ func TestBoardShowsLaneLifecycle(t *testing.T) {
 	if !strings.Contains(view, "LERP-42 exited 0") {
 		t.Fatalf("view after exit does not note the outcome:\n%s", view)
 	}
-	if strings.Contains(view, "running") {
-		t.Fatalf("view after exit still shows a running lane:\n%s", view)
+	if strings.Contains(m.laneRow(1), "running") {
+		t.Fatalf("lane 1's row still shows running after exit:\n%s", m.laneRow(1))
 	}
 }
 
@@ -274,11 +329,112 @@ func TestAttentionViewListsWhatWaits(t *testing.T) {
 	if !strings.Contains(view, "nothing needs you") {
 		t.Fatalf("empty attention list does not read as the goal state:\n%s", view)
 	}
-	if !strings.Contains(view, "shows your claimed tickets sitting in statuses no queue serves") {
+	if !strings.Contains(view, "shows unclaimed tickets, and your claimed tickets, sitting in statuses no queue serves") {
 		t.Fatalf("empty attention list does not explain what would make items appear:\n%s", view)
 	}
 	if strings.Contains(view, "LERP-42") {
 		t.Fatalf("cleared item still rendered:\n%s", view)
+	}
+}
+
+// needs-you widens attention into two groups: unclaimed work to route, and
+// the operator's own claimed tickets parked outside every queue.
+func TestAttentionViewGroupsToRouteAndParked(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Group: loop.ToRoute, Ticket: "LERP-4", TicketID: "loose", Title: "Nobody's routed this", Status: "Backlog",
+			Reason: `unassigned in "Backlog" — no queue serves it`},
+		{Group: loop.Parked, Ticket: "LERP-1", TicketID: "help", Title: "Fix the build", Status: "Needs Help",
+			Reason: `claimed in "Needs Help" — no queue serves it`},
+	}}})
+	view := m.View()
+	toRoute := strings.Index(view, "to route")
+	parked := strings.Index(view, "parked on you")
+	lerp4 := strings.Index(view, "LERP-4")
+	lerp1 := strings.Index(view, "LERP-1")
+	if toRoute < 0 || parked < 0 || lerp4 < 0 || lerp1 < 0 {
+		t.Fatalf("view is missing a group heading or ticket:\n%s", view)
+	}
+	if !(toRoute < lerp4 && lerp4 < parked && parked < lerp1) {
+		t.Fatalf("groups are not rendered to-route-then-parked, each above its ticket:\n%s", view)
+	}
+}
+
+// Selecting a needs-you item and pressing "p" opens the promote picker;
+// choosing a status and confirming calls Promote with the ticket's Linear id
+// and the chosen status, and settles into a transient note. Cancelling
+// touches nothing.
+func TestPromotePicker(t *testing.T) {
+	m, _, _, promoter := newPromoteTestModel(t, 1, []string{"Planning", "Implementing"})
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Group: loop.ToRoute, Ticket: "LERP-4", TicketID: "loose", Title: "Nobody's routed this", Status: "Backlog"},
+	}}})
+
+	// esc backs out without promoting.
+	m = update(t, m, keyMsg("p"))
+	if !m.promoting {
+		t.Fatal("p did not open the promote picker")
+	}
+	m = update(t, m, keyMsg("esc"))
+	if m.promoting {
+		t.Fatal("esc did not close the promote picker")
+	}
+	if len(promoter.calls) != 0 {
+		t.Fatalf("esc called Promote: %+v", promoter.calls)
+	}
+
+	// p, choose the second status, enter: confirms with the right ticket id
+	// and status.
+	m = update(t, m, keyMsg("p"))
+	view := m.View()
+	for _, want := range []string{"promote LERP-4", "Planning", "Implementing"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("promote picker is missing %q:\n%s", want, view)
+		}
+	}
+	m = update(t, m, keyMsg("down"))
+	next, cmd := m.Update(keyMsg("enter"))
+	m = next.(model)
+	if m.promoting {
+		t.Fatal("enter did not close the promote picker")
+	}
+	if cmd == nil {
+		t.Fatal("enter produced no promote command")
+	}
+	// Promote runs off the render loop, exactly like a tick; running the
+	// command here is what actually calls it.
+	msg := cmd()
+	promoted, ok := msg.(promotedMsg)
+	if !ok {
+		t.Fatalf("promote command yielded %T, want promotedMsg", msg)
+	}
+	if got := promoter.last(); got.ticketID != "loose" || got.status != "Implementing" {
+		t.Fatalf("Promote call = %+v, want {loose Implementing}", got)
+	}
+
+	m = update(t, m, promoted)
+	if !strings.Contains(m.View(), "promoted LERP-4 to Implementing") {
+		t.Fatalf("view does not note the promotion:\n%s", m.View())
+	}
+}
+
+// A pass that reports the promoted ticket gone (it moved out of needs-you)
+// while the picker is still open must not leave a dangling selection.
+func TestPromotePickerClosesWhenTheListEmpties(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Group: loop.ToRoute, Ticket: "LERP-4", TicketID: "loose", Title: "Nobody's routed this"},
+	}}})
+	m = update(t, m, keyMsg("p"))
+	if !m.promoting {
+		t.Fatal("p did not open the promote picker")
+	}
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention}})
+	if m.promoting {
+		t.Fatal("promote picker stayed open after its item vanished")
 	}
 }
 

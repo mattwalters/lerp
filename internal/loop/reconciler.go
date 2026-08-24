@@ -82,15 +82,31 @@ type QueueSnapshot struct {
 	Tickets []QueueTicket
 }
 
+// AttentionGroup names which half of the needs-you view an item belongs to.
+type AttentionGroup string
+
+const (
+	// ToRoute is unclaimed work sitting in a status no queue serves: nobody
+	// has put it on the board yet.
+	ToRoute AttentionGroup = "to route"
+	// Parked is a ticket the operator claimed that sits in a status no
+	// queue serves — parked there deliberately, or landed there by a failed
+	// run's on_failure move.
+	Parked AttentionGroup = "parked on you"
+)
+
 // AttentionItem is one ticket waiting on the operator: what it is, why it
-// needs a human, and Linear's URL for it — acting on the item (promoting it
-// into a queue) happens in Linear, never in lerp.
+// needs a human, and Linear's URL for it. TicketID is Linear's internal id —
+// what Promote and MoveIssue take; Ticket is the human identifier shown on
+// screen.
 type AttentionItem struct {
-	Ticket string // human identifier, e.g. LERP-42
-	Title  string
-	Status string
-	Reason string
-	URL    string
+	Group    AttentionGroup
+	Ticket   string // human identifier, e.g. LERP-42
+	TicketID string
+	Title    string
+	Status   string
+	Reason   string
+	URL      string
 }
 
 // Event is one observation from the loop. Fields beyond Type are filled as
@@ -248,22 +264,21 @@ func (r *Reconciler) Tick(ctx context.Context) {
 // AttentionDefinition is the operator-facing one-line description of the
 // rule attention implements, rendered by the TUI's empty state. It lives
 // here, next to the rule, so the two change in the same hunk.
-const AttentionDefinition = "your claimed tickets sitting in statuses no queue serves"
+const AttentionDefinition = "unclaimed tickets, and your claimed tickets, sitting in statuses no queue serves"
 
-// attention recomputes what is blocked on the operator and emits it as one
-// EventAttention carrying the whole list.
+// attention recomputes what needs the operator and emits it as one
+// EventAttention carrying the whole list, to-route items before parked ones.
 //
-// The v0 definition of "blocked on me", in full: a ticket needs the operator
-// when it is assigned to the operating user and sits in a status no queue
-// serves. That one rule covers both halves of the question — a ticket the
-// operator claimed and parked in a human column (Backlog, a review status)
-// waits to be promoted onward, and a failed run's on_failure move lands its
-// ticket, still claimed, in exactly such a status. Deliberately out of v0: a
-// claimed ticket sitting in a queue status with no live run in a lane (a
-// failed run whose queue has no on_failure route). From one Linear read that
-// state is indistinguishable from a live run under the same user on another
-// machine, so v0 leaves it to the log line conclude writes. This is a
-// reading of the board, not an inbox product; resist growing it.
+// The v0 definition of "needs you", in full: a ticket needs the operator
+// when it sits in a status no queue serves, and is either unassigned (to
+// route — nobody has put it on the board yet) or assigned to the operating
+// user (parked on them — deliberately, or landed there by a failed run's
+// on_failure move). Deliberately out of v0: a claimed ticket sitting in a
+// queue status with no live run in a lane (a failed run whose queue has no
+// on_failure route). From one Linear read that state is indistinguishable
+// from a live run under the same user on another machine, so v0 leaves it to
+// the log line conclude writes. This is a reading of the board plus a place
+// to route from, not a general inbox; resist growing it further.
 //
 // A pass that could not list every team emits nothing: the failure is
 // reported and the subscriber keeps its last full list, because a partial
@@ -278,28 +293,60 @@ func (r *Reconciler) attention(ctx context.Context) {
 	for _, q := range r.o.Repo.Queues {
 		served[q.Status] = true
 	}
-	var items []AttentionItem
+	var toRoute, parked []AttentionItem
 	for _, team := range r.o.Repo.Teams {
-		issues, err := r.o.Client.ListAssignedIssues(ctx, team, viewerID)
+		unassigned, err := r.o.Client.ListUnassignedIssues(ctx, team)
+		if err != nil {
+			r.fail(fmt.Errorf("attention: list unassigned tickets for team %s: %w", team, err))
+			return
+		}
+		for _, issue := range unassigned {
+			if served[issue.Status] {
+				continue
+			}
+			toRoute = append(toRoute, AttentionItem{
+				Group:    ToRoute,
+				Ticket:   issue.Identifier,
+				TicketID: issue.ID,
+				Title:    issue.Title,
+				Status:   issue.Status,
+				Reason:   fmt.Sprintf("unassigned in %q — no queue serves it", issue.Status),
+				URL:      issue.URL,
+			})
+		}
+
+		assigned, err := r.o.Client.ListAssignedIssues(ctx, team, viewerID)
 		if err != nil {
 			r.fail(fmt.Errorf("attention: list claimed tickets for team %s: %w", team, err))
 			return
 		}
-		for _, issue := range issues {
+		for _, issue := range assigned {
 			if served[issue.Status] {
 				continue
 			}
-			items = append(items, AttentionItem{
-				Ticket: issue.Identifier,
-				Title:  issue.Title,
-				Status: issue.Status,
-				Reason: fmt.Sprintf("claimed in %q — no queue serves it", issue.Status),
-				URL:    issue.URL,
+			parked = append(parked, AttentionItem{
+				Group:    Parked,
+				Ticket:   issue.Identifier,
+				TicketID: issue.ID,
+				Title:    issue.Title,
+				Status:   issue.Status,
+				Reason:   fmt.Sprintf("claimed in %q — no queue serves it", issue.Status),
+				URL:      issue.URL,
 			})
 		}
 	}
-	sort.Slice(items, func(i, j int) bool { return items[i].Ticket < items[j].Ticket })
-	r.emit(Event{Type: EventAttention, Attention: items})
+	sort.Slice(toRoute, func(i, j int) bool { return toRoute[i].Ticket < toRoute[j].Ticket })
+	sort.Slice(parked, func(i, j int) bool { return parked[i].Ticket < parked[j].Ticket })
+	r.emit(Event{Type: EventAttention, Attention: append(toRoute, parked...)})
+}
+
+// Promote is the TUI's one write action, the SCOPE amendment this ticket
+// makes: move a selected ticket straight into a status by calling the same
+// client the loop reads with. It touches no lane, claim, or evidence — the
+// next pass simply finds the ticket wherever this left it, exactly as it
+// would find a move a human made in Linear.
+func (r *Reconciler) Promote(ctx context.Context, ticketID, status string) error {
+	return r.o.Client.MoveIssue(ctx, ticketID, status)
 }
 
 // reconcileEvidence converges the lanes with .lerp/runs: every record either

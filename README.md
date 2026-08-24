@@ -280,19 +280,26 @@ into free lanes. `-lanes N` caps how many agents run at once (default
 3). The TUI needs a terminal: in a pipe or a script, `lerp` prints
 usage and exits 2 rather than quietly starting to claim tickets.
 
-The Board view shows one row per lane — ticket, queue, and runner
+The Running view shows one row per lane — ticket, queue, and runner
 state: provisioning, running, or adopted, each with the run's elapsed
 time (an adopted run shows its true age, not the moment it was
 adopted) — and a live tail of the selected lane's log, with
-scrollback that survives the run's exit. The Queue view shows what
+scrollback that survives the run's exit. The Up-next view shows what
 runs next: each configured queue with every ticket sitting in its
 status, in the loop's own pickup order, refreshed on every pass —
 eligible tickets run as lanes free up, and blocked or claimed ones are
 shown faint with the reason. It is read-only; to change what runs
-next, move tickets in Linear. Keys: `1`/`2`/`3` choose a view and
-`tab` cycles — the Attention view is an empty shell until its own
-ticket (LERP-13) lands. `↑`/`↓` pick a lane, `pgup`/`pgdn` scroll the
-log, `end` resumes following, `q` quits.
+next, move tickets in Linear. The Needs-you view lists what waits on a
+human in two groups: unclaimed tickets sitting in a status no queue
+serves (to route), and the operator's own claimed tickets sitting the
+same way (parked on them) — each with the reason and a link. Select
+one and press `p` to promote it: pick a target from the configured
+queue statuses or a pipeline exit, and lerp moves it there. That
+MoveIssue is the only write any view makes; everything else about a
+ticket still happens in Linear. Keys: `1`/`2`/`3` choose a view and
+`tab` cycles. `↑`/`↓` pick a lane or a needs-you item, `pgup`/`pgdn`
+scroll the log, `end` resumes following, `q` quits (or backs out of
+the promote picker).
 
 Quitting (`q` or `ctrl+c`) closes the screen, stops future passes, and
 waits briefly for a pass already in flight to settle. The agents are
@@ -342,11 +349,11 @@ run it:
 **What ships today?** The TUI is the way to run the loop: bare `lerp`
 opens it, and the reconciling loop of the mental model — N lanes,
 adopting live runs, reaping dead ones, repairing drift — is real,
-running behavior while it is open (see [Running](#running)). Of the
-TUI's three views only the Board is built so far. `lerp once` is the
-single-shot alternative: one ticket through its queue, no loop, no
-evidence store. Beyond those, `lerp version` and `lerp init` complete
-the surface.
+running behavior while it is open (see [Running](#running)). All three
+views are built, and needs-you's promote is the TUI's one write
+action. `lerp once` is the single-shot alternative: one ticket through
+its queue, no loop, no evidence store. Beyond those, `lerp version`
+and `lerp init` complete the surface.
 
 **Where does state live?** In Linear — that is the first sentence of
 the model, and [SCOPE.md](SCOPE.md) invariant 1 holds it. Locally lerp
