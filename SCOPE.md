@@ -140,11 +140,16 @@ its existence.
 Three panels on one screen, one per question an operator actually
 has, beside a main pane that details whichever panel has focus:
 
-1. **Needs-you** — what waits on a human, in two groups: unclaimed
-   tickets sitting in a status no queue serves (to route), and the
-   operator's own claimed tickets sitting the same way (parked on
-   them) — reviews to read, questions agents have raised, failed runs
-   to retriage. Select a ticket and press `p` to promote it: pick a
+1. **Needs-you** — what waits on a human: unclaimed tickets, and the
+   operator's own claimed tickets, sitting in a status no queue serves
+   — reviews to read, questions agents have raised, failed runs to
+   retriage. It reads as a table, one row per ticket, and the Linear
+   status is a column: the vocabulary is the operator's own, never a
+   category invented here. Sorting it (by leverage, priority, status or
+   project) and scoping it to one project are display over the one list
+   the pass already fetched, session-only, with no saved views and no
+   filter syntax; filtering that changed *which* tickets were fetched
+   would not be. Select a ticket and press `p` to promote it: pick a
    target from the configured queue statuses or a pipeline exit, and
    lerp calls MoveIssue. This is the one write the TUI makes anywhere.
 2. **Running** — what is running now, which queue each lane's agent is

@@ -631,21 +631,26 @@ func TestTickPublishesQueueSnapshotEveryPass(t *testing.T) {
 }
 
 // Done-when: the attention pass reports exactly the unclaimed tickets and
-// the operator's claimed tickets sitting in statuses no queue serves,
-// to-route items before parked ones — and once neither half has anything,
-// an empty list, so a subscriber can show the goal state.
+// the operator's claimed tickets sitting in statuses no queue serves — with
+// the project, the status and what the pipeline says about that status on
+// every item, so the table can be sorted, grouped and filtered without a
+// second read. Once neither query has anything it reports an empty list, so
+// a subscriber can show the goal state.
 func TestTickEmitsAttention(t *testing.T) {
 	h := newHarness(t, 1, nil)
-	// Parked on the operator: claimed, in a status no queue serves.
+	// Resting on the operator: claimed, in a status no queue serves — and
+	// the one this pipeline's on_failure points at.
 	h.fake.AddIssue("LERP", linear.Issue{ID: "help", Identifier: "LERP-1", Title: "Fix the build",
-		Status: "Needs Help", AssigneeID: "fake-viewer", URL: "https://linear.app/l/LERP-1"})
+		Status: "Needs Help", AssigneeID: "fake-viewer", URL: "https://linear.app/l/LERP-1",
+		Project: "Open-source readiness"})
 	// Neither: claimed but in a queue's own status — a run may hold it.
 	h.fake.AddIssue("LERP", linear.Issue{ID: "queued", Identifier: "LERP-2", Status: "Todo",
 		AssigneeID: "fake-viewer"})
 	// Neither: someone else's claim is someone else's work.
 	h.fake.AddIssue("LERP", linear.Issue{ID: "theirs", Identifier: "LERP-3", Status: "Needs Help",
 		AssigneeID: "somebody-else"})
-	// To route: unclaimed, in a status no queue serves.
+	// Unclaimed, in a status no queue serves — one the pipeline never names
+	// at all, so nothing lerp ran put it there.
 	h.fake.AddIssue("LERP", linear.Issue{ID: "loose", Identifier: "LERP-4", Title: "Nobody's routed this",
 		Status: "Backlog", URL: "https://linear.app/l/LERP-4"})
 	// Neither: finished tickets wait on nobody.
@@ -657,14 +662,16 @@ func TestTickEmitsAttention(t *testing.T) {
 	got := h.waitEvents(t, EventAttention, 1)[0]
 	want := []AttentionItem{
 		{
-			Group: ToRoute, Ticket: "LERP-4", TicketID: "loose", Title: "Nobody's routed this", Status: "Backlog",
-			Reason: `unassigned in "Backlog" — no queue serves it`,
-			URL:    "https://linear.app/l/LERP-4",
+			Ticket: "LERP-1", TicketID: "help", Title: "Fix the build", Status: "Needs Help",
+			Project: "Open-source readiness", Relevance: StatusFailed,
+			Reason: `claimed in "Needs Help" — a run failed here`,
+			URL:    "https://linear.app/l/LERP-1",
 		},
 		{
-			Group: Parked, Ticket: "LERP-1", TicketID: "help", Title: "Fix the build", Status: "Needs Help",
-			Reason: `claimed in "Needs Help" — no queue serves it`,
-			URL:    "https://linear.app/l/LERP-1",
+			Ticket: "LERP-4", TicketID: "loose", Title: "Nobody's routed this", Status: "Backlog",
+			Relevance: StatusUnnamed,
+			Reason:    `unassigned in "Backlog" — the pipeline never names it`,
+			URL:       "https://linear.app/l/LERP-4",
 		},
 	}
 	if !reflect.DeepEqual(got.Attention, want) {
@@ -679,15 +686,16 @@ func TestTickEmitsAttention(t *testing.T) {
 	h.rec.Tick(ctx)
 	got = h.waitEvents(t, EventAttention, 1)[0]
 	if len(got.Attention) != 1 || got.Attention[0].Ticket != "LERP-4" {
-		t.Errorf("attention after the operator routed it = %+v, want only LERP-4 to route", got.Attention)
+		t.Errorf("attention after the operator routed it = %+v, want only the unrouted LERP-4", got.Attention)
 	}
 }
 
-// Done-when: to route is ordered by leverage — what a promote would free
-// first — with the unblock count and the priority carried on every item, so
-// the panel can show them without another read. Parked keeps its identifier
-// order; nothing is waiting on those.
-func TestAttentionOrdersToRouteByLeverage(t *testing.T) {
+// Done-when: every item carries the facts the table sorts, groups and marks
+// by — the transitive unblock count, the priority, the project, and the
+// pipeline-relevance of the status — computed once per pass so no view has
+// to read the board or the config a second time. The list itself comes back
+// in identifier order: how it is ordered on screen is the panel's business.
+func TestAttentionCarriesLeverageAndRelevance(t *testing.T) {
 	h := newHarness(t, 1, nil)
 	backlog := func(id, identifier string, priority int) {
 		h.fake.AddIssue("LERP", linear.Issue{ID: id, Identifier: identifier,
@@ -701,69 +709,104 @@ func TestAttentionOrdersToRouteByLeverage(t *testing.T) {
 	h.fake.Block("t38", "t22")
 	h.fake.Block("t23", "t22")
 	h.fake.Block("t24", "t23")
-	backlog("t36", "LERP-36", 2) // High
-	backlog("t37", "LERP-37", 1) // Urgent — outranks 36 despite the identifier
-	backlog("t45", "LERP-45", 4) // Low
-	backlog("t40", "LERP-40", 0) // no priority, which ranks last, not first
 	// A blocker outside the listing: claimed by somebody else, so neither
-	// half of needs-you lists it. Its ticket still reads as blocked.
+	// query lists it. Its ticket still reads as blocked.
 	backlog("t50", "LERP-50", 1)
 	h.fake.AddIssue("LERP", linear.Issue{ID: "theirs", Identifier: "LERP-99",
 		Status: "Backlog", AssigneeID: "somebody-else"})
 	h.fake.Block("t50", "theirs")
-	// Parked on the operator, added out of order.
-	for _, id := range []string{"LERP-9", "LERP-3"} {
-		h.fake.AddIssue("LERP", linear.Issue{ID: id, Identifier: id, Status: "Needs Help",
-			AssigneeID: "fake-viewer", Priority: 1})
-	}
+	// Claimed by the operator, in the status this pipeline's on_failure
+	// points at — the one place a run is known to have failed.
+	h.fake.AddIssue("LERP", linear.Issue{ID: "t3", Identifier: "LERP-3", Status: "Needs Help",
+		AssigneeID: "fake-viewer", Priority: 1, Project: "Open-source readiness"})
 
 	h.rec.Tick(context.Background())
 	got := h.waitEvents(t, EventAttention, 1)[0].Attention
 
 	var order []string
-	unblocks := map[string]int{}
+	items := map[string]AttentionItem{}
 	for _, it := range got {
 		order = append(order, it.Ticket)
-		unblocks[it.Ticket] = it.Unblocks
+		items[it.Ticket] = it
 	}
-	want := []string{
-		// Leverage first, then priority, then the identifier; blocked
-		// tickets after everything that can actually be routed today.
-		"LERP-22", "LERP-37", "LERP-36", "LERP-45", "LERP-40",
-		"LERP-23", "LERP-50", "LERP-24", "LERP-38",
-		// Parked, in identifier order.
-		"LERP-3", "LERP-9",
-	}
+	want := []string{"LERP-22", "LERP-23", "LERP-24", "LERP-3", "LERP-38", "LERP-50"}
 	if !slices.Equal(order, want) {
-		t.Errorf("attention order = %v, want %v", order, want)
+		t.Errorf("attention order = %v, want the identifier order %v", order, want)
 	}
 	// Transitive: 22 frees 38, 23 and — through 23 — 24.
 	for ticket, count := range map[string]int{
-		"LERP-22": 3, "LERP-23": 1, "LERP-24": 0, "LERP-38": 0, "LERP-50": 0, "LERP-36": 0,
+		"LERP-22": 3, "LERP-23": 1, "LERP-24": 0, "LERP-38": 0, "LERP-50": 0, "LERP-3": 0,
 	} {
-		if unblocks[ticket] != count {
-			t.Errorf("%s unblocks %d, want %d", ticket, unblocks[ticket], count)
+		if items[ticket].Unblocks != count {
+			t.Errorf("%s unblocks %d, want %d", ticket, items[ticket].Unblocks, count)
 		}
 	}
-	for _, it := range got {
-		switch it.Ticket {
-		case "LERP-22":
-			if it.Priority != 2 || len(it.BlockedBy) != 0 || !slices.Contains(it.Blocks, "LERP-23") {
-				t.Errorf("LERP-22 = %+v, want an unblocked High blocking LERP-23", it)
-			}
-		case "LERP-50":
-			// The blocker is outside the listing, so it earns no leverage
-			// there — but it still blocks, and the item says so.
-			if !slices.Equal(it.BlockedBy, []string{"LERP-99"}) {
-				t.Errorf("LERP-50 blocked by %v, want the unlisted LERP-99", it.BlockedBy)
-			}
+	if it := items["LERP-22"]; it.Priority != 2 || len(it.BlockedBy) != 0 || !slices.Contains(it.Blocks, "LERP-23") {
+		t.Errorf("LERP-22 = %+v, want an unblocked High blocking LERP-23", it)
+	}
+	// The blocker is outside the listing, so it earns no leverage there —
+	// but it still blocks, and the item says so.
+	if it := items["LERP-50"]; !slices.Equal(it.BlockedBy, []string{"LERP-99"}) {
+		t.Errorf("LERP-50 blocked by %v, want the unlisted LERP-99", it.BlockedBy)
+	}
+	if it := items["LERP-3"]; it.Relevance != StatusFailed || it.Project != "Open-source readiness" {
+		t.Errorf("LERP-3 = %+v, want a failure status in the Open-source readiness project", it)
+	}
+	if it := items["LERP-22"]; it.Relevance != StatusUnnamed || it.Project != "" {
+		t.Errorf("LERP-22 = %+v, want a status the pipeline never names and no project", it)
+	}
+}
+
+// Done-when: the ordering the status mode groups by is derived from
+// lerp.toml and nothing else — failure routes first, then where clean runs
+// come to rest, then statuses the pipeline never names, then the statuses it
+// serves. Rewriting the on_success pointers rewrites this with them; there
+// is no key in the config that says any of it.
+func TestStatusRelevanceIsDerivedFromTheQueues(t *testing.T) {
+	repo := &config.RepoConfig{
+		Teams:     []string{"LERP"},
+		Provision: "provision",
+		Dispose:   "dispose",
+		Runners:   map[string]config.Runner{"agent": {Command: "agent"}},
+		Queues: map[string]config.Queue{
+			"plan": {Status: "Planning", Prompt: "p", Runner: "agent",
+				OnSuccess: "Plan Review", OnFailure: "Needs Attention"},
+			"implement": {Status: "Implementing", Prompt: "p", Runner: "agent",
+				OnSuccess: "In Review", OnFailure: "Needs Attention"},
+			// One queue's exit is another's status: serving it wins.
+			"review": {Status: "Plan Review", Prompt: "p", Runner: "agent",
+				OnSuccess: "Done", OnFailure: "Planning"},
+		},
+	}
+	relevance := statusRelevance(repo)
+	for status, want := range map[string]StatusRelevance{
+		"Needs Attention": StatusFailed,
+		"In Review":       StatusFinished,
+		"Done":            StatusFinished,
+		"Backlog":         StatusUnnamed,
+		"In Progress":     StatusUnnamed,
+		"Implementing":    StatusOther,
+		// Served by the review queue, though the plan queue's on_success
+		// also points at it.
+		"Plan Review": StatusOther,
+		// A queue's own status, and another queue's failure route: the
+		// pipeline serves it, so a ticket there is not resting.
+		"Planning": StatusOther,
+	} {
+		if got := relevance(status); got != want {
+			t.Errorf("relevance of %q = %d, want %d", status, got, want)
 		}
+	}
+	// The ranks order the way the table groups by them.
+	if !(StatusFailed < StatusFinished && StatusFinished < StatusUnnamed && StatusUnnamed < StatusOther) {
+		t.Error("status relevance ranks do not order failure, finished, unnamed, served")
 	}
 }
 
 // A failed run's on_failure move lands the ticket — still claimed — in a
-// status no queue serves; the next pass surfaces it in attention. The
-// on-failure half of "blocked on me" needs no machinery of its own.
+// status no queue serves; the next pass surfaces it in attention, marked as
+// somewhere a run failed. Neither half of needs-you needs machinery of its
+// own.
 func TestFailedRunLandsInAttention(t *testing.T) {
 	h := newHarness(t, 1, func(context.Context, run.Invocation) (run.Result, error) {
 		return run.Result{ExitCode: 3}, nil
@@ -777,9 +820,9 @@ func TestFailedRunLandsInAttention(t *testing.T) {
 
 	h.rec.Tick(ctx)
 	got := h.waitEvents(t, EventAttention, 1)[0]
-	if len(got.Attention) != 1 || got.Attention[0].Ticket != "LERP-1" || got.Attention[0].Status != "Needs Help" ||
-		got.Attention[0].Group != Parked {
-		t.Errorf("attention after a failed run = %+v, want LERP-1 in Needs Help, parked on the operator", got.Attention)
+	if len(got.Attention) != 1 || got.Attention[0].Ticket != "LERP-1" ||
+		got.Attention[0].Status != "Needs Help" || got.Attention[0].Relevance != StatusFailed {
+		t.Errorf("attention after a failed run = %+v, want LERP-1 resting in Needs Help, a status a run failed in", got.Attention)
 	}
 }
 

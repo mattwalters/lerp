@@ -17,6 +17,8 @@ type keymap struct {
 	Top       key.Binding
 	Bottom    key.Binding
 	Promote   key.Binding
+	Sort      key.Binding
+	Project   key.Binding
 	Open      key.Binding
 	Raw       key.Binding
 	Help      key.Binding
@@ -37,6 +39,8 @@ func newKeymap() keymap {
 		Top:       key.NewBinding(key.WithKeys("home", "g"), key.WithHelp("home/g", "top")),
 		Bottom:    key.NewBinding(key.WithKeys("end", "G"), key.WithHelp("end/G", "follow")),
 		Promote:   key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "promote")),
+		Sort:      key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort needs you")),
+		Project:   key.NewBinding(key.WithKeys("P"), key.WithHelp("P", "filter by project")),
 		Open:      key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "open in Linear")),
 		Raw:       key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "raw log")),
 		Help:      key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
@@ -50,10 +54,14 @@ func (k keymap) ShortHelp() []key.Binding {
 	return []key.Binding{k.Help, k.Quit}
 }
 
+// Two groups, not three: bubbles lays each one out as a column, and the
+// main pane is narrower than the side panels' table left it. Getting about
+// the terminal by moving through it, then everything a key does to the
+// selection — the split reads, and it fits.
 func (k keymap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{k.Attention, k.Lanes, k.UpNext, k.NextPanel, k.PrevPanel},
-		{k.Up, k.Down, k.PageUp, k.PageDown, k.Top, k.Bottom},
-		{k.Promote, k.Open, k.Raw, k.Help, k.Quit},
+		{k.Attention, k.Lanes, k.UpNext, k.NextPanel, k.PrevPanel,
+			k.Up, k.Down, k.PageUp, k.PageDown, k.Top, k.Bottom},
+		{k.Promote, k.Sort, k.Project, k.Open, k.Raw, k.Help, k.Quit},
 	}
 }
