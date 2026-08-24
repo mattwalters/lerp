@@ -63,3 +63,28 @@ func (k keymap) FullHelp() [][]key.Binding {
 		{k.Promote, k.Sort, k.Project, k.Open, k.Raw, k.Help, k.Quit},
 	}
 }
+
+// panelHelp is the line a focused panel carries: the keys that act on that
+// panel's own selection. These used to live in the main pane under a
+// selected ticket, which made sort and project look like they did not exist
+// until the operator had already picked a row. Navigation and the two global
+// keys are left out — the status bar already carries "? help · q quit", and
+// a hint that gets truncated away is a hint that was not there.
+func (k keymap) panelHelp(p panel) []key.Binding {
+	switch p {
+	case panelAttention:
+		return []key.Binding{k.Promote, short(k.Sort, "sort"),
+			short(k.Project, "project"), short(k.Open, "open")}
+	case panelWork:
+		return []key.Binding{short(k.Raw, "raw"), short(k.Open, "open")}
+	}
+	return nil
+}
+
+// short re-labels a binding for the panel line: the ? overlay has room for
+// "sort needs you", a forty-column panel does not, and on the needs-you
+// panel the noun is already in the title. The keys come from the binding
+// itself, so the two lines can never disagree about what to press.
+func short(b key.Binding, desc string) key.Binding {
+	return key.NewBinding(key.WithKeys(b.Keys()...), key.WithHelp(b.Help().Key, desc))
+}

@@ -522,11 +522,18 @@ func TestNeedsYouListsWhatWaits(t *testing.T) {
 	for _, want := range []string{
 		"LERP-42",
 		"Fix the flaky test",
-		`claimed in "Needs Help" — no queue serves it`,
 		"https://linear.app/acme/issue/LERP-42/fix",
 	} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("needs-you view is missing %q:\n%s", want, view)
+		}
+	}
+	// The reason wraps under its label rather than being truncated, so it
+	// is checked word by word: a cut pane would lose the tail, which is the
+	// part that says what is actually holding the ticket up.
+	for _, want := range strings.Fields(`claimed in "Needs Help" — no queue serves it`) {
+		if !strings.Contains(view, want) {
+			t.Fatalf("needs-you view cut the reason at %q:\n%s", want, view)
 		}
 	}
 
@@ -1019,6 +1026,91 @@ func TestFocusedPanelTakesTheSlack(t *testing.T) {
 	if g2.workH <= g.workH || g2.workH != g.bodyH-g2.attnH {
 		t.Fatalf("work did not take the slack on focus: %d lines", g2.workH)
 	}
+}
+
+// Padding is asymmetric on purpose: the main pane takes a space inside both
+// borders, because prose pressed against a box edge reads badly, while the
+// list panels take a left pad only — horizontal padding costs two columns a
+// panel and the needs-you table is already truncating titles, so its right
+// edge stays the truncation point it was.
+func TestPanelPaddingIsAsymmetric(t *testing.T) {
+	row := func(pad padding) string {
+		return strings.Split(panelBox("t", false, 10, 3, []string{"abcdefg"}, pad), "\n")[1]
+	}
+	if got, want := row(padList), "│ abcdefg│"; got != want {
+		t.Fatalf("list row is %q, want %q — a left pad and the right edge", got, want)
+	}
+	if got, want := row(padMain), "│ abcde… │"; got != want {
+		t.Fatalf("main row is %q, want %q — a space inside both borders", got, want)
+	}
+}
+
+// Focus is weight as well as colour: the focused panel draws the heavy box,
+// so which panel the keys are talking to still reads on a terminal that
+// gives the accent back as plain text.
+func TestFocusDrawsTheHeavyBox(t *testing.T) {
+	if idle := panelBox("t", false, 10, 3, nil, padList); !strings.Contains(idle, "╭") ||
+		!strings.Contains(idle, "│") {
+		t.Fatalf("an unfocused panel is not the light box:\n%s", idle)
+	}
+	if on := panelBox("t", true, 10, 3, nil, padList); !strings.Contains(on, "┏") ||
+		!strings.Contains(on, "┃") {
+		t.Fatalf("a focused panel is not the heavy box:\n%s", on)
+	}
+}
+
+// And the weight follows focus, both ways, in the view the operator sees.
+func TestTheHeavyBoxFollowsFocus(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	for _, tc := range []struct{ key, focused, idle string }{
+		{"1", "[1] needs you", "[2] work"},
+		{"2", "[2] work", "[1] needs you"},
+	} {
+		m = update(t, m, keyMsg(tc.key))
+		view := m.View()
+		if got := lineWith(t, view, tc.focused); !strings.HasPrefix(got, "┏") {
+			t.Fatalf("%q has focus but not the heavy box: %q", tc.focused, got)
+		}
+		if got := lineWith(t, view, tc.idle); !strings.HasPrefix(got, "╭") {
+			t.Fatalf("%q has no focus but the heavy box: %q", tc.idle, got)
+		}
+	}
+}
+
+// Done-when: the keys a panel's own selection answers to are on that panel,
+// so sort and project are visible without picking a row first — which is
+// the whole reason they felt like they did not exist.
+func TestFocusedPanelCarriesItsKeys(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("1"))
+	view := m.View()
+	for _, want := range []string{"p promote", "s sort", "P project", "o open"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("the needs-you panel does not offer %q:\n%s", want, view)
+		}
+	}
+	// The line belongs to the focused panel, so it moves with focus rather
+	// than sitting on both.
+	m = update(t, m, keyMsg("2"))
+	view = m.View()
+	if strings.Contains(view, "P project") {
+		t.Fatalf("the needs-you keys are still on screen with work focused:\n%s", view)
+	}
+	if !strings.Contains(view, "r raw") {
+		t.Fatalf("the work panel does not offer its own keys:\n%s", view)
+	}
+}
+
+// lineWith is the one line of a rendered view containing want.
+func lineWith(t *testing.T, view, want string) string {
+	t.Helper()
+	for _, l := range strings.Split(view, "\n") {
+		if strings.Contains(l, want) {
+			return l
+		}
+	}
+	t.Fatalf("no line of the view contains %q:\n%s", want, view)
+	return ""
 }
 
 // A panel with nothing to show costs one line — its own title row — and
@@ -1535,7 +1627,8 @@ func TestTicketDetailShowsBodyAndComments(t *testing.T) {
 	if strings.Index(view, "unclaimed") > strings.Index(view, "the ticket body") {
 		t.Fatalf("the pass's own lines no longer render first:\n%s", view)
 	}
-	if !strings.Contains(view, "o open in Linear") {
+	// The o hint lives on the focused panel now, not under the selection.
+	if !strings.Contains(view, "o open") {
 		t.Fatalf("the o hint is gone:\n%s", view)
 	}
 }
