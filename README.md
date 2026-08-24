@@ -98,3 +98,17 @@ repo is a function. A single repo config can only vouch for its own repo,
 so the cross-repo half of that rule ("no two repos claim the same
 team") is verified by the loop at startup, which refuses to run if it
 doesn't hold.
+
+### Workspace commands
+
+Lerp runs `provision` before starting a runner and `dispose` when reaping
+its lane. Each command runs from the repo root, writes both standard output
+and standard error to the lane log, and receives these environment variables:
+
+- `LERP_LANE` — the lane number
+- `LERP_TICKET_ID` — the Linear issue ID
+- `LERP_WORKSPACE` — the workspace path
+
+If provisioning fails, lerp leaves the ticket untouched and does not start
+the runner. A disposal failure is recorded in the lane log but never keeps a
+lane occupied.
