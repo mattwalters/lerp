@@ -13,6 +13,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -344,14 +345,26 @@ type model struct {
 	shown         []loop.AttentionItem
 	attnSel       int // index into shown; the promote target
 
-	// sortMode and project are the table's two session-only controls: one
-	// key cycles the order, another scopes the rows to a single Linear
-	// project ("" is every project). Neither is saved anywhere — they are a
-	// way to read one list the pass already fetched, not a view to keep.
-	// sortMode starts at defaultSort, so it is set in newModel rather than
-	// left to the zero value.
+	// sortMode and project are two of the table's three session-only
+	// controls: one key cycles the order, another scopes the rows to a
+	// single Linear project ("" is every project). None of the three is
+	// saved anywhere — they are a way to read one list the pass already
+	// fetched, not a view to keep. sortMode starts at defaultSort, so it is
+	// set in newModel rather than left to the zero value.
 	sortMode sortMode
 	project  string
+
+	// The third is search (see search.go): searching is the prompt's
+	// open/closed state, search the query the rows are filtered by ("" is
+	// every row), searchWas and searchSelWas the query and the selected row
+	// esc puts back. The filter outlives the prompt — enter closes the box
+	// and keeps the rows narrowed, so the keys can promote what the search
+	// found.
+	searching    bool
+	search       string
+	searchWas    string
+	searchSelWas string
+	searchInput  textinput.Model
 
 	// details is what the Reader has returned, keyed by ticket ID and kept
 	// for the process's lifetime: a stale body is a view of Linear, not
@@ -449,10 +462,11 @@ func newModel(ctx context.Context, o Options) model {
 	m := model{o: o, ctx: ctx, focus: panelWork, lanes: make(map[int]*lane),
 		details: make(map[string]*ticketDetail), lastLog: make(map[string]string),
 		vp: viewport.New(0, 0), follow: true, keys: newKeymap(), help: h,
-		sortMode:   defaultSort,
-		detailOpen: [2]bool{panelAttention: false, panelWork: true},
-		inFlight:   true, // Init starts the first pass immediately
-		passes:     &sync.WaitGroup{}}
+		sortMode:    defaultSort,
+		searchInput: newSearchInput(),
+		detailOpen:  [2]bool{panelAttention: false, panelWork: true},
+		inFlight:    true, // Init starts the first pass immediately
+		passes:      &sync.WaitGroup{}}
 	for n := 1; n <= o.Lanes; n++ {
 		m.lanes[n] = &lane{}
 	}
@@ -572,6 +586,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.note("force-started "+msg.ticket, false)
 		}
 		return m, nil
+	default:
+		// The search prompt's own messages land here: the cases above are
+		// this model's, and a clipboard read on ctrl+v is the widget's.
+		// Without this the paste it asked for is dropped on the floor.
+		if m.searching {
+			return m.updateSearch(msg)
+		}
 	}
 	return m, nil
 }
@@ -582,6 +603,9 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.ejecting || m.ejection != nil {
 		return m.handleEjectKey(msg)
+	}
+	if m.searching {
+		return m.handleSearchKey(msg)
 	}
 	switch {
 	case key.Matches(msg, m.keys.Quit):
@@ -617,13 +641,21 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.refreshMain()
 		}
 	case key.Matches(msg, m.keys.Close):
-		// esc closes the overlay first, the way it cancels the picker: a key
-		// acts on what is on screen.
-		if m.helpOn {
+		// esc acts on what is on screen, nearest first: the overlay, the way
+		// it cancels the picker; then a filter narrowing the list, which the
+		// panel line offers as "clear" while one is on; and only then the
+		// detail pane. handleSearchKey has esc while the prompt itself is
+		// open, and the filter is not the inbox panel's alone — it is on the
+		// list wherever the operator is standing.
+		switch {
+		case m.helpOn:
 			m.helpOn = false
-			break
+		case m.search != "":
+			m.setSearch("")
+			m.refreshMain()
+		default:
+			m.detailOpen[m.focus] = false
 		}
-		m.detailOpen[m.focus] = false
 	case key.Matches(msg, m.keys.Promote):
 		if m.focus == panelAttention && len(m.shown) > 0 && len(m.o.Statuses) > 0 && m.roomForMain() {
 			m.promoting = true
@@ -653,6 +685,14 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.cycleProject()
 			m.refreshMain()
 		}
+	case key.Matches(msg, m.keys.Search):
+		// Nothing to narrow is nothing to search: an empty inbox would put a
+		// prompt over the one line that says so.
+		if m.focus == panelAttention && len(m.attention) > 0 {
+			m.openSearch()
+			m.refreshMain()
+		}
+
 	// A closed pane shows nothing to scroll, so these keys are inert rather
 	// than silently unfollowing a log the operator cannot see and parking it
 	// at the top for when it reopens.
@@ -1059,9 +1099,25 @@ func (m *model) apply(ev loop.Event) {
 		m.attentionSeen = true
 		// The filter is a choice about the list that was on screen. When the
 		// pass no longer has that project, the choice would hide the whole
-		// panel behind a name nothing waits in, so it resets to all.
+		// panel behind a name nothing waits in, so it resets to all. A
+		// search is not reset the same way: a project is a category that
+		// stopped existing, where a query is text the operator typed and can
+		// see in the title — clearing it under them would be the surprise.
 		if m.project != "" && !slices.Contains(m.projects(), m.project) {
 			m.project = ""
+		}
+		// An inbox with nothing in it has nothing to narrow, and the title
+		// stops carrying the query along with the count — so a filter left
+		// behind by a closed prompt goes with the rows, rather than
+		// narrowing the pass that repopulates the board out of sight.
+		//
+		// An open prompt keeps its query, which is on screen in the box
+		// whatever the title says. Taking the keyboard back here would be
+		// taking it back mid-word, from a passing event rather than from a
+		// key the operator pressed, and their next letter would land on the
+		// list as a command — a `q` in the middle of "queue" would quit.
+		if len(m.attention) == 0 && !m.searching && m.search != "" {
+			m.search = ""
 		}
 		// A pass mid-picker may shrink or empty the list out from under it;
 		// resort clamps the selection, and the picker closes rather than
@@ -1420,7 +1476,7 @@ func (m *model) resort() {
 	if it := m.selectedAttention(); it != nil {
 		selected = it.Ticket
 	}
-	m.shown = sortAttention(filterAttention(m.attention, m.project), m.sortMode)
+	m.shown = sortAttention(filterAttention(m.attention, m.project, m.search), m.sortMode)
 	i := slices.IndexFunc(m.shown, func(it loop.AttentionItem) bool { return it.Ticket == selected })
 	if selected == "" || i < 0 {
 		m.attnSel = clampIndex(m.attnSel, len(m.shown))
@@ -1429,16 +1485,20 @@ func (m *model) resort() {
 	m.attnSel = i
 }
 
-// filterAttention scopes the list to one Linear project. There is no filter
-// syntax and no second query behind this: it is the project column, matched
-// whole, or every project.
-func filterAttention(items []loop.AttentionItem, project string) []loop.AttentionItem {
-	if project == "" {
+// filterAttention narrows the list to one Linear project and to the rows the
+// search matches. There is no filter syntax and no second query behind
+// either: the project column matched whole, and a plain substring over the
+// facts a row already shows (see matchesSearch).
+func filterAttention(items []loop.AttentionItem, project, query string) []loop.AttentionItem {
+	if project == "" && query == "" {
 		return items
 	}
 	out := make([]loop.AttentionItem, 0, len(items))
 	for _, it := range items {
-		if it.Project == project {
+		if project != "" && it.Project != project {
+			continue
+		}
+		if matchesSearch(it, query) {
 			out = append(out, it)
 		}
 	}
@@ -1531,6 +1591,16 @@ func (m *model) projects() []string {
 	}
 	slices.Sort(names)
 	return names
+}
+
+// hasProjects reports whether the pass's list has any project to scope to.
+// P cycles between every project and each one present, so with none present
+// it is a key that does nothing — projects() answers the same question but
+// builds and sorts the cycle to do it.
+func (m *model) hasProjects() bool {
+	return slices.ContainsFunc(m.attention, func(it loop.AttentionItem) bool {
+		return it.Project != ""
+	})
 }
 
 // cycleProject advances the filter one stop: every project, then each
@@ -1648,11 +1718,11 @@ func (m *model) geometry() geometry {
 }
 
 // panelWant is one panel's height: the rows it renders plus its borders, and
-// one line more when it is the focused panel carrying key hints. Both the
-// height bought here and the line panelBody draws ask keyHints, so the two
+// one line more when it is the focused panel carrying a footer. Both the
+// height bought here and the line panelBody draws ask hasFooter, so the two
 // can never disagree about whether the line is there.
 func (m *model) panelWant(p panel, rows int) int {
-	if m.focus == p && m.keyHints(p) {
+	if m.focus == p && m.hasFooter(p) {
 		rows++
 	}
 	return rows + 2
@@ -1690,6 +1760,10 @@ func (m *model) layout() {
 	m.vp.Width = max(0, padMain.inner(g.mainW))
 	m.vp.Height = max(1, g.mainH-2)
 	m.help.Width = m.vp.Width
+	// The prompt is a row of the inbox panel, so a query longer than the
+	// panel scrolls within it rather than overflowing it. Two columns for
+	// the "/" and the cursor.
+	m.searchInput.Width = max(1, padList.inner(g.sideW)-2)
 	// A pane that just changed height holds a scroll position measured
 	// against the old one: re-pin a followed log to the bottom, and clamp
 	// anything else back inside the new box.
@@ -1757,22 +1831,24 @@ func (m *model) panelBody(p panel, rows []string, cur cursor, width, ih int) []s
 	if m.focus != p {
 		return rows
 	}
-	// The hint costs a line, and it is only affordable when the rows can
+	// The footer costs a line, and it is only affordable when the rows can
 	// still be shown in what is left: either they fit outright, or two lines
 	// remain, which is the least windowRows needs to keep the selection
 	// visible. Below that the rows win — a panel showing only "⋯ n more" has
-	// lost the cursor the keys move.
-	hint := ""
+	// lost the cursor the keys move. That holds for the search prompt too:
+	// the title carries the query either way, so dropping the line costs the
+	// cursor rather than the operator's place in what they typed.
+	foot := ""
 	if ih >= 3 || (ih == 2 && len(rows) <= 1) {
-		hint = m.keyHint(p, width)
+		foot = m.panelFooter(p, width)
 	}
-	if hint != "" {
+	if foot != "" {
 		ih--
 	}
 	if cur.at >= 0 {
 		rows = windowRows(rows, cur, ih)
 	}
-	if hint == "" {
+	if foot == "" {
 		return rows
 	}
 	// Pinned to the last line rather than left floating under the rows: a
@@ -1782,12 +1858,42 @@ func (m *model) panelBody(p panel, rows []string, cur cursor, width, ih int) []s
 	for len(rows) < ih {
 		rows = append(rows, "")
 	}
-	return append(rows, hint)
+	return append(rows, foot)
+}
+
+// panelFooter is the line the focused panel carries under its rows: the
+// search prompt while it is open, otherwise the keys the row under the
+// cursor answers to.
+func (m *model) panelFooter(p panel, width int) string {
+	if width < 1 {
+		return ""
+	}
+	if m.searchOpen(p) {
+		return m.searchInput.View()
+	}
+	return m.keyHint(p, width)
+}
+
+// searchOpen reports whether p is the panel the prompt is on. Inbox only,
+// for now: it is the panel with rows enough to lose track of.
+func (m *model) searchOpen(p panel) bool {
+	return m.searching && p == panelAttention
+}
+
+// hasFooter is panelFooter's question without the rendering, for the
+// geometry that buys the line.
+func (m *model) hasFooter(p panel) bool {
+	return m.searchOpen(p) || m.keyHints(p)
 }
 
 // keyHint is the focused panel's key line, rendered by bubbles/help so it
-// truncates to the panel rather than overflowing it. The model's own help
-// component draws it, on a copy: the ? overlay owns m.help.Width.
+// fits the panel rather than overflowing it. The model's own help component
+// draws it, on a copy: the ? overlay owns m.help.Width.
+//
+// bubbles drops whole hints off the end and marks what is left out with an
+// ellipsis, so no hint is ever half-shown — which makes panelHelp's order
+// the thing that decides what an inbox row's five keys lose on a narrow
+// panel, and the ? overlay the place that still has all of them.
 func (m model) keyHint(p panel, width int) string {
 	if width < 1 || !m.keyHints(p) {
 		return ""
@@ -1805,6 +1911,11 @@ func (m *model) panelKeys(p panel) []key.Binding {
 	switch p {
 	case panelAttention:
 		if m.selectedAttention() == nil {
+			// A search that matched nothing has no row to act on, but esc is
+			// the way back and this line is where the operator looks for it.
+			if m.search != "" {
+				return []key.Binding{short(m.keys.ClearSearch, "clear search")}
+			}
 			return nil
 		}
 	case panelWork:
@@ -1812,23 +1923,32 @@ func (m *model) panelKeys(p panel) []key.Binding {
 			return nil
 		}
 	}
-	return m.keys.panelHelp(p, m.selectedLogPath() != "", m.selectedURL() != "",
-		len(m.o.Statuses) > 0 && m.roomForMain(), m.canEjectSelected())
+	return m.keys.panelHelp(p, rowKeys{
+		hasLog:     m.selectedLogPath() != "",
+		hasURL:     m.selectedURL() != "",
+		filtered:   m.search != "",
+		projects:   m.hasProjects(),
+		canPromote: len(m.o.Statuses) > 0 && m.roomForMain(),
+		canEject:   m.canEjectSelected(),
+	})
 }
 
 // keyHints reports whether the focused panel is carrying a key line at all:
-// no overlay may have taken the keyboard — handleKey routes everything to the
-// promote picker and to eject's two panels, so those keys would be dead — and
-// the row under the cursor has to answer to something. Both the height
-// panelWant buys and the line panelBody draws ask this, so the two can never
-// disagree about whether the line is there.
+// nothing modal may have taken the keyboard — handleKey routes everything to
+// the promote picker, to the search prompt and to eject's two panels, so
+// those keys would be dead — and the row under the cursor has to answer to
+// something. Both the height panelWant buys and the line panelBody draws ask
+// this, so the two can never disagree about whether the line is there.
 func (m *model) keyHints(p panel) bool {
 	return !m.modal() && len(m.panelKeys(p)) > 0
 }
 
-// modal reports whether an overlay owns the keyboard and the main pane.
+// modal reports whether something has taken the keyboard off the panels. The
+// picker and eject's two panels own the main pane with it; the search prompt
+// is a row of the inbox panel instead, but it takes every keystroke the same
+// way, which is what the key line is answering.
 func (m *model) modal() bool {
-	return m.promoting || m.ejecting || m.ejection != nil
+	return m.promoting || m.searching || m.ejecting || m.ejection != nil
 }
 
 // marker renders the selection arrow for one row of a focused panel.
@@ -1850,7 +1970,7 @@ func (m *model) attentionRows(width int) ([]string, cursor) {
 	case len(m.attention) == 0:
 		return []string{styleFaint.Render("the inbox is empty")}, none
 	case len(m.shown) == 0:
-		return []string{styleFaint.Render("nothing in " + m.project)}, none
+		return []string{styleFaint.Render(m.emptyNote())}, none
 	}
 	focused := m.focus == panelAttention
 	// Every column is padded to the widest cell on the list, so the four of
@@ -1886,9 +2006,31 @@ func (m *model) attentionRows(width int) ([]string, cursor) {
 		if i == m.attnSel {
 			sel = len(rows)
 		}
-		rows = append(rows, attentionRow(it, focused && i == m.attnSel, idW, levW, statusW, projW, width))
+		rows = append(rows, attentionRow(it, focused && i == m.attnSel, idW, levW, statusW, projW, width, m.search))
 	}
 	return rows, cursor{at: sel, span: 1}
+}
+
+// emptyNote says why an inbox that has rows is showing none of them: the
+// search, the project scope, or both. The panel never draws an empty box
+// here — a list narrowed down to nothing and a board with nothing on it are
+// the same picture, and only one of them is the goal state.
+func (m *model) emptyNote() string {
+	switch {
+	case m.search != "" && m.project != "":
+		return fmt.Sprintf("no match for /%s in %s", m.search, m.project)
+	case m.search != "":
+		return "no match for /" + m.search
+	}
+	return "nothing in " + m.project
+}
+
+// emptyHint is the key that puts those rows back.
+func (m *model) emptyHint() string {
+	if m.search != "" {
+		return "(esc clears the search)"
+	}
+	return "(P cycles the project filter back to all)"
 }
 
 // oneGroup reports whether every shown row falls under the same header.
@@ -1933,15 +2075,17 @@ const (
 // width the operator's own status vocabulary sets — before the identifier
 // and the leverage, the two facts that make a row addressable at all, which
 // survive any width.
-func attentionRow(it loop.AttentionItem, selected bool, idW, levW, statusW, projW, width int) string {
-	id := styleTicket.Render(it.Ticket) + strings.Repeat(" ", max(0, idW-lipgloss.Width(it.Ticket)))
+//
+// query is the search the row highlights its matches from, "" for no search.
+func attentionRow(it loop.AttentionItem, selected bool, idW, levW, statusW, projW, width int, query string) string {
+	id := highlight(it.Ticket, query, styleTicket) + strings.Repeat(" ", max(0, idW-lipgloss.Width(it.Ticket)))
 	lev := leverageCell(it)
 	lev += strings.Repeat(" ", max(0, levW-lipgloss.Width(lev)))
 	// statusCell pads to the column and no further, so head carries the
 	// gutter itself: every branch below ends in one, and a status wide
 	// enough to leave no pad of its own still cannot touch the title.
-	head := marker(selected) + id + " " + lev + " " + statusCell(it, statusW) + "  "
-	full := head + projectCell(it.Project, projW) + "  " + priorityCell(it.Priority) + "  "
+	head := marker(selected) + id + " " + lev + " " + statusCell(it, statusW, query) + "  "
+	full := head + projectCell(it.Project, projW, query) + "  " + priorityCell(it.Priority) + "  "
 	noProject := head + priorityCell(it.Priority) + "  "
 	// Both columns priced out and the identifier, the leverage and the status
 	// are the last three things standing. Every row measures the same
@@ -1954,7 +2098,7 @@ func attentionRow(it loop.AttentionItem, selected bool, idW, levW, statusW, proj
 	case width-lipgloss.Width(noProject) >= titleStub:
 		cols = noProject
 	}
-	return ansi.Truncate(cols+it.Title, max(0, width), "…")
+	return ansi.Truncate(cols+highlight(it.Title, query, stylePlain), max(0, width), "…")
 }
 
 // statusText is the row's status as it reads: the real Linear status name —
@@ -1971,17 +2115,23 @@ func statusText(it loop.AttentionItem) string {
 	return it.Status
 }
 
-// statusCell is statusText padded out to the status column.
-func statusCell(it loop.AttentionItem, w int) string {
-	cell := statusText(it)
+// statusCell is statusText padded out to the status column, with the
+// search's matches marked inside it. The mark is not part of the status
+// name, so it is appended after the highlight rather than searched through.
+func statusCell(it loop.AttentionItem, w int, query string) string {
+	cell := highlight(it.Status, query, stylePlain)
+	if it.Relevance == loop.StatusUnnamed {
+		cell += " " + styleAttention.Render("⚠")
+	}
 	return cell + strings.Repeat(" ", max(0, w-lipgloss.Width(cell)))
 }
 
 // projectCell is the row's project column, a dash for a ticket filed under
-// no project.
-func projectCell(project string, w int) string {
+// no project. The dash is not a project name and never highlights: a row
+// with no project is on screen because something else about it matched.
+func projectCell(project string, w int, query string) string {
 	name := projectName(project)
-	cell := name
+	cell := highlight(name, query, stylePlain)
 	if project == "" {
 		cell = styleFaint.Render(name)
 	}
@@ -2044,10 +2194,17 @@ func (m model) attentionPanel(w, h int) string {
 		// a table sorted differently than the operator remembers is worse
 		// than one that says how it is sorted.
 		count := fmt.Sprintf(" ● %d", len(m.attention))
-		if m.project != "" {
+		if m.project != "" || m.search != "" {
 			count = fmt.Sprintf(" ● %d/%d", len(m.shown), len(m.attention))
 		}
-		extra = styleAttention.Render(count) + styleFaint.Render(" · by "+m.sortMode.String())
+		extra = styleAttention.Render(count)
+		// The query sits next to the fraction, ahead of the two controls
+		// that were already here: they are the one fact that explains the
+		// other, and a title truncated by a narrow panel loses them last.
+		if m.search != "" {
+			extra += styleFocus.Render(" · /" + m.search)
+		}
+		extra += styleFaint.Render(" · by " + m.sortMode.String())
 		if m.project != "" {
 			extra += styleFaint.Render(" · " + m.project)
 		}
@@ -2391,8 +2548,7 @@ func (m model) attentionDetail(width int) string {
 			styleFaint.Render("(shows "+loop.AttentionDefinition+")")
 	}
 	if len(m.shown) == 0 {
-		return styleFaint.Render("nothing in "+m.project) + "\n" +
-			styleFaint.Render("(P cycles the project filter back to all)")
+		return styleFaint.Render(m.emptyNote()) + "\n" + styleFaint.Render(m.emptyHint())
 	}
 	it := m.selectedAttention()
 	status := statusText(*it)
@@ -2635,6 +2791,8 @@ func (m model) statusBar() string {
 		hint = "enter eject · esc cancel"
 	case m.ejection != nil:
 		hint = "esc dismiss"
+	case m.searching:
+		hint = "type to filter · enter accept · esc cancel"
 	}
 	right := styleFaint.Render(hint)
 

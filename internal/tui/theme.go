@@ -33,6 +33,14 @@ var (
 	styleFaint        = lipgloss.NewStyle().Foreground(colorFaint)
 	styleErr          = lipgloss.NewStyle().Foreground(colorAttention)
 
+	// styleMatch marks the spans a search matched inside a row. Underlined
+	// as well as coloured, the rule the state dots already follow: the mark
+	// has to survive a 16-colour terminal and a colour-blind operator.
+	styleMatch = lipgloss.NewStyle().Foreground(colorFocus).Underline(true)
+	// stylePlain is a row's unstyled text — what highlight renders the spans
+	// it did not match with, where the cell carries no style of its own.
+	stylePlain = lipgloss.NewStyle()
+
 	styleBorder      = lipgloss.NewStyle().Foreground(colorFaint)
 	styleBorderFocus = lipgloss.NewStyle().Foreground(colorFocus)
 	styleTitleFocus  = lipgloss.NewStyle().Foreground(colorFocus).Bold(true)
