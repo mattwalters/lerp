@@ -281,33 +281,55 @@ func TestExecuteRecordsItsOwnExitStatus(t *testing.T) {
 	}
 }
 
-// A command template ending in a comment is why the epilogue is joined with
-// newlines rather than semicolons: a `;` would be commented out along with
-// everything after it, and the status would never be written.
-func TestExecuteRecordsItsExitStatusAfterATrailingComment(t *testing.T) {
-	dir := t.TempDir()
-	script := writeScript(t, dir, "runner.sh", "exit 5\n")
-	exitPath := filepath.Join(dir, "exit")
+// The configured command is a quoted word to the wrapping shell, never text
+// pasted in ahead of the epilogue — so nothing a template ends in can parse as
+// one construct with what follows it. A trailing comment would swallow the
+// epilogue; a trailing `&&` would join it, leaving `s` unset and reporting a
+// broken command as a clean exit 0; a trailing `exec` would replace the shell
+// that has to write the file. Each of these must still report the status the
+// command itself ended with.
+func TestExecuteRecordsItsExitStatusWhateverTheCommandEndsIn(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		suffix string
+		want   int
+	}{
+		{name: "trailing comment", suffix: " # run the agent", want: 5},
+		// A syntax error in the configured command is the inner shell's, and
+		// it exits non-zero for it — as it did before there was any wrapper.
+		{name: "trailing and", suffix: " &&", want: 2},
+		{name: "leading exec", suffix: "", want: 5},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			script := writeScript(t, dir, "runner.sh", "exit 5\n")
+			command := shellQuote(script) + tc.suffix
+			if tc.name == "leading exec" {
+				command = "exec " + command
+			}
+			exitPath := filepath.Join(dir, "exit")
 
-	result, err := Execute(context.Background(), Invocation{
-		Runner:   config.Runner{Command: shellQuote(script) + " # run the agent"},
-		Ticket:   "LERP-1",
-		Workdir:  dir,
-		LogPath:  filepath.Join(dir, "runner.log"),
-		ExitPath: exitPath,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.ExitCode != 5 {
-		t.Errorf("ExitCode = %d, want 5", result.ExitCode)
-	}
-	recorded, err := os.ReadFile(exitPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.TrimSpace(string(recorded)) != "5" {
-		t.Errorf("exit file = %q, want 5", recorded)
+			result, err := Execute(context.Background(), Invocation{
+				Runner:   config.Runner{Command: command},
+				Ticket:   "LERP-1",
+				Workdir:  dir,
+				LogPath:  filepath.Join(dir, "runner.log"),
+				ExitPath: exitPath,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.ExitCode != tc.want {
+				t.Errorf("ExitCode = %d, want %d", result.ExitCode, tc.want)
+			}
+			recorded, err := os.ReadFile(exitPath)
+			if err != nil {
+				t.Fatalf("no exit status was recorded: %v", err)
+			}
+			if strings.TrimSpace(string(recorded)) != strconv.Itoa(tc.want) {
+				t.Errorf("exit file = %q, want %d", recorded, tc.want)
+			}
+		})
 	}
 }
 

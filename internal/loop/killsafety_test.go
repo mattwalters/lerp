@@ -584,6 +584,23 @@ func TestAdoptedRunSettlesFromItsRecordedExitStatus(t *testing.T) {
 		name: "a queue the config no longer names falls back too",
 		exit: "0\n", repo: renamedQueueRepo(),
 		wantEvent: EventReaped, wantStatus: "Todo", wantAssignee: "",
+	}, {
+		// Same queue name, different status: this run picked its ticket up
+		// from somewhere the queue no longer serves, so its move rule says
+		// nothing about it. Concluding anyway would report a hop nobody
+		// skipped and withhold the release the fallback makes.
+		name: "a queue repointed at another status falls back too",
+		exit: "0\n", repo: repointedQueueRepo(),
+		wantEvent: EventReaped, wantStatus: "Todo", wantAssignee: "",
+	}, {
+		// conclude's rule, inherited whole: a run that really failed in a
+		// queue with nowhere to fail to keeps its claim and stays put, rather
+		// than being released to fail again on every pass forever. This is
+		// the one case where settling differs from the old reap, and it is
+		// deliberate.
+		name: "a failed run with no on_failure route parks claimed",
+		exit: "1\n", repo: noFailureRouteRepo(),
+		wantEvent: EventExited, wantExitCode: 1, wantStatus: "Todo", wantAssignee: "fake-viewer",
 	}} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newHarness(t, 1, nil)
@@ -680,5 +697,25 @@ func renamedQueueRepo() *config.RepoConfig {
 	repo := testRepo()
 	repo.Queues["backlog"] = repo.Queues["todo"]
 	delete(repo.Queues, "todo")
+	return repo
+}
+
+// repointedQueueRepo is the other half of that edit: the queue keeps its name
+// and is given a different status, so the name still resolves but no longer
+// describes the run the record remembers.
+func repointedQueueRepo() *config.RepoConfig {
+	repo := testRepo()
+	queue := repo.Queues["todo"]
+	queue.Status = "Doing"
+	repo.Queues["todo"] = queue
+	return repo
+}
+
+// noFailureRouteRepo is testRepo with nowhere for a failed run to go.
+func noFailureRouteRepo() *config.RepoConfig {
+	repo := testRepo()
+	queue := repo.Queues["todo"]
+	queue.OnFailure = ""
+	repo.Queues["todo"] = queue
 	return repo
 }

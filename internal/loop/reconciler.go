@@ -615,14 +615,27 @@ func (r *Reconciler) reap(ctx context.Context, record evidence.Record) bool {
 // invariant 3). Retrying is safe either way, since conclude only moves a
 // ticket still sitting in the queue's status and only releases a claim still
 // held by this user.
+//
+// "Exactly as a live run would" includes the one case where it differs from
+// the old reap: a failed run whose queue has no on_failure route keeps its
+// claim and stays put, rather than being released back into the queue. That
+// is conclude's deliberate rule — releasing a ticket that fails every time
+// would re-run it on every pass forever — and a run that really failed is the
+// case it was written for. The ticket then rests claimed in a served status,
+// which the inbox does not list (see attention); that gap is the one a live
+// failed run has always had, not a new one.
 func (r *Reconciler) settleDead(ctx context.Context, record evidence.Record) (Event, bool) {
 	reaped := Event{Type: EventReaped, RunID: record.RunID, Lane: record.Lane,
 		TicketID: record.TicketID, Queue: record.Queue, LogPath: record.LogPath}
 	code, recorded := evidence.ExitStatus(record)
-	// The queue the run started from may have been renamed or removed in
-	// lerp.toml since; there is no move rule left to apply.
+	// The queue the run started from may have been renamed, removed, or
+	// pointed at a different status in lerp.toml since it started. Only a
+	// queue still serving the status this run picked its ticket up from has a
+	// move rule that means anything here: concluding against a queue whose
+	// status has moved on would report a hop nobody skipped, and would judge
+	// the claim by a served set the run never ran under.
 	queue, configured := r.o.Repo.Queues[record.Queue]
-	if !recorded || !configured || record.TicketID == "" {
+	if !recorded || !configured || queue.Status != record.StartingStatus || record.TicketID == "" {
 		if err := r.releaseDead(ctx, record); err != nil {
 			r.fail(fmt.Errorf("reap run %s: %w", record.RunID, err))
 			return Event{}, false

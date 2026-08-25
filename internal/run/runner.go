@@ -65,8 +65,8 @@ type Invocation struct {
 // A session ID is generated and returned only when the command uses
 // {{session}}.
 //
-// When inv.ExitPath is set, the command is followed by an epilogue that writes
-// the command's own exit status to that file and then exits with it, so a
+// When inv.ExitPath is set, the command is wrapped in a shell that writes the
+// command's own exit status to that file and then exits with it, so a
 // successor process can learn how a run it did not start ended.
 //
 // The command runs in its own process group. Cancelling ctx kills that entire
@@ -135,28 +135,33 @@ func Execute(ctx context.Context, inv Invocation) (Result, error) {
 	return result, nil
 }
 
-// withExitStatus appends the epilogue that records the command's own exit
-// status. The path is made absolute first — the command runs with cwd set to
-// the workspace, while the path points into the clone's .lerp/runs — and
-// quoted like every other substitution.
+// withExitStatus wraps the configured command in a shell that records the
+// command's own exit status. The path is made absolute first — the command
+// runs with cwd set to the workspace, while the path points into the clone's
+// .lerp/runs — and quoted like every other substitution.
 //
-// The parts are separated by newlines rather than semicolons so a configured
-// command ending in a comment cannot swallow the epilogue. `exit $s` matters
-// as much as the file: without it Execute's own Wait() would report the echo's
-// status, changing the result of every live run.
+// The command is handed to a nested `sh -c` as a single quoted word rather
+// than pasted in ahead of the epilogue, so no configured text can parse as one
+// construct with what follows it. Appending would not be safe: a template
+// ending in a comment would swallow the epilogue, and one ending in `&&` — a
+// plausible typo — would join it, leaving `s` unset and reporting a broken
+// command as a clean exit 0. Nesting also means a template that ends in `exec`
+// replaces only the inner shell, so the status is still written.
 //
-// One consequence is worth naming. The command is now several statements, so
-// sh no longer exec-optimizes itself away and the PID lerp records is the
-// wrapping shell — the very process that writes the file. Alive therefore goes
-// false only after the status is on disk, which is what lets a reader trust an
-// absent file to mean "this run never finished". Both kill sites signal the
-// process group, so the extra shell changes nothing there.
+// `exit $s` matters as much as the file: without it Execute's own Wait() would
+// report the echo's status, changing the result of every live run.
+//
+// One consequence is worth naming. The recorded PID is now the outer shell —
+// the very process that writes the file — rather than the agent. Alive
+// therefore goes false only after the status is on disk, which is what lets a
+// reader trust an absent file to mean "this run never finished". Both kill
+// sites signal the process group, so the extra shell changes nothing there.
 func withExitStatus(command, exitPath string) (string, error) {
 	abs, err := filepath.Abs(exitPath)
 	if err != nil {
 		return "", fmt.Errorf("resolving runner exit path: %w", err)
 	}
-	return command + "\ns=$?\necho \"$s\" > " + shellQuote(abs) + "\nexit $s\n", nil
+	return "sh -c " + shellQuote(command) + "\ns=$?\necho \"$s\" > " + shellQuote(abs) + "\nexit $s\n", nil
 }
 
 // expand replaces the supported command-template placeholders. Values are

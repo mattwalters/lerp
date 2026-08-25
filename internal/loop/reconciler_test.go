@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -637,6 +638,35 @@ func TestRunReportsNothingWhenNoHopWasSkipped(t *testing.T) {
 				t.Errorf("run log reports a skipped hop that never happened: %q", h.logs.String())
 			}
 		})
+	}
+}
+
+// The whole adopted-run repair rests on real runs actually being told where to
+// write their exit status: without this, every reap in production silently
+// falls back to releasing the claim, and the tests that stage an exit file by
+// hand would go on passing. The path must be the record's own, so it lands
+// beside the log in the run directory Remove takes away.
+func TestRunsAreToldWhereToRecordTheirExitStatus(t *testing.T) {
+	var mu sync.Mutex
+	var exitPath, logPath string
+	h := newHarness(t, 1, func(_ context.Context, inv run.Invocation) (run.Result, error) {
+		mu.Lock()
+		exitPath, logPath = inv.ExitPath, inv.LogPath
+		mu.Unlock()
+		return run.Result{ExitCode: 0}, nil
+	})
+	h.fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Todo"})
+
+	h.rec.Tick(context.Background())
+	h.waitEvents(t, EventExited, 1)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if exitPath == "" {
+		t.Fatal("the run was given no exit path, so no reap of it could ever apply the move rule")
+	}
+	if filepath.Dir(exitPath) != filepath.Dir(logPath) {
+		t.Errorf("exit path %q is not beside the run's log %q", exitPath, logPath)
 	}
 }
 
