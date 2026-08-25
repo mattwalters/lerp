@@ -1264,8 +1264,7 @@ func TestInboxTakesTheRoomAndFocusDoesNotMoveIt(t *testing.T) {
 	}
 
 	// Focus moves and the stack does not: work never grows past its share
-	// just because it is the panel being worked in. (The main pane still
-	// fits its own content, and focus changes which row that content is.)
+	// just because it is the panel being worked in.
 	m = update(t, m, keyMsg("2"))
 	if g2 := m.geometry(); g2.attnH != g.attnH || g2.workH != g.workH {
 		t.Fatalf("focus moved the stack: inbox %d→%d, work %d→%d",
@@ -1730,6 +1729,57 @@ func TestStackedLayoutKeepsBothPanelsReadable(t *testing.T) {
 	first := strings.TrimRight(ansi.Strip(attn[0]), " ")
 	if !strings.Contains(ansi.Strip(view), first) {
 		t.Fatalf("inbox lost its list to the log lens:\n%s", view)
+	}
+}
+
+// Wide, the main pane has its column to itself, so it fills the body rather
+// than floating at content height: a one-line ticket, a ticket longer than
+// the screen and a running row's log tail all draw the same box, ending on
+// the last line above the status bar. A pane that changed size with its
+// contents read as a glitch rather than as a rule.
+func TestWideMainPaneFillsTheBody(t *testing.T) {
+	m, _, _ := newTestModel(t, 3)
+	resized, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
+	m = resized.(model)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-1", Title: "short", Status: "Backlog", Reason: "waiting"},
+		{Ticket: "LERP-2", Title: "long", Status: "Backlog",
+			Reason: strings.Repeat("a reason that runs on and on and on. ", 60)},
+	}}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		TicketID: "t0", Ticket: "QUEUED-1", Queue: "implement", LogPath: "/dev/null"}})
+
+	m = update(t, m, keyMsg("1"))
+	if !m.geometry().wide {
+		t.Fatal("140 columns is not the wide layout")
+	}
+	// The short ticket is the case that used to leave dead space: its detail
+	// is a handful of lines in a 39-line body.
+	if lines := strings.Count(m.detail(padMain.inner(m.geometry().mainW)), "\n") + 1; lines > 10 {
+		t.Fatalf("the short ticket draws %d lines: it is not short enough to test with", lines)
+	}
+	for _, tc := range []struct {
+		name string
+		keys []string
+	}{
+		{"a short ticket", nil},
+		{"a long ticket", []string{"down"}},
+		{"a running row's log", []string{"2"}},
+		{"the help overlay", []string{"?"}},
+	} {
+		for _, k := range tc.keys {
+			m = update(t, m, keyMsg(k))
+		}
+		g := m.geometry()
+		if g.mainH != g.bodyH {
+			t.Fatalf("%s: the main pane is %d lines of a %d-line body",
+				tc.name, g.mainH, g.bodyH)
+		}
+		body := strings.Split(ansi.Strip(m.View()), "\n")[:g.bodyH]
+		if n := strings.Count(body[g.bodyH-1], "\u2570") + strings.Count(body[g.bodyH-1], "\u2517"); n != 2 {
+			t.Fatalf("%s: %d panels end on the body's last line, want the side column and the main pane:\n%s",
+				tc.name, n, m.View())
+		}
 	}
 }
 

@@ -622,8 +622,11 @@ func (m model) handlePromoteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			cmd = m.doPromote(it.TicketID, it.Ticket, m.o.Statuses[m.promoteSel])
 		}
 	}
-	// Closing the picker hands the main pane back to a lens of a different
-	// height; re-fit before the next frame draws into the old one.
+	// The picker and the lens under it are the same box now, so this is not
+	// resizing anything — it is the clamp. A pass landing while the picker
+	// was open can swap a long detail for a short one under a scrolled
+	// viewport, and layout re-pins the offset inside the content before the
+	// pane is handed back.
 	m.layout()
 	return m, cmd
 }
@@ -938,15 +941,14 @@ func (m *model) refreshMain() {
 		m.refreshLog()
 		return
 	}
-	// The viewport's width is the pane's inner width, and it follows the
-	// terminal's alone — so wrapping against it here can never disagree with
-	// the width geometry measured the same content at.
+	// The viewport's width is the pane's inner width, so prose wrapped here
+	// is wrapped to the columns it will be drawn in — panelBox truncates its
+	// rows rather than wrapping them, and a line too long is a line cut.
 	m.vp.SetContent(m.detail(m.vp.Width))
 }
 
 // detail is the read-only lens the main pane shows for a selection with no
-// log — and the measure geometry fits the pane's box to. width is the pane's
-// inner width, which the inbox lens wraps prose to.
+// log. width is the pane's inner width, which the inbox lens wraps prose to.
 func (m *model) detail(width int) string {
 	if m.focus == panelWork {
 		return m.workDetail()
@@ -1222,9 +1224,11 @@ func (m *model) cycleProject() {
 // for the rows it renders, held to about a third of the panel stack, and
 // needs-you takes everything left over. Focus is not in the arithmetic at
 // all: moving between panels never moves the geometry, and a panel that is
-// quiet keeps its border rather than collapsing to a line. Heights include
-// borders, and the stack always fits bodyH so the status bar stays on
-// screen.
+// quiet keeps its border rather than collapsing to a line. The main pane is
+// not in that split: wide, it is a column of its own and fills the body;
+// stacked, it takes half the body and the panels share the rest. Heights
+// include borders, and the stack always fits bodyH so the status bar stays
+// on screen.
 type geometry struct {
 	wide         bool
 	sideW, mainW int
@@ -1265,9 +1269,14 @@ func (m *model) geometry() geometry {
 
 	stackH := g.bodyH
 	if g.wide {
-		// The main pane has the other column to itself, so it fits its own
-		// content and never competes with the stack.
-		g.mainH = min(g.bodyH, m.mainWant(g.bodyH, padMain.inner(g.mainW)))
+		// The main pane has the other column to itself, so it takes the whole
+		// of it. Fitting it to its content ended the box a third of the way
+		// down the screen on a short ticket and at the bottom on a long one,
+		// with dead space under it and no visible reason why — a pane that
+		// changes size with its contents reads as a glitch rather than as a
+		// rule. It competes with nothing here, so there was nothing to win by
+		// fitting. What it holds scrolls.
+		g.mainH = g.bodyH
 	} else {
 		// Stacked, the body is split rather than fitted: half the screen is
 		// the board, half is whatever the selected row opens. Fitting the
@@ -1316,16 +1325,6 @@ func workHeight(stackH, want, attnWant int) int {
 // shrinks its panels to nothing rather than push the status bar off screen.
 func fitH(h, lo, hi int) int {
 	return max(0, min(max(h, lo), hi))
-}
-
-// mainWant is the main pane's height by the same rule. The detail lenses ask
-// for the lines they draw; the log tail, the promote picker and the help
-// overlay ask for the whole body, because what they hold scrolls.
-func (m *model) mainWant(bodyH, width int) int {
-	if m.promoting || m.helpOn || m.showingLog() {
-		return bodyH
-	}
-	return strings.Count(m.detail(width), "\n") + 3
 }
 
 // layout sizes the main pane's viewport from the geometry.
