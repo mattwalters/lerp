@@ -203,7 +203,7 @@ If the brief turns out to be wrong or missing, move {{ticket}} to
 # The decision belongs on the board and stays there — a human reads the pull
 # request and promotes the ticket here, and that promote is the merge
 # approval. The mechanics are what this queue does. Nothing in the engine
-# changed to allow it: a queue is a status with a prompt, and this is a fourth
+# changed to allow it: a queue is a status with a prompt, and this is a third
 # one.
 [queues.merge]
 status = "To Merge"
@@ -225,8 +225,10 @@ commenting and without touching the branch. That is the ordinary shape of a
 re-run — nothing here is checkpointed, so a run killed mid-rebase is safe to
 start again from the top, and the second one usually finds the work done.
 
-Before merging, fetch, and check with `gh` that the default branch's own
-required checks are green. Merging onto a red main buries somebody else's
+Before merging, fetch, and check with `gh` that the default branch is green
+— its latest CI run against main's own head, not a required-checks setting:
+this repository requires no checks of anybody, so asking after required ones
+comes back empty and proves nothing. Merging onto a red main buries somebody else's
 breakage inside your merge, where the next person to look will find it
 attributed to this pull request. If main is red, do not merge: comment on
 {{ticket}} saying so and move it to {{on_failure}}. Main is not yours to fix
@@ -234,12 +236,28 @@ from here.
 
 Then bring the branch up to date with the default branch — rebase it, or
 merge the default branch into it — and resolve the conflicts textually. Run
-whatever this repository uses as its check, and push. Your workspace is a
-fresh worktree sharing the operator's git directory, detached, so
-`git checkout <branch>` by name fails when another worktree holds that
-branch: push with `git push origin HEAD:<branch>`. Then merge it with
-`gh pr merge`, in whatever way this repository merges its pull requests.
-Linear's GitHub automation will usually move {{ticket}} to "{{on_success}}"
+whatever this repository uses as its check. It has to pass before anything
+merges, whether or not this run resolved a conflict to get there; a check
+that comes back red is a stop and not something to fix — comment on
+{{ticket}} with what failed and move it to {{on_failure}}.
+
+Then push. Your workspace is a fresh worktree sharing the operator's git
+directory, detached, so `git checkout <branch>` by name fails when another
+worktree holds that branch: push with `git push origin HEAD:<branch>`. A
+rebase rewrites the branch's commits, so that push comes back rejected as a
+non-fast-forward; the answer is `--force-with-lease`, which refuses if
+anything reached the branch since you fetched, and never a plain `--force`.
+Nothing on this repo's branches stops a plain force, and what it throws away
+is whatever arrived while you were rebasing — most likely a review fix a
+human pushed, which is the one thing this queue must not lose.
+
+Then merge, by number: `gh pr merge <number>`, in whatever way this
+repository merges its pull requests — on a detached HEAD there is no branch
+for `gh` to infer it from. Merge only once the pull request's own checks are
+green against the head you just pushed; they will still be running when you
+get there, so wait for them (`--auto` does the waiting, or watch them with
+`gh pr checks`). Your local check passing says the code is fine; these say
+what will actually land on main is. Linear's GitHub automation will usually move {{ticket}} to "{{on_success}}"
 as the merge lands, a moment before this run would have; that race is
 harmless, since both are taking it to the same place.
 
@@ -252,7 +270,11 @@ resolution that was textually clean; or if your resolution diff comes out
 bigger than the conflict hunks it settles. On any of those, do not merge —
 pushing the rebase you already made is fine — comment on {{ticket}} naming
 the files and the two intents that collide, and move it to {{on_failure}}.
-Never guess and merge. A merge you guessed at is code that nobody reviewed,
+If the push you made carried a resolution you wrote, the comment has to say
+so and name the files it touched: the branch now looks conflict-free, so
+whoever reads your comment, agrees, and promotes the ticket back here would
+otherwise get a second run that finds nothing left to resolve and merges
+your guess unread. Never guess and merge. A merge you guessed at is code that nobody reviewed,
 sitting inside two changes that each were.
 
 Everything you write stays inside a conflict hunk. The diff a human approved
@@ -291,6 +313,11 @@ the paragraph above says what to do with one of those.
 # leaves a trail of hops nobody read, and nothing on a board can count them.
 # So "Implementing" reviews and fixes its own work inside one run,
 # where the round count is the agent's own context and costs the board
-# nothing. What reaches "Needs Attention" is only what three rounds could
-# not settle: say what you want on the pull request, promote the ticket back
-# to "Implementing", and the next run reads your threads as its brief.
+# nothing. What reaches "Needs Attention" from there is what three rounds
+# could not settle: say what you want on the pull request, promote the ticket
+# back to "Implementing", and the next run reads your threads as its brief.
+#
+# A merge refusal comes to rest in the same place and is read the same way.
+# Its comment names what stopped it, and the promote that answers it goes to
+# whichever status can act on that: back to "To Merge" once main is green
+# again, back to "Implementing" when two changes really do collide.
