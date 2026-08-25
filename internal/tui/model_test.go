@@ -59,6 +59,28 @@ func (p *recordingPromoter) last() promoteCall {
 	return p.calls[len(p.calls)-1]
 }
 
+// recordingStarter stands in for the reconciler's force-start: it records
+// every ticket it was asked to run past the limit, and returns whatever err
+// is set to — the refusals themselves are the reconciler's, not the TUI's.
+type recordingStarter struct {
+	mu    sync.Mutex
+	calls []string
+	err   error
+}
+
+func (s *recordingStarter) ForceStart(_ context.Context, ticketID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls = append(s.calls, ticketID)
+	return s.err
+}
+
+func (s *recordingStarter) started() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.calls...)
+}
+
 // recordingReader stands in for the reconciler's one read beyond the pass.
 // It records every ticket it was asked for — so a test can prove that
 // walking the list does not fire a fetch per row — and hands back whatever
@@ -95,7 +117,7 @@ var defaultTestStatuses = []string{"Planning", "Implementing"}
 
 func newTestModel(t *testing.T, lanes int) (model, *countingTicker, chan loop.Event) {
 	t.Helper()
-	m, ticker, events := newTestModelWith(t, lanes, defaultTestStatuses, &recordingPromoter{}, &recordingReader{})
+	m, ticker, events := newTestModelWith(t, lanes, defaultTestStatuses, &recordingPromoter{}, &recordingStarter{}, &recordingReader{})
 	return m, ticker, events
 }
 
@@ -104,7 +126,7 @@ func newTestModel(t *testing.T, lanes int) (model, *countingTicker, chan loop.Ev
 func newPromoteTestModel(t *testing.T, lanes int, statuses []string) (model, *countingTicker, chan loop.Event, *recordingPromoter) {
 	t.Helper()
 	promoter := &recordingPromoter{}
-	m, ticker, events := newTestModelWith(t, lanes, statuses, promoter, &recordingReader{})
+	m, ticker, events := newTestModelWith(t, lanes, statuses, promoter, &recordingStarter{}, &recordingReader{})
 	return m, ticker, events, promoter
 }
 
@@ -113,17 +135,27 @@ func newPromoteTestModel(t *testing.T, lanes int, statuses []string) (model, *co
 func newReadingTestModel(t *testing.T) (model, chan loop.Event, *recordingReader) {
 	t.Helper()
 	reader := &recordingReader{}
-	m, _, events := newTestModelWith(t, 1, defaultTestStatuses, &recordingPromoter{}, reader)
+	m, _, events := newTestModelWith(t, 1, defaultTestStatuses, &recordingPromoter{}, &recordingStarter{}, reader)
 	return m, events, reader
 }
 
-func newTestModelWith(t *testing.T, lanes int, statuses []string, promoter *recordingPromoter, reader *recordingReader) (model, *countingTicker, chan loop.Event) {
+// newStartingTestModel is newTestModel plus the recording starter, for tests
+// that press the force-start key and need to see what it sent.
+func newStartingTestModel(t *testing.T, lanes int) (model, chan loop.Event, *recordingStarter) {
+	t.Helper()
+	starter := &recordingStarter{}
+	m, _, events := newTestModelWith(t, lanes, defaultTestStatuses, &recordingPromoter{}, starter, &recordingReader{})
+	return m, events, starter
+}
+
+func newTestModelWith(t *testing.T, lanes int, statuses []string, promoter *recordingPromoter, starter *recordingStarter, reader *recordingReader) (model, *countingTicker, chan loop.Event) {
 	t.Helper()
 	ticker := &countingTicker{}
 	events := make(chan loop.Event, 8)
 	m := newModel(context.Background(), Options{
 		Ticker:   ticker,
 		Promoter: promoter,
+		Starter:  starter,
 		Reader:   reader,
 		Statuses: statuses,
 		Interval: time.Millisecond,
@@ -2256,5 +2288,115 @@ func TestOffBoardRunsFromOneQueueShareAHeader(t *testing.T) {
 		if !strings.Contains(view, want) {
 			t.Errorf("adopted run %q vanished:\n%s", want, view)
 		}
+	}
+}
+
+// Force-start is the work panel's one write: S on the selected queued
+// ticket sends that row's ticket ID and reports the start on the status bar.
+func TestForceStartKeySendsTheSelectedTicket(t *testing.T) {
+	m, _, starter := newStartingTestModel(t, 1)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
+			{ID: "t1", Identifier: "LERP-1", Title: "first", Assigned: true},
+			{ID: "t2", Identifier: "LERP-2", Title: "the one to force", Eligible: true},
+		}},
+	}}})
+	m = update(t, m, keyMsg("2"))
+	m = update(t, m, keyMsg("down"))
+	if r := m.selectedWork(); r == nil || r.ticketID != "t2" {
+		t.Fatalf("selected row = %+v, want the second ticket", r)
+	}
+
+	m, cmd := updateCmd(t, m, keyMsg("S"))
+	if cmd == nil {
+		t.Fatal("S on a queued row produced no command")
+	}
+	msg := cmd()
+	if got := starter.started(); len(got) != 1 || got[0] != "t2" {
+		t.Fatalf("force-started tickets = %v, want exactly the selected one", got)
+	}
+	m = update(t, m, msg)
+	if !strings.Contains(m.View(), "force-started LERP-2") {
+		t.Fatalf("status bar does not report the force-start:\n%s", m.View())
+	}
+}
+
+// Every refusal is the reconciler's — the TUI gates nothing — so a refusal
+// has to arrive somewhere the operator will read it.
+func TestForceStartRefusalLandsOnTheStatusBar(t *testing.T) {
+	m, _, starter := newStartingTestModel(t, 1)
+	starter.err = errors.New(`force-start LERP-2: blocked by LERP-1`)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
+			{ID: "t2", Identifier: "LERP-2", Title: "gated work", BlockedBy: []string{"LERP-1"}},
+		}},
+	}}})
+	m = update(t, m, keyMsg("2"))
+	m, cmd := updateCmd(t, m, keyMsg("S"))
+	if cmd == nil {
+		t.Fatal("S on a queued row produced no command")
+	}
+	m = update(t, m, cmd())
+	if !strings.Contains(m.View(), "blocked by LERP-1") {
+		t.Fatalf("status bar does not carry the refusal:\n%s", m.View())
+	}
+	if m.lastErr == "" {
+		t.Errorf("refusal did not land on lastErr: %+v", m.notes)
+	}
+}
+
+// The work panel's key, and only the work panel's: S with the inbox focused
+// is not a promote by another name.
+func TestForceStartKeyIsInertOnTheInbox(t *testing.T) {
+	m, _, starter := newStartingTestModel(t, 1)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-7", TicketID: "id-7", Title: "waiting", Status: "Plan Review"},
+	}}})
+	m = update(t, m, keyMsg("1"))
+	if _, cmd := updateCmd(t, m, keyMsg("S")); cmd != nil {
+		if msg := cmd(); msg != nil {
+			t.Fatalf("S on the inbox produced %T", msg)
+		}
+	}
+	if got := starter.started(); len(got) != 0 {
+		t.Fatalf("S on the inbox force-started %v, want nothing", got)
+	}
+}
+
+// A key nobody can discover may as well not exist: the binding renders from
+// the keymap, so the overlay documents it for free.
+func TestForceStartIsInTheHelpOverlay(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("?"))
+	view := m.View()
+	if !strings.Contains(view, "start it past the limit") {
+		t.Fatalf("the force-start key is missing from the help overlay:\n%s", view)
+	}
+}
+
+// Capacity is one label in two places, and it has to be able to say the
+// board is over the limit — the state force-start puts it in, and the state
+// an adopted run from a bigger lerp arrives in.
+func TestCapacityLabelReportsRunsAboveTheLimit(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		TicketID: "t1", Ticket: "LERP-1", Queue: "implement", LogPath: "/dev/null"}})
+	if got := m.capacityLabel(); got != "1/1 running" {
+		t.Fatalf("capacity label within the limit = %q", got)
+	}
+
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r2", Lane: 2,
+		TicketID: "t2", Ticket: "LERP-2", Queue: "implement", LogPath: "/dev/null"}})
+	if got := m.capacityLabel(); got != "1/1 running · +1 over" {
+		t.Fatalf("capacity label over the limit = %q, want the fraction plus the overage", got)
+	}
+	if !strings.Contains(m.View(), "1/1 running · +1 over") {
+		t.Fatalf("the screen does not say the board is over capacity:\n%s", m.View())
+	}
+
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventExited, RunID: "r2", Lane: 2,
+		TicketID: "t2", Ticket: "LERP-2", Queue: "implement", ExitCode: 0}})
+	if got := m.capacityLabel(); got != "1/1 running" {
+		t.Fatalf("capacity label after the forced run ended = %q, want the overage gone", got)
 	}
 }

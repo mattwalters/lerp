@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -480,6 +481,61 @@ func (r *Reconciler) Promote(ctx context.Context, ticketID, status string) error
 	return nil
 }
 
+// ForceStart runs one selected ticket now, past the lane limit. It overrides
+// exactly one thing — the lane count — and nothing else that gates a pickup:
+// the claim protocol still runs in full (invariant 4), a ticket with an
+// unfinished blocker is still refused, and a ticket somebody else holds is
+// still left alone. Capacity is the operator's call; sequencing is not.
+//
+// The lane budget is already soft in the way this needs — adopted runs from a
+// previous process routinely sit above N (see freeLanes) — so a forced run is
+// an ordinary run on an out-of-range lane number, not a new kind of thing.
+// Nothing downstream can tell it apart: same evidence record, same adoption,
+// same reaping, same conclude.
+//
+// It returns once the run is launched; the refusals are what the operator
+// waits on. A claim lost in the race window after that resolves exactly as
+// fill's does — record removed, no run, no event, and the row simply never
+// starts.
+func (r *Reconciler) ForceStart(ctx context.Context, ticketID string) error {
+	issue, err := r.o.Client.GetIssue(ctx, ticketID)
+	if err != nil {
+		return fmt.Errorf("force-start %s: %w", ticketID, err)
+	}
+	name, queue, ok := queueForStatus(r.o.Repo, issue.Status)
+	if !ok {
+		return fmt.Errorf("force-start %s: no queue serves %q", issue.Identifier, issue.Status)
+	}
+	if issue.Blocked {
+		return fmt.Errorf("force-start %s: blocked by %s", issue.Identifier,
+			strings.Join(issue.BlockedBy, ", "))
+	}
+	if issue.AssigneeID != "" {
+		// Any assignee, including the operating user's own claim: that is
+		// Eligible's rule, and force-start overrides the lane count alone.
+		return fmt.Errorf("force-start %s: already claimed", issue.Identifier)
+	}
+	lr, ok := r.registerForce(issue.ID)
+	if !ok {
+		return fmt.Errorf("force-start %s: already running here", issue.Identifier)
+	}
+	r.wg.Add(1)
+	go r.runLane(ctx, lr, candidate{issue: issue, name: name, queue: queue})
+	return nil
+}
+
+// queueForStatus finds the queue that picks up from status. RepoConfig's
+// validation refuses two queues watching one status, so the answer is
+// unambiguous whenever there is one.
+func queueForStatus(repo *config.RepoConfig, status string) (string, config.Queue, bool) {
+	for name, q := range repo.Queues {
+		if q.Status == status {
+			return name, q, true
+		}
+	}
+	return "", config.Queue{}, false
+}
+
 // IssueDetail reads the selected ticket's body and its comments for the
 // TUI's inbox pane — the read SCOPE's "not a Linear client" bullet
 // licenses. Like Promote it is a passthrough to the client, touching no
@@ -865,6 +921,35 @@ func (r *Reconciler) register(lane int, ticketID string) (*laneRun, bool) {
 	for _, lr := range r.active {
 		if lr.ticketID == ticketID {
 			return nil, false
+		}
+	}
+	lr := &laneRun{lane: lane, ticketID: ticketID}
+	r.active = append(r.active, lr)
+	return lr, true
+}
+
+// registerForce occupies a lane for a forced run, choosing the number under
+// the same lock that checks it: the lowest free lane in 1..N, or one above
+// the highest occupied lane when every configured one is busy. Choosing
+// inside the hold is the point — two force-starts a frame apart must not pick
+// the same number. Like register, it refuses a ticket already in a lane.
+func (r *Reconciler) registerForce(ticketID string) (*laneRun, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	used := make(map[int]bool, len(r.active))
+	highest := 0
+	for _, lr := range r.active {
+		if lr.ticketID == ticketID {
+			return nil, false
+		}
+		used[lr.lane] = true
+		highest = max(highest, lr.lane)
+	}
+	lane := highest + 1
+	for n := 1; n <= r.o.Lanes; n++ {
+		if !used[n] {
+			lane = n
+			break
 		}
 	}
 	lr := &laneRun{lane: lane, ticketID: ticketID}

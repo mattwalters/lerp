@@ -88,6 +88,49 @@ func newHarnessWith(t *testing.T, lanes int, execute ExecuteFunc, fake *linear.F
 	return h
 }
 
+// newSecondLerp is another reconciler over the same clone — same evidence
+// store, same board — with its own lanes, events, and liveness map. It is
+// how a test plays the successor process that finds another lerp's records
+// on disk.
+func newSecondLerp(t *testing.T, h *harness, lanes int) *harness {
+	t.Helper()
+	next := &harness{
+		fake:     h.fake,
+		evidence: h.evidence,
+		root:     h.root,
+		events:   make(chan Event, 64),
+		alive:    map[string]bool{},
+		logs:     &logBuffer{},
+	}
+	rec, err := NewReconciler(ReconcilerOptions{
+		Client:   h.fake,
+		Repo:     testRepo(),
+		RepoDir:  "/repo",
+		Evidence: next.evidence,
+		Lanes:    lanes,
+		Events:   func(ev Event) { next.events <- ev },
+		Log:      next.logs,
+		Execute: func(context.Context, run.Invocation) (run.Result, error) {
+			return run.Result{ExitCode: 0}, nil
+		},
+		Provision: func(context.Context, string, string, workspace.Identity, io.Writer) error {
+			return nil
+		},
+		Dispose: func(_ context.Context, _ string, _ string, id workspace.Identity, _ io.Writer) {
+			next.mu.Lock()
+			next.disposed = append(next.disposed, id)
+			next.mu.Unlock()
+		},
+		Alive: func(record evidence.Record) bool { return next.alive[record.RunID] },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	next.rec = rec
+	t.Cleanup(func() { waitIdle(t, rec) })
+	return next
+}
+
 // logBuffer is a Log a test can read while lanes are still writing to it.
 type logBuffer struct {
 	mu sync.Mutex
@@ -1051,6 +1094,219 @@ type countingDetailClient struct {
 func (c *countingDetailClient) GetIssueDetail(ctx context.Context, issueID string) (linear.IssueDetail, error) {
 	c.details.Add(1)
 	return c.Client.GetIssueDetail(ctx, issueID)
+}
+
+// Done-when: with every lane busy, force-starting a queued ticket runs it
+// past the limit — and the forced run concludes exactly as an ordinary one
+// does: claimed, moved by the queue's rule, record removed, workspace
+// disposed.
+func TestForceStartRunsPastTheLaneLimitAndConcludes(t *testing.T) {
+	execute, release, ran := blockingExecute(t, "")
+	h := newHarness(t, 1, execute)
+	h.fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Todo"})
+	h.fake.AddIssue("LERP", linear.Issue{ID: "two", Identifier: "LERP-2", Status: "Todo"})
+	ctx := context.Background()
+
+	h.rec.Tick(ctx)
+	if got := h.waitEvents(t, EventStarted, 1); got[0].Lane != 1 || got[0].TicketID != "one" {
+		t.Fatalf("first start = %+v, want LERP-1 in lane 1", got[0])
+	}
+	if got := h.issue(t, "two"); got.AssigneeID != "" {
+		t.Fatalf("ticket beyond the limit = %+v, want it still waiting unclaimed", got)
+	}
+
+	if err := h.rec.ForceStart(ctx, "two"); err != nil {
+		t.Fatalf("ForceStart: %v", err)
+	}
+	forced := h.waitEvents(t, EventStarted, 1)[0]
+	if forced.TicketID != "two" || forced.Lane != 2 {
+		t.Fatalf("forced start = %+v, want LERP-2 on lane 2, one above the limit", forced)
+	}
+	record, err := h.evidence.Read(forced.RunID)
+	if err != nil {
+		t.Fatalf("forced run's record: %v", err)
+	}
+	if record.Lane != 2 || record.Queue != "todo" || record.StartingStatus != "Todo" {
+		t.Errorf("forced run's record = %+v, want an ordinary record on lane 2", record)
+	}
+	if got := h.issue(t, "two"); got.AssigneeID != "fake-viewer" {
+		t.Errorf("forced ticket = %+v, want it claimed: the claim protocol still runs", got)
+	}
+
+	release()
+	h.waitEvents(t, EventExited, 2)
+	waitIdle(t, h.rec)
+
+	// Settled by the queue's own rule, claim and all: "Done" is a pipeline
+	// exit no queue serves, so conclude parks the ticket there still
+	// claimed — exactly what an ordinary run in this queue does.
+	if got := h.issue(t, "two"); got.Status != "Done" || got.AssigneeID != "fake-viewer" {
+		t.Errorf("forced ticket after its run = %+v, want it parked in Done still claimed", got)
+	}
+	assertReaped(t, h, record)
+	if got := ran(); len(got) != 2 || !slices.Contains(got, "LERP-2") {
+		t.Errorf("executed runs = %v, want both tickets", got)
+	}
+}
+
+// A forced run is an ordinary run in every later pass: the lerp that finds
+// its record knows nothing about how it started, adopts it on its
+// out-of-range lane, and reaps it when the process dies.
+func TestForceStartRunIsAdoptedAndReapedOnItsOutOfRangeLane(t *testing.T) {
+	execute, release, _ := blockingExecute(t, "")
+	h := newHarness(t, 1, execute)
+	h.fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Todo"})
+	h.fake.AddIssue("LERP", linear.Issue{ID: "two", Identifier: "LERP-2", Status: "Todo"})
+	ctx := context.Background()
+
+	h.rec.Tick(ctx)
+	h.waitEvents(t, EventStarted, 1)
+	if err := h.rec.ForceStart(ctx, "two"); err != nil {
+		t.Fatalf("ForceStart: %v", err)
+	}
+	forced := h.waitEvents(t, EventStarted, 1)[0]
+	record, err := h.evidence.Read(forced.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A second lerp over the same clone, with a smaller idea of capacity than
+	// the lane it is about to inherit.
+	next := newSecondLerp(t, h, 1)
+	next.alive[record.RunID] = true
+	next.rec.Tick(ctx)
+	adopted := waitEventsOn(t, next.events, EventAdopted, 1)[0]
+	if adopted.RunID != record.RunID || adopted.Lane != 2 {
+		t.Fatalf("adopted event = %+v, want the forced run on lane 2", adopted)
+	}
+	if free := next.rec.freeLanes(); len(free) != 0 {
+		t.Errorf("free lanes under an adopted out-of-range run = %v, want none", free)
+	}
+
+	// Its process dies: the reap is the ordinary one, workspace and all.
+	next.alive[record.RunID] = false
+	next.rec.Tick(ctx)
+	waitEventsOn(t, next.events, EventReaped, 1)
+	if _, err := h.evidence.Read(record.RunID); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("reaped forced record read error = %v, want not exist", err)
+	}
+	release()
+	waitIdle(t, h.rec)
+}
+
+// The fence: force-start overrides the lane count and nothing else. Each
+// refusal must leave the board and the evidence store exactly as it found
+// them — no claim, no record, no lane.
+func TestForceStartRefusals(t *testing.T) {
+	ctx := context.Background()
+	cases := []struct {
+		name  string
+		setup func(t *testing.T, h *harness)
+		want  string
+	}{{
+		name: "blocked names its blocker",
+		setup: func(_ *testing.T, h *harness) {
+			h.fake.AddIssue("LERP", linear.Issue{ID: "blocker", Identifier: "LERP-9", Status: "Todo"})
+			h.fake.Block("one", "blocker")
+		},
+		want: "blocked by LERP-9",
+	}, {
+		name: "claimed by someone else",
+		setup: func(_ *testing.T, h *harness) {
+			if err := h.fake.AssignIssue(ctx, "one", "someone-else"); err != nil {
+				panic(err)
+			}
+		},
+		want: "already claimed",
+	}, {
+		name: "already occupying a lane here",
+		setup: func(t *testing.T, h *harness) {
+			if _, ok := h.rec.register(1, "one"); !ok {
+				t.Fatal("register: the lane was not free")
+			}
+		},
+		want: "already running here",
+	}, {
+		name: "resting in a status no queue serves",
+		setup: func(_ *testing.T, h *harness) {
+			if err := h.fake.MoveIssue(ctx, "one", "Needs Help"); err != nil {
+				panic(err)
+			}
+		},
+		want: `no queue serves "Needs Help"`,
+	}}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			execute, ran := recordingExecute("")
+			h := newHarness(t, 2, execute)
+			h.fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Todo"})
+			tc.setup(t, h)
+
+			err := h.rec.ForceStart(ctx, "one")
+			if err == nil {
+				t.Fatalf("ForceStart on a %s ticket = nil, want a refusal", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("refusal = %q, want it to contain %q", err, tc.want)
+			}
+			waitIdle(t, h.rec)
+			records, listErr := h.evidence.List()
+			if listErr != nil {
+				t.Fatal(listErr)
+			}
+			if len(records) != 0 {
+				t.Errorf("run records after a refusal = %d, want 0", len(records))
+			}
+			if got := ran(); len(got) != 0 {
+				t.Errorf("executed runs after a refusal = %v, want none", got)
+			}
+			if got := h.issue(t, "one"); got.AssigneeID == "fake-viewer" {
+				t.Errorf("refused ticket = %+v, want no claim made", got)
+			}
+		})
+	}
+}
+
+// Over capacity throttles harder, never wraps into starting more: fill
+// computes capacity as Lanes - len(active), and a negative capacity must
+// yield no free lanes rather than every lane.
+func TestFillStartsNothingWhileOverCapacity(t *testing.T) {
+	execute, release, ran := blockingExecute(t, "")
+	h := newHarness(t, 1, execute)
+	h.fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Todo"})
+	h.fake.AddIssue("LERP", linear.Issue{ID: "two", Identifier: "LERP-2", Status: "Todo"})
+	ctx := context.Background()
+
+	h.rec.Tick(ctx)
+	h.waitEvents(t, EventStarted, 1)
+	if err := h.rec.ForceStart(ctx, "two"); err != nil {
+		t.Fatalf("ForceStart: %v", err)
+	}
+	h.waitEvents(t, EventStarted, 1)
+
+	// A third ticket arrives while two runs occupy a one-lane board.
+	h.fake.AddIssue("LERP", linear.Issue{ID: "three", Identifier: "LERP-3", Status: "Todo"})
+	h.drainEvents()
+	if free := h.rec.freeLanes(); len(free) != 0 {
+		t.Fatalf("free lanes over capacity = %v, want none", free)
+	}
+	h.rec.Tick(ctx)
+	for _, ev := range h.drainEvents() {
+		if ev.Type == EventStarted {
+			t.Fatalf("an over-capacity pass started %+v", ev)
+		}
+	}
+	if got := h.issue(t, "three"); got.Status != "Todo" || got.AssigneeID != "" {
+		t.Errorf("ticket queued behind an over-capacity board = %+v, want unclaimed in Todo", got)
+	}
+
+	release()
+	h.waitEvents(t, EventExited, 2)
+	waitIdle(t, h.rec)
+	if got := ran(); slices.Contains(got, "LERP-3") {
+		t.Errorf("executed runs = %v, want the third ticket never started", got)
+	}
 }
 
 func TestReconcilerIssueDetail(t *testing.T) {
