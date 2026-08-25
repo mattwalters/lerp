@@ -45,3 +45,29 @@ check: ## What CI runs: gofmt, vet, build, test
 .PHONY: fmt
 fmt: ## Format all Go source
 	gofmt -w .
+
+# --------------------------------------------------------------------------
+# The README cast
+# --------------------------------------------------------------------------
+
+# Where the demo harness builds to. The tape puts this dir on PATH so the cast
+# records `lerp`, not a path into a build directory.
+DEMO_BIN := .demo
+DEMO_TAPE := docs/demo.tape
+DEMO_GIF := docs/demo.gif
+# GIF bytes are not reproducible, so nothing here diffs them. The cap is the
+# only thing standing between "a couple of MB" and drift.
+DEMO_MAX_BYTES := 3145728
+
+.PHONY: demo
+demo: ## Re-record docs/demo.gif from docs/demo.tape (needs vhs)
+	@command -v vhs >/dev/null || { \
+	  echo 'demo: vhs is not installed — see https://github.com/charmbracelet/vhs'; \
+	  exit 1; }
+	go build -o $(DEMO_BIN)/lerp ./internal/demo
+	vhs $(DEMO_TAPE)
+	@size=$$(wc -c < $(DEMO_GIF) | tr -d ' '); \
+	  test "$$size" -le $(DEMO_MAX_BYTES) || { \
+	    printf 'demo: %s is %s bytes, over the %s cap — shorten the tape or drop the framerate\n' \
+	      '$(DEMO_GIF)' "$$size" '$(DEMO_MAX_BYTES)'; exit 1; }; \
+	  printf 'rendered %s (%s bytes)\n' '$(DEMO_GIF)' "$$size"

@@ -1,0 +1,42 @@
+# The demo board's lerp.toml. The harness writes this file into a throwaway
+# root and loads it back through config.LoadRepoConfig, so the cast runs the
+# pipeline as configuration exactly as a real repo does (SCOPE invariant 5):
+# nothing about the demo is an `if` in the engine.
+
+teams = ["DEMO"]
+
+# The workspace a lane gets is a plain directory. A real repo builds a git
+# worktree here; the stub agent below never touches its workspace, so a
+# mkdir is the whole environment it needs.
+provision = 'mkdir -p "$LERP_WORKSPACE"'
+dispose = 'rm -rf "$LERP_WORKSPACE"'
+
+# The coding agent, stubbed: a shell script that replays a checked-in Claude
+# stream-json log and exits 0. It is a runner like any other — named here,
+# invoked through the same run.Execute as `claude` — which is why the demo
+# needs no runner capability of its own. $LERP_DEMO_DIR is where the harness
+# wrote the script; it is on the environment every command here inherits.
+[runners.agent]
+command = 'sh "$LERP_DEMO_DIR/agent.sh"'
+
+[queues.plan]
+status = "Planning"
+runner = "agent"
+on_success = "Plan Review"
+on_failure = "Needs Attention"
+prompt = """
+Plan {{ticket}}: write the plan into its description and leave it at
+"{{on_success}}" for a human to read. The stub runner ignores this prompt —
+it is here because a queue without one is not a queue.
+"""
+
+[queues.implement]
+status = "Implementing"
+runner = "agent"
+on_success = "In Review"
+on_failure = "Needs Attention"
+prompt = """
+Implement {{ticket}} and open a pull request, then leave it at
+"{{on_success}}" — or move it to "{{on_failure}}" with a comment saying what
+stopped you. The stub runner ignores this prompt too.
+"""
