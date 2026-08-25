@@ -433,6 +433,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.ready = true
+		// A window that shrank below the pane's floor closes the two things
+		// that took it modally. detailOpen is the operator's own preference
+		// and survives — esc is on the too-small screen — but a picker left
+		// live behind that screen would still take the enter that writes to
+		// Linear, and the overlay would still eat the keyboard.
+		if !m.roomForMain() {
+			m.promoting, m.helpOn = false, false
+		}
 		m.layout()
 		m.refreshMain()
 		return m, nil
@@ -513,7 +521,9 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// flips. esc inside the promote picker still cancels the picker, because
 	// handlePromoteKey ran before this switch and returned.
 	case key.Matches(msg, m.keys.Detail):
-		if m.roomForMain() {
+		// Not under the overlay: it is what is on screen, and enter behind it
+		// would open a pane nobody asked for and read a ticket nobody sees.
+		if m.roomForMain() && !m.helpOn {
 			m.detailOpen[m.focus] = true
 			// Size before filling: the viewport was zero-width while the
 			// pane was closed, and refreshMain wraps to that width.
@@ -521,6 +531,12 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.refreshMain()
 		}
 	case key.Matches(msg, m.keys.Close):
+		// esc closes the overlay first, the way it cancels the picker: a key
+		// acts on what is on screen.
+		if m.helpOn {
+			m.helpOn = false
+			break
+		}
 		m.detailOpen[m.focus] = false
 	case key.Matches(msg, m.keys.Promote):
 		if m.focus == panelAttention && len(m.shown) > 0 && len(m.o.Statuses) > 0 && m.roomForMain() {
@@ -601,7 +617,9 @@ func (m *model) wantDetail() tea.Cmd {
 // off the render loop, so a slow Linear call never blocks a frame. A failed
 // entry is retried when the pane comes back to it; a loaded one never is.
 func (m *model) fetchDetail(ticketID string) tea.Cmd {
-	if ticketID != m.detailWant {
+	// The pane may have closed inside the debounce, which is a quarter of a
+	// second the operator can shut it in.
+	if ticketID != m.detailWant || !m.detailOpen[panelAttention] {
 		return nil
 	}
 	if d := m.details[ticketID]; d != nil && d.state != detailFailed {
@@ -979,20 +997,18 @@ func (m *model) mainOpen() bool {
 	return m.promoting || m.helpOn || m.detailOpen[m.focus]
 }
 
-// roomForMain reports whether this window can hold the main pane at all.
-// The wide layout gives the pane a column of its own, so any window View
-// admits has room; stacked, it comes out of the same body as the panels, and
-// View's own floor arithmetic is the answer.
+// roomForMain reports whether this window can hold the main pane at all —
+// View's own guard, asked of the pane rather than of the frame in hand.
 //
 // The keys that open the pane ask first. With the pane shut a short terminal
 // is a usable screen, which is the point — but a key that turned that screen
 // into "window too small" would take the panels away, and with the promote
 // picker it would take them away while the picker was still live and still
-// taking the enter that writes to Linear. A key that does nothing is the
-// better half of that trade; at these heights the panels are too short to
-// carry a key line advertising it.
+// taking the enter that writes to Linear. A key that does nothing, and that
+// the panel line and the status bar both stop offering, is the better half
+// of that trade.
 func (m *model) roomForMain() bool {
-	return m.width >= narrowWidth || m.height >= 2*panelFloor+mainFloor+1
+	return m.width >= minWidth && m.height >= m.minHeight(true)
 }
 
 // refreshMain points the main pane's viewport at whatever the selection asks
@@ -1311,7 +1327,23 @@ const (
 	// it shares the body with the panels.
 	panelFloor = 4
 	mainFloor  = 5
+	// minWidth is where four columns of table and a border stop being a
+	// screen at all, whatever the height.
+	minWidth = 24
 )
+
+// minHeight is the shortest window View will draw: both panels' floors and
+// the status bar, plus the main pane's floor when the layout stacks and the
+// pane is on screen — stacked, the pane comes out of the same body. withMain
+// is the caller's question: View asks about the pane it is about to draw,
+// roomForMain about the pane a key would open.
+func (m *model) minHeight(withMain bool) int {
+	h := 2*panelFloor + 1
+	if withMain && m.width < narrowWidth {
+		h += mainFloor
+	}
+	return h
+}
 
 func (m *model) geometry() geometry {
 	g := geometry{bodyH: max(4, m.height-1)}
@@ -1431,13 +1463,17 @@ func (m model) View() string {
 		return "starting lerp…\n"
 	}
 	// Below every panel's floor plus the status bar — plus the main pane's
-	// floor when the layout stacks — geometry can only produce a screen
-	// taller than the terminal. Say so instead of rendering one.
-	minH := 2*panelFloor + 1
-	if m.width < narrowWidth && m.mainOpen() {
-		minH += mainFloor
-	}
-	if m.width < 24 || m.height < minH {
+	// floor when the layout stacks and the pane is on screen — geometry can
+	// only produce a screen taller than the terminal. Say so instead of
+	// rendering one.
+	if m.width < minWidth || m.height < m.minHeight(m.mainOpen()) {
+		// When the pane is the whole of what does not fit, name the key that
+		// gives the window back: this frame has no status bar to carry the
+		// hint, and a terminal that starts this short starts with work's
+		// pane open.
+		if m.width >= minWidth && m.height >= m.minHeight(false) {
+			return "lerp — window too small\nesc closes the pane\n"
+		}
 		return "lerp — window too small\n"
 	}
 	g := m.geometry()
@@ -1534,7 +1570,8 @@ func (m *model) panelKeys(p panel) []key.Binding {
 			return nil
 		}
 	}
-	return m.keys.panelHelp(p, m.selectedLogPath() != "", m.selectedURL() != "")
+	return m.keys.panelHelp(p, m.selectedLogPath() != "", m.selectedURL() != "",
+		len(m.o.Statuses) > 0 && m.roomForMain())
 }
 
 // keyHints reports whether the focused panel is carrying a key line at all:
@@ -2193,7 +2230,8 @@ func (m model) statusBar() string {
 	// The pane's key is contextual, and a key nobody can see is a key nobody
 	// presses. detailOpen, not mainOpen: it is what enter and esc actually
 	// set, so the hint never promises to close an overlay it cannot.
-	hint := "? help · q quit"
+	const globals = "? help · q quit"
+	hint := globals
 	switch {
 	case m.detailOpen[m.focus]:
 		hint = "esc close · " + hint
@@ -2204,6 +2242,15 @@ func (m model) statusBar() string {
 		hint = "↑/↓ choose · enter promote · esc cancel"
 	}
 	right := styleFaint.Render(hint)
+
+	// The pane's segment is the first thing the bar gives up. Below it the
+	// truncation takes the left side instead, and what it would take is
+	// "● n in the inbox" — the one number the needs-you panel exists for,
+	// spent on advertising a key. The picker's line is not a hint but its
+	// instructions, so it is not up for this.
+	if !m.promoting && m.width-lipgloss.Width(left)-lipgloss.Width(right) < 1 {
+		right = styleFaint.Render(globals)
+	}
 
 	pad := m.width - lipgloss.Width(left) - lipgloss.Width(right)
 	if pad < 1 {

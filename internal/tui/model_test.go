@@ -1559,6 +1559,280 @@ func TestScrollingAClosedPaneIsInert(t *testing.T) {
 	}
 }
 
+// Done-when: the pane opens onto the row the cursor is on now, not the one
+// it was on when the pane was last shut. Nothing refreshes it while it is
+// closed, so opening has to.
+func TestTheReopenedPaneIsCurrent(t *testing.T) {
+	dir := t.TempDir()
+	one, two := filepath.Join(dir, "one.log"), filepath.Join(dir, "two.log")
+	writeLog(t, one, []byte("agent one says hello\n"))
+	writeLog(t, two, []byte("agent two says hello\n"))
+
+	m, _, _ := newTestModel(t, 2)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		TicketID: "id-1", Ticket: "LERP-1", Queue: "plan", LogPath: one}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r2", Lane: 2,
+		TicketID: "id-2", Ticket: "LERP-2", Queue: "plan", LogPath: two}})
+
+	m = update(t, m, keyMsg("esc"))
+	m = update(t, m, keyMsg("down"))
+	m = update(t, m, keyMsg("enter"))
+	view := m.View()
+	if !strings.Contains(view, "agent two says hello") {
+		t.Fatalf("the pane opened on the row the cursor left, not the one it is on:\n%s", view)
+	}
+	if strings.Contains(view, "agent one says hello") {
+		t.Fatalf("the reopened pane still holds the old row's log:\n%s", view)
+	}
+}
+
+// Done-when: roomForMain is View's own guard, asked of the pane instead of
+// the frame in hand. An off-by-one either way is a key that blanks the
+// screen or a window that refuses one it could draw.
+func TestThePanesFloorIsTheGuardsFloor(t *testing.T) {
+	const w = 70 // stacked: the pane comes out of the same body as the panels
+	for _, tc := range []struct {
+		h    int
+		want bool
+	}{
+		{h: 2*panelFloor + mainFloor, want: false},
+		{h: 2*panelFloor + mainFloor + 1, want: true},
+	} {
+		m, _, _ := newTestModel(t, 1)
+		resized, _ := m.Update(tea.WindowSizeMsg{Width: w, Height: tc.h})
+		m = fillBoard(t, resized.(model), 20)
+		m = update(t, m, keyMsg("esc")) // work starts open; start from a screen
+		m = update(t, m, keyMsg("1"))
+		if strings.Contains(m.View(), "too small") {
+			t.Fatalf("height %d: a closed pane did not buy this window a screen", tc.h)
+		}
+		next := update(t, m, keyMsg("enter"))
+		// Either way the screen survives: one line under the floor the key
+		// is refused, one line over it the pane it opens fits.
+		if strings.Contains(next.View(), "too small") {
+			t.Fatalf("height %d: enter took the screen away:\n%s", tc.h, next.View())
+		}
+		if next.detailOpen[panelAttention] != tc.want {
+			t.Fatalf("height %d: enter opened the pane = %v, want %v",
+				tc.h, next.detailOpen[panelAttention], tc.want)
+		}
+	}
+}
+
+// Done-when: the wide layout has a height floor of its own, and the pane's
+// keys have to respect it too — the picker is modal and writes to Linear.
+func TestAWideButShortWindowStillRefusesThePane(t *testing.T) {
+	m, _, _, promoter := newPromoteTestModel(t, 1, []string{"Planning"})
+	resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 8})
+	m = resized.(model)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-4", TicketID: "loose", Title: "Nobody's routed this"},
+	}}})
+	m = update(t, m, keyMsg("1"))
+	if !strings.Contains(m.View(), "too small") {
+		t.Fatalf("8 lines is under every floor and rendered anyway:\n%s", m.View())
+	}
+
+	m = update(t, m, keyMsg("p"))
+	if m.promoting {
+		t.Fatal("p opened the picker behind the too-small screen")
+	}
+	next, cmd := m.Update(keyMsg("enter"))
+	m = next.(model)
+	if cmd != nil {
+		t.Fatal("enter behind the too-small screen produced a command")
+	}
+	if len(promoter.calls) != 0 {
+		t.Fatalf("a picker nobody could see promoted: %+v", promoter.calls)
+	}
+}
+
+// Done-when: a window that shrinks under the pane's floor does not leave the
+// picker or the overlay live behind "window too small" — the picker is modal
+// and its enter is the TUI's one write.
+func TestShrinkingTheWindowClosesWhatTookThePane(t *testing.T) {
+	m, _, _, promoter := newPromoteTestModel(t, 1, []string{"Planning"})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-4", TicketID: "loose", Title: "Nobody's routed this"},
+	}}})
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, keyMsg("p"))
+	m = update(t, m, keyMsg("?"))
+	if !m.promoting {
+		t.Fatal("the picker is not open to begin with")
+	}
+
+	resized, _ := m.Update(tea.WindowSizeMsg{Width: 70, Height: 10})
+	m = resized.(model)
+	if m.promoting || m.helpOn {
+		t.Fatalf("the shrunk window kept the picker (%v) and the overlay (%v)",
+			m.promoting, m.helpOn)
+	}
+	next, cmd := m.Update(keyMsg("enter"))
+	if cmd != nil {
+		t.Fatal("enter after the shrink still confirmed something")
+	}
+	_ = next
+	if len(promoter.calls) != 0 {
+		t.Fatalf("a picker the shrink should have closed promoted: %+v", promoter.calls)
+	}
+}
+
+// Done-when: a window too short for the pane names the key that gives it
+// back. That frame draws no status bar, and a terminal this short starts
+// with work's pane open — so without this the only way out is a guess.
+func TestTheTooSmallScreenNamesTheWayOut(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	resized, _ := m.Update(tea.WindowSizeMsg{Width: 70, Height: 12})
+	m = resized.(model)
+	view := m.View()
+	if !strings.Contains(view, "too small") || !strings.Contains(view, "esc") {
+		t.Fatalf("the too-small screen does not name esc:\n%s", view)
+	}
+	for _, line := range strings.Split(strings.TrimRight(view, "\n"), "\n") {
+		if lipgloss.Width(line) > 70 {
+			t.Fatalf("the too-small screen overflows its window: %q", line)
+		}
+	}
+	if m = update(t, m, keyMsg("esc")); strings.Contains(m.View(), "too small") {
+		t.Fatalf("esc did not give the window its screen:\n%s", m.View())
+	}
+
+	// Under every floor there is no pane to blame, so no key to offer.
+	resized, _ = m.Update(tea.WindowSizeMsg{Width: 70, Height: 8})
+	if view := resized.(model).View(); strings.Contains(view, "esc") {
+		t.Fatalf("a window under every floor still blames the pane:\n%s", view)
+	}
+}
+
+// Done-when: the status bar gives up the pane's hint before it gives up the
+// inbox count. 80 columns is a standard terminal, and the count is the one
+// number the needs-you panel exists for.
+func TestTheStatusBarKeepsTheCountOverTheHint(t *testing.T) {
+	m, _, _ := newTestModel(t, 3)
+	resized, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 30})
+	m = resized.(model)
+	m = update(t, m, tickedMsg{})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-1", Title: "one"}, {Ticket: "LERP-2", Title: "two"},
+	}}})
+	if !strings.Contains(m.View(), "2 in the inbox") {
+		t.Fatalf("the hint truncated the inbox count away:\n%s", m.View())
+	}
+
+	// Wide enough for both, and then the hint is there.
+	resized, _ = m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	view := resized.(model).View()
+	if !strings.Contains(view, "2 in the inbox") || !strings.Contains(view, "esc close") {
+		t.Fatalf("120 columns should carry the count and the hint:\n%s", view)
+	}
+}
+
+// Done-when: the panel line stops offering p where the picker has no room to
+// open — an advertised key that does nothing is how the operator finds out.
+func TestAPanelWithNoRoomForThePickerDoesNotOfferIt(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	resized, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 30})
+	m = resized.(model)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-4", TicketID: "loose", Title: "Nobody's routed this"},
+	}}})
+	m = update(t, m, keyMsg("1"))
+	if !strings.Contains(m.View(), "p promote") {
+		t.Fatalf("a window with room does not offer promote:\n%s", m.View())
+	}
+
+	resized, _ = m.Update(tea.WindowSizeMsg{Width: 90, Height: 12})
+	m = resized.(model)
+	m = update(t, m, keyMsg("esc"))
+	view := m.View()
+	if strings.Contains(view, "too small") {
+		t.Fatalf("this window was supposed to have a screen:\n%s", view)
+	}
+	if strings.Contains(view, "p promote") {
+		t.Fatalf("the panel offers a key this window has no room for:\n%s", view)
+	}
+	if !strings.Contains(view, "s sort") {
+		t.Fatalf("the panel dropped the keys that still work:\n%s", view)
+	}
+}
+
+// Done-when: the ? overlay is modal the way the picker is. esc closes it
+// rather than flipping the pane behind it, and enter neither opens a pane
+// nobody asked for nor reads a ticket nobody can see.
+func TestTheOverlayTakesEscAndEnter(t *testing.T) {
+	m, _, reader := newReadingTestModel(t)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+	m = update(t, m, keyMsg("?"))
+
+	next, cmd := updateCmd(t, m, keyMsg("enter"))
+	if next.detailOpen[panelAttention] || cmd != nil {
+		t.Fatal("enter under the overlay opened the pane behind it")
+	}
+	m = update(t, m, keyMsg("esc"))
+	if m.helpOn {
+		t.Fatalf("esc did not close the overlay:\n%s", m.View())
+	}
+	if m.detailOpen[panelAttention] {
+		t.Fatal("esc flipped the pane instead of closing the overlay")
+	}
+	if got := reader.fetched(); len(got) != 0 {
+		t.Fatalf("the overlay read %v", got)
+	}
+}
+
+// Done-when: a read scheduled just before esc does not outlive the pane. The
+// debounce is a quarter of a second, which is time enough to shut it.
+func TestADebounceDoesNotOutliveThePane(t *testing.T) {
+	m, _, reader := newReadingTestModel(t)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, keyMsg("enter"))
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+	m = update(t, m, keyMsg("j"))
+	id := m.shown[m.attnSel].TicketID
+
+	m = update(t, m, keyMsg("esc"))
+	if _, cmd := updateCmd(t, m, detailDueMsg{ticketID: id}); cmd != nil {
+		t.Fatalf("the debounce for %s fired into a closed pane", id)
+	}
+	if got := reader.fetched(); len(got) != 0 {
+		t.Fatalf("a closed pane read %v", got)
+	}
+}
+
+// Done-when: a closed pane costs nothing on the 250ms poll — no wrapping a
+// log tail to a zero-width viewport twenty times a minute.
+func TestAClosedPaneIsNotRefreshed(t *testing.T) {
+	log := filepath.Join(t.TempDir(), "one.log")
+	writeLog(t, log, []byte("agent one says hello\n"))
+
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		TicketID: "id-1", Ticket: "LERP-1", Queue: "plan", LogPath: log}})
+	m = update(t, m, keyMsg("esc"))
+	held := m.vp.View()
+
+	f, err := os.OpenFile(log, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("and more\n"); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	m = update(t, m, pollMsg{})
+	if m.vp.View() != held {
+		t.Fatalf("the poll refreshed a pane nobody is looking at:\n%s", m.vp.View())
+	}
+
+	// And opening it is current all the same.
+	m = update(t, m, keyMsg("enter"))
+	if !strings.Contains(m.View(), "and more") {
+		t.Fatalf("the reopened pane missed what arrived while it was shut:\n%s", m.View())
+	}
+}
+
 func TestPanelPaddingIsAsymmetric(t *testing.T) {
 	row := func(pad padding) string {
 		return strings.Split(panelBox("t", false, 10, 3, []string{"abcdefg"}, pad), "\n")[1]

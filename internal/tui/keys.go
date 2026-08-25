@@ -79,16 +79,20 @@ func (k keymap) FullHelp() [][]key.Binding {
 // keys are left out — the status bar already carries "? help · q quit", and
 // a hint that gets truncated away is a hint that was not there.
 //
-// hasLog and hasURL say which of these keys the row under the cursor
-// actually answers to: r is inert on a ticket that has never run, and o on
-// a run whose ticket the pass no longer lists. An advertised key that does
-// nothing is worse than one left out, because pressing it is how the
-// operator finds out — and r would flip the raw toggle invisibly.
-func (k keymap) panelHelp(p panel, hasLog, hasURL bool) []key.Binding {
+// hasLog, hasURL and canPromote say which of these keys the row under the
+// cursor actually answers to: r is inert on a ticket that has never run, o on
+// a run whose ticket the pass no longer lists, and p where there is no status
+// to promote into or no room for the picker the key opens. An advertised key
+// that does nothing is worse than one left out, because pressing it is how
+// the operator finds out — and r would flip the raw toggle invisibly.
+func (k keymap) panelHelp(p panel, hasLog, hasURL, canPromote bool) []key.Binding {
 	var b []key.Binding
 	switch p {
 	case panelAttention:
-		b = []key.Binding{k.Promote, short(k.Sort, "sort"), short(k.Project, "project")}
+		b = []key.Binding{short(k.Sort, "sort"), short(k.Project, "project")}
+		if canPromote {
+			b = append([]key.Binding{k.Promote}, b...)
+		}
 	case panelWork:
 		if hasLog {
 			b = append(b, short(k.Raw, "raw"))
