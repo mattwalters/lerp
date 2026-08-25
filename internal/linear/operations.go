@@ -182,7 +182,7 @@ query ListAssignedIssues($team: String!, $assignee: ID!, $after: String) {
 
 // ListAssignedIssues returns the team's unfinished issues assigned to the
 // user, in any workflow state — the other half of the read behind the
-// needs-you view (see Client). Completed and canceled issues are filtered
+// inbox view (see Client). Completed and canceled issues are filtered
 // out server-side.
 func (c *HTTP) ListAssignedIssues(ctx context.Context, teamKey, assigneeID string) ([]Issue, error) {
 	issues, err := c.listIssues(ctx, listAssignedIssuesQuery, map[string]any{"team": teamKey, "assignee": assigneeID})
@@ -230,7 +230,7 @@ query ListUnassignedIssues($team: String!, $after: String) {
 }`
 
 // ListUnassignedIssues returns the team's unclaimed issues, in any workflow
-// state — half of the read behind the needs-you view (see Client).
+// state — half of the read behind the inbox view (see Client).
 // Completed and canceled issues are filtered out server-side.
 func (c *HTTP) ListUnassignedIssues(ctx context.Context, teamKey string) ([]Issue, error) {
 	issues, err := c.listIssues(ctx, listUnassignedIssuesQuery, map[string]any{"team": teamKey})
@@ -331,7 +331,7 @@ query IssueDetail($id: String!) {
   }
 }`
 
-// GetIssueDetail reads one issue's body and comments — the needs-you pane's
+// GetIssueDetail reads one issue's body and comments — the inbox pane's
 // read (see Client). It is deliberately its own query rather than fields on
 // issueNode: that struct is shared by the three list queries every pass
 // runs, and hanging a description or a comment connection off it would grow
