@@ -219,6 +219,20 @@ func update(t *testing.T, m model, msg tea.Msg) model {
 	return next.(model)
 }
 
+// pastTheSplash lands the first pass on a fresh model. The opening splash
+// owns the whole screen until one reports (see splashing), so a test about
+// what the board draws starts by getting past it — with the pass reporting
+// nothing, which is the weaker of the two ways out and leaves the panels on
+// their own empty states.
+func pastTheSplash(t *testing.T, m model) model {
+	t.Helper()
+	m = update(t, m, tickedMsg{})
+	if m.splashing() {
+		t.Fatal("the splash still owns the screen after the first pass landed")
+	}
+	return m
+}
+
 // openMain opens the focused panel's main pane. Both panels start with the
 // list owning the screen, so a test about what the pane holds asks for it
 // with the key an operator would press rather than reaching into the model.
@@ -258,6 +272,7 @@ func keyMsg(s string) tea.KeyMsg {
 
 func TestWorkPanelShowsTheRunLifecycle(t *testing.T) {
 	m, _, _ := newTestModel(t, 2)
+	m = pastTheSplash(t, m)
 	view := m.View()
 	for _, want := range []string{"inbox", "work", "q quit"} {
 		if !strings.Contains(view, want) {
@@ -394,6 +409,7 @@ func TestAdoptedRunOccupiesAndFreesItsRow(t *testing.T) {
 // the key that used to open one is bound to nothing.
 func TestFocusSwitching(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	if m.focus != panelAttention {
 		t.Fatalf("lerp opens focused on %v, want inbox", m.focus)
 	}
@@ -1590,6 +1606,9 @@ func TestPromotePickerClosesWhenTheListEmpties(t *testing.T) {
 // main pane for the full keymap.
 func TestStatusBarAndHelp(t *testing.T) {
 	m, _, _ := newTestModel(t, 2)
+	// The bar is only on screen once the board is: the splash the first pass
+	// runs under has no status bar to name a panel on.
+	m = pastTheSplash(t, m)
 	if !strings.Contains(m.View(), "INBOX") {
 		t.Fatalf("status bar does not name the panel lerp opens on:\n%s", m.View())
 	}
@@ -1597,13 +1616,14 @@ func TestStatusBarAndHelp(t *testing.T) {
 	if !strings.Contains(m.View(), "WORK") {
 		t.Fatalf("status bar does not name the focused panel:\n%s", m.View())
 	}
-	if !strings.Contains(m.View(), "pass running") {
-		t.Fatalf("status bar hides the in-flight first pass:\n%s", m.View())
-	}
-	m = update(t, m, tickedMsg{})
 	if !strings.Contains(m.View(), "next in") {
 		t.Fatalf("status bar after a pass shows no countdown:\n%s", m.View())
 	}
+	m = update(t, m, tickMsg{})
+	if !strings.Contains(m.View(), "pass running") {
+		t.Fatalf("status bar hides the pass in flight:\n%s", m.View())
+	}
+	m = update(t, m, tickedMsg{})
 
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
 		{Ticket: "LERP-1", Title: "one"}, {Ticket: "LERP-2", Title: "two"},
@@ -2505,6 +2525,7 @@ func TestFocusDrawsTheHeavyBox(t *testing.T) {
 // And the weight follows focus, both ways, in the view the operator sees.
 func TestTheHeavyBoxFollowsFocus(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	for _, tc := range []struct{ key, focused, idle string }{
 		{"1", "[1] inbox", "[2] work"},
 		{"2", "[2] work", "[1] inbox"},

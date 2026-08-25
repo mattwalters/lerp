@@ -437,6 +437,10 @@ type model struct {
 	frame    int
 	inFlight bool
 	lastPass time.Time
+	// heard is whether anything has come back from the loop yet — any event
+	// at all, which is the moment the board stops having nothing to draw. It
+	// is what the opening splash gives way to; see splashing.
+	heard bool
 
 	lastErr string
 	// notes are this interval's transient reports — run outcomes, a
@@ -1134,6 +1138,7 @@ func openURL(url string) tea.Cmd {
 // cleaned here, once, so the views below can stay plain string building.
 func (m *model) apply(ev loop.Event) {
 	ev = cleanEvent(ev)
+	m.heard = true
 	if ev.Err != nil {
 		// Pass errors interpolate Linear's own status and team names.
 		m.lastErr = clean(ev.Err.Error())
@@ -1923,6 +1928,20 @@ func (m *model) layout() {
 	m.vp.SetYOffset(m.vp.YOffset)
 }
 
+// splashing reports the state the splash stands in for: lerp is up, the
+// first pass is out, and nothing has come back from it — no event, and no
+// pass finished. Either one ends it, and neither un-happens, which is what
+// keeps the splash the first screen and never a later one.
+//
+// An event is the board having something to draw, whatever it was about: a
+// lane, a queue, the inbox. A failed pass is an event too — its error goes
+// to the status bar, where it can be read, rather than under a spinner that
+// would go on saying "working" about a pass that is over. And a pass that
+// finished having said nothing at all has nothing left to wait for.
+func (m model) splashing() bool {
+	return !m.heard && m.lastPass.IsZero()
+}
+
 func (m model) View() string {
 	if !m.ready {
 		return "starting lerp…\n"
@@ -1949,6 +1968,15 @@ func (m model) View() string {
 			return "lerp — window too small\nesc closes the pane\n"
 		}
 		return "lerp — window too small\n"
+	}
+	// Below the too-small screen, which is the actionable one: a splash on a
+	// window that cannot draw a board would hide the one thing the operator
+	// can do something about behind a spinner. And above everything else,
+	// except the ? overlay — that is the operator asking a question the
+	// splash cannot answer, and a key that visibly does nothing is worse
+	// than the empty board they get to read it over.
+	if m.splashing() && !m.helpOn {
+		return m.splash()
 	}
 	g := m.geometry()
 	side := lipgloss.JoinVertical(lipgloss.Left,
