@@ -340,12 +340,19 @@ type model struct {
 	promoting  bool
 	promoteSel int
 
-	// ejecting is the eject confirm overlay's open/closed state; ejection is
-	// the result panel that replaces it, nil when none is up. That panel is
-	// sticky — dismissed by esc, never by the next pass — because the resume
-	// command it holds is the one string the operator has to copy, and a
-	// status-bar note would be cleared out from under them.
+	// ejecting is the eject confirm overlay's open/closed state, and ejectRow
+	// the row it is about — captured when the key was pressed, not re-read
+	// when enter lands. A pass between the two moves the cursor (the row's
+	// own ticket may leave the panel entirely), and killing whatever agent
+	// the cursor ended up on is not what the operator confirmed.
+	//
+	// ejection is the result panel that replaces the confirm, nil when none
+	// is up. That panel is sticky — dismissed by esc, never by the next
+	// pass — because the resume command it holds is the one string the
+	// operator has to copy, and a status-bar note would be cleared out from
+	// under them.
 	ejecting bool
+	ejectRow workRow
 	ejection *loop.Ejection
 
 	vp     viewport.Model
@@ -545,9 +552,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.promoteSel = 0
 		}
 	case key.Matches(msg, m.keys.Eject):
-		if m.canEjectSelected() {
-			m.ejecting = true
-		}
+		m.startEject()
 	case key.Matches(msg, m.keys.Sort):
 		if m.focus == panelAttention {
 			m.sortMode = (m.sortMode + 1) % sortModes
@@ -701,9 +706,7 @@ func (m model) handleEjectKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		if m.ejecting {
 			m.ejecting = false
-			if r := m.selectedWork(); r != nil {
-				cmd = m.doEject(r.ticketID, r.ticket)
-			}
+			cmd = m.doEject(m.ejectRow.ticketID, m.ejectRow.ticket)
 		}
 	}
 	// Leaving either overlay hands the main pane back to a lens of a
@@ -722,6 +725,26 @@ func (m model) doEject(ticketID, ticket string) tea.Cmd {
 	}
 }
 
+// startEject opens the confirm for the selected row, capturing it, or says
+// why it cannot. A queue whose runner has no resume command is the one
+// refusal worth a word: the row looks exactly like an ejectable one, and the
+// key line's silence about "e" is easy to miss. The others — a ticket that
+// is not running, a lane still provisioning — are plain on the row itself.
+func (m *model) startEject() {
+	if m.focus != panelWork {
+		return
+	}
+	r := m.selectedWork()
+	if r == nil || r.lane == 0 || r.state == laneProvisioning {
+		return
+	}
+	if can, why := m.o.Ejector.CanEject(r.queue); !can {
+		m.note("cannot eject "+r.ticket+": "+clean(why), true)
+		return
+	}
+	m.ejectRow, m.ejecting = *r, true
+}
+
 // canEjectSelected reports whether the work panel's selected row is a run
 // eject could take over: a live agent, in a queue whose runner has a resume
 // command. A provisioning lane has no agent yet and a waiting ticket has no
@@ -736,6 +759,18 @@ func (m *model) canEjectSelected() bool {
 	}
 	can, _ := m.o.Ejector.CanEject(r.queue)
 	return can
+}
+
+// ejectRowIsRunning reports whether the row the confirm captured is still a
+// running row. A run that ended while the overlay was open has nothing left
+// to eject.
+func (m *model) ejectRowIsRunning() bool {
+	for _, r := range m.workRows() {
+		if r.ticketID == m.ejectRow.ticketID {
+			return r.lane > 0
+		}
+	}
+	return false
 }
 
 func (m *model) setFocus(p panel) {
@@ -914,6 +949,12 @@ func (m *model) apply(ev loop.Event) {
 	}
 	m.reorder()
 	m.retargetWork()
+	// A run that ended while the confirm was open leaves nothing to kill, so
+	// the overlay closes rather than sending enter after a dead agent — the
+	// same care the promote picker takes when its list empties.
+	if m.ejecting && !m.ejectRowIsRunning() {
+		m.ejecting = false
+	}
 	m.layout()
 	m.retarget()
 	// Only the lens this event feeds is re-rendered; a live log also
@@ -1938,9 +1979,7 @@ func (m model) mainPanel(w, h int) string {
 		return m.ejectResult(*m.ejection, w, h)
 	}
 	if m.ejecting {
-		if r := m.selectedWork(); r != nil {
-			return m.ejectConfirm(*r, w, h)
-		}
+		return m.ejectConfirm(m.ejectRow, w, h)
 	}
 	if m.helpOn {
 		return panelBox(styleTitleFocus.Render("help"), true, w, h,
@@ -1991,17 +2030,24 @@ func (m model) ejectConfirm(r workRow, w, h int) string {
 // dispose, and the command that reopens the run as the operator's own
 // session. It stays up until esc, because nothing else on screen keeps it.
 func (m model) ejectResult(ej loop.Ejection, w, h int) string {
-	rows := []string{
-		styleFaint.Render("the agent is stopped; the ticket is untouched in Linear"),
-		"",
-		styleFaint.Render("workspace"),
-		ej.Workspace,
-		"",
-		styleFaint.Render("resume"),
-		styleTicket.Render(ej.Resume),
-		"",
-		styleFaint.Render("esc dismisses this panel; the command is also in .lerp/loop.log"),
+	// Wrapped, not truncated, and the command first: panelBox cuts a row to
+	// the pane's width and fitRows drops the tail on a short pane, either of
+	// which would hand back half a command. A resume command and a workspace
+	// path are both routinely wider than a 45%-of-the-terminal pane.
+	width := padMain.inner(w)
+	rows := []string{styleFaint.Render("resume")}
+	rows = append(rows, styleTicket.Render(ansi.Wrap(ej.Resume, max(8, width), " ")))
+	rows = append(rows, "", styleFaint.Render("workspace"))
+	rows = append(rows, wrapText(ej.Workspace, width)...)
+	// The log line is not an aside: a command wrapped across rows pastes as
+	// several commands, so the operator who wants to copy rather than read
+	// needs somewhere it exists on one line.
+	rows = append(rows, "")
+	for _, line := range wrapText("the agent is stopped; the ticket is untouched in Linear. "+
+		"esc dismisses this panel; the whole command is on one line in .lerp/loop.log", width) {
+		rows = append(rows, styleFaint.Render(line))
 	}
+	rows = strings.Split(strings.Join(rows, "\n"), "\n")
 	rows = fitRows(rows, h-2)
 	title := "ejected"
 	if ej.Ticket != "" {

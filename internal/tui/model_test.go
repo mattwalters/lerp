@@ -2692,3 +2692,98 @@ func TestEjectIsNotOfferedWhileProvisioning(t *testing.T) {
 		t.Fatal("a provisioning lane reads as ejectable")
 	}
 }
+
+// The panel is the only place the resume command is shown, so it must survive
+// a narrow pane whole: panelBox truncates rows and fitRows drops the tail, and
+// half a command is not a command.
+func TestEjectResultKeepsTheWholeCommand(t *testing.T) {
+	m, _ := newEjectTestModel(t, 1, &recordingEjector{})
+	resume := "claude --resume '1e9a4a0e-0000-4000-8000-00000000abcd' --cwd '/Users/x/src/lerp/.lerp/workspaces/11f642e6'"
+	workspace := "/Users/x/src/lerp/.lerp/workspaces/11f642e6e35fe9092b7dccb0dc4b69ca"
+	view := m.ejectResult(loop.Ejection{Ticket: "LERP-14", Workspace: workspace, Resume: resume}, 55, 20)
+	if strings.Contains(view, "…") {
+		t.Fatalf("the eject result truncated something:\n%s", view)
+	}
+	// Wrapped rather than cut, so the assertion is that every wrapped line of
+	// both — including the last, which is what fitRows would have dropped —
+	// is on screen.
+	plain := ansi.Strip(view)
+	width := padMain.inner(55)
+	for _, want := range append(strings.Split(ansi.Wrap(resume, width, " "), "\n"),
+		strings.Split(ansi.Wrap(workspace, width, "-"), "\n")...) {
+		if !strings.Contains(plain, want) {
+			t.Errorf("the eject result is missing %q:\n%s", want, view)
+		}
+	}
+}
+
+// The confirm is about the row the operator pressed "e" on, not about
+// whatever the cursor has drifted to by the time they press enter: a pass in
+// between can move rows, and a run in another lane must not be killed by an
+// enter meant for this one.
+func TestEjectConfirmHoldsItsRowAcrossAPass(t *testing.T) {
+	ejector := &recordingEjector{}
+	m, _ := newEjectTestModel(t, 2, ejector)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		TicketID: "id-42", Ticket: "LERP-42", Queue: "implement", LogPath: "/dev/null"}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r2", Lane: 2,
+		TicketID: "id-9", Ticket: "LERP-9", Queue: "implement", LogPath: "/dev/null"}})
+	m = update(t, m, keyMsg("e"))
+	if !m.ejecting || m.ejectRow.ticketID != "id-42" {
+		t.Fatalf("e captured %+v, want the selected LERP-42 row", m.ejectRow)
+	}
+
+	// The selection moves under the overlay — here by the operator's own
+	// earlier row leaving the panel is simulated with a plain move.
+	m.workPos, m.workSel = 1, "id-9"
+	m, cmd := updateCmd(t, m, keyMsg("enter"))
+	if cmd == nil {
+		t.Fatal("enter produced no eject command")
+	}
+	cmd() // the call off the render loop is what reaches the Ejector
+	if got := ejector.ejected(); len(got) != 1 || got[0] != "id-42" {
+		t.Fatalf("Eject calls = %v, want only the row the confirm was opened on", got)
+	}
+}
+
+// A run that ends while the confirm is open leaves nothing to eject, so the
+// overlay closes rather than sending an enter after a dead agent.
+func TestEjectConfirmClosesWhenItsRunEnds(t *testing.T) {
+	ejector := &recordingEjector{}
+	m, _ := newEjectTestModel(t, 1, ejector)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		TicketID: "id-42", Ticket: "LERP-42", Queue: "implement", LogPath: "/dev/null"}})
+	m = update(t, m, keyMsg("e"))
+	if !m.ejecting {
+		t.Fatal("e did not open the eject confirm")
+	}
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventExited, RunID: "r1", Lane: 1,
+		TicketID: "id-42", Ticket: "LERP-42", Queue: "implement", ExitCode: 0}})
+	if m.ejecting {
+		t.Fatal("the eject confirm stayed open after its run finished")
+	}
+	m, cmd := updateCmd(t, m, keyMsg("enter"))
+	if cmd != nil {
+		cmd()
+	}
+	if got := ejector.ejected(); len(got) != 0 {
+		t.Fatalf("enter ejected a finished run: %v", got)
+	}
+}
+
+// A runner that cannot resume is the one refusal worth a word: the row looks
+// exactly like an ejectable one, so pressing "e" says why instead of doing
+// nothing at all.
+func TestEjectSaysWhyARunnerCannotResume(t *testing.T) {
+	ejector := &recordingEjector{resumable: []string{"implement"}}
+	m, _ := newEjectTestModel(t, 1, ejector)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		TicketID: "id-9", Ticket: "LERP-9", Queue: "plan", LogPath: "/dev/null"}})
+	m = update(t, m, keyMsg("e"))
+	if m.ejecting {
+		t.Fatal("e opened the confirm for a run that cannot be ejected")
+	}
+	if !strings.Contains(m.View(), "no resume command") {
+		t.Fatalf("pressing e said nothing about why it will not eject:\n%s", m.View())
+	}
+}

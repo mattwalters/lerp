@@ -165,6 +165,28 @@ func (e *Evidence) Attach(runID string, pid int) (Record, error) {
 	return record, nil
 }
 
+// Disown drops the two things that make a record actionable — the workspace
+// to dispose and the ticket to settle — leaving a record that says only that
+// a run was here.
+//
+// It is how a workspace is handed to the operator (eject): the record is
+// removed straight afterwards, but a removal can fail and a process can die
+// between the two, and a leftover record is read by the next lerp as a dead
+// run to reap. Reaping this one disposes nothing and touches no ticket, which
+// is the whole promise — an ejected workspace is the operator's, and their
+// ticket keeps the claim they took over with.
+func (e *Evidence) Disown(runID string) error {
+	record, err := e.Read(runID)
+	if err != nil {
+		return fmt.Errorf("disowning run %s: %w", runID, err)
+	}
+	record.Workspace, record.TicketID = "", ""
+	if err := writeJSON(filepath.Join(e.runPath(runID), "metadata.json"), record); err != nil {
+		return fmt.Errorf("disowning run %s: %w", runID, err)
+	}
+	return nil
+}
+
 // Read returns one run's recorded evidence. It returns fs.ErrNotExist when
 // the run has no local record.
 func (e *Evidence) Read(runID string) (Record, error) {
