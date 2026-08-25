@@ -740,6 +740,20 @@ func board() loop.Event {
 	}}
 }
 
+// browseBacklog presses B on the inbox panel. The fixture is half backlog
+// rows and the panel opens folded, so every test below that is about the
+// whole of it — the sort order, the grouping, the columns, the filters —
+// asks for the rest of the list the way an operator does. The tests about
+// what the panel says on sight do not call it.
+func browseBacklog(t *testing.T, m model) model {
+	t.Helper()
+	m = update(t, m, keyMsg("B"))
+	if !m.backlogOpen {
+		t.Fatal("B did not expand the backlog")
+	}
+	return m
+}
+
 // rowOf returns the panel line carrying the ticket, for the assertions that
 // are about one row rather than about the order of several.
 func rowOf(t *testing.T, panel, ticket string) string {
@@ -775,6 +789,7 @@ func TestInboxRowsCarryTheRealStatus(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: board()})
+	m = browseBacklog(t, m)
 
 	panel := m.attentionPanel(96, 14)
 	view := m.View()
@@ -1110,6 +1125,7 @@ func TestInboxSortModesCycle(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: board()})
+	m = browseBacklog(t, m)
 
 	// Status is the default: pipeline-relevance first — a failure route,
 	// then where a clean run comes to rest, then the statuses the pipeline
@@ -1240,6 +1256,7 @@ func TestInboxProjectFilter(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: board()})
+	m = browseBacklog(t, m)
 
 	// Projects cycle in name order: OSS readiness, then TUI redesign, then
 	// back to every project. A ticket in no project is not a stop.
@@ -1283,6 +1300,249 @@ func TestInboxProjectFilter(t *testing.T) {
 	}
 	if !strings.Contains(m.attentionPanel(96, 14), "LERP-9") {
 		t.Fatalf("a stale filter hid the whole panel:\n%s", m.attentionPanel(96, 14))
+	}
+}
+
+// Done-when: the inbox opens on the tickets a human is blocked on — where a
+// run failed, where one finished, and the status the pipeline never named —
+// and the backlog is one line saying how many are behind it and which key
+// opens them.
+func TestInboxOpensOnWhatIsBlockedOnYou(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: board()})
+
+	panel := m.attentionPanel(96, 18)
+	want := []string{"LERP-1", "LERP-48", "LERP-60"}
+	if got := shownTickets(m); !slices.Equal(got, want) {
+		t.Fatalf("the inbox opens on %v, want the three blocked on a human", got)
+	}
+	for _, folded := range []string{"LERP-22", "LERP-23", "LERP-70"} {
+		if strings.Contains(panel, folded+" ") {
+			t.Fatalf("%s has not entered the pipeline, but the panel opens on it:\n%s", folded, panel)
+		}
+	}
+	// The count, the reason and the key, in the backlog tier's own words.
+	if !strings.Contains(panel, "3 waiting to enter the pipeline — B to browse") {
+		t.Fatalf("the fold does not say what it is holding back:\n%s", panel)
+	}
+	// A long enough blocked-on-you list windows the summary away behind
+	// "⋯ n more", so the key has to be somewhere that never scrolls.
+	if got := ansi.Strip(update(t, m, keyMsg("?")).View()); !strings.Contains(got, "browse the backlog") {
+		t.Fatalf("the ? overlay does not carry the fold's key:\n%s", got)
+	}
+}
+
+// Done-when: B expands the fold in place — the same panel, the same table,
+// the same pinned header, the backlog rows under their own status group
+// header — and B again puts it back. Not a tab and not a second view.
+func TestBacklogExpandsInPlace(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: board()})
+
+	m = browseBacklog(t, m)
+	panel := m.attentionPanel(96, 18)
+	want := []string{"LERP-1", "LERP-48", "LERP-60", "LERP-22", "LERP-70", "LERP-23"}
+	if got := order(panel, want...); !slices.Equal(got, want) {
+		t.Fatalf("expanded order = %v, want the whole list in the sort's own order:\n%s", got, panel)
+	}
+	// Same table: the column header is still pinned above it, and the rows
+	// arrive under the status group header the sort would give them anyway.
+	for _, keep := range []string{hdrTicket, hdrStatus, "Backlog — waiting to enter the pipeline"} {
+		if !strings.Contains(panel, keep) {
+			t.Fatalf("the expanded panel is missing %q:\n%s", keep, panel)
+		}
+	}
+	// Nothing left folded is nothing left to say.
+	if strings.Contains(panel, "to browse") {
+		t.Fatalf("the summary line survived the expansion:\n%s", panel)
+	}
+	// The way back is in the title, beside the other controls a key changed.
+	if !strings.Contains(panel, "· backlog") {
+		t.Fatalf("the title does not say the backlog is expanded:\n%s", panel)
+	}
+
+	m = update(t, m, keyMsg("B"))
+	if m.backlogOpen {
+		t.Fatal("B a second time did not fold the backlog back")
+	}
+	panel = m.attentionPanel(96, 18)
+	if got := shownTickets(m); len(got) != 3 {
+		t.Fatalf("folding back left %v, want the three blocked on a human", got)
+	}
+	if strings.Contains(panel, "· backlog") {
+		t.Fatalf("the folded title still says the backlog is expanded:\n%s", panel)
+	}
+}
+
+// Done-when: "● n in the inbox" counts only what is blocked on a human, so
+// it is the same number folded or not — that is what makes it mean
+// "something to look up at". The panel's own count is the other question,
+// what is in this panel, and follows the fold.
+func TestTheInboxCountIsWhatIsBlockedOnYou(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: board()})
+
+	if got := m.View(); !strings.Contains(got, "● 3 in the inbox") {
+		t.Fatalf("the status bar counts the backlog into the inbox:\n%s", got)
+	}
+	if panel := m.attentionPanel(96, 18); !strings.Contains(panel, "● 3") {
+		t.Fatalf("the folded panel title does not count its rows:\n%s", panel)
+	}
+
+	m = browseBacklog(t, m)
+	if got := m.View(); !strings.Contains(got, "● 3 in the inbox") {
+		t.Fatalf("expanding the backlog moved the status bar's count:\n%s", got)
+	}
+	if panel := m.attentionPanel(96, 18); !strings.Contains(panel, "● 6") {
+		t.Fatalf("the expanded panel title does not count what it shows:\n%s", panel)
+	}
+}
+
+// Done-when: an expanded backlog row is a row like any other — enter reads
+// it and p promotes it. The fold is display over the list the pass already
+// fetched, not a second class of row.
+func TestExpandedBacklogRowsTakeTheKeys(t *testing.T) {
+	m, _, _, promoter := newPromoteTestModel(t, 1, []string{"Planning", "Implementing"})
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: board()})
+	m = browseBacklog(t, m)
+
+	// Down to LERP-22, the first backlog row under the status default.
+	for range 3 {
+		m = update(t, m, keyMsg("j"))
+	}
+	if got := m.selectedAttention().Ticket; got != "LERP-22" {
+		t.Fatalf("the cursor reached %s, want the first expanded backlog row", got)
+	}
+	m = openMain(t, m)
+	if got := m.View(); !strings.Contains(got, "GoReleaser: tagged releases") {
+		t.Fatalf("enter on an expanded backlog row opened nothing:\n%s", got)
+	}
+
+	m = update(t, m, keyMsg("p"))
+	if !m.promoting {
+		t.Fatal("p did not open the promote picker on an expanded backlog row")
+	}
+	next, cmd := m.Update(keyMsg("enter"))
+	m = next.(model)
+	if cmd == nil {
+		t.Fatal("enter produced no promote command")
+	}
+	cmd()
+	if got := promoter.last(); got.ticketID != "id-22" || got.status != "Planning" {
+		t.Fatalf("Promote call = %+v, want {id-22 Planning}", got)
+	}
+}
+
+// Done-when: P stops only at projects with a row the fold lets through.
+// Cycling to one whose every ticket is folded away would scope the panel to
+// "nothing in X" — a filter that hides the whole panel is the thing the
+// project cycle already refuses to do.
+func TestProjectFilterSkipsAProjectThatIsAllBacklog(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-1", TicketID: "id-1", Title: "Fix the build", Status: "Needs Attention",
+			Project: "Shipping", Relevance: loop.StatusFailed},
+		{Ticket: "LERP-2", TicketID: "id-2", Title: "Someday", Status: "Backlog",
+			Project: "Later", Relevance: loop.StatusBacklog},
+	}}})
+
+	if got := m.projects(); !slices.Equal(got, []string{"Shipping"}) {
+		t.Fatalf("the project cycle offers %v, want only the project with a visible row", got)
+	}
+	m = update(t, m, keyMsg("P"))
+	if m.project != "Shipping" {
+		t.Fatalf("P scoped to %q, want the one project on screen", m.project)
+	}
+	m = update(t, m, keyMsg("P"))
+	if m.project != "" {
+		t.Fatalf("P scoped to %q, want back to every project", m.project)
+	}
+
+	// Expanding puts the project back on the cycle: the rows are on screen,
+	// so scoping to them shows something.
+	m = browseBacklog(t, m)
+	if got := m.projects(); !slices.Equal(got, []string{"Later", "Shipping"}) {
+		t.Fatalf("the expanded project cycle offers %v, want both projects", got)
+	}
+}
+
+// Done-when: an inbox holding nothing but backlog says nothing is waiting on
+// a human, and still offers the key to the rows behind it. It must not claim
+// "the inbox is empty" — a board with nothing waiting at all is the goal
+// state, and a fold does not get to wear it.
+func TestAFoldedBacklogDoesNotClaimTheGoalState(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-2", TicketID: "id-2", Title: "Someday", Status: "Backlog",
+			Relevance: loop.StatusBacklog},
+	}}})
+
+	panel := m.attentionPanel(96, 14)
+	if !strings.Contains(panel, "nothing is waiting on you") {
+		t.Fatalf("an inbox of nothing but backlog does not say so:\n%s", panel)
+	}
+	if strings.Contains(panel, "the inbox is empty") {
+		t.Fatalf("the fold claimed the goal state:\n%s", panel)
+	}
+	if !strings.Contains(panel, "1 waiting to enter the pipeline — B to browse") {
+		t.Fatalf("the one line that is on you is precisely when the key must show:\n%s", panel)
+	}
+	if got := m.View(); strings.Contains(got, "in the inbox") {
+		t.Fatalf("the status bar counts a backlog nobody is blocked on:\n%s", got)
+	}
+
+	// A board with nothing waiting at all still reads as the goal state, and
+	// has no fold to advertise.
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention}})
+	panel = m.attentionPanel(96, 14)
+	if !strings.Contains(panel, "the inbox is empty") {
+		t.Fatalf("an empty board no longer reads as the goal state:\n%s", panel)
+	}
+	if strings.Contains(panel, "to browse") {
+		t.Fatalf("an empty board advertises a fold with nothing behind it:\n%s", panel)
+	}
+}
+
+// Done-when: a pass does not reset the fold. It is model state like the sort
+// and the project scope, and a list that re-folded itself every few seconds
+// would take the rows back out from under the operator's hands.
+func TestAPassDoesNotResetTheFold(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: board()})
+	m = browseBacklog(t, m)
+
+	m = update(t, m, eventMsg{ev: board()})
+	if !m.backlogOpen {
+		t.Fatal("a pass folded the backlog back")
+	}
+	if got := len(m.shown); got != 6 {
+		t.Fatalf("the list after a pass has %d rows, want the whole expanded list", got)
+	}
+}
+
+// Done-when: an item carrying StatusUnknown is never folded away. It is the
+// reconciler's bug marker — nothing set a relevance on this row — which is
+// why the fold hides the backlog tier rather than keeping an allow-list of
+// the tiers it shows.
+func TestTheBugMarkerIsNeverFolded(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-3", TicketID: "id-3", Title: "Nothing ranked this", Status: "Somewhere"},
+	}}})
+
+	if got := shownTickets(m); !slices.Equal(got, []string{"LERP-3"}) {
+		t.Fatalf("the folded inbox shows %v, want the unranked row it cannot classify", got)
+	}
+	if panel := m.attentionPanel(96, 14); strings.Contains(panel, "to browse") {
+		t.Fatalf("an unranked row was counted as folded backlog:\n%s", panel)
 	}
 }
 
@@ -1362,6 +1622,7 @@ func TestInboxTitleIsTheLastColumn(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: board()})
+	m = browseBacklog(t, m)
 
 	panel := m.attentionPanel(120, 14)
 	row := ansi.Strip(rowOf(t, panel, "LERP-1"))

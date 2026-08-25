@@ -14,12 +14,16 @@ import (
 
 // searching opens the prompt on a board-loaded inbox and types query into
 // it, one key at a time — the way an operator does, so every assertion after
-// it is about a list that narrowed incrementally.
+// it is about a list that narrowed incrementally. The backlog is expanded
+// first: search is a filter over the rows on screen, and these tests are
+// about it filtering the whole fixture rather than about what the fold
+// leaves on screen (see TestSearchDoesNotReachAFoldedBacklog).
 func searching(t *testing.T, query string) model {
 	t.Helper()
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: board()})
+	m = browseBacklog(t, m)
 	return typeSearch(t, update(t, m, keyMsg("/")), query)
 }
 
@@ -97,6 +101,32 @@ func TestSearchMatchesTheColumnsOnTheRow(t *testing.T) {
 		if !slices.Equal(got, want) {
 			t.Fatalf("search %q shows %v, want %v", tc.query, got, want)
 		}
+	}
+}
+
+// Done-when: the search reaches the rows on screen and no further. A query
+// only a backlog ticket matches finds nothing while the fold is closed —
+// SCOPE calls the search a substring over the rows the panel is showing, and
+// a folded row is not one — and finds it once B has put the row on screen.
+func TestSearchDoesNotReachAFoldedBacklog(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: board()})
+
+	m = typeSearch(t, update(t, m, keyMsg("/")), "curl")
+	if got := shownTickets(m); len(got) != 0 {
+		t.Fatalf("the search reached %v behind the fold", got)
+	}
+	// The panel says the fold is why, rather than leaving the operator to
+	// conclude the ticket is not on the board.
+	if panel := m.attentionPanel(96, 14); !strings.Contains(panel, "B to browse") {
+		t.Fatalf("a search that found nothing does not offer the fold:\n%s", panel)
+	}
+
+	m = update(t, m, keyMsg("enter")) // keep the filter, hand the keys back
+	m = browseBacklog(t, m)
+	if got := shownTickets(m); !slices.Equal(got, []string{"LERP-23"}) {
+		t.Fatalf("shown = %v, want the backlog ticket the query matches", got)
 	}
 }
 
@@ -238,6 +268,7 @@ func TestSearchKeepsTheSelectionOrTakesItToTheTop(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: board()})
+	m = browseBacklog(t, m)       // the whole fixture, so "b" has several rows to match
 	m = update(t, m, keyMsg("j")) // LERP-48, second under the status default
 
 	m = typeSearch(t, update(t, m, keyMsg("/")), "read")
@@ -422,6 +453,7 @@ func TestSearchIsOnTheKeyLineAndTakesIt(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: board()})
+	m = browseBacklog(t, m) // "back" below is a query over the backlog rows
 
 	panel := m.attentionPanel(96, 14)
 	if !strings.Contains(panel, "/ search") {
