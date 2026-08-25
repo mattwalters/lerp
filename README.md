@@ -151,6 +151,12 @@ applies the queue's move rule: `on_success` on a clean exit,
 `on_failure` otherwise, and only if the agent didn't move the ticket
 itself. [Running](#running) describes the interface.
 
+Before the first unattended run, read
+[SECURITY.md](SECURITY.md): running lerp against a team gives everyone
+who can move a ticket into a served status the ability to start an
+agent on your machine, and that page is the whole trust model in one
+place.
+
 Where a finished run leaves the ticket is the whole of the topology.
 A finished run releases the claim wherever it comes to rest — the
 assignment is the claim, and a claimed ticket is someone else's work
@@ -499,6 +505,11 @@ run it:
   agent from reading `~/.ssh` or writing outside its workspace. Because the
   grant lives in a checked-in `lerp.toml`, adding, reviewing, or narrowing
   it (for example with `--allowedTools`) is an ordinary code change.
+
+Both of those, and the half that is not about this config at all — who
+can trigger a run, and what a ticket's text is to the agent that reads
+it — are set out in [SECURITY.md](SECURITY.md), which is also where to
+report a vulnerability.
 
 ## How it behaves
 
