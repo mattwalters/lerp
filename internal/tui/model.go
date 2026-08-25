@@ -354,6 +354,16 @@ func newModel(ctx context.Context, o Options) model {
 	}
 	h := help.New()
 	h.ShowAll = true
+	// bubbles renders the panels' key line, so it takes the theme's faint
+	// and the "·" the rest of the TUI separates facts with rather than the
+	// component's own grey and bullet. The ? overlay keeps bubbles' own two
+	// greys: its key and description columns are what tell it apart from a
+	// wall of text.
+	h.ShortSeparator = " · "
+	h.Styles.ShortKey = styleFaint
+	h.Styles.ShortDesc = styleFaint
+	h.Styles.ShortSeparator = styleFaint
+	h.Styles.Ellipsis = styleFaint
 	m := model{o: o, ctx: ctx, focus: panelWork, lanes: make(map[int]*lane),
 		details: make(map[string]*ticketDetail), lastLog: make(map[string]string),
 		vp: viewport.New(0, 0), follow: true, keys: newKeymap(), help: h,
@@ -1238,14 +1248,16 @@ func (m *model) geometry() geometry {
 		g.sideW = max(28, m.width*45/100)
 		g.mainW = m.width - g.sideW
 	}
-	workRows, _ := m.workListRows(g.sideW - 2)
-	attnRows, _ := m.attentionRows(g.sideW - 2)
+	// Wants come from the same row builders the panels draw with, so the
+	// counts can never drift from what lands on screen.
+	workRows, _ := m.workListRows(padList.inner(g.sideW))
+	attnRows, _ := m.attentionRows(padList.inner(g.sideW))
 
 	stackH := g.bodyH
 	if g.wide {
 		// The main pane has the other column to itself, so it fits its own
 		// content and never competes with the stack.
-		g.mainH = min(g.bodyH, m.mainWant(g.bodyH, g.mainW-2))
+		g.mainH = min(g.bodyH, m.mainWant(g.bodyH, padMain.inner(g.mainW)))
 	} else {
 		// Stacked, the body is split rather than fitted: half the screen is
 		// the board, half is whatever the selected row opens. Fitting the
@@ -1257,9 +1269,20 @@ func (m *model) geometry() geometry {
 		g.mainH = fitH(g.bodyH/2, mainFloor, g.bodyH-2*panelFloor)
 		stackH = g.bodyH - g.mainH
 	}
-	g.workH = workHeight(stackH, len(workRows)+2, len(attnRows)+2)
+	g.workH = workHeight(stackH, m.panelWant(panelWork, len(workRows)), m.panelWant(panelAttention, len(attnRows)))
 	g.attnH = stackH - g.workH
 	return g
+}
+
+// panelWant is one panel's height: the rows it renders plus its borders, and
+// one line more when it is the focused panel carrying key hints. Both the
+// height bought here and the line panelBody draws ask keyHints, so the two
+// can never disagree about whether the line is there.
+func (m *model) panelWant(p panel, rows int) int {
+	if m.focus == p && m.keyHints(p) {
+		rows++
+	}
+	return rows + 2
 }
 
 // workHeight is work's share of the stack: the rows it renders plus its
@@ -1301,7 +1324,7 @@ func (m *model) layout() {
 		return
 	}
 	g := m.geometry()
-	m.vp.Width = max(0, g.mainW-2)
+	m.vp.Width = max(0, padMain.inner(g.mainW))
 	m.vp.Height = max(1, g.mainH-2)
 	m.help.Width = m.vp.Width
 	// A pane that just changed height holds a scroll position measured
@@ -1352,6 +1375,83 @@ func panelTitle(n int, name string, focused bool, extra string) string {
 		label = styleFaint.Render(label)
 	}
 	return label + extra
+}
+
+// panelBody is what a panel draws inside its border: its list rows, windowed
+// so the focused panel's selection stays visible, and — on the focused panel
+// — the key hints on the last line. A panel squeezed down to a single row
+// keeps the row and drops the hints: a key line over an empty body says what
+// the keys do to nothing.
+func (m *model) panelBody(p panel, rows []string, sel, width, ih int) []string {
+	if m.focus != p {
+		return rows
+	}
+	// The hint costs a line, and it is only affordable when the rows can
+	// still be shown in what is left: either they fit outright, or two lines
+	// remain, which is the least windowRows needs to keep the selection
+	// visible. Below that the rows win — a panel showing only "⋯ n more" has
+	// lost the cursor the keys move.
+	hint := ""
+	if ih >= 3 || (ih == 2 && len(rows) <= 1) {
+		hint = m.keyHint(p, width)
+	}
+	if hint != "" {
+		ih--
+	}
+	if sel >= 0 {
+		rows = windowRows(rows, sel, ih)
+	}
+	if hint == "" {
+		return rows
+	}
+	// Pinned to the last line rather than left floating under the rows: a
+	// focused panel absorbs the layout's slack, and a key line adrift in
+	// that space reads as one more row.
+	rows = fitRows(rows, ih)
+	for len(rows) < ih {
+		rows = append(rows, "")
+	}
+	return append(rows, hint)
+}
+
+// keyHint is the focused panel's key line, rendered by bubbles/help so it
+// truncates to the panel rather than overflowing it. The model's own help
+// component draws it, on a copy: the ? overlay owns m.help.Width.
+func (m model) keyHint(p panel, width int) string {
+	if width < 1 || !m.keyHints(p) {
+		return ""
+	}
+	h := m.help
+	h.Width = width
+	return h.ShortHelpView(m.panelKeys(p))
+}
+
+// panelKeys is the focused panel's key line as bindings: what the row under
+// its cursor answers to. A panel with no row under the cursor has none —
+// the first frame, before any pass has reported, and the settled empty
+// states, where every one of these keys is dead.
+func (m *model) panelKeys(p panel) []key.Binding {
+	switch p {
+	case panelAttention:
+		if m.selectedAttention() == nil {
+			return nil
+		}
+	case panelWork:
+		if m.selectedWork() == nil {
+			return nil
+		}
+	}
+	return m.keys.panelHelp(p, m.selectedLogPath() != "", m.selectedURL() != "")
+}
+
+// keyHints reports whether the focused panel is carrying a key line at all:
+// the promote picker must not have taken the keyboard — handleKey routes
+// everything to it, so those keys would be dead — and the row under the
+// cursor has to answer to something. Both the height panelWant buys and the
+// line panelBody draws ask this, so the two can never disagree about
+// whether the line is there.
+func (m *model) keyHints(p panel) bool {
+	return !m.promoting && len(m.panelKeys(p)) > 0
 }
 
 // marker renders the selection arrow for one row of a focused panel.
@@ -1525,11 +1625,9 @@ func (m model) attentionPanel(w, h int) string {
 			extra += styleFaint.Render(" · " + m.project)
 		}
 	}
-	rows, sel := m.attentionRows(w - 2)
-	if focused && sel >= 0 {
-		rows = windowRows(rows, sel, h-2)
-	}
-	return panelBox(panelTitle(1, "needs you", focused, extra), focused, w, h, rows)
+	rows, sel := m.attentionRows(padList.inner(w))
+	rows = m.panelBody(panelAttention, rows, sel, padList.inner(w), h-2)
+	return panelBox(panelTitle(1, "needs you", focused, extra), focused, w, h, rows, padList)
 }
 
 // busyLanes counts the configured lanes hosting live runs. Adopted runs
@@ -1550,11 +1648,9 @@ func (m model) workPanel(w, h int) string {
 	// Capacity has two homes now that the lane rows are gone: this title and
 	// the status bar. It is the number that says whether anything can start.
 	extra := styleFaint.Render(fmt.Sprintf(" · %d/%d running", m.busyLanes(), m.o.Lanes))
-	rows, sel := m.workListRows(w - 2)
-	if focused && sel >= 0 {
-		rows = windowRows(rows, sel, h-2)
-	}
-	return panelBox(panelTitle(2, "work", focused, extra), focused, w, h, rows)
+	rows, sel := m.workListRows(padList.inner(w))
+	rows = m.panelBody(panelWork, rows, sel, padList.inner(w), h-2)
+	return panelBox(panelTitle(2, "work", focused, extra), focused, w, h, rows, padList)
 }
 
 // workListRows renders the merged list: each queue's header, then its
@@ -1660,11 +1756,11 @@ func (m model) mainPanel(w, h int) string {
 	}
 	if m.helpOn {
 		return panelBox(styleTitleFocus.Render("help"), true, w, h,
-			strings.Split(m.help.View(m.keys), "\n"))
+			strings.Split(m.help.View(m.keys), "\n"), padMain)
 	}
 	title := m.mainTitle()
 	return panelBox(styleFaint.Render(title), false, w, h,
-		strings.Split(m.vp.View(), "\n"))
+		strings.Split(m.vp.View(), "\n"), padMain)
 }
 
 // promotePicker renders the target-status list for the selected needs-you
@@ -1681,7 +1777,7 @@ func (m model) promotePicker(it loop.AttentionItem, w, h int) string {
 	}
 	// The highlighted status must be on screen before enter can confirm it.
 	rows = windowRows(rows, 2+m.promoteSel, h-2)
-	return panelBox(styleTitleFocus.Render("promote "+it.Ticket), true, w, h, rows)
+	return panelBox(styleTitleFocus.Render("promote "+it.Ticket), true, w, h, rows, padMain)
 }
 
 func (m model) mainTitle() string {
@@ -1718,6 +1814,10 @@ func (m model) rawSuffix() string {
 	return ""
 }
 
+// labelGutter is the width of the detail lenses' label column, and the
+// hanging indent a wrapped value lines up under.
+const labelGutter = "        "
+
 // attentionDetail is the main pane's lens on the selected needs-you item:
 // everything the loop knows, Linear's URL, and then the ticket itself (see
 // ticketLines). Promote is the one action here; everything else about the
@@ -1747,13 +1847,19 @@ func (m model) attentionDetail(width int) string {
 		"",
 		styleFaint.Render("status  ") + status,
 		styleFaint.Render("project ") + projectName(it.Project),
-		styleFaint.Render("why     ") + it.Reason,
-		styleFaint.Render("linear  ") + it.URL,
-		"",
-		// Short enough to survive the pane: the hint that gets truncated is
-		// the hint that was not there.
-		styleFaint.Render("p promote · s sort · P project · o open in Linear"),
 	}
+	// The reason is a sentence, not a cell. panelBox truncates its rows, and
+	// the pane's padding costs two columns, so a long "why" would lose the
+	// tail — the part that says what is actually holding the ticket up.
+	// Wrapped under the gutter, the way the ticket body already is.
+	for i, l := range wrapText(it.Reason, width-len(labelGutter)) {
+		if i == 0 {
+			lines = append(lines, styleFaint.Render("why     ")+l)
+			continue
+		}
+		lines = append(lines, labelGutter+l)
+	}
+	lines = append(lines, styleFaint.Render("linear  ")+it.URL)
 	return strings.Join(append(lines, m.ticketLines(it.TicketID, width)...), "\n")
 }
 
@@ -1856,7 +1962,7 @@ func (m model) workDetail() string {
 		styleFaint.Render("pickup  ") + gate,
 		styleFaint.Render("linear  ") + r.url,
 		"",
-		styleFaint.Render("o opens it in Linear; to change what runs next, move it there"),
+		styleFaint.Render("to change what runs next, move the ticket in Linear"),
 	}, "\n")
 }
 
