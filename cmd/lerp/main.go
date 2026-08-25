@@ -31,9 +31,10 @@ const usage = `usage:
 `
 
 // defaultLanes is how many agents run at once unless -concurrency says so.
-// SCOPE keeps N small and names five; each lane is a whole workspace, so a
-// repo with a heavy provision command may want -concurrency lower.
-const defaultLanes = 5
+// SCOPE keeps N small and leaves the number to this default; each lane is a
+// whole workspace, so a repo with a heavy provision command may want
+// -concurrency lower.
+const defaultLanes = 10
 
 func main() {
 	args := os.Args[1:]
