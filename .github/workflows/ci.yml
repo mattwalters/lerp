@@ -28,22 +28,33 @@ jobs:
       - run: make check
 
   # A dependency that turns out to be vulnerable should fail a build, not wait
-  # to be noticed. govulncheck reports only vulnerabilities actually reachable
-  # from this module's code, so a finding is a finding worth acting on rather
-  # than a version number to argue with. Its own job, not a step in `make
-  # check`: the gate stays something a contributor can run offline with
-  # nothing installed but Go.
+  # to be noticed. This gates on reachability: govulncheck fails the job only
+  # for advisories lerp's own code can reach, so a red run is something to act
+  # on rather than a version number to argue with. The tradeoff is real and
+  # deliberate — an advisory in a dependency lerp never calls is reported and
+  # does not gate. Its own job, not a step in `make check`, because it needs
+  # the network and the gate does not.
   vuln:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
-      # Deliberately unpinned. The scanner is only as good as the vulnerability
-      # database it fetches, which is current by definition; pinning the tool
-      # would freeze the analysis without freezing the data it reads.
-      - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+          # Deliberately not go.mod's `go 1.25` like the test job. govulncheck
+          # scans the standard library too, and it reports against whichever
+          # toolchain runs it: pinned to an old line, this job goes red for
+          # stdlib advisories whose fix only ever ships in a newer one, and no
+          # change to this repo can clear it. `stable` asks the question worth
+          # asking — is lerp exposed when built with a current Go — and
+          # check-latest keeps the answer off the runner image's cache, which
+          # lags upstream by days after a security release.
+          go-version: stable
+          check-latest: true
+      # Pinned, and bumped by hand. The vulnerability database is fetched from
+      # vuln.go.dev at run time, so a pinned scanner still sees today's
+      # advisories; what the pin buys is that a new govulncheck release cannot
+      # turn an unrelated PR red on its own.
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
 
   # The cast rots silently: a tape whose keystrokes no longer drive the UI
   # they were written against still renders, it just renders the wrong thing.
