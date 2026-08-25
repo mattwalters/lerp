@@ -512,10 +512,15 @@ func TestStockVariants(t *testing.T) {
 			}
 			// Declining the review pass is the only thing that distinguishes
 			// two otherwise identical renderings, and it shows up as prose
-			// inside one prompt rather than as a queue of its own. "three
-			// rounds" is the cap that paragraph puts on the fix loop.
-			if got := strings.Contains(c.Queues["implement"].Prompt, "three rounds"); got != tc.reviewPass {
-				t.Errorf("implement prompt reviews its own work = %v, want %v", got, tc.reviewPass)
+			// inside one prompt rather than as a queue of its own.
+			// "three rounds" is the cap that paragraph puts on the fix loop;
+			// "how the review went" is what the verdict comment owes the board
+			// once a review has happened, and a pipeline without the pass must
+			// not ask an agent to report rounds it never ran.
+			for _, prose := range []string{"three rounds", "how the review went"} {
+				if got := strings.Contains(c.Queues["implement"].Prompt, prose); got != tc.reviewPass {
+					t.Errorf("implement prompt contains %q = %v, want %v", prose, got, tc.reviewPass)
+				}
 			}
 			// A finished plan lands on the approval gate, never straight in
 			// implement: the planning stage is worth running only if a human

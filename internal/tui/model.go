@@ -115,6 +115,13 @@ const (
 	sortModes // the count, so one key can cycle them
 )
 
+// defaultSort is the mode the inbox opens on. Grouping by status puts the
+// two things most worth acting on — where runs fail, then where they
+// finish — at the top under headers that say so, where a flat list buries
+// a nearly-done ticket among the backlog rows. Leverage keeps its
+// throughput job as the order within each group, one `s` away as a mode.
+const defaultSort = sortStatus
+
 func (s sortMode) String() string {
 	switch s {
 	case sortPriority:
@@ -311,6 +318,8 @@ type model struct {
 	// key cycles the order, another scopes the rows to a single Linear
 	// project ("" is every project). Neither is saved anywhere — they are a
 	// way to read one list the pass already fetched, not a view to keep.
+	// sortMode starts at defaultSort, so it is set in newModel rather than
+	// left to the zero value.
 	sortMode sortMode
 	project  string
 
@@ -386,6 +395,7 @@ func newModel(ctx context.Context, o Options) model {
 	m := model{o: o, ctx: ctx, focus: panelWork, lanes: make(map[int]*lane),
 		details: make(map[string]*ticketDetail), lastLog: make(map[string]string),
 		vp: viewport.New(0, 0), follow: true, keys: newKeymap(), help: h,
+		sortMode: defaultSort,
 		inFlight: true, // Init starts the first pass immediately
 		passes:   &sync.WaitGroup{}}
 	for n := 1; n <= o.Lanes; n++ {
@@ -1532,8 +1542,15 @@ func (m *model) attentionRows(width int) ([]string, int) {
 	var rows []string
 	sel := -1
 	header := ""
+	// A header separates one group from the next, so a list with a single
+	// group draws none: there is no boundary left for it to mark, and on a
+	// squeezed panel it costs the row or the key hint that line was worth
+	// more as. It costs the group's derived note, which no row column
+	// carries — but that note explains why a group ranks where it does, and
+	// with one group there is no ranking to explain.
+	grouped := m.sortMode.grouped() && !m.oneGroup()
 	for i, it := range m.shown {
-		if m.sortMode.grouped() {
+		if grouped {
 			if h, note := m.sortMode.header(it); h != header {
 				header = h
 				row := styleTicket.Render(h)
@@ -1549,6 +1566,19 @@ func (m *model) attentionRows(width int) ([]string, int) {
 		rows = append(rows, attentionRow(it, focused && i == m.attnSel, idW, statusW, projW, width))
 	}
 	return rows, sel
+}
+
+// oneGroup reports whether every shown row falls under the same header.
+// The rows are already in group order, so a single header over all of them
+// means there is exactly one group. Only called with a non-empty list.
+func (m *model) oneGroup() bool {
+	first, _ := m.sortMode.header(m.shown[0])
+	for _, it := range m.shown[1:] {
+		if h, _ := m.sortMode.header(it); h != first {
+			return false
+		}
+	}
+	return true
 }
 
 // titleFloor is how much of a title has to survive for the project column
@@ -1938,8 +1968,8 @@ func (m model) attentionDetail(width int) string {
 // then the comments oldest first — so lerp's last stage-boundary artifact,
 // the verdict that parked the ticket, is where the eye lands. Read-only and
 // flat: nothing here is selectable, no thread is followed, no other ticket
-// is reachable from it. Markdown is rendered as the plain text it is; `o` is
-// the answer to anything that wants more.
+// is reachable from it. Markdown is rendered (see markdown.go); `o` is the
+// answer to anything that wants more.
 func (m model) ticketLines(ticketID string, width int) []string {
 	d := m.details[ticketID]
 	switch {
@@ -1952,7 +1982,7 @@ func (m model) ticketLines(ticketID string, width int) []string {
 	}
 	lines := []string{""}
 	if body := strings.TrimSpace(d.body); body != "" {
-		lines = append(lines, wrapText(body, width)...)
+		lines = append(lines, renderMarkdown(body, width)...)
 	} else {
 		lines = append(lines, styleFaint.Render("(no description)"))
 	}
@@ -1961,7 +1991,7 @@ func (m model) ticketLines(ticketID string, width int) []string {
 	}
 	for _, c := range d.comments {
 		lines = append(lines, "", styleFaint.Render(commentHead(c)))
-		lines = append(lines, wrapText(strings.TrimSpace(c.Body), width)...)
+		lines = append(lines, renderMarkdown(strings.TrimSpace(c.Body), width)...)
 	}
 	return lines
 }
@@ -1992,7 +2022,9 @@ func age(t time.Time) string {
 
 // wrapText word-wraps prose to the pane's inner width. panelBox truncates
 // its rows instead of wrapping — right for a one-line list row, wrong for a
-// ticket body, where it would throw away everything past the first line.
+// sentence, where it would throw away everything past the first line. The
+// ticket body goes through renderMarkdown instead; this is for lerp's own
+// prose, which is not markdown and must not be read as any.
 func wrapText(s string, width int) []string {
 	return strings.Split(ansi.Wrap(s, max(8, width), "-"), "\n")
 }

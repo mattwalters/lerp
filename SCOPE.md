@@ -67,9 +67,12 @@ sentence.
    directory, runs to exit, exit code means done or failed. The
    contract is the lowest common denominator — a capability every
    runner can't offer is a capability lerp doesn't have.
-4. **Lane** — a concurrency unit. Lerp runs at most N agents at once
-   (N is small, ~5). A lane's occupant is a run: a pid, a log file, a
-   ticket, and a workspace (see invariant 9).
+4. **Lane** — a concurrency unit. Lerp runs at most N agents at once.
+   N is small — small enough that one person can watch what is
+   happening — and the number itself is a default the operator
+   overrides per run, not a constant this document pins. A lane's
+   occupant is a run: a pid, a log file, a ticket, and a workspace
+   (see invariant 9).
 5. **The loop** — the reconciler described above. There is exactly one.
 
 Amendment rule: adding a sixth concept requires removing one of these

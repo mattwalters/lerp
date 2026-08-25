@@ -38,12 +38,15 @@ const (
 	// still alive, and now occupies a lane here. The event carries the log
 	// path so a subscriber can reattach its tail.
 	EventAdopted EventType = "adopted"
-	// EventReaped reports that a recorded run's process is dead: its
-	// workspace was disposed and its record removed. The ticket is left
-	// wherever Linear says it is.
+	// EventReaped reports that a recorded run's process is dead without
+	// having recorded how it ended: its workspace was disposed and its
+	// record removed. The ticket is left wherever Linear says it is. A dead
+	// run that did record an exit status is settled instead, and reports
+	// EventExited.
 	EventReaped EventType = "reaped"
-	// EventExited reports that a run this process started finished and the
-	// queue's move rule was applied.
+	// EventExited reports that a run finished and the queue's move rule was
+	// applied — a run this process started, or an adopted run that finished
+	// with nobody waiting on it and recorded its own exit status.
 	EventExited EventType = "exited"
 	// EventError reports a pass or a run that failed in a way worth
 	// surfacing. The loop keeps ticking; whatever still needs repair is
@@ -176,7 +179,9 @@ type Event struct {
 	// that is the original start under a previous process, not the adoption.
 	// Zero when no run exists yet.
 	StartedAt time.Time
-	ExitCode  int // meaningful only for EventExited
+	// ExitCode is how the run ended: waited for on the live path, read back
+	// from the run's own exit file for an adopted one. EventExited only.
+	ExitCode int
 	// Note is a remark about how a run settled, for the operator to read:
 	// today, the on_success or on_failure hop conclude did not make because
 	// the ticket left the queue's status mid-run. Empty when there is
@@ -629,9 +634,7 @@ func (r *Reconciler) adopt(record evidence.Record) {
 const reapDisposeTimeout = 2 * time.Minute
 
 // reap cleans up after a run whose process is dead: dispose the workspace,
-// release the dead run's claim when the board still shows it, and remove the
-// local record. The ticket's status is left wherever Linear says it is — a
-// crash is drift, and re-running the stage repairs it (SCOPE invariant 3).
+// settle the ticket, and remove the local record.
 //
 // It reports whether the reap finished. One that could not keeps the record,
 // so the next pass retries it.
@@ -643,21 +646,85 @@ func (r *Reconciler) reap(ctx context.Context, record evidence.Record) bool {
 	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), reapDisposeTimeout)
 	r.o.Dispose(dctx, r.o.RepoDir, r.o.Repo.Dispose, id, r.o.Log)
 	cancel()
-	if err := r.releaseDead(ctx, record); err != nil {
-		r.fail(fmt.Errorf("reap run %s: %w", record.RunID, err))
+	ev, ok := r.settleDead(ctx, record)
+	if !ok {
 		return false
 	}
 	if err := r.o.Evidence.Remove(record.RunID); err != nil {
 		r.fail(fmt.Errorf("reap run %s: %w", record.RunID, err))
 		return false
 	}
-	r.emit(Event{Type: EventReaped, RunID: record.RunID, Lane: record.Lane,
-		TicketID: record.TicketID, Queue: record.Queue, LogPath: record.LogPath})
+	r.emit(ev)
 	return true
 }
 
-// releaseDead releases a dead run's claim so its ticket becomes eligible
-// again — but only when the board still looks exactly as the run left it:
+// settleDead decides what a dead run's ticket is owed, and returns the
+// terminal event that says so. It reports false when the board could not be
+// settled, so the caller keeps the record and the next pass retries.
+//
+// A run that recorded its own exit status really finished, and gets the
+// queue's move rule exactly as a live run would — adoption that only ever
+// remembered would silently cost a whole stage every time lerp restarted
+// across a run's finish. Anything else — no file, a torn one, a run killed
+// before it could write — falls back to releasing the claim and leaving the
+// status alone: a crash is drift, and re-running the stage repairs it (SCOPE
+// invariant 3). Retrying is safe either way, since conclude only moves a
+// ticket still sitting in the queue's status and only releases a claim still
+// held by this user.
+//
+// "Exactly as a live run would" includes the one case where it differs from
+// the old reap: a failed run whose queue has no on_failure route keeps its
+// claim and stays put, rather than being released back into the queue. That
+// is conclude's deliberate rule — releasing a ticket that fails every time
+// would re-run it on every pass forever — and a run that really failed is the
+// case it was written for. The ticket then rests claimed in a served status,
+// which the inbox does not list (see attention); that gap is the one a live
+// failed run has always had, not a new one.
+func (r *Reconciler) settleDead(ctx context.Context, record evidence.Record) (Event, bool) {
+	reaped := Event{Type: EventReaped, RunID: record.RunID, Lane: record.Lane,
+		TicketID: record.TicketID, Queue: record.Queue, LogPath: record.LogPath}
+	code, recorded := evidence.ExitStatus(record)
+	// The queue the run started from may have been renamed, removed, or
+	// pointed at a different status in lerp.toml since it started. Only a
+	// queue still serving the status this run picked its ticket up from has a
+	// move rule that means anything here: concluding against a queue whose
+	// status has moved on would report a hop nobody skipped, and would judge
+	// the claim by a served set the run never ran under.
+	queue, configured := r.o.Repo.Queues[record.Queue]
+	if !recorded || !configured || queue.Status != record.StartingStatus || record.TicketID == "" {
+		if err := r.releaseDead(ctx, record); err != nil {
+			r.fail(fmt.Errorf("reap run %s: %w", record.RunID, err))
+			return Event{}, false
+		}
+		return reaped, true
+	}
+
+	issue, err := r.o.Client.GetIssue(ctx, record.TicketID)
+	if errors.Is(err, linear.ErrNotFound) {
+		return reaped, true // the ticket itself is gone; nothing to settle
+	}
+	if err != nil {
+		r.fail(fmt.Errorf("reap run %s: read ticket %s: %w", record.RunID, record.TicketID, err))
+		return Event{}, false
+	}
+	viewerID, err := r.o.Client.Viewer(ctx)
+	if err != nil {
+		r.fail(fmt.Errorf("reap run %s: read viewer: %w", record.RunID, err))
+		return Event{}, false
+	}
+	note, moveErr := conclude(ctx, r.o.Client, issue, queue, r.o.Repo, code, viewerID, r.o.Log)
+	if moveErr != nil {
+		r.fail(fmt.Errorf("reap run %s: %w", record.RunID, moveErr))
+		return Event{}, false
+	}
+	return Event{Type: EventExited, RunID: record.RunID, Lane: record.Lane,
+		TicketID: record.TicketID, Ticket: issue.Identifier, Queue: record.Queue,
+		LogPath: record.LogPath, ExitCode: code, Note: note}, true
+}
+
+// releaseDead releases the claim of a dead run that never said how it ended,
+// so its ticket becomes eligible again — but only when the board still looks
+// exactly as the run left it:
 // same status the run started from, still assigned to this operating user.
 // Anything else means a human, an agent, or an automation acted since, and
 // the loop leaves their work alone.
@@ -857,6 +924,11 @@ func (r *Reconciler) provisionAndRun(ctx context.Context, lr *laneRun, c candida
 		Ticket:  issue.Identifier,
 		Workdir: record.Workspace,
 		LogPath: record.LogPath,
+		// The run records its own exit status, so a lerp that restarts across
+		// its finish can still apply the move rule. The live path below keeps
+		// concluding from the code Wait() returned: the file is the fallback
+		// for runs nobody was waiting on, never a second source of truth.
+		ExitPath: record.ExitPath,
 		Started: func(pid int) {
 			// The PID makes the record adoptable; without it the run would be
 			// reaped by the next process even while the agent is alive. An
@@ -888,7 +960,7 @@ func (r *Reconciler) provisionAndRun(ctx context.Context, lr *laneRun, c candida
 	// on the exit event; the ticket stays claimed for a human to settle. A
 	// move that was skipped because the ticket left mid-run rides along too,
 	// as a note: the run log alone is not somewhere anyone is looking.
-	note, moveErr := conclude(ctx, r.o.Client, issue, c.queue, r.o.Repo, result.ExitCode, r.o.Log)
+	note, moveErr := conclude(ctx, r.o.Client, issue, c.queue, r.o.Repo, result.ExitCode, viewerID, r.o.Log)
 	return Event{Type: EventExited, RunID: record.RunID, Lane: lr.lane, TicketID: issue.ID,
 		Ticket: issue.Identifier, Queue: c.name, LogPath: record.LogPath,
 		ExitCode: result.ExitCode, Note: note, Err: moveErr}, false, true
