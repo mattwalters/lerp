@@ -1477,9 +1477,10 @@ func (m *model) attentionRows(width int) ([]string, int) {
 	focused := m.focus == panelAttention
 	// Every column is padded to the widest cell on the list, so the four of
 	// them line up as columns worth scanning rather than as ragged text.
-	idW, statusW, projW := 0, 0, 0
+	idW, levW, statusW, projW := 0, 0, 0, 0
 	for _, it := range m.shown {
 		idW = max(idW, lipgloss.Width(it.Ticket))
+		levW = max(levW, lipgloss.Width(leverageCell(it)))
 		statusW = max(statusW, lipgloss.Width(statusText(it)))
 		projW = max(projW, lipgloss.Width(projectName(it.Project)))
 	}
@@ -1500,7 +1501,7 @@ func (m *model) attentionRows(width int) ([]string, int) {
 		if i == m.attnSel {
 			sel = len(rows)
 		}
-		rows = append(rows, attentionRow(it, focused && i == m.attnSel, idW, statusW, projW, width))
+		rows = append(rows, attentionRow(it, focused && i == m.attnSel, idW, levW, statusW, projW, width))
 	}
 	return rows, sel
 }
@@ -1534,12 +1535,14 @@ const (
 // width the operator's own status vocabulary sets — before the identifier
 // and the leverage, the two facts that make a row addressable at all, which
 // survive any width.
-func attentionRow(it loop.AttentionItem, selected bool, idW, statusW, projW, width int) string {
+func attentionRow(it loop.AttentionItem, selected bool, idW, levW, statusW, projW, width int) string {
 	id := styleTicket.Render(it.Ticket) + strings.Repeat(" ", max(0, idW-lipgloss.Width(it.Ticket)))
+	lev := leverageCell(it)
+	lev += strings.Repeat(" ", max(0, levW-lipgloss.Width(lev)))
 	// statusCell pads to the column and no further, so head carries the
 	// gutter itself: every branch below ends in one, and a status wide
 	// enough to leave no pad of its own still cannot touch the title.
-	head := marker(selected) + id + " " + leverageCell(it) + " " + statusCell(it, statusW) + "  "
+	head := marker(selected) + id + " " + lev + " " + statusCell(it, statusW) + "  "
 	full := head + projectCell(it.Project, projW) + "  " + priorityCell(it.Priority) + "  "
 	noProject := head + priorityCell(it.Priority) + "  "
 	// Both columns priced out and the identifier, the leverage and the status
@@ -1597,9 +1600,11 @@ func projectName(project string) string {
 	return project
 }
 
-// leverageCell says what routing this ticket would free, in a fixed-width
-// cell so the titles line up: ⊘ for a ticket something still blocks, ↓n for
-// the count it transitively unblocks. Bold marks the ones with downstream —
+// leverageCell says what routing this ticket would free: ⊘ for a ticket
+// something still blocks, ↓n for the count it transitively unblocks. The pad
+// here is the cell's own floor — a count in the hundreds outgrows it, so the
+// column is measured across the list like the others, and the row pads out
+// to that. Bold marks the ones with downstream —
 // shape and weight, not color alone.
 func leverageCell(it loop.AttentionItem) string {
 	if len(it.BlockedBy) > 0 {

@@ -793,7 +793,7 @@ func TestInboxProjectFilter(t *testing.T) {
 // Done-when: leverage, priority and blocked-ness are readable on the row
 // itself, without selecting it — and the columns elide from the right, so a
 // narrow panel truncates the title first, then drops the project, and never
-// costs the identifier, the leverage or the status.
+// costs the identifier or the leverage.
 func TestInboxRowsCarryLeverageAndPriority(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, keyMsg("1"))
@@ -952,12 +952,45 @@ func TestInboxTitleIsTheLastColumn(t *testing.T) {
 		t.Fatalf("the marked status pushed its row's title out of the column:\n%s", wide)
 	}
 
+	// The priority column carries a gutter of its own for the same reason
+	// the status column does: an Urgent row fills priorityCell's pad exactly,
+	// so nothing is left between the widest label and the title.
+	urgent, _, _ := newTestModel(t, 1)
+	urgent = update(t, urgent, keyMsg("1"))
+	urgent = update(t, urgent, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-36", Title: "Sanitize config", Status: "Backlog", Priority: 1},
+	}}})
+	if got := ansi.Strip(rowOf(t, urgent.attentionPanel(44, 5), "LERP-36")); !strings.Contains(got, "Urgent  Sanitize") {
+		t.Fatalf("the priority runs into the title:\n%s", got)
+	}
+
+	// A leverage count wider than leverageCell's own pad widens the column
+	// rather than its own row: every column hangs off the head now, so a row
+	// measured short would take its own rung of the ladder and carry every
+	// column after it one place right.
+	big, _, _ := newTestModel(t, 1)
+	big = update(t, big, keyMsg("1"))
+	big = update(t, big, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-1", Title: "hundred blocker", Status: "Backlog", Unblocks: 100},
+		{Ticket: "LERP-2", Title: "ordinary row", Status: "Backlog", Unblocks: 2},
+	}}})
+	hundreds := big.attentionPanel(76, 6)
+	many, few := ansi.Strip(rowOf(t, hundreds, "LERP-1")), ansi.Strip(rowOf(t, hundreds, "LERP-2"))
+	iMany, iFew := strings.Index(many, "hundred blocker"), strings.Index(few, "ordinary row")
+	if iMany < 0 || iFew < 0 {
+		t.Fatalf("a title is not on its row whole:\n%s", hundreds)
+	}
+	if lipgloss.Width(many[:iMany]) != lipgloss.Width(few[:iFew]) {
+		t.Fatalf("a three-digit leverage count moved its own row's columns:\n%s", hundreds)
+	}
+
 	// Fixed columns to the left means every title starts in the same place,
-	// whatever the rows around it carry.
+	// whatever the rows around it carry — LERP-23, the blocked row, is the
+	// one whose leverage cell is the ⊘ rather than a count.
 	at := -1
 	for _, tc := range []struct{ ticket, title string }{
 		{"LERP-1", "Fix the build"}, {"LERP-48", "Read the ticket in the TUI"},
-		{"LERP-60", "Unfiled work"},
+		{"LERP-60", "Unfiled work"}, {"LERP-23", "curl install"},
 	} {
 		row := ansi.Strip(rowOf(t, panel, tc.ticket))
 		start := strings.Index(row, tc.title)
