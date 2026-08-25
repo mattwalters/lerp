@@ -215,6 +215,18 @@ func update(t *testing.T, m model, msg tea.Msg) model {
 	return next.(model)
 }
 
+// openMain opens the focused panel's main pane. Both panels start with the
+// list owning the screen, so a test about what the pane holds asks for it
+// with the key an operator would press rather than reaching into the model.
+func openMain(t *testing.T, m model) model {
+	t.Helper()
+	m = update(t, m, keyMsg("enter"))
+	if !m.mainOpen() {
+		t.Fatal("enter did not open the main pane")
+	}
+	return m
+}
+
 // updateCmd is update for the messages whose command is the assertion — the
 // detail fetch, which either fires or does not.
 func updateCmd(t *testing.T, m model, msg tea.Msg) (model, tea.Cmd) {
@@ -411,6 +423,7 @@ func TestFocusSwitching(t *testing.T) {
 // ticket, including why it will not run.
 func TestWorkPanelShowsWhatRunsNext(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = openMain(t, m)
 
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
 		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
@@ -520,6 +533,7 @@ func TestTheLensFollowsTheRowNotThePanel(t *testing.T) {
 	}}})
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 		TicketID: "id-1", Ticket: "LERP-1", Queue: "implement", LogPath: path}})
+	m = openMain(t, m)
 	if !strings.Contains(m.View(), "agent at work") {
 		t.Fatalf("the running row does not show its log:\n%s", m.View())
 	}
@@ -933,7 +947,7 @@ func TestTheHelpOverlayIsNotWrittenOverByALiveLog(t *testing.T) {
 	}}})
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 		TicketID: "t1", Ticket: "LERP-1", Queue: "implement", LogPath: logPath}})
-	m = update(t, m, keyMsg("2"))
+	m = openMain(t, update(t, m, keyMsg("2")))
 	if !strings.Contains(m.View(), "line 199") {
 		t.Fatalf("the log lens is not up, so this test is not exercising the case:\n%s", m.View())
 	}
@@ -1034,7 +1048,7 @@ func TestReadingTheHelpDoesNotDisturbTheLogBehindIt(t *testing.T) {
 	}}})
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 		TicketID: "t1", Ticket: "LERP-1", Queue: "implement", LogPath: logPath}})
-	m = update(t, m, keyMsg("2"))
+	m = openMain(t, update(t, m, keyMsg("2")))
 	m = update(t, m, keyMsg("pgup"))
 	m = update(t, m, keyMsg("pgup"))
 	if m.follow {
@@ -1729,29 +1743,36 @@ func TestEnterOpensTheDetailAndEscCloses(t *testing.T) {
 	}
 }
 
-// Done-when: one toggle, two memories. The panels want opposite defaults, so
-// the state is the panel's and not the screen's.
+// Done-when: one toggle, two memories. Both panels start closed now, so what
+// the state has to survive is the operator opening one of them and walking
+// away: the answer is the panel's and not the screen's.
 func TestThePaneIsRememberedPerPanel(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("enter")) // work
+	m = update(t, m, keyMsg("1"))
+	if m.mainOpen() {
+		t.Fatal("the inbox inherited the pane work opened")
+	}
+	m = update(t, m, keyMsg("2"))
+	if !m.mainOpen() {
+		t.Fatal("work forgot that enter opened its pane")
+	}
+
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, keyMsg("enter"))
 	m = update(t, m, keyMsg("2"))
 	m = update(t, m, keyMsg("esc"))
-
 	m = update(t, m, keyMsg("1"))
 	if !m.mainOpen() {
-		t.Fatal("the inbox forgot that enter opened its pane")
-	}
-	m = update(t, m, keyMsg("2"))
-	if m.mainOpen() {
-		t.Fatal("work forgot that esc closed its pane")
+		t.Fatal("the inbox lost its pane to an esc pressed in work")
 	}
 }
 
-// Done-when: work starts open, so the startup screen is unchanged — a
-// running ticket's live log is the point of watching it, and no key is
-// needed to see it.
-func TestWorkStartsWithItsLogOnScreen(t *testing.T) {
+// Done-when: work starts with the list owning the screen, exactly as the
+// inbox does. The log is something the operator opens to read one run — the
+// row itself already says whether that run is alive — so it waits for enter
+// and gives the screen back on esc.
+func TestWorkStartsWithTheListOnScreen(t *testing.T) {
 	log := filepath.Join(t.TempDir(), "one.log")
 	writeLog(t, log, []byte("agent one says hello\n"))
 
@@ -1762,11 +1783,27 @@ func TestWorkStartsWithItsLogOnScreen(t *testing.T) {
 	if m.focus != panelWork {
 		t.Fatalf("focus starts on %v, not work", m.focus)
 	}
+	if g := m.geometry(); g.mainH != 0 || g.sideW != m.width {
+		t.Fatalf("work started with its pane open: %+v", g)
+	}
+	if strings.Contains(m.View(), "agent one says hello") {
+		t.Fatalf("the log is on screen before anything asked for it:\n%s", m.View())
+	}
+
+	m = update(t, m, keyMsg("enter"))
 	if g := m.geometry(); g.mainH == 0 {
-		t.Fatalf("work started with its pane closed: %+v", g)
+		t.Fatalf("enter did not open the log: %+v", g)
 	}
 	if !strings.Contains(m.View(), "agent one says hello") {
-		t.Fatalf("the log is not on screen without a key:\n%s", m.View())
+		t.Fatalf("the opened pane holds no log:\n%s", m.View())
+	}
+
+	m = update(t, m, keyMsg("esc"))
+	if g := m.geometry(); g.mainH != 0 || g.sideW != m.width {
+		t.Fatalf("esc did not give the width back: %+v", g)
+	}
+	if strings.Contains(m.View(), "agent one says hello") {
+		t.Fatalf("the closed pane is still drawing the log:\n%s", m.View())
 	}
 }
 
@@ -2061,10 +2098,11 @@ func TestShrinkingTheWindowClosesWhatTookThePane(t *testing.T) {
 }
 
 // Done-when: a window too short for the pane names the key that gives it
-// back. That frame draws no status bar, and a terminal this short starts
-// with work's pane open — so without this the only way out is a guess.
+// back. That frame draws no status bar, and the pane is the operator's own
+// state across a resize — so without this the only way out is a guess.
 func TestTheTooSmallScreenNamesTheWayOut(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = openMain(t, m)
 	resized, _ := m.Update(tea.WindowSizeMsg{Width: 70, Height: 12})
 	m = resized.(model)
 	view := m.View()
@@ -2093,7 +2131,7 @@ func TestTheTooSmallScreenNamesTheWayOut(t *testing.T) {
 func TestTheStatusBarKeepsTheCountOverTheHint(t *testing.T) {
 	m, _, _ := newTestModel(t, 3)
 	resized, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 30})
-	m = resized.(model)
+	m = openMain(t, resized.(model))
 	m = update(t, m, tickedMsg{})
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
 		{Ticket: "LERP-1", Title: "one"}, {Ticket: "LERP-2", Title: "two"},
@@ -2722,9 +2760,9 @@ func TestFlooredPanelStillShowsTheSelection(t *testing.T) {
 }
 
 // Stacked, the main pane is one more claimant on the same body — but it
-// never takes so much that the panels fall to their floors, and opening the
-// log lens (which wants the whole body, and opens on focusing work) does
-// not resize the board under the operator.
+// never takes so much that the panels fall to their floors, and the log lens
+// (which wants the whole body) does not resize the board under the operator
+// when focus moves onto it.
 func TestStackedLayoutKeepsBothPanelsReadable(t *testing.T) {
 	m, _, _ := newTestModel(t, 3)
 	resized, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 40})
@@ -2734,9 +2772,10 @@ func TestStackedLayoutKeepsBothPanelsReadable(t *testing.T) {
 		TicketID: "t0", Ticket: "QUEUED-1", Queue: "implement", LogPath: "/dev/null"}})
 
 	// Both panes open: this is about focus alone, not about the pane's
-	// per-panel default.
+	// per-panel state.
+	m = openMain(t, m) // work, where focus starts
 	m = update(t, m, keyMsg("1"))
-	m = update(t, m, keyMsg("enter"))
+	m = openMain(t, m)
 	g := m.geometry()
 	if g.wide {
 		t.Fatal("80 columns is not the stacked layout")
@@ -2807,7 +2846,7 @@ func TestWideMainPaneFillsTheBody(t *testing.T) {
 	}{
 		{"a short ticket", nil},
 		{"a long ticket", []string{"down"}},
-		{"a running row's log", []string{"2"}},
+		{"a running row's log", []string{"2", "enter"}},
 		{"the help overlay", []string{"?"}},
 	} {
 		for _, k := range tc.keys {
@@ -2844,8 +2883,12 @@ func TestSmallestWindowTheGuardAdmits(t *testing.T) {
 		m, _, _ := newTestModel(t, 3)
 		resized, _ := m.Update(tea.WindowSizeMsg{Width: tc.w, Height: tc.h})
 		m = fillBoard(t, resized.(model), 20)
+		// The pane is the operator's own state and starts closed, so the
+		// cases that are about a window holding one press for it.
 		if tc.closed {
 			m = update(t, m, keyMsg("esc"))
+		} else {
+			m = openMain(t, m)
 		}
 		view := m.View()
 		if strings.Contains(view, "too small") {
@@ -2968,6 +3011,7 @@ func TestSelectingARunningTicketTailsItsLog(t *testing.T) {
 		TicketID: "id-1", Ticket: "LERP-1", Queue: "plan", LogPath: one}})
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r2", Lane: 2,
 		TicketID: "id-2", Ticket: "LERP-2", Queue: "plan", LogPath: two}})
+	m = openMain(t, m)
 
 	if !strings.Contains(m.View(), "agent one says hello") {
 		t.Fatalf("the selected ticket's log is not tailed:\n%s", m.View())
@@ -3003,6 +3047,7 @@ func TestRunLogRendersActivityAndTogglesToRaw(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 		Ticket: "LERP-1", Queue: "plan", LogPath: path}})
+	m = openMain(t, m)
 
 	view := m.View()
 	if !strings.Contains(view, "⏺ Read model.go") {
@@ -3049,6 +3094,7 @@ func TestLogSurvivesAFocusDetour(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 		Ticket: "LERP-1", Queue: "plan", LogPath: one}})
+	m = openMain(t, m)
 	m = update(t, m, keyMsg("1"))
 	if strings.Contains(m.View(), "first line") {
 		t.Fatalf("inbox lens still shows the log:\n%s", m.View())
@@ -3492,6 +3538,7 @@ func TestHostileLogOutputCannotRepaintTheScreen(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 		Ticket: "LERP-1", Queue: "plan", LogPath: path}})
+	m = openMain(t, m)
 
 	view := m.View()
 	escapeFree(t, "log pane", view)
@@ -3543,7 +3590,7 @@ func TestScrollPositionSurvivesADetourThroughAPendingRow(t *testing.T) {
 	}}})
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 		TicketID: "t1", Ticket: "LERP-1", Queue: "implement", LogPath: logPath}})
-	m = update(t, m, keyMsg("2"))
+	m = openMain(t, update(t, m, keyMsg("2")))
 
 	// Scroll back into the log, which turns following off.
 	m = update(t, m, keyMsg("pgup"))
@@ -4072,6 +4119,64 @@ func TestRunLineKeepsItsNumbersWhenNarrow(t *testing.T) {
 	if !strings.Contains(tight, "heard 12m30s ago") {
 		t.Fatalf("the reading was truncated to make room for decoration: %q", tight)
 	}
+}
+
+// Done-when: the sparkline is sized by the row it is drawn on, not by a
+// constant. On the full-width list — the panel the closed pane leaves —
+// a row draws the whole history the ring holds, a quarter of an hour of it;
+// beside an open pane the same row draws the recent end of that history at
+// the same resolution, since narrowing the panel costs buckets and never
+// changes what one covers.
+func TestTheSparklineTakesTheWidthItIsGiven(t *testing.T) {
+	rate := make([]int, sparkCells)
+	for i := range rate {
+		rate[i] = i % 4
+	}
+	r := workRow{lane: 1, since: time.Now().Add(-65 * time.Minute),
+		heard: time.Now().Add(-12*time.Minute - 30*time.Second), rate: rate}
+
+	m, _, _ := newTestModel(t, 1)
+	resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = resized.(model)
+
+	full := drawnCells(t, r, padList.inner(m.geometry().sideW))
+	if full != sparkCells {
+		t.Fatalf("a full-width row draws %d of the %d buckets the ring holds", full, sparkCells)
+	}
+	if span := time.Duration(full) * sparkBucket; span < 10*time.Minute {
+		t.Fatalf("a full-width row reaches back %s, want at least ten minutes", span)
+	}
+
+	m = openMain(t, m)
+	beside := drawnCells(t, r, padList.inner(m.geometry().sideW))
+	if beside == 0 || beside >= full {
+		t.Fatalf("beside the pane a row draws %d buckets, want some but fewer than %d", beside, full)
+	}
+	// The recent end, not the old one: a row too narrow for the history
+	// drops what has already been read, never what just happened.
+	want := sparkline(rate[len(rate)-beside:])
+	if got := sparkOf(ansi.Strip(runLine(r, padList.inner(m.geometry().sideW)))); got != want {
+		t.Fatalf("the narrow row drew %q, want the newest %d buckets %q", got, beside, want)
+	}
+}
+
+// drawnCells is how many sparkline bars a row's second line renders at a
+// given panel width.
+func drawnCells(t *testing.T, r workRow, width int) int {
+	t.Helper()
+	return len([]rune(sparkOf(ansi.Strip(runLine(r, width)))))
+}
+
+// sparkOf picks the bars out of a rendered line: every rune on it that is
+// one of the ramp's.
+func sparkOf(line string) string {
+	var b strings.Builder
+	for _, c := range line {
+		if strings.ContainsRune(string(sparkBars), c) {
+			b.WriteRune(c)
+		}
+	}
+	return b.String()
 }
 
 // A squeezed panel cuts a row's second line first, so the line that survives

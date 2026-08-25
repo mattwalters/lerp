@@ -383,11 +383,16 @@ type model struct {
 
 	// detailOpen is whether the main pane is open, per panel — a panel
 	// doubles as its index, the way geometry's wants and floors are indexed.
-	// The list owns the screen until the operator asks for the detail, and
-	// each panel remembers the answer: the inbox's detail is something you
-	// open once you have decided to read a ticket, a running ticket's live
-	// log is the point of watching it. A display default, not a rule about
-	// process, and session-only like sort and the project filter.
+	// The list owns the screen until the operator asks for the detail, in
+	// both panels alike: a log is something you open to read a particular
+	// run, the way a ticket's body is something you open once you have
+	// decided to read that ticket. Work kept the pane open while the row
+	// said nothing about its run; the row answers that itself now — how
+	// long since the log grew, and the shape of the activity behind it —
+	// so the pane is no longer the only way to see a run is alive.
+	//
+	// Each panel still remembers its own answer, session-only like sort and
+	// the project filter. A display default, not a rule about process.
 	detailOpen [2]bool
 
 	// promoting is the promote picker's open/closed state; promoteSel is its
@@ -470,7 +475,7 @@ func newModel(ctx context.Context, o Options) model {
 		vp: viewport.New(0, 0), follow: true, keys: newKeymap(), help: h,
 		sortMode:    defaultSort,
 		searchInput: newSearchInput(),
-		detailOpen:  [2]bool{panelAttention: false, panelWork: true},
+		detailOpen:  [2]bool{panelAttention: false, panelWork: false},
 		inFlight:    true, // Init starts the first pass immediately
 		passes:      &sync.WaitGroup{}}
 	for n := 1; n <= o.Lanes; n++ {
@@ -2577,10 +2582,17 @@ func runLine(r workRow, width int) string {
 	// splitRow protects its right column against a narrow panel, and here
 	// the right column is the one that can be spared — a panel too narrow
 	// for both drops the line rather than truncate the digits.
+	//
+	// The line takes the width it is given: one cell per free column, up to
+	// the whole history the ring holds. A row on a full-width list draws
+	// back a quarter of an hour, the same row beside an open detail pane
+	// draws the recent end of it, and neither changes what a cell means —
+	// the bucket is fifteen seconds wherever the line is drawn.
 	right := ""
-	spark := sparkline(r.rate)
-	if spark != "" && lipgloss.Width(left)+1+lipgloss.Width(spark) <= width {
-		right = styleFaint.Render(spark)
+	if room := width - lipgloss.Width(left) - 1; room >= min(sparkMinCells, len(r.rate)) {
+		if cells := min(room, len(r.rate)); cells > 0 {
+			right = styleFaint.Render(sparkline(r.rate[len(r.rate)-cells:]))
+		}
 	}
 	return splitRow(styleFaint.Render(left), right, width)
 }

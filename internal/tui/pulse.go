@@ -8,15 +8,19 @@ import (
 )
 
 const (
-	// sparkCells is how many buckets a row's sparkline draws and sparkBucket
-	// how long each covers: two minutes of history, which is the span the
-	// question behind this — "has it been sitting there for four minutes" —
-	// is asked over, in cells narrow enough that a run falling quiet shows
-	// within a bucket or two. Eight of them, because the line shares a
-	// narrow panel with the numbers it illustrates and the numbers come
-	// first.
-	sparkCells  = 8
-	sparkBucket = 15 * time.Second
+	// sparkBucket is how long one bucket covers and sparkCells how many the
+	// ring holds: fifteen seconds each, in cells narrow enough that a run
+	// falling quiet shows within a bucket or two, and fifteen minutes of
+	// them — as far back as the widest row has the columns to draw.
+	//
+	// A row draws the tail of that ring that fits the width it is given
+	// (see runLine), so the ring is sized for the widest row rather than
+	// for one layout, and a narrow panel costs history rather than
+	// resolution. sparkMinCells is the narrowest line still worth drawing:
+	// under that the row keeps its numbers and drops the line.
+	sparkBucket   = 15 * time.Second
+	sparkCells    = 60
+	sparkMinCells = 8
 )
 
 // sparkBars is the ramp, lowest first. Index 0 is an empty bucket, so a
@@ -112,10 +116,11 @@ func (p *pulse) roll(now time.Time) {
 }
 
 // window is the counts of the buckets that have existed, oldest first, which
-// is the order a sparkline draws. It is short while a run is young: a line
-// that has not had time to fall is not a line that has fallen, and a run
-// picked up ten seconds ago must not read like one that stopped two minutes
-// ago.
+// is the order a sparkline draws. It is the whole history the ring holds; a
+// row too narrow for all of it draws the tail, which is the recent end. It is
+// short while a run is young: a line that has not had time to fall is not a
+// line that has fallen, and a run picked up ten seconds ago must not read
+// like one that stopped two minutes ago.
 func (p *pulse) window() []int {
 	if p.heard.IsZero() {
 		// No log behind the ring: it may not exist yet, or it may have been

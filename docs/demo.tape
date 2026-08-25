@@ -40,11 +40,14 @@ Enter
 # panel below with the queues, and three lanes already picking tickets up.
 Sleep 5s
 
-# Up to the first of the running lanes, then down through them. Each one opens
-# its own log tail in the main pane, formatted from the agent's stream —
-# thinking, tool calls, the result. (Up clamps at the first row, so the count
-# only has to be at least the distance.)
+# The list has the whole screen until it is asked for a run. Up to the first
+# of the running lanes — Up clamps at the first row, so the count only has to
+# be at least the distance — and `enter` opens that lane's log tail in the
+# main pane, formatted from the agent's stream: thinking, tool calls, the
+# result. Down walks the other lanes through the pane the same way.
 Up 6
+Sleep 2500ms
+Enter
 Sleep 4s
 Down
 Sleep 4s
