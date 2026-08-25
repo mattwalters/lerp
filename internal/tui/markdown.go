@@ -24,8 +24,9 @@ import (
 // already made inert (see sanitize.go), so it is the only thing in the pane
 // emitting escapes — and every styled span is rendered whole on the line it
 // sits on, closed there, so nothing bleeds past the panel's border. And it
-// does its own wrapping to the width it is handed, the same width geometry
-// measures at, so mainWant's line count and the pane agree.
+// does its own wrapping to the width it is handed — the pane's inner width —
+// so panelBox, which truncates rather than wraps, is never handed a line to
+// cut.
 
 // Markdown is structure, not state, so it is drawn in attributes — bold,
 // italic, strikethrough — rather than in the palette's colors, which mark
