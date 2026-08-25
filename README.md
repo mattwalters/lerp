@@ -365,7 +365,7 @@ rewriting them into a different shape needs no code change.
 | Backlog / Todo | you | promote a ticket into Planning, or into Implementing if it is small |
 | Planning | agent | writes the plan into the ticket's description, under `## Plan` → Plan Review |
 | Plan Review | you | read the plan — it is the top of the ticket — edit it where you disagree, then press `p` to promote: Implementing to build it, Planning to re-plan, Needs Attention to park it |
-| Implementing | agent | reads its brief — unanswered PR review threads, else the newest comment asking for changes, else the ticket — commits, pushes, opens a draft PR with `gh` or adds to the ticket's existing one, then reviews and fixes its own work until a round is clean or three rounds are up; marks the PR ready → In Review |
+| Implementing | agent | reads its brief — unanswered PR review threads, else the newest comment asking for changes, else the ticket — commits, pushes, opens a draft PR with `gh` or adds to the ticket's existing one, then reviews and fixes its own work until a round is clean or three rounds are up; ends by leaving a verdict comment on the ticket and then marking the PR ready → In Review, or moves itself → Needs Attention |
 | In Review | you | merge the PR; Linear's GitHub integration moves it to Done |
 | Needs Attention | you | where failed runs and reviews that three rounds could not settle park; no queue watches it, so nothing retries it — promote back to Implementing to rework |
 
@@ -380,6 +380,21 @@ Implementing reviews and fixes its own work inside one run — findings go on
 the pull request, as comments on the lines they concern, and the round count
 is the agent's own context, which costs the board nothing. One short verdict
 comment on the ticket says how it went.
+
+That comment is also what makes a skipped review visible. The hop out of
+Implementing keys on the run's exit code and the ticket's status, never on a
+pull request — so an agent that implements, opens the draft and stops
+still lands its ticket in In Review looking finished. The prompt answers that
+by leading with the contract rather than trailing it: a run ends either with
+a verdict on the ticket and the PR marked ready, or in Needs Attention saying
+what stopped it and the PR never marked ready. Nothing enforces that
+mechanically, but the verdict says how the review went — rounds run and what
+the last one found — which is what keeps it from reading the same whether the
+review happened or not, and the board reads a ticket's comments into the main
+pane. A ticket resting in In Review with no verdict on it reads as unfinished
+at a glance, without opening GitHub to find out. The comment goes on before
+the PR is marked ready, since that flip is what frees a PR automation to move
+the ticket.
 
 What reaches Needs Attention is only what three rounds could not settle, and
 that is a loop rather than the end of the line: say what you want on the pull
