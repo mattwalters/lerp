@@ -47,6 +47,12 @@ const (
 	// applied — a run this process started, or an adopted run that finished
 	// with nobody waiting on it and recorded its own exit status.
 	EventExited EventType = "exited"
+	// EventEjected reports that the operator took a lane's run over: the
+	// agent was killed, the lane is free, and the ticket was left exactly
+	// where the run had it — claim, status and workspace all untouched. It
+	// is EventExited's opposite number, and the reason the two are separate
+	// events: nothing settled here.
+	EventEjected EventType = "ejected"
 	// EventError reports a pass or a run that failed in a way worth
 	// surfacing. The loop keeps ticking; whatever still needs repair is
 	// retried on a later pass.
@@ -231,15 +237,27 @@ type Reconciler struct {
 	mu     sync.Mutex
 	active []*laneRun
 	wg     sync.WaitGroup
+	// ejected remembers the runs the operator took over, by run ID. Eject
+	// removes a run's record and frees its lane, but a pass already holding
+	// the listing that named it would otherwise adopt or reap it — and a reap
+	// disposes the very workspace eject just handed over. The set is one
+	// entry per eject and never consulted after the run is gone from disk.
+	ejected map[string]bool
 }
 
 // laneRun is one occupied lane: either a run this process started or a live
 // run adopted from a previous process.
+//
+// record is the run's evidence as it was last written: for an adopted run
+// that is what the previous process left, for a started one what Attach
+// returned when the agent's PID first existed. Both kinds carry it because
+// eject needs the PID, the workspace and the session id whoever started the
+// run recorded.
 type laneRun struct {
 	lane     int
 	ticketID string
 	adopted  bool
-	record   evidence.Record // adopted runs only; started runs settle their own records
+	record   evidence.Record
 }
 
 // NewReconciler validates o and returns a loop ready to Run or Tick.
@@ -274,7 +292,7 @@ func NewReconciler(o ReconcilerOptions) (*Reconciler, error) {
 	if o.Log != nil {
 		o.Log = &syncWriter{w: o.Log}
 	}
-	return &Reconciler{o: o}, nil
+	return &Reconciler{o: o, ejected: map[string]bool{}}, nil
 }
 
 // syncWriter serializes the Log writes that arrive concurrently from the tick
@@ -485,6 +503,139 @@ func (r *Reconciler) Promote(ctx context.Context, ticketID, status string) error
 	return nil
 }
 
+// Ejection is what eject hands back: the run it stopped, and the command
+// that reopens that run as the operator's own interactive session.
+type Ejection struct {
+	Ticket    string // human identifier, e.g. LERP-42
+	TicketID  string
+	Lane      int
+	Workspace string
+	Resume    string
+}
+
+// Eject is the escape hatch (SCOPE, "The interface"): kill the lane's agent,
+// free the lane, drop the run record, and hand back the runner's own resume
+// command. The headless run becomes the operator's session.
+//
+// Nothing here touches Linear — the ticket keeps its claim and its status,
+// because ejecting is taking the work over, not abandoning it. That is also
+// why the workspace is not disposed: it is the operator's now, and the git
+// worktree in it is theirs to remove when they are done. The context is taken
+// for symmetry with the TUI's other actions and deliberately unused; a local
+// kill needs nothing to wait on.
+//
+// Every refusal happens before anything changes: a ticket in no lane, a run
+// with no agent yet or no recorded session, and a queue whose runner has no
+// resume template all return an error having killed nothing. The error text
+// is what the TUI shows as the reason.
+func (r *Reconciler) Eject(_ context.Context, ticketID string) (Ejection, error) {
+	ej, record, adopted, err := r.ejectLane(ticketID)
+	if err != nil {
+		return Ejection{}, err
+	}
+	if err := r.o.Evidence.Remove(record.RunID); err != nil {
+		// The agent is already dead and the lane already free, so this is not
+		// a failed eject: it is a stale run directory, which the next pass
+		// reads as a dead run and reaps. Report it and hand over the command.
+		r.fail(fmt.Errorf("eject %s: %w", ej.Ticket, err))
+	}
+	// The resume command is the one string this whole action exists to
+	// produce, and the TUI holding it is one keystroke from being closed.
+	if r.o.Log != nil {
+		fmt.Fprintf(r.o.Log, "ejected run %s on lane %d, workspace %s left in place, resume with: %s\n",
+			record.RunID, ej.Lane, ej.Workspace, ej.Resume)
+	}
+	if adopted {
+		// A run this process started emits its own EventEjected as its
+		// goroutine winds down, after runLane has freed the lane. An adopted
+		// run has no goroutine: forgetting its lane entry above was the whole
+		// of its ending, so the event belongs here.
+		r.emit(Event{Type: EventEjected, RunID: record.RunID, Lane: ej.Lane,
+			TicketID: ej.TicketID, Ticket: ej.Ticket, Queue: record.Queue,
+			LogPath: record.LogPath})
+	}
+	return ej, nil
+}
+
+// ejectLane is eject's locked half: check the refusals, then mark the run
+// ejected and kill its process group. Marking comes first because a run this
+// process started reports the agent's death through a goroutine that reads
+// the mark to decide whether it may conclude the ticket.
+//
+// The recorded PID is the wrapper shell that leads the run's process group,
+// so the negated PID kills the agent and everything it spawned — the same
+// signal Execute's own cancel and the PID-attach failure path send.
+func (r *Reconciler) ejectLane(ticketID string) (Ejection, evidence.Record, bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	var lr *laneRun
+	for _, other := range r.active {
+		if other.ticketID == ticketID {
+			lr = other
+			break
+		}
+	}
+	fail := func(format string, args ...any) (Ejection, evidence.Record, bool, error) {
+		return Ejection{}, evidence.Record{}, false, fmt.Errorf(format, args...)
+	}
+	switch {
+	case lr == nil:
+		return fail("no lane is running %s", ticketID)
+	case lr.record.PID < 1:
+		return fail("%s has no agent to eject yet", ticketID)
+	case lr.record.SessionID == "":
+		return fail("%s recorded no session to resume", ticketID)
+	}
+	record := lr.record
+	resume := run.ResumeCommand(r.runnerFor(record.Queue), record)
+	if resume == "" {
+		return fail("the runner for queue %q has no resume command", record.Queue)
+	}
+
+	r.ejected[record.RunID] = true
+	if err := syscall.Kill(-record.PID, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+		delete(r.ejected, record.RunID)
+		return fail("killing %s: %w", ticketID, err)
+	}
+	if lr.adopted {
+		// The lane is freed here for an adopted run, which nothing else is
+		// waiting on; a started one is unregistered by its own runLane.
+		r.forgetLocked(record.RunID)
+	}
+	return Ejection{Ticket: record.Ticket, TicketID: ticketID, Lane: record.Lane,
+		Workspace: record.Workspace, Resume: resume}, record, lr.adopted, nil
+}
+
+// CanEject reports whether a run in this queue could be ejected at all, and
+// why not when it could not. It answers for the queue rather than for a run,
+// because that is the part the TUI has to know before the operator presses
+// the key — a greyed-out key with a reason beats one that fails on press.
+func (r *Reconciler) CanEject(queue string) (bool, string) {
+	q, ok := r.o.Repo.Queues[queue]
+	if !ok {
+		return false, fmt.Sprintf("queue %q is not configured", queue)
+	}
+	if r.o.Repo.Runners[q.Runner].Resume == "" {
+		return false, fmt.Sprintf("runner %q has no resume command", q.Runner)
+	}
+	return true, ""
+}
+
+// runnerFor is the runner a queue's runs use, zero when either the queue or
+// its runner has since left the config — a zero runner has no resume
+// template, which is the refusal the caller wants anyway.
+func (r *Reconciler) runnerFor(queue string) config.Runner {
+	return r.o.Repo.Runners[r.o.Repo.Queues[queue].Runner]
+}
+
+// wasEjected reports whether the operator took this run over.
+func (r *Reconciler) wasEjected(runID string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.ejected[runID]
+}
+
 // IssueDetail reads the selected ticket's body and its comments for the
 // TUI's inbox pane — the read SCOPE's "not a Linear client" bullet
 // licenses. Like Promote it is a passthrough to the client, touching no
@@ -510,6 +661,14 @@ func (r *Reconciler) reconcileEvidence(ctx context.Context) bool {
 	seen := make(map[string]bool, len(records))
 	for _, record := range records {
 		seen[record.RunID] = true
+		if r.wasEjected(record.RunID) {
+			// The operator has taken this run over: its record is being
+			// removed and its lane is free. Adopting it would put a dead run
+			// back in a lane, and reaping it would dispose the workspace
+			// eject just handed over — so a listing taken before the eject
+			// must not act on it.
+			continue
+		}
 		if r.ownsTicket(record.TicketID) {
 			// A run this process started; its own goroutine settles the
 			// ticket and the record when the agent exits.
@@ -795,12 +954,24 @@ func (r *Reconciler) executeLane(ctx context.Context, lr *laneRun, c candidate) 
 	// record and releases the claim. The reverse order would leave the ticket
 	// assigned and recordless — invisible to every future pass — until a
 	// human noticed.
+	// The session id is minted here rather than inside Execute: it goes on
+	// disk with the record, before the agent starts, because a run this
+	// process will not live to see — one a later lerp adopts — can only be
+	// ejected if its session id was recorded. A runner whose command never
+	// asks for one gets "", and its runs are not ejectable.
+	sessionID, err := run.NewSessionID(r.o.Repo.Runners[c.queue.Runner])
+	if err != nil {
+		return fail(fmt.Errorf("session id for issue %s: %w", issue.ID, err))
+	}
+
 	record, err := r.o.Evidence.Create(evidence.Record{
 		Lane:           lr.lane,
 		StartedAt:      time.Now().UTC(),
 		TicketID:       issue.ID,
+		Ticket:         issue.Identifier,
 		Queue:          c.name,
 		StartingStatus: c.queue.Status,
+		SessionID:      sessionID,
 	})
 	if err != nil {
 		return fail(fmt.Errorf("record run for issue %s: %w", issue.ID, err))
@@ -852,6 +1023,13 @@ func (r *Reconciler) provisionAndRun(ctx context.Context, lr *laneRun, c candida
 	// reap path, so a hung dispose command cannot wedge the lane — occupied,
 	// its terminal event unemitted — forever.
 	defer func() {
+		if r.wasEjected(record.RunID) {
+			// The operator took this run over: the workspace is theirs now,
+			// agent output and half-finished work included, and the worktree
+			// in it is theirs to remove. Disposing it here would delete the
+			// very thing eject exists to hand over.
+			return
+		}
 		dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), reapDisposeTimeout)
 		defer cancel()
 		r.o.Dispose(dctx, r.o.RepoDir, r.o.Repo.Dispose, id, r.o.Log)
@@ -887,6 +1065,9 @@ func (r *Reconciler) provisionAndRun(ctx context.Context, lr *laneRun, c candida
 		// concluding from the code Wait() returned: the file is the fallback
 		// for runs nobody was waiting on, never a second source of truth.
 		ExitPath: record.ExitPath,
+		// The id already on the record, so what the agent is told and what
+		// eject would resume can never be two different sessions.
+		SessionID: record.SessionID,
 		Started: func(pid int) {
 			// The PID makes the record adoptable; without it the run would be
 			// reaped by the next process even while the agent is alive. An
@@ -894,12 +1075,27 @@ func (r *Reconciler) provisionAndRun(ctx context.Context, lr *laneRun, c candida
 			// its process group so the run fails now, visibly, instead of
 			// surviving as an unadoptable orphan for a successor to reap —
 			// workspace and all — out from under it.
-			if _, err := r.o.Evidence.Attach(record.RunID, pid); err != nil {
+			attached, err := r.o.Evidence.Attach(record.RunID, pid)
+			if err != nil {
 				r.fail(fmt.Errorf("attach pid of run %s: %w", record.RunID, err))
 				_ = syscall.Kill(-pid, syscall.SIGKILL)
+				return
 			}
+			// The lane keeps the attached record — the first moment a PID
+			// exists is the first moment this run can be ejected.
+			r.setRecord(lr, attached)
 		},
 	})
+	if r.wasEjected(record.RunID) {
+		// The operator killed this agent themselves. The ticket keeps its
+		// claim and its status — ejecting is taking the work over, not
+		// failing at it — so there is no conclude to run and nothing to say
+		// about the exit code of a process that was shot. The record is gone
+		// already; dropping it again is harmless and keeps the one rule
+		// ("keepRecord false means remove it") intact.
+		return Event{Type: EventEjected, RunID: record.RunID, Lane: lr.lane, TicketID: issue.ID,
+			Ticket: issue.Identifier, Queue: c.name, LogPath: record.LogPath}, false, true
+	}
 	if ctx.Err() != nil {
 		// Shutdown, not failure: the agent was killed along with the loop.
 		// Keep the claim and the record; the next lerp finds a dead run and
@@ -958,6 +1154,14 @@ func (r *Reconciler) register(lane int, ticketID string) (*laneRun, bool) {
 	return lr, true
 }
 
+// setRecord records a started run's evidence on its lane, so eject can find
+// the PID, the workspace and the session id without going back to disk.
+func (r *Reconciler) setRecord(lr *laneRun, record evidence.Record) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	lr.record = record
+}
+
 func (r *Reconciler) unregister(lr *laneRun) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -973,6 +1177,11 @@ func (r *Reconciler) unregister(lr *laneRun) {
 func (r *Reconciler) forget(runID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.forgetLocked(runID)
+}
+
+// forgetLocked is forget for a caller already holding r.mu.
+func (r *Reconciler) forgetLocked(runID string) {
 	for i, lr := range r.active {
 		if lr.adopted && lr.record.RunID == runID {
 			r.active = append(r.active[:i], r.active[i+1:]...)

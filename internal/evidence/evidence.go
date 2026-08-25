@@ -47,8 +47,16 @@ type Record struct {
 	// its code; the file is how a finished run still reports one. Empty on
 	// records written before it existed, which ExitStatus reads as "no
 	// status", the same as a run that never got that far.
-	ExitPath  string `json:"exit_path,omitempty"`
+	ExitPath string `json:"exit_path,omitempty"`
+	// SessionID is the session the agent was told to open, when its runner's
+	// command asked for one. It is written before the agent starts, so a run
+	// left behind by a previous lerp can still be resumed; a run whose runner
+	// mints its own session ids has none here and cannot be ejected.
 	SessionID string `json:"session_id,omitempty"`
+	// Ticket is the human identifier the run was started for — LERP-42, not
+	// TicketID's opaque Linear id. It is what {{ticket}} expands to, so the
+	// resume command eject hands over reads like the command lerp ran.
+	Ticket string `json:"ticket,omitempty"`
 }
 
 // ErrLocked reports that another lerp process is running in this clone.

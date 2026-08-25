@@ -35,6 +35,17 @@ type Promoter interface {
 	Promote(ctx context.Context, ticketID, status string) error
 }
 
+// Ejector is the escape hatch (SCOPE, "The interface"): stop a lane's agent
+// and hand back the runner's own resume command, so the headless run becomes
+// the operator's interactive session. It is Reconciler.Eject in production.
+// CanEject answers for a queue rather than a run, because the panel has to
+// know before the key is pressed whether to offer it, and with what reason
+// when it cannot.
+type Ejector interface {
+	Eject(ctx context.Context, ticketID string) (loop.Ejection, error)
+	CanEject(queue string) (bool, string)
+}
+
 // Reader is the inbox pane's one read beyond the pass: the body and
 // comments of the ticket the operator selected. It is Reconciler.IssueDetail
 // in production. Read-only, one ticket at a time — SCOPE's "not a Linear
@@ -48,6 +59,7 @@ type Reader interface {
 type Options struct {
 	Ticker   Ticker
 	Promoter Promoter
+	Ejector  Ejector
 	Reader   Reader
 	Statuses []string      // promote targets: configured queue statuses, plus the pipeline's exits
 	Interval time.Duration // tick cadence; loop.DefaultInterval when zero
@@ -61,6 +73,8 @@ func (o Options) validate() error {
 		return fmt.Errorf("tui: ticker is required")
 	case o.Promoter == nil:
 		return fmt.Errorf("tui: promoter is required")
+	case o.Ejector == nil:
+		return fmt.Errorf("tui: ejector is required")
 	case o.Reader == nil:
 		return fmt.Errorf("tui: reader is required")
 	case o.Lanes < 1:
@@ -193,6 +207,13 @@ type (
 		status string
 		err    error
 	}
+	// ejectedMsg reports the outcome of an eject: the agent is dead and the
+	// lane free, or it is untouched and err says why.
+	ejectedMsg struct {
+		ticket   string
+		ejection loop.Ejection
+		err      error
+	}
 	// detailDueMsg is the debounce firing for a ticket; detailMsg is the
 	// read coming back.
 	detailDueMsg struct{ ticketID string }
@@ -318,6 +339,14 @@ type model struct {
 	// item, closed by confirming, cancelling, or the list going empty.
 	promoting  bool
 	promoteSel int
+
+	// ejecting is the eject confirm overlay's open/closed state; ejection is
+	// the result panel that replaces it, nil when none is up. That panel is
+	// sticky — dismissed by esc, never by the next pass — because the resume
+	// command it holds is the one string the operator has to copy, and a
+	// status-bar note would be cleared out from under them.
+	ejecting bool
+	ejection *loop.Ejection
 
 	vp     viewport.Model
 	tail   tail
@@ -464,6 +493,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case detailMsg:
 		m.applyDetail(msg)
 		return m, nil
+	case ejectedMsg:
+		if msg.err != nil {
+			m.lastErr = clean(fmt.Sprintf("eject %s: %v", msg.ticket, msg.err))
+		} else {
+			// No note here: the loop's own EventEjected leaves one as the
+			// lane frees, and the panel below says far more than a note can.
+			ej := msg.ejection
+			m.ejection = &ej
+			m.layout()
+		}
+		return m, nil
 	case promotedMsg:
 		if msg.err != nil {
 			m.lastErr = clean(fmt.Sprintf("promote %s to %s: %v", msg.ticket, msg.status, msg.err))
@@ -478,6 +518,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.promoting {
 		return m.handlePromoteKey(msg)
+	}
+	if m.ejecting || m.ejection != nil {
+		return m.handleEjectKey(msg)
 	}
 	switch {
 	case key.Matches(msg, m.keys.Quit):
@@ -500,6 +543,10 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.focus == panelAttention && len(m.shown) > 0 && len(m.o.Statuses) > 0 {
 			m.promoting = true
 			m.promoteSel = 0
+		}
+	case key.Matches(msg, m.keys.Eject):
+		if m.canEjectSelected() {
+			m.ejecting = true
 		}
 	case key.Matches(msg, m.keys.Sort):
 		if m.focus == panelAttention {
@@ -638,6 +685,59 @@ func (m model) doPromote(ticketID, ticket, status string) tea.Cmd {
 	}
 }
 
+// handleEjectKey drives both halves of eject: the confirm overlay, where
+// enter stops the agent and esc backs out having touched nothing, and the
+// result panel that follows, which esc dismisses. Both are modal, like the
+// promote picker: the second one holds the resume command, and a keystroke
+// meant for the board must not throw it away.
+func (m model) handleEjectKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc", "q":
+		m.ejecting = false
+		m.ejection = nil
+	case "enter":
+		if m.ejecting {
+			m.ejecting = false
+			if r := m.selectedWork(); r != nil {
+				cmd = m.doEject(r.ticketID, r.ticket)
+			}
+		}
+	}
+	// Leaving either overlay hands the main pane back to a lens of a
+	// different height; re-fit before the next frame draws into the old one.
+	m.layout()
+	return m, cmd
+}
+
+// doEject stops the agent off the render loop, like every other call into the
+// loop. It writes nothing to Linear: the ticket keeps its claim and its
+// status, because ejecting is taking the work over rather than dropping it.
+func (m model) doEject(ticketID, ticket string) tea.Cmd {
+	return func() tea.Msg {
+		ejection, err := m.o.Ejector.Eject(m.ctx, ticketID)
+		return ejectedMsg{ticket: ticket, ejection: ejection, err: err}
+	}
+}
+
+// canEjectSelected reports whether the work panel's selected row is a run
+// eject could take over: a live agent, in a queue whose runner has a resume
+// command. A provisioning lane has no agent yet and a waiting ticket has no
+// run at all, so neither offers the key.
+func (m *model) canEjectSelected() bool {
+	if m.focus != panelWork {
+		return false
+	}
+	r := m.selectedWork()
+	if r == nil || r.lane == 0 || r.state == laneProvisioning {
+		return false
+	}
+	can, _ := m.o.Ejector.CanEject(r.queue)
+	return can
+}
+
 func (m *model) setFocus(p panel) {
 	m.focus = p
 	m.retarget()
@@ -766,6 +866,13 @@ func (m *model) apply(ev loop.Event) {
 			note, warn = ev.Note, true
 		}
 		m.note(note, warn)
+		m.settle(ev)
+		changed = panelWork
+	case loop.EventEjected:
+		// Not a warning: the operator asked for this, and the run ending is
+		// the point rather than a surprise. The resume command is on the
+		// result panel, which is where they are looking.
+		m.note(ejectedNote(ev), false)
 		m.settle(ev)
 		changed = panelWork
 	case loop.EventReaped:
@@ -1322,7 +1429,7 @@ func fitH(h, lo, hi int) int {
 // for the lines they draw; the log tail, the promote picker and the help
 // overlay ask for the whole body, because what they hold scrolls.
 func (m *model) mainWant(bodyH, width int) int {
-	if m.promoting || m.helpOn || m.showingLog() {
+	if m.modal() || m.helpOn || m.showingLog() {
 		return bodyH
 	}
 	return strings.Count(m.detail(width), "\n") + 3
@@ -1451,17 +1558,22 @@ func (m *model) panelKeys(p panel) []key.Binding {
 			return nil
 		}
 	}
-	return m.keys.panelHelp(p, m.selectedLogPath() != "", m.selectedURL() != "")
+	return m.keys.panelHelp(p, m.selectedLogPath() != "", m.canEjectSelected(), m.selectedURL() != "")
 }
 
 // keyHints reports whether the focused panel is carrying a key line at all:
-// the promote picker must not have taken the keyboard — handleKey routes
-// everything to it, so those keys would be dead — and the row under the
-// cursor has to answer to something. Both the height panelWant buys and the
-// line panelBody draws ask this, so the two can never disagree about
-// whether the line is there.
+// no overlay may have taken the keyboard — handleKey routes everything to the
+// promote picker and to eject's two panels, so those keys would be dead — and
+// the row under the cursor has to answer to something. Both the height
+// panelWant buys and the line panelBody draws ask this, so the two can never
+// disagree about whether the line is there.
 func (m *model) keyHints(p panel) bool {
-	return !m.promoting && len(m.panelKeys(p)) > 0
+	return !m.modal() && len(m.panelKeys(p)) > 0
+}
+
+// modal reports whether an overlay owns the keyboard and the main pane.
+func (m *model) modal() bool {
+	return m.promoting || m.ejecting || m.ejection != nil
 }
 
 // marker renders the selection arrow for one row of a focused panel.
@@ -1822,6 +1934,14 @@ func (m model) mainPanel(w, h int) string {
 			return m.promotePicker(*it, w, h)
 		}
 	}
+	if m.ejection != nil {
+		return m.ejectResult(*m.ejection, w, h)
+	}
+	if m.ejecting {
+		if r := m.selectedWork(); r != nil {
+			return m.ejectConfirm(*r, w, h)
+		}
+	}
 	if m.helpOn {
 		return panelBox(styleTitleFocus.Render("help"), true, w, h,
 			strings.Split(m.help.View(m.keys), "\n"), padMain)
@@ -1846,6 +1966,48 @@ func (m model) promotePicker(it loop.AttentionItem, w, h int) string {
 	// The highlighted status must be on screen before enter can confirm it.
 	rows = windowRows(rows, 2+m.promoteSel, h-2)
 	return panelBox(styleTitleFocus.Render("promote "+it.Ticket), true, w, h, rows, padMain)
+}
+
+// ejectConfirm is the overlay eject opens: what pressing enter kills, and
+// what it deliberately leaves standing. The workspace and the ticket are
+// spelled out because they are the two things an operator expects a "stop"
+// to take away, and eject takes neither.
+func (m model) ejectConfirm(r workRow, w, h int) string {
+	rows := []string{
+		styleTicket.Render(r.ticket) + " " + r.title,
+		"",
+		styleAttention.Render("stops") + "  the agent in lane " + fmt.Sprintf("%d", r.lane) +
+			", running " + elapsed(r.since),
+		styleFaint.Render("keeps") + "  the workspace, the claim and the status — the ticket does not move",
+		"",
+		styleFaint.Render("lerp hands back the runner's resume command; the workspace, worktree"),
+		styleFaint.Render("and all, is yours to finish in and yours to remove."),
+	}
+	rows = fitRows(rows, h-2)
+	return panelBox(styleTitleFocus.Render("eject "+r.ticket), true, w, h, rows, padMain)
+}
+
+// ejectResult is the panel the eject leaves behind: the workspace it did not
+// dispose, and the command that reopens the run as the operator's own
+// session. It stays up until esc, because nothing else on screen keeps it.
+func (m model) ejectResult(ej loop.Ejection, w, h int) string {
+	rows := []string{
+		styleFaint.Render("the agent is stopped; the ticket is untouched in Linear"),
+		"",
+		styleFaint.Render("workspace"),
+		ej.Workspace,
+		"",
+		styleFaint.Render("resume"),
+		styleTicket.Render(ej.Resume),
+		"",
+		styleFaint.Render("esc dismisses this panel; the command is also in .lerp/loop.log"),
+	}
+	rows = fitRows(rows, h-2)
+	title := "ejected"
+	if ej.Ticket != "" {
+		title += " " + ej.Ticket
+	}
+	return panelBox(styleTitleFocus.Render(title), true, w, h, rows, padMain)
 }
 
 func (m model) mainTitle() string {
@@ -2050,6 +2212,16 @@ func (m *model) note(text string, warn bool) {
 	m.notes = append(m.notes, note{text: text, warn: warn})
 }
 
+// ejectedNote names the run the operator took over. An adopted run whose
+// record never carried the identifier still names its lane, which is the row
+// the operator was looking at.
+func ejectedNote(ev loop.Event) string {
+	if ev.Ticket != "" {
+		return ev.Ticket + ": ejected, the agent is stopped"
+	}
+	return fmt.Sprintf("lane %d ejected, the agent is stopped", ev.Lane)
+}
+
 // reapedNote names the ticket when the record knew it, because "reaped a
 // dead run" told the operator nothing about which run.
 func reapedNote(ev loop.Event) string {
@@ -2108,8 +2280,13 @@ func (m model) statusBar() string {
 		left += "  " + styleAttention.Render(fmt.Sprintf("● %d in the inbox", len(m.attention)))
 	}
 	right := styleFaint.Render("? help · q quit")
-	if m.promoting {
+	switch {
+	case m.promoting:
 		right = styleFaint.Render("↑/↓ choose · enter promote · esc cancel")
+	case m.ejecting:
+		right = styleFaint.Render("enter eject · esc cancel")
+	case m.ejection != nil:
+		right = styleFaint.Render("esc dismiss")
 	}
 
 	pad := m.width - lipgloss.Width(left) - lipgloss.Width(right)

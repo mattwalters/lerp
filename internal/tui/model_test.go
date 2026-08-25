@@ -59,6 +59,40 @@ func (p *recordingPromoter) last() promoteCall {
 	return p.calls[len(p.calls)-1]
 }
 
+// recordingEjector stands in for the reconciler's escape hatch: it records
+// every Eject call and hands back whatever ejection or error is set on it.
+// resumable is which queues CanEject says yes to — empty means every queue,
+// so the tests that do not care about the greyed-out case need say nothing.
+type recordingEjector struct {
+	mu        sync.Mutex
+	calls     []string
+	resumable []string
+	ejection  loop.Ejection
+	err       error
+}
+
+func (e *recordingEjector) Eject(_ context.Context, ticketID string) (loop.Ejection, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.calls = append(e.calls, ticketID)
+	return e.ejection, e.err
+}
+
+func (e *recordingEjector) CanEject(queue string) (bool, string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if len(e.resumable) == 0 || slices.Contains(e.resumable, queue) {
+		return true, ""
+	}
+	return false, "runner has no resume command"
+}
+
+func (e *recordingEjector) ejected() []string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return append([]string(nil), e.calls...)
+}
+
 // recordingReader stands in for the reconciler's one read beyond the pass.
 // It records every ticket it was asked for — so a test can prove that
 // walking the list does not fire a fetch per row — and hands back whatever
@@ -95,7 +129,7 @@ var defaultTestStatuses = []string{"Planning", "Implementing"}
 
 func newTestModel(t *testing.T, lanes int) (model, *countingTicker, chan loop.Event) {
 	t.Helper()
-	m, ticker, events := newTestModelWith(t, lanes, defaultTestStatuses, &recordingPromoter{}, &recordingReader{})
+	m, ticker, events := newTestModelWith(t, lanes, defaultTestStatuses, &recordingPromoter{}, &recordingEjector{}, &recordingReader{})
 	return m, ticker, events
 }
 
@@ -104,8 +138,16 @@ func newTestModel(t *testing.T, lanes int) (model, *countingTicker, chan loop.Ev
 func newPromoteTestModel(t *testing.T, lanes int, statuses []string) (model, *countingTicker, chan loop.Event, *recordingPromoter) {
 	t.Helper()
 	promoter := &recordingPromoter{}
-	m, ticker, events := newTestModelWith(t, lanes, statuses, promoter, &recordingReader{})
+	m, ticker, events := newTestModelWith(t, lanes, statuses, promoter, &recordingEjector{}, &recordingReader{})
 	return m, ticker, events, promoter
+}
+
+// newEjectTestModel is newTestModel plus the recording ejector, for tests
+// that drive eject and need to see what it sent.
+func newEjectTestModel(t *testing.T, lanes int, ejector *recordingEjector) (model, chan loop.Event) {
+	t.Helper()
+	m, _, events := newTestModelWith(t, lanes, defaultTestStatuses, &recordingPromoter{}, ejector, &recordingReader{})
+	return m, events
 }
 
 // newReadingTestModel is newTestModel plus the recording reader, for tests
@@ -113,17 +155,18 @@ func newPromoteTestModel(t *testing.T, lanes int, statuses []string) (model, *co
 func newReadingTestModel(t *testing.T) (model, chan loop.Event, *recordingReader) {
 	t.Helper()
 	reader := &recordingReader{}
-	m, _, events := newTestModelWith(t, 1, defaultTestStatuses, &recordingPromoter{}, reader)
+	m, _, events := newTestModelWith(t, 1, defaultTestStatuses, &recordingPromoter{}, &recordingEjector{}, reader)
 	return m, events, reader
 }
 
-func newTestModelWith(t *testing.T, lanes int, statuses []string, promoter *recordingPromoter, reader *recordingReader) (model, *countingTicker, chan loop.Event) {
+func newTestModelWith(t *testing.T, lanes int, statuses []string, promoter *recordingPromoter, ejector *recordingEjector, reader *recordingReader) (model, *countingTicker, chan loop.Event) {
 	t.Helper()
 	ticker := &countingTicker{}
 	events := make(chan loop.Event, 8)
 	m := newModel(context.Background(), Options{
 		Ticker:   ticker,
 		Promoter: promoter,
+		Ejector:  ejector,
 		Reader:   reader,
 		Statuses: statuses,
 		Interval: time.Millisecond,
@@ -2524,5 +2567,128 @@ func TestOffBoardRunsFromOneQueueShareAHeader(t *testing.T) {
 		if !strings.Contains(view, want) {
 			t.Errorf("adopted run %q vanished:\n%s", want, view)
 		}
+	}
+}
+
+// Eject is the escape hatch on a running row: "e" opens a confirm in the main
+// pane, enter calls the Ejector with that row's ticket, and the reply becomes
+// a sticky panel holding the workspace and the resume command — the one
+// string the operator has to copy, so nothing but esc takes it away.
+func TestEjectConfirmAndResult(t *testing.T) {
+	ejector := &recordingEjector{ejection: loop.Ejection{
+		Ticket: "LERP-42", Lane: 1, Workspace: "/tmp/lerp/lane-1", Resume: "agent --resume 'sid-42'",
+	}}
+	m, _ := newEjectTestModel(t, 1, ejector)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		TicketID: "id-42", Ticket: "LERP-42", Queue: "implement", LogPath: "/dev/null"}})
+	if !strings.Contains(m.View(), "e eject") {
+		t.Fatalf("the work panel does not offer eject on a running row:\n%s", m.View())
+	}
+
+	// esc backs out without touching the run.
+	m = update(t, m, keyMsg("e"))
+	if !m.ejecting {
+		t.Fatal("e did not open the eject confirm")
+	}
+	m = update(t, m, keyMsg("esc"))
+	if m.ejecting {
+		t.Fatal("esc did not close the eject confirm")
+	}
+	if len(ejector.ejected()) != 0 {
+		t.Fatalf("esc ejected anyway: %v", ejector.ejected())
+	}
+
+	m = update(t, m, keyMsg("e"))
+	view := m.View()
+	for _, want := range []string{"eject LERP-42", "stops", "keeps", "enter eject"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("the eject confirm is missing %q:\n%s", want, view)
+		}
+	}
+
+	next, cmd := m.Update(keyMsg("enter"))
+	m = next.(model)
+	if m.ejecting {
+		t.Fatal("enter did not close the eject confirm")
+	}
+	if cmd == nil {
+		t.Fatal("enter produced no eject command")
+	}
+	// Eject runs off the render loop, exactly like promote and the tick.
+	msg, ok := cmd().(ejectedMsg)
+	if !ok {
+		t.Fatalf("eject command yielded %T, want ejectedMsg", cmd())
+	}
+	if got := ejector.ejected(); len(got) != 1 || got[0] != "id-42" {
+		t.Fatalf("Eject calls = %v, want exactly the selected row's ticket id", got)
+	}
+
+	m = update(t, m, msg)
+	view = m.View()
+	for _, want := range []string{"ejected LERP-42", "/tmp/lerp/lane-1", "agent --resume 'sid-42'", "esc dismiss"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("the eject result is missing %q:\n%s", want, view)
+		}
+	}
+	// A pass arriving under the panel must not clear it: the run it reports
+	// finishing is the very one that was ejected.
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventEjected, RunID: "r1", Lane: 1,
+		TicketID: "id-42", Ticket: "LERP-42", Queue: "implement"}})
+	if m.ejection == nil {
+		t.Fatal("a loop event dismissed the eject result")
+	}
+	if !strings.Contains(m.View(), "agent --resume 'sid-42'") {
+		t.Fatalf("the resume command is gone after a pass:\n%s", m.View())
+	}
+	m = update(t, m, keyMsg("esc"))
+	if m.ejection != nil {
+		t.Fatal("esc did not dismiss the eject result")
+	}
+	if !strings.Contains(m.View(), "0/1 running") {
+		t.Fatalf("the ejected run still holds its lane:\n%s", m.View())
+	}
+}
+
+// The key is offered only where it works: not on a ticket that is waiting to
+// run, and not on a run whose queue's runner has no resume command. An
+// advertised key that does nothing is worse than one left out.
+func TestEjectKeyOnlyOnAResumableRun(t *testing.T) {
+	ejector := &recordingEjector{resumable: []string{"implement"}}
+	m, _ := newEjectTestModel(t, 1, ejector)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{{
+		Team: "LERP", Name: "implement", Status: "Implementing",
+		Tickets: []loop.QueueTicket{{ID: "id-7", Identifier: "LERP-7", Title: "waiting", Eligible: true}},
+	}}}})
+	if strings.Contains(m.View(), "e eject") {
+		t.Fatalf("the work panel offers eject on a ticket that is not running:\n%s", m.View())
+	}
+	if m.canEjectSelected() {
+		t.Fatal("a waiting ticket reads as ejectable")
+	}
+
+	// A live run in a queue whose runner cannot resume: same answer, and it
+	// comes from the loop rather than from the panel guessing.
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		TicketID: "id-9", Ticket: "LERP-9", Queue: "plan", LogPath: "/dev/null"}})
+	if m.canEjectSelected() {
+		t.Fatal("a run under a runner with no resume command reads as ejectable")
+	}
+	if strings.Contains(m.View(), "e eject") {
+		t.Fatalf("the work panel offers eject under a runner that cannot resume:\n%s", m.View())
+	}
+	// Pressing it anyway does nothing at all.
+	m = update(t, m, keyMsg("e"))
+	if m.ejecting {
+		t.Fatal("e opened the confirm for a run that cannot be ejected")
+	}
+}
+
+// A lane that is still provisioning has no agent to kill yet.
+func TestEjectIsNotOfferedWhileProvisioning(t *testing.T) {
+	m, _ := newEjectTestModel(t, 1, &recordingEjector{})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventProvisioning, RunID: "r1", Lane: 1,
+		TicketID: "id-42", Ticket: "LERP-42", Queue: "implement"}})
+	if m.canEjectSelected() {
+		t.Fatal("a provisioning lane reads as ejectable")
 	}
 }

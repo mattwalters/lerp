@@ -16,6 +16,7 @@ type keymap struct {
 	Top       key.Binding
 	Bottom    key.Binding
 	Promote   key.Binding
+	Eject     key.Binding
 	Sort      key.Binding
 	Project   key.Binding
 	Open      key.Binding
@@ -37,6 +38,7 @@ func newKeymap() keymap {
 		Top:       key.NewBinding(key.WithKeys("home", "g"), key.WithHelp("home/g", "top")),
 		Bottom:    key.NewBinding(key.WithKeys("end", "G"), key.WithHelp("end/G", "follow")),
 		Promote:   key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "promote")),
+		Eject:     key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "eject")),
 		Sort:      key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort inbox")),
 		Project:   key.NewBinding(key.WithKeys("P"), key.WithHelp("P", "filter by project")),
 		Open:      key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "open in Linear")),
@@ -60,7 +62,7 @@ func (k keymap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Attention, k.Work, k.NextPanel, k.PrevPanel,
 			k.Up, k.Down, k.PageUp, k.PageDown, k.Top, k.Bottom},
-		{k.Promote, k.Sort, k.Project, k.Open, k.Raw, k.Help, k.Quit},
+		{k.Promote, k.Eject, k.Sort, k.Project, k.Open, k.Raw, k.Help, k.Quit},
 	}
 }
 
@@ -71,17 +73,21 @@ func (k keymap) FullHelp() [][]key.Binding {
 // keys are left out — the status bar already carries "? help · q quit", and
 // a hint that gets truncated away is a hint that was not there.
 //
-// hasLog and hasURL say which of these keys the row under the cursor
-// actually answers to: r is inert on a ticket that has never run, and o on
-// a run whose ticket the pass no longer lists. An advertised key that does
-// nothing is worse than one left out, because pressing it is how the
-// operator finds out — and r would flip the raw toggle invisibly.
-func (k keymap) panelHelp(p panel, hasLog, hasURL bool) []key.Binding {
+// hasLog, canEject and hasURL say which of these keys the row under the
+// cursor actually answers to: r is inert on a ticket that has never run, e on
+// anything but a live run under a runner that can resume, and o on a run
+// whose ticket the pass no longer lists. An advertised key that does nothing
+// is worse than one left out, because pressing it is how the operator finds
+// out — and r would flip the raw toggle invisibly.
+func (k keymap) panelHelp(p panel, hasLog, canEject, hasURL bool) []key.Binding {
 	var b []key.Binding
 	switch p {
 	case panelAttention:
 		b = []key.Binding{k.Promote, short(k.Sort, "sort"), short(k.Project, "project")}
 	case panelWork:
+		if canEject {
+			b = append(b, k.Eject)
+		}
 		if hasLog {
 			b = append(b, short(k.Raw, "raw"))
 		}
