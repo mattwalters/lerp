@@ -1971,6 +1971,15 @@ func age(t time.Time) string {
 	}
 }
 
+// wrapText word-wraps prose to the pane's inner width. panelBox truncates
+// its rows instead of wrapping — right for a one-line list row, wrong for a
+// sentence, where it would throw away everything past the first line. The
+// ticket body goes through renderMarkdown instead; this is for lerp's own
+// prose, which is not markdown and must not be read as any.
+func wrapText(s string, width int) []string {
+	return strings.Split(ansi.Wrap(s, max(8, width), "-"), "\n")
+}
+
 // workDetail is the lens on a selected ticket no run has a log for: where
 // it sits in pickup order and what, if anything, gates it. With nothing
 // queued it says how tickets enter each queue instead.
