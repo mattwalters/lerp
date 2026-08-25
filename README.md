@@ -305,8 +305,14 @@ in the loop's own pickup order, with the ones running now at the top
 of their own group. A running row carries its state — provisioning
 or running — and the run's elapsed time. A run inherited from a
 previous `lerp` reads as `running` like any other, and shows its true
-age rather than the moment it was adopted; a waiting row is shown
-faint with the reason it waits, blocked or claimed. The panel title
+age rather than the moment it was adopted. Under it, once the run
+has a log, a second line reads how that run is going: how long since
+the log last said anything, and a sparkline of the agent's recent
+activity, so a run that has fallen quiet reads as a flat line. Those
+are numbers to read, not a timeout — lerp sets no threshold on them and
+never acts on one; ejecting a run that has stopped making progress
+stays the operator's call. A waiting row is shown faint with the reason
+it waits, blocked or claimed. The panel title
 and the status bar carry the capacity, `2/3 running`, which is what
 says whether anything can start — every live run counts against it,
 whichever lane it landed on, with `· +1 over` beside it while more runs

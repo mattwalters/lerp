@@ -7,6 +7,12 @@
 // render time by internal/logfmt, never on disk — with a raw toggle
 // for when the decoding is wrong, and plain text as the floor.
 //
+// The row reads the same log for its own second line: how long since
+// the log grew, and a sparkline of recent activity (see pulse.go).
+// That is a reading for the operator,
+// never a timeout — SCOPE defers hang detection, and nothing here
+// holds a threshold or acts on a number.
+//
 // A ticket the operator selects is read out of Linear into that same
 // pane, description and comments alike, rendered as the markdown
 // Linear stores rather than as its source (see markdown.go).

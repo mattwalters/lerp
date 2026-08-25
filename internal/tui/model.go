@@ -174,6 +174,11 @@ type lane struct {
 	queue    string
 	logPath  string // survives the run, so the tail outlives the agent
 	since    time.Time
+	// pulse reads that log for what the run's row shows beyond its age: when
+	// it last said anything, and the activity behind it. Nil until the first
+	// poll finds a log path; a new run gets a new lane, so it never inherits
+	// the last occupant's counts.
+	pulse *pulse
 }
 
 const (
@@ -258,6 +263,10 @@ type workRow struct {
 	lane  int
 	state laneState
 	since time.Time
+	// heard is when that run's log last grew, zero while it has none; rate
+	// is its recent activity per bucket, oldest first, for the sparkline.
+	heard time.Time
+	rate  []int
 	// The pickup gate, for a ticket that is not running: where it sits in
 	// its queue's order, and what holds it there.
 	pos, of   int
@@ -489,6 +498,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// The poll is also the clock: elapsed times and the heartbeat
 		// re-render even when the log is quiet.
 		m.frame++
+		m.readPulses()
 		if m.tail.read() && m.showingLog() {
 			m.refreshLog()
 		}
@@ -1023,6 +1033,34 @@ func (m *model) retarget() {
 	m.refreshLog()
 }
 
+// readPulses reads every live lane's log for what its row shows about the
+// run: when the log last grew, and the activity behind it. It rides the same
+// 250ms poll as the tail and the heartbeat — one clock for everything.
+//
+// The selected lane's log is read twice, once here and once by the tail. The
+// two want different positions in the same file — the tail holds a
+// scrollback, the pulse only counts what arrives — and a poll that finds
+// nothing new costs a stat, so the duplication buys each of them its own
+// place for a price the poll was already paying.
+//
+// This does decode every live lane's log, where before only the selected
+// one was parsed at all. That is the count being of events rather than of
+// bytes, which is what makes it degrade with logfmt; an agent writes a few
+// kilobytes a second and a whole tool result is one line, so the poll's
+// share of a 250ms budget stays small.
+func (m *model) readPulses() {
+	now := time.Now()
+	for _, ln := range m.lanes {
+		if ln.state == laneIdle || ln.logPath == "" {
+			continue
+		}
+		if ln.pulse == nil {
+			ln.pulse = newPulse(ln.logPath)
+		}
+		ln.pulse.read(now)
+	}
+}
+
 // selectedLogPath is the log behind the selected row: the live lane's while a
 // run holds it, then the one that run left behind.
 func (m *model) selectedLogPath() string {
@@ -1130,6 +1168,9 @@ func (m *model) workGroups() []workGroup {
 		}
 		row := workRow{ticketID: ln.ticketID, ticket: ln.name(), queue: ln.queue,
 			lane: n, state: ln.state, since: ln.since}
+		if ln.pulse != nil {
+			row.heard, row.rate = ln.pulse.heard, ln.pulse.window()
+		}
 		// A running ticket normally still sits in its queue's listing,
 		// claimed and ineligible: that listing is the group, and it carries
 		// the ticket's title and URL. Failing that, the queue the run started
@@ -1564,7 +1605,7 @@ func panelTitle(n int, name string, focused bool, extra string) string {
 // — the key hints on the last line. A panel squeezed down to a single row
 // keeps the row and drops the hints: a key line over an empty body says what
 // the keys do to nothing.
-func (m *model) panelBody(p panel, rows []string, sel, width, ih int) []string {
+func (m *model) panelBody(p panel, rows []string, cur cursor, width, ih int) []string {
 	if m.focus != p {
 		return rows
 	}
@@ -1580,8 +1621,8 @@ func (m *model) panelBody(p panel, rows []string, sel, width, ih int) []string {
 	if hint != "" {
 		ih--
 	}
-	if sel >= 0 {
-		rows = windowRows(rows, sel, ih)
+	if cur.at >= 0 {
+		rows = windowRows(rows, cur, ih)
 	}
 	if hint == "" {
 		return rows
@@ -1646,16 +1687,17 @@ func marker(on bool) string {
 }
 
 // attentionRows builds the inbox table's rows — under a grouping mode,
-// a header above each run of them; sel is the selected row's index (-1 with
-// nothing to select), for the focus window.
-func (m *model) attentionRows(width int) ([]string, int) {
+// a header above each run of them — and where the cursor sits among them,
+// for the focus window. Every inbox row is one line.
+func (m *model) attentionRows(width int) ([]string, cursor) {
+	none := cursor{at: -1}
 	switch {
 	case !m.attentionSeen:
-		return []string{styleFaint.Render("reading the board…")}, -1
+		return []string{styleFaint.Render("reading the board…")}, none
 	case len(m.attention) == 0:
-		return []string{styleFaint.Render("the inbox is empty")}, -1
+		return []string{styleFaint.Render("the inbox is empty")}, none
 	case len(m.shown) == 0:
-		return []string{styleFaint.Render("nothing in " + m.project)}, -1
+		return []string{styleFaint.Render("nothing in " + m.project)}, none
 	}
 	focused := m.focus == panelAttention
 	// Every column is padded to the widest cell on the list, so the four of
@@ -1693,7 +1735,7 @@ func (m *model) attentionRows(width int) ([]string, int) {
 		}
 		rows = append(rows, attentionRow(it, focused && i == m.attnSel, idW, levW, statusW, projW, width))
 	}
-	return rows, sel
+	return rows, cursor{at: sel, span: 1}
 }
 
 // oneGroup reports whether every shown row falls under the same header.
@@ -1857,8 +1899,8 @@ func (m model) attentionPanel(w, h int) string {
 			extra += styleFaint.Render(" · " + m.project)
 		}
 	}
-	rows, sel := m.attentionRows(padList.inner(w))
-	rows = m.panelBody(panelAttention, rows, sel, padList.inner(w), h-2)
+	rows, cur := m.attentionRows(padList.inner(w))
+	rows = m.panelBody(panelAttention, rows, cur, padList.inner(w), h-2)
 	return panelBox(panelTitle(1, "inbox", focused, extra), focused, w, h, rows, padList)
 }
 
@@ -1906,16 +1948,17 @@ func (m model) workPanel(w, h int) string {
 }
 
 // workListRows renders the merged list: each queue's header, then its
-// tickets — running first, then what runs next. sel is the selected row's
-// index among the rendered lines (-1 with nothing to select), for the focus
-// window.
-func (m *model) workListRows(width int) ([]string, int) {
+// tickets — running first, then what runs next — and where the cursor sits
+// among the rendered lines, for the focus window. A ticket a lane holds
+// draws two lines, so the cursor carries that span rather than a bare index.
+func (m *model) workListRows(width int) ([]string, cursor) {
+	none := cursor{at: -1}
 	groups := m.workGroups()
 	if len(groups) == 0 {
 		if m.queues == nil {
-			return []string{styleFaint.Render("waiting for the first pass…")}, -1
+			return []string{styleFaint.Render("waiting for the first pass…")}, none
 		}
-		return []string{styleFaint.Render("no queues configured")}, -1
+		return []string{styleFaint.Render("no queues configured")}, none
 	}
 	n := 0
 	for _, g := range groups {
@@ -1927,18 +1970,23 @@ func (m *model) workListRows(width int) ([]string, int) {
 	}
 	focused := m.focus == panelWork
 	var rows []string
-	sel, idx := -1, 0
+	var cont []bool
+	at, span, idx := -1, 1, 0
 	for _, g := range groups {
-		rows = append(rows, groupHeader(g))
+		rows, cont = append(rows, groupHeader(g)), append(cont, false)
 		for _, r := range g.rows {
+			lines := m.workRowLines(r, focused && idx == selRow, width)
 			if idx == selRow {
-				sel = len(rows)
+				at, span = len(rows), len(lines)
 			}
-			rows = append(rows, m.workRowLine(r, focused && idx == selRow, width))
+			for i := range lines {
+				cont = append(cont, i > 0)
+			}
+			rows = append(rows, lines...)
 			idx++
 		}
 	}
-	return rows, sel
+	return rows, cursor{at: at, span: span, cont: cont}
 }
 
 // groupHeader is one queue's line: its name, the Linear status a ticket
@@ -1958,11 +2006,13 @@ func groupHeader(g workGroup) string {
 		styleFaint.Render(fmt.Sprintf(" · %s · %s · %s", g.status, g.team, count))
 }
 
-// workRowLine is one ticket as a line of the panel: what is running it, or
-// what it waits on. The state and the elapsed clock are right-aligned so the
-// fact that is changing is never the one truncated away; the state is a
-// colored dot plus a word, since color alone would not carry it.
-func (m model) workRowLine(r workRow, selected bool, width int) string {
+// workRowLines is one ticket as the panel draws it: a line naming it and
+// what is running it or what it waits on, and — for a ticket a lane holds —
+// a second line of how that run is going. The right-hand column is
+// right-aligned so the fact that is changing is never the one truncated
+// away; the state is a colored dot plus a word, since color alone would not
+// carry it.
+func (m model) workRowLines(r workRow, selected bool, width int) []string {
 	name := styleTicket.Render(r.ticket) + " " + r.title
 	if r.lane == 0 {
 		if !r.eligible {
@@ -1977,7 +2027,7 @@ func (m model) workRowLine(r workRow, selected bool, width int) string {
 		}
 		// Two spaces where a running row draws its dot, so identifiers line
 		// up down the group whether or not a lane holds them.
-		return splitRow(marker(selected)+"  "+name, right, width)
+		return []string{splitRow(marker(selected)+"  "+name, right, width)}
 	}
 	var dot, state string
 	switch r.state {
@@ -2003,8 +2053,48 @@ func (m model) workRowLine(r workRow, selected bool, width int) string {
 		dot = styleRunning.Render("●")
 		state = styleFaint.Render("running")
 	}
+	// The elapsed clock stays on this line, where it already was: a squeezed
+	// panel keeps the first line of a row and cuts the second, and the row
+	// that survives that cut must not say less than it did before the
+	// second line existed.
 	right := state + " " + styleFaint.Render(elapsed(r.since))
-	return splitRow(marker(selected)+dot+" "+name, right, width)
+	lines := []string{splitRow(marker(selected)+dot+" "+name, right, width)}
+	if reading := runLine(r, width); reading != "" {
+		lines = append(lines, reading)
+	}
+	return lines
+}
+
+// runLine is the second line of a row a lane holds: how long since its log
+// last said anything, and a sparkline of the activity behind that. Beside the
+// elapsed clock on the line above, they answer what elapsed alone cannot —
+// whether a run that started four minutes ago is still doing something.
+//
+// It is empty for a run with no log to read, which is a lane still
+// provisioning: a blank line under the row would claim a reading that does
+// not exist, and cost the panel a row to say nothing.
+//
+// This is a reading, not a verdict. Nothing here compares the number to a
+// threshold or calls a run stuck; SCOPE defers hang detection, and this shows
+// the operator what the log already knows and leaves the decision to eject
+// theirs.
+func runLine(r workRow, width int) string {
+	if r.heard.IsZero() {
+		return ""
+	}
+	// Four spaces: the cursor column and the state dot, so the line starts
+	// under the ticket identifier rather than under the cursor.
+	left := "    heard " + elapsed(r.heard) + " ago"
+	// The number is the reading; the sparkline is the shape behind it.
+	// splitRow protects its right column against a narrow panel, and here
+	// the right column is the one that can be spared — a panel too narrow
+	// for both drops the line rather than truncate the digits.
+	right := ""
+	spark := sparkline(r.rate)
+	if spark != "" && lipgloss.Width(left)+1+lipgloss.Width(spark) <= width {
+		right = styleFaint.Render(spark)
+	}
+	return splitRow(styleFaint.Render(left), right, width)
 }
 
 // mainPanel is the lens: the promote picker while it is open, the ? overlay,
@@ -2037,7 +2127,7 @@ func (m model) promotePicker(it loop.AttentionItem, w, h int) string {
 		}
 	}
 	// The highlighted status must be on screen before enter can confirm it.
-	rows = windowRows(rows, 2+m.promoteSel, h-2)
+	rows = windowRows(rows, cursor{at: 2 + m.promoteSel, span: 1}, h-2)
 	return panelBox(styleTitleFocus.Render("promote "+it.Ticket), true, w, h, rows, padMain)
 }
 
@@ -2342,7 +2432,9 @@ func (m model) statusBar() string {
 }
 
 func elapsed(since time.Time) string {
-	return time.Since(since).Truncate(time.Second).String()
+	// A clock that disagrees with the filesystem's can put a log's mtime a
+	// moment in the future; "-1s ago" would read as a bug in the board.
+	return max(time.Since(since), 0).Truncate(time.Second).String()
 }
 
 // name is the ticket column: the human identifier when the loop knows it, a

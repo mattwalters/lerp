@@ -290,7 +290,7 @@ func TestAdoptedRunReadsAsRunning(t *testing.T) {
 	// Without the trailing clock: elapsed is recomputed per render, so a
 	// second falling between the two calls would fail this for no reason.
 	line := func(r workRow) string {
-		s := m.workRowLine(r, false, 80)
+		s := m.workRowLines(r, false, 80)[0]
 		return s[:strings.LastIndex(s, " ")]
 	}
 	row := rows[0]
@@ -319,7 +319,7 @@ func TestAdoptedRunOccupiesAndFreesItsRow(t *testing.T) {
 	// The row itself, not the view: the main pane titles the selected row's
 	// log with the same shortened ID, so a view check would pass even with
 	// the ticket column gone.
-	if line := m.workRowLine(rows[0], false, 80); !strings.Contains(line, "abcdef12…") {
+	if line := m.workRowLines(rows[0], false, 80)[0]; !strings.Contains(line, "abcdef12…") {
 		t.Fatalf("adopted run not on the board: %q", line)
 	}
 
@@ -2281,11 +2281,11 @@ func TestWorkIsCappedAndScrollsUnderTheCap(t *testing.T) {
 	if g2 := m.geometry(); g2.workH != g.workH {
 		t.Fatalf("work grew as the selection walked: %d then %d lines", g.workH, g2.workH)
 	}
-	rows, sel := m.workListRows(g.sideW - 2)
-	if sel < 0 {
+	rows, cur := m.workListRows(g.sideW - 2)
+	if cur.at < 0 {
 		t.Fatal("work has no selection to keep on screen")
 	}
-	want := strings.TrimRight(ansi.Strip(rows[sel]), " ")
+	want := strings.TrimRight(ansi.Strip(rows[cur.at]), " ")
 	if !strings.Contains(ansi.Strip(m.View()), want) {
 		t.Fatalf("the selected row walked off the capped panel:\n%s", m.View())
 	}
@@ -2310,11 +2310,11 @@ func TestFlooredPanelStillShowsTheSelection(t *testing.T) {
 		if g.workH < panelFloor {
 			t.Fatalf("%dx%d: work is %d lines, under the floor", tc.w, tc.h, g.workH)
 		}
-		rows, sel := m.workListRows(g.sideW - 2)
-		if sel < 0 {
+		rows, cur := m.workListRows(g.sideW - 2)
+		if cur.at < 0 {
 			t.Fatalf("%dx%d: work has no selection to show", tc.w, tc.h)
 		}
-		want := strings.TrimRight(ansi.Strip(rows[sel]), " ")
+		want := strings.TrimRight(ansi.Strip(rows[cur.at]), " ")
 		if !strings.Contains(ansi.Strip(m.View()), want) {
 			t.Fatalf("%dx%d: the selected row is not on screen:\n%s", tc.w, tc.h, m.View())
 		}
@@ -3239,6 +3239,240 @@ func TestOffBoardRunsFromOneQueueShareAHeader(t *testing.T) {
 		if !strings.Contains(view, want) {
 			t.Errorf("adopted run %q vanished:\n%s", want, view)
 		}
+	}
+}
+
+// A running row's second line is the question the first one cannot answer:
+// not "did it start" but "is it still doing something". Elapsed, when the log
+// last grew, and the activity behind it.
+func TestRunningRowShowsHowTheRunIsGoing(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.log")
+	writeLog(t, path, []byte(
+		`{"type":"system","subtype":"init","model":"claude-opus-5","session_id":"abc"}`+"\n"))
+
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
+			{ID: "id-1", Identifier: "LERP-1", Title: "one", Assigned: true}}},
+	}}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		TicketID: "id-1", Ticket: "LERP-1", Queue: "implement", LogPath: path,
+		StartedAt: time.Now().Add(-90 * time.Second)}})
+
+	// The first poll attaches the pulse; the agent then does something.
+	m = update(t, m, pollMsg{})
+	appendLog(t, path,
+		`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"/a/b.go"}}]}}`+"\n")
+	m = update(t, m, pollMsg{})
+
+	view := m.View()
+	for _, want := range []string{"running", "1m30s", "heard", "ago", "█"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("the running row is missing %q:\n%s", want, view)
+		}
+	}
+	// The row is two lines and the panel counts them, or the list would
+	// draw more rows than it has room for.
+	rows, _ := m.workListRows(40)
+	if len(rows) != 3 {
+		t.Fatalf("work list drew %d lines, want a header and a two-line row: %q", len(rows), rows)
+	}
+	if !strings.Contains(rows[1], "LERP-1") || strings.Contains(rows[2], "LERP-1") {
+		t.Fatalf("the run's two lines are not the ticket then its reading: %q", rows)
+	}
+}
+
+// A ticket nothing is running keeps its one line: the second line is a
+// reading of a run, and there is no run.
+func TestWaitingRowStaysOneLine(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
+			{ID: "id-1", Identifier: "LERP-1", Title: "one", Eligible: true}}},
+	}}})
+	rows, _ := m.workListRows(40)
+	if len(rows) != 2 {
+		t.Fatalf("work list drew %d lines, want a header and a one-line row: %q", len(rows), rows)
+	}
+}
+
+// A lane still provisioning has no log to read, so its row shows the clock it
+// has and claims nothing about a stream that does not exist yet.
+func TestProvisioningRowClaimsNoReading(t *testing.T) {
+	// The loop hands a provisioning lane the path its log will have, and the
+	// runner does not create the file until the agent starts — so the row
+	// has a path pointing at nothing, which is the case that matters.
+	path := filepath.Join(t.TempDir(), "not-yet.log")
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventProvisioning, RunID: "r1", Lane: 1,
+		TicketID: "id-9", Ticket: "LERP-9", Queue: "plan", LogPath: path, StartedAt: time.Now()}})
+	m = update(t, m, pollMsg{})
+	view := m.View()
+	if strings.Contains(view, "heard") {
+		t.Fatalf("a provisioning row reports a log it does not have:\n%s", view)
+	}
+	if strings.ContainsAny(view, "▁█") {
+		t.Fatalf("a provisioning row draws activity for a log that does not exist:\n%s", view)
+	}
+	if !strings.Contains(view, "provisioning") {
+		t.Fatalf("a provisioning row lost its state:\n%s", view)
+	}
+}
+
+// A run whose log appears late — the ordinary case, since the lane is given
+// its path while the workspace is still being provisioned — starts its
+// reading when the file does. The buckets that passed before it existed are
+// not quiet buckets; they are no buckets.
+func TestPulseStartsWhenTheLogDoes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "late.log")
+	start := time.Now()
+	p := newPulse(path)
+	for i := 0; i < 20; i++ {
+		p.read(start.Add(time.Duration(i) * sparkBucket))
+	}
+	if got := p.window(); len(got) != 0 {
+		t.Fatalf("a log that never appeared drew %v", got)
+	}
+	appendLog(t, path, "the agent starts\n")
+	p.read(start.Add(20 * sparkBucket))
+	if got := p.window(); len(got) != 1 {
+		t.Fatalf("the run's first poll drew %d buckets, want 1: %v", len(got), got)
+	}
+}
+
+// The focus window slides by line, and a run's two lines are one row. A
+// window that keeps only the first cuts the reading off the very row the
+// operator is looking at; one that opens on a second line strands it under
+// whatever name happens to be above, where it reads as that ticket's.
+func TestScrolledRunKeepsRowsWhole(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.log")
+	writeLog(t, path, []byte("agent at work\n"))
+
+	for _, size := range []struct{ w, h int }{{120, 22}, {120, 25}, {120, 30}, {100, 44}} {
+		m, _, _ := newTestModel(t, 5)
+		resized, _ := m.Update(tea.WindowSizeMsg{Width: size.w, Height: size.h})
+		m = fillBoard(t, resized.(model), 40)
+		for lane := 1; lane <= 5; lane++ {
+			m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted,
+				RunID: fmt.Sprintf("r%d", lane), Lane: lane,
+				TicketID: fmt.Sprintf("t%d", lane-1), Ticket: fmt.Sprintf("QUEUED-%d", lane),
+				Queue: "implement", LogPath: path}})
+		}
+		m = update(t, m, pollMsg{})
+		m = update(t, m, keyMsg("2"))
+
+		// Walk the cursor onto each running row in turn. The panel is capped
+		// near a third of the stack, so it is scrolling well before the last.
+		for _, want := range []string{"QUEUED-1", "QUEUED-2", "QUEUED-3", "QUEUED-4", "QUEUED-5"} {
+			for m.selectedWork() == nil || m.selectedWork().ticket != want {
+				m = update(t, m, keyMsg("down"))
+			}
+			g := m.geometry()
+			panel := ansi.Strip(m.workPanel(g.sideW, g.workH))
+			lines := strings.Split(panel, "\n")
+			at := slices.IndexFunc(lines, func(l string) bool {
+				return strings.Contains(l, "▸") && strings.Contains(l, want)
+			})
+			if at < 0 {
+				t.Fatalf("%dx%d: the selected row %s is not on the panel:\n%s", size.w, size.h, want, panel)
+			}
+			if at+1 >= len(lines) || !strings.Contains(lines[at+1], "heard") {
+				t.Fatalf("%dx%d: %s lost its reading to the window:\n%s", size.w, size.h, want, panel)
+			}
+			// And no reading line is left under a name it does not belong
+			// to: every one of them follows the row that produced it.
+			for i, l := range lines {
+				if !strings.Contains(l, "heard") {
+					continue
+				}
+				if i == 0 || !strings.Contains(lines[i-1], "●") {
+					t.Fatalf("%dx%d: a reading sits under %q, not under a run:\n%s",
+						size.w, size.h, strings.TrimSpace(lines[max(i-1, 0)]), panel)
+				}
+			}
+		}
+	}
+}
+
+// The panel the wide layout starts at is the narrowest one it draws, and the
+// number is the reading: the sparkline is what yields to a narrow panel,
+// never the digits.
+func TestRunLineKeepsItsNumbersWhenNarrow(t *testing.T) {
+	r := workRow{lane: 1, since: time.Now().Add(-65 * time.Minute),
+		heard: time.Now().Add(-12*time.Minute - 30*time.Second),
+		rate:  []int{1, 0, 3, 0, 9, 0, 0, 0}}
+	// What a 100-column terminal — the wide layout's own threshold — leaves
+	// a list panel for its rows, asked of the geometry rather than restated.
+	m, _, _ := newTestModel(t, 1)
+	resized, _ := m.Update(tea.WindowSizeMsg{Width: narrowWidth, Height: 40})
+	m = resized.(model)
+	width := padList.inner(m.geometry().sideW)
+
+	line := ansi.Strip(runLine(r, width))
+	if !strings.Contains(line, "heard 12m30s ago") {
+		t.Fatalf("the number did not survive a %d-column panel: %q", width, line)
+	}
+	if !strings.ContainsAny(line, "▁█") {
+		t.Fatalf("the sparkline was dropped where it fits: %q", line)
+	}
+	if lipgloss.Width(line) > width {
+		t.Fatalf("the line is %d columns wide, panel is %d: %q", lipgloss.Width(line), width, line)
+	}
+	// The boundary itself is in columns, not bytes: the sparkline appears at
+	// exactly the width the drawn line occupies, and one column under that
+	// it goes rather than the digits.
+	fits := 0
+	for w := 1; w <= 60 && fits == 0; w++ {
+		if strings.ContainsAny(ansi.Strip(runLine(r, w)), "▁█") {
+			fits = w
+		}
+	}
+	if want := lipgloss.Width("    heard 12m30s ago") + 1 + len(r.rate); fits != want {
+		t.Fatalf("the sparkline appears at %d columns, but the line draws in %d", fits, want)
+	}
+	tight := ansi.Strip(runLine(r, fits-1))
+	if strings.ContainsAny(tight, "▁█") {
+		t.Fatalf("a sparkline crowded out the number: %q", tight)
+	}
+	if !strings.Contains(tight, "heard 12m30s ago") {
+		t.Fatalf("the reading was truncated to make room for decoration: %q", tight)
+	}
+}
+
+// A squeezed panel cuts a row's second line first, so the line that survives
+// has to carry what the row carried before this one existed: the clock.
+func TestSqueezedRunRowKeepsItsClock(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.log")
+	writeLog(t, path, []byte("agent at work\n"))
+	for _, size := range []struct{ w, h int }{{80, 24}, {120, 18}, {120, 21}} {
+		m, _, _ := newTestModel(t, 3)
+		resized, _ := m.Update(tea.WindowSizeMsg{Width: size.w, Height: size.h})
+		m = fillBoard(t, resized.(model), 40)
+		m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+			TicketID: "t0", Ticket: "QUEUED-1", Queue: "implement", LogPath: path,
+			StartedAt: time.Now().Add(-90 * time.Second)}})
+		m = update(t, m, pollMsg{})
+		m = update(t, m, keyMsg("2"))
+		g := m.geometry()
+		panel := ansi.Strip(m.workPanel(g.sideW, g.workH))
+		at := slices.IndexFunc(strings.Split(panel, "\n"), func(l string) bool {
+			return strings.Contains(l, "QUEUED-1")
+		})
+		if at < 0 {
+			t.Fatalf("%dx%d: the running row is not on the panel:\n%s", size.w, size.h, panel)
+		}
+		if line := strings.Split(panel, "\n")[at]; !strings.Contains(line, "1m30s") {
+			t.Fatalf("%dx%d: the running row lost its clock: %q\n%s", size.w, size.h, line, panel)
+		}
+	}
+}
+
+// A log's modification time comes from the filesystem's clock, which may sit
+// a moment ahead of this process's. "-1s ago" would read as a bug in the
+// board rather than as the skew it is.
+func TestElapsedDoesNotRunBackwards(t *testing.T) {
+	if got := elapsed(time.Now().Add(2 * time.Second)); got != "0s" {
+		t.Fatalf("a time in the future reads as %q, want 0s", got)
 	}
 }
 
