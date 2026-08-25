@@ -257,6 +257,15 @@ func TestInitDeclinedReviewDropsThePassNotAQueue(t *testing.T) {
 	if strings.Contains(c.Queues["implement"].Prompt, "three rounds") {
 		t.Error("implement prompt still reviews its own work after the pass was declined")
 	}
+	// The exit contract is not part of the review pass: a run that never
+	// reviews still owes the board one of the two endings. Its prose is all
+	// verdict-comment and draft-state vocabulary, so it is the paragraph most
+	// likely to be tidied into the review section by mistake.
+	for _, ending := range []string{"ends one of exactly two ways", "marked ready for review", "{{on_failure}}"} {
+		if !strings.Contains(c.Queues["implement"].Prompt, ending) {
+			t.Errorf("declined-review implement prompt lost its exit contract: no %q", ending)
+		}
+	}
 	// The declined pass costs the board nothing: no status disappears with it.
 	want := []linear.StateSpec{
 		{Name: "Implementing", Type: "started"},
