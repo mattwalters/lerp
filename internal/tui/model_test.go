@@ -1444,12 +1444,7 @@ func TestExpandedBacklogRowsTakeTheKeys(t *testing.T) {
 func TestProjectFilterSkipsAProjectThatIsAllBacklog(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, keyMsg("1"))
-	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
-		{Ticket: "LERP-1", TicketID: "id-1", Title: "Fix the build", Status: "Needs Attention",
-			Project: "Shipping", Relevance: loop.StatusFailed},
-		{Ticket: "LERP-2", TicketID: "id-2", Title: "Someday", Status: "Backlog",
-			Project: "Later", Relevance: loop.StatusBacklog},
-	}}})
+	m = update(t, m, eventMsg{ev: allBacklogProject()})
 
 	if got := m.projects(); !slices.Equal(got, []string{"Shipping"}) {
 		t.Fatalf("the project cycle offers %v, want only the project with a visible row", got)
@@ -1469,6 +1464,51 @@ func TestProjectFilterSkipsAProjectThatIsAllBacklog(t *testing.T) {
 	if got := m.projects(); !slices.Equal(got, []string{"Later", "Shipping"}) {
 		t.Fatalf("the expanded project cycle offers %v, want both projects", got)
 	}
+
+	// Scope to the backlog-only project, then fold it away underneath: the
+	// scope is a choice the operator made and the fold is not a reason to
+	// take it back, but P has to leave it in one press. The panel is showing
+	// nothing and the only text on it is the hint that says so.
+	m = update(t, m, keyMsg("P"))
+	if m.project != "Later" {
+		t.Fatalf("P scoped to %q, want the backlog-only project", m.project)
+	}
+	m = update(t, m, keyMsg("B"))
+	if m.project != "Later" || len(m.shown) != 0 {
+		t.Fatalf("folding changed the scope: %q, %d rows", m.project, len(m.shown))
+	}
+	if got := m.emptyHint(); !strings.Contains(got, "P cycles the project filter back to all") {
+		t.Fatalf("the empty panel's hint = %q, want the promise P has to keep", got)
+	}
+	m = update(t, m, keyMsg("P"))
+	if m.project != "" {
+		t.Fatalf("P from a folded-away project went to %q, want every project", m.project)
+	}
+
+	// And a pass does not take the scope away on its own: the project did
+	// not stop existing, it went behind the fold.
+	m = update(t, m, keyMsg("B")) // expanded, so Later is on the cycle again
+	m = update(t, m, keyMsg("P"))
+	if m.project != "Later" {
+		t.Fatalf("P scoped to %q, want the backlog-only project", m.project)
+	}
+	m = update(t, m, keyMsg("B")) // and now folded away under the scope
+	m = update(t, m, eventMsg{ev: allBacklogProject()})
+	if m.project != "Later" {
+		t.Fatalf("a pass cleared the scope to %q, though the board did not change", m.project)
+	}
+}
+
+// allBacklogProject is a board with one ticket blocked on a human and a
+// whole project behind the fold: the shape that separates "the fold is
+// hiding this project" from "the pass no longer has it".
+func allBacklogProject() loop.Event {
+	return loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-1", TicketID: "id-1", Title: "Fix the build", Status: "Needs Attention",
+			Project: "Shipping", Relevance: loop.StatusFailed},
+		{Ticket: "LERP-2", TicketID: "id-2", Title: "Someday", Status: "Backlog",
+			Project: "Later", Relevance: loop.StatusBacklog},
+	}}
 }
 
 // Done-when: an inbox holding nothing but backlog says nothing is waiting on
@@ -1496,6 +1536,16 @@ func TestAFoldedBacklogDoesNotClaimTheGoalState(t *testing.T) {
 	if got := m.View(); strings.Contains(got, "in the inbox") {
 		t.Fatalf("the status bar counts a backlog nobody is blocked on:\n%s", got)
 	}
+	// No count to show is not no title: the sort is still in force, and a
+	// panel that says nothing about it makes `s` a silent state change.
+	if !strings.Contains(panel, "by status") {
+		t.Fatalf("the title dropped the sort mode along with the count:\n%s", panel)
+	}
+	m = update(t, m, keyMsg("s"))
+	if got := m.attentionPanel(96, 14); !strings.Contains(got, "by project") {
+		t.Fatalf("s cycled the sort without the title moving:\n%s", got)
+	}
+	m = update(t, m, keyMsg("s"))
 
 	// A board with nothing waiting at all still reads as the goal state, and
 	// has no fold to advertise.

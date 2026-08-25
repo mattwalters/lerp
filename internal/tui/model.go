@@ -1215,7 +1215,14 @@ func (m *model) apply(ev loop.Event) {
 		// search is not reset the same way: a project is a category that
 		// stopped existing, where a query is text the operator typed and can
 		// see in the title — clearing it under them would be the surprise.
-		if m.project != "" && !slices.Contains(m.projects(), m.project) {
+		//
+		// Asked of the whole pass rather than of projects(), which follows
+		// the fold: a project the operator scoped to while browsing the
+		// backlog has not stopped existing when the fold closes over it, and
+		// a pass is not the place to take that choice away.
+		if m.project != "" && !slices.ContainsFunc(m.attention, func(it loop.AttentionItem) bool {
+			return it.Project == m.project
+		}) {
 			m.project = ""
 		}
 		// An inbox with nothing in it has nothing to narrow, and the title
@@ -1817,6 +1824,12 @@ func (m *model) hasProjects() bool {
 func (m *model) cycleProject() {
 	names := m.projects()
 	switch i := slices.Index(names, m.project); {
+	// A scope the fold has taken off the cycle — every row of that project
+	// is backlog, and the backlog just closed — has one stop from here, and
+	// it is the one the empty panel's hint promises. Not folded in with the
+	// case below, whose i is -1 for the empty scope that starts the cycle.
+	case m.project != "" && i < 0:
+		m.project = ""
 	case i+1 >= len(names):
 		m.project = ""
 	default:
@@ -2548,16 +2561,21 @@ func (m model) attentionPanel(w, h int) string {
 	// from the status bar's number on purpose while the backlog is open —
 	// the bar answers "should I look up", the title "what is in this panel".
 	base := m.unfolded()
-	if len(base) > 0 {
+	if len(m.attention) > 0 {
 		// The sort mode, the project filter and the fold live in the title
 		// because they are the only things about this panel a key changed,
 		// and a table sorted or folded differently than the operator
-		// remembers is worse than one that says how it is.
-		count := fmt.Sprintf(" ● %d", len(base))
-		if m.project != "" || m.search != "" {
-			count = fmt.Sprintf(" ● %d/%d", len(m.shown), len(base))
+		// remembers is worse than one that says how it is. They are not
+		// gated on the count below: a board worked down to nothing but
+		// backlog has no count to show and still answers to `s`, and a sort
+		// that changed without the title moving is a silent one.
+		if len(base) > 0 {
+			count := fmt.Sprintf(" ● %d", len(base))
+			if m.project != "" || m.search != "" {
+				count = fmt.Sprintf(" ● %d/%d", len(m.shown), len(base))
+			}
+			extra = styleAttention.Render(count)
 		}
-		extra = styleAttention.Render(count)
 		// The query sits next to the fraction, ahead of the two controls
 		// that were already here: they are the one fact that explains the
 		// other, and a title truncated by a narrow panel loses them last.

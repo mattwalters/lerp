@@ -130,6 +130,30 @@ func TestSearchDoesNotReachAFoldedBacklog(t *testing.T) {
 	}
 }
 
+// Done-when: `/` is inert on an inbox whose every row is behind the fold.
+// Nothing to narrow is nothing to search — and a prompt opened over the one
+// line saying the panel is empty would take the keyboard for a filter that
+// can match nothing.
+func TestSearchIsInertBehindAFullyFoldedInbox(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-2", TicketID: "id-2", Title: "Someday", Status: "Backlog",
+			Relevance: loop.StatusBacklog},
+	}}})
+
+	m = update(t, m, keyMsg("/"))
+	if m.searching {
+		t.Fatal("/ opened a prompt over an inbox with no row on it")
+	}
+	// And the key comes back with the rows.
+	m = browseBacklog(t, m)
+	m = update(t, m, keyMsg("/"))
+	if !m.searching {
+		t.Fatal("/ is still inert once the backlog is on screen")
+	}
+}
+
 // Done-when: the prompt takes the keyboard while it is open. A p or a q
 // typed into a search is text, not a promote and not a quit — ctrl+c is the
 // one key that still means what it always means.
