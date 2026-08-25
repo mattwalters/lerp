@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -41,7 +42,13 @@ type Record struct {
 	StartingStatus     string    `json:"starting_status"`
 	Workspace          string    `json:"workspace"`
 	LogPath            string    `json:"log_path"`
-	SessionID          string    `json:"session_id,omitempty"`
+	// ExitPath is where the run writes its own exit status. A run started by
+	// a previous lerp is not this process's child, so nobody can wait() for
+	// its code; the file is how a finished run still reports one. Empty on
+	// records written before it existed, which ExitStatus reads as "no
+	// status", the same as a run that never got that far.
+	ExitPath  string `json:"exit_path,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
 }
 
 // ErrLocked reports that another lerp process is running in this clone.
@@ -94,6 +101,11 @@ func (e *Evidence) Create(record Record) (Record, error) {
 
 	runPath := e.runPath(record.RunID)
 	record.LogPath = filepath.Join(runPath, "run.log")
+	// Only the path is reserved. Unlike the log, the file is deliberately not
+	// created: its absence is the signal that the run never reached its own
+	// last line, and an empty file created here would be indistinguishable
+	// from a torn write.
+	record.ExitPath = filepath.Join(runPath, "exit")
 	if record.Workspace == "" {
 		// Unless the caller has its own placement policy, the workspace lives
 		// under .lerp/workspaces, beside the run evidence rather than inside
@@ -329,6 +341,39 @@ func Alive(record Record) bool {
 		return true
 	}
 	return started == record.ProcessStartedUnix
+}
+
+// exitStatusMax bounds what ExitStatus will read. A status is at most three
+// digits and a newline; anything longer is not one, and reading it in full
+// would let a runaway file into a decision that has a safe answer already.
+const exitStatusMax = 32
+
+// ExitStatus returns the exit status a run recorded for itself, and whether
+// there is one to read. It is a process fact, so it lives beside Alive.
+//
+// Only a whole file that trims to a single integer in 0-255 counts. Absent,
+// empty, torn, oversized or non-numeric all report false, and callers fall
+// back to knowing nothing about how the run ended: a run killed with SIGKILL
+// or interrupted mid-write never wrote a status, and guessing at one would
+// turn a lost exit code into a wrong hop on the board.
+func ExitStatus(record Record) (int, bool) {
+	if record.ExitPath == "" {
+		return 0, false
+	}
+	f, err := os.Open(record.ExitPath)
+	if err != nil {
+		return 0, false
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, exitStatusMax+1))
+	if err != nil || len(data) > exitStatusMax {
+		return 0, false
+	}
+	code, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || code < 0 || code > 255 {
+		return 0, false
+	}
+	return code, true
 }
 
 // ProcessStart returns the start time of a running process, in seconds since

@@ -244,6 +244,168 @@ wait
 	t.Errorf("child process %d still exists after runner cancellation", pid)
 }
 
+// The whole point of the epilogue: a run leaves its exit status on disk for a
+// lerp that was not its parent, without changing the code Execute itself
+// reports. The workspace is deliberately somewhere other than the exit file's
+// directory — the wrapper runs with cwd set to the workspace, and a relative
+// path would land the status in the wrong place.
+func TestExecuteRecordsItsOwnExitStatus(t *testing.T) {
+	for _, want := range []int{0, 3} {
+		t.Run(strconv.Itoa(want), func(t *testing.T) {
+			dir := t.TempDir()
+			workdir := t.TempDir()
+			script := writeScript(t, dir, "runner.sh", "exit "+strconv.Itoa(want)+"\n")
+			exitPath := filepath.Join(dir, "exit")
+
+			result, err := Execute(context.Background(), Invocation{
+				Runner:   config.Runner{Command: shellQuote(script)},
+				Ticket:   "LERP-1",
+				Workdir:  workdir,
+				LogPath:  filepath.Join(dir, "runner.log"),
+				ExitPath: exitPath,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.ExitCode != want {
+				t.Errorf("ExitCode = %d, want %d — the epilogue must not change what Execute reports", result.ExitCode, want)
+			}
+			recorded, err := os.ReadFile(exitPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.TrimSpace(string(recorded)) != strconv.Itoa(want) {
+				t.Errorf("exit file = %q, want %d", recorded, want)
+			}
+		})
+	}
+}
+
+// The configured command is a quoted word to the wrapping shell, never text
+// pasted in ahead of the epilogue — so nothing a template ends in can parse as
+// one construct with what follows it. A trailing comment would swallow the
+// epilogue; a trailing `&&` would join it, leaving `s` unset and reporting a
+// broken command as a clean exit 0; a trailing `exec` would replace the shell
+// that has to write the file. Each of these must still report the status the
+// command itself ended with.
+func TestExecuteRecordsItsExitStatusWhateverTheCommandEndsIn(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		suffix string
+		want   int
+		// wantAny takes any non-zero status instead of a fixed one, for the
+		// case where the number itself is the shell's business.
+		wantAny bool
+	}{
+		{name: "trailing comment", suffix: " # run the agent", want: 5},
+		// A syntax error in the configured command is the inner shell's, and
+		// it exits non-zero for it — as it did before there was any wrapper.
+		// Which non-zero is unspecified by POSIX (2 in bash and dash, 3 in
+		// ksh93, 1 in zsh's sh mode), so the claim under test is that the
+		// command was a quoted word and whatever status it ended with was
+		// recorded faithfully — not the number.
+		{name: "trailing and", suffix: " &&", wantAny: true},
+		{name: "leading exec", suffix: "", want: 5},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			script := writeScript(t, dir, "runner.sh", "exit 5\n")
+			command := shellQuote(script) + tc.suffix
+			if tc.name == "leading exec" {
+				command = "exec " + command
+			}
+			exitPath := filepath.Join(dir, "exit")
+
+			result, err := Execute(context.Background(), Invocation{
+				Runner:   config.Runner{Command: command},
+				Ticket:   "LERP-1",
+				Workdir:  dir,
+				LogPath:  filepath.Join(dir, "runner.log"),
+				ExitPath: exitPath,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := tc.want
+			switch {
+			case tc.wantAny && result.ExitCode == 0:
+				t.Errorf("ExitCode = 0, want any non-zero: the command was a syntax error")
+			case tc.wantAny:
+				want = result.ExitCode
+			case result.ExitCode != tc.want:
+				t.Errorf("ExitCode = %d, want %d", result.ExitCode, tc.want)
+			}
+			recorded, err := os.ReadFile(exitPath)
+			if err != nil {
+				t.Fatalf("no exit status was recorded: %v", err)
+			}
+			if strings.TrimSpace(string(recorded)) != strconv.Itoa(want) {
+				t.Errorf("exit file = %q, want %d — the status Execute reported", recorded, want)
+			}
+		})
+	}
+}
+
+// Without an exit path there is no wrapper and nothing to record: the dev
+// harness that owns no run evidence must not start writing status files into
+// somebody else's directory.
+func TestExecuteWithoutAnExitPathRecordsNothing(t *testing.T) {
+	dir := t.TempDir()
+	script := writeScript(t, dir, "runner.sh", "exit 4\n")
+
+	result, err := Execute(context.Background(), Invocation{
+		Runner:  config.Runner{Command: shellQuote(script)},
+		Ticket:  "LERP-1",
+		Workdir: dir,
+		LogPath: filepath.Join(dir, "runner.log"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ExitCode != 4 {
+		t.Errorf("ExitCode = %d, want 4", result.ExitCode)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if entry.Name() == "exit" {
+			t.Errorf("an exit file was written for an invocation that asked for none")
+		}
+	}
+}
+
+// Reap trusts an absent exit file to mean "this run never finished", and that
+// is only sound because the process lerp recorded a PID for is the wrapping
+// shell — the very thing that writes the file — rather than the agent itself.
+// So the recorded PID must not be the agent's: if sh exec-optimized itself
+// away, Alive would go false while the status was still unwritten.
+func TestExecuteRecordsThePIDOfTheShellThatWritesTheStatus(t *testing.T) {
+	dir := t.TempDir()
+	script := writeScript(t, dir, "runner.sh", "printf '%s' \"$$\"\n")
+	logPath := filepath.Join(dir, "runner.log")
+	var recordedPID int
+
+	if _, err := Execute(context.Background(), Invocation{
+		Runner:   config.Runner{Command: shellQuote(script)},
+		Ticket:   "LERP-1",
+		Workdir:  dir,
+		LogPath:  logPath,
+		ExitPath: filepath.Join(dir, "exit"),
+		Started:  func(pid int) { recordedPID = pid },
+	}); err != nil {
+		t.Fatal(err)
+	}
+	agentPID, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(agentPID) == strconv.Itoa(recordedPID) {
+		t.Errorf("recorded PID %d is the agent's own, want the wrapping shell's", recordedPID)
+	}
+}
+
 func writeScript(t *testing.T, dir, name, body string) string {
 	t.Helper()
 	path := filepath.Join(dir, name)

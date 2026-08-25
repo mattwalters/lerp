@@ -29,11 +29,20 @@ func TestRecordsRoundTripAndRemove(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.RunID == "" || got.LogPath == "" {
-		t.Fatalf("Create did not set run ID and log path: %#v", got)
+	if got.RunID == "" || got.LogPath == "" || got.ExitPath == "" {
+		t.Fatalf("Create did not set run ID, log path and exit path: %#v", got)
 	}
 	if _, err := os.Stat(got.LogPath); err != nil {
 		t.Fatalf("run log: %v", err)
+	}
+	runDir := filepath.Dir(got.LogPath)
+	if filepath.Dir(got.ExitPath) != runDir {
+		t.Errorf("exit path = %q, want it inside the run directory %q", got.ExitPath, runDir)
+	}
+	// Reserved, never created: the file's absence is what tells a reader the
+	// run never reached its own last line.
+	if _, err := os.Stat(got.ExitPath); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("exit file after Create: stat error = %v, want not exist", err)
 	}
 	got, err = e.Read(got.RunID)
 	if err != nil {
@@ -41,6 +50,9 @@ func TestRecordsRoundTripAndRemove(t *testing.T) {
 	}
 	if got.TicketID != want.TicketID || got.Lane != want.Lane || got.RunID == "" {
 		t.Errorf("record = %#v, want the original run facts", got)
+	}
+	if got.ExitPath != filepath.Join(runDir, "exit") {
+		t.Errorf("exit path did not round-trip: %q", got.ExitPath)
 	}
 	if err := e.Remove(got.RunID); err != nil {
 		t.Fatal(err)
@@ -428,4 +440,55 @@ func names(entries []os.DirEntry) []string {
 		out[i] = entry.Name()
 	}
 	return out
+}
+
+// ExitStatus is the only thing standing between a torn file and a wrong hop on
+// the board, so it accepts exactly a whole file that trims to one integer in
+// the range a shell can report, and nothing else.
+func TestExitStatusReadsOnlyACleanStatus(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		content string // the exit file's bytes; missing means no file at all
+		missing bool
+		want    int
+		wantOK  bool
+	}{
+		{name: "clean zero", content: "0", want: 0, wantOK: true},
+		{name: "trailing newline", content: "0\n", want: 0, wantOK: true},
+		{name: "signalled", content: "137\n", want: 137, wantOK: true},
+		{name: "surrounding whitespace", content: "  3 \n", want: 3, wantOK: true},
+		{name: "absent", missing: true},
+		{name: "empty", content: ""},
+		{name: "whitespace only", content: " \n"},
+		{name: "not a number", content: "abc\n"},
+		{name: "two numbers", content: "1 2\n"},
+		{name: "out of range", content: "999\n"},
+		{name: "negative", content: "-1\n"},
+		{name: "oversized", content: strings.Repeat("0", 33)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := New(t.TempDir())
+			record, err := e.Create(Record{Lane: 1, TicketID: "LERP-1"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !tc.missing {
+				if err := os.WriteFile(record.ExitPath, []byte(tc.content), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			code, ok := ExitStatus(record)
+			if ok != tc.wantOK || code != tc.want {
+				t.Errorf("ExitStatus(%q) = (%d, %v), want (%d, %v)", tc.content, code, ok, tc.want, tc.wantOK)
+			}
+		})
+	}
+}
+
+// A record written before exit files existed carries no path, and reads as a
+// run that said nothing about how it ended rather than as a status of 0.
+func TestExitStatusWithoutAPathReportsNothing(t *testing.T) {
+	if code, ok := ExitStatus(Record{RunID: "old", LogPath: "/tmp/run.log"}); ok {
+		t.Errorf("ExitStatus of a pathless record = (%d, %v), want no status", code, ok)
+	}
 }

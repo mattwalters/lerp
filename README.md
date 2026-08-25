@@ -151,7 +151,12 @@ rest in a status no queue serves keeps it assigned to you on purpose:
 that is the pipeline waiting on a human, and the stock config waits
 twice, in "Plan Review" for you to read the plan and in "In Review"
 for you to merge the PR. Promote it with `p` in the TUI, or move it in
-Linear; either way the loop carries it on from there.
+Linear; either way the loop carries it on from there. Two things call
+the whole rule off: a ticket an agent or a human moved out of the
+queue's status during the run keeps that move — the hop it skipped is
+reported rather than forced — and a ticket assigned to somebody else by
+the time the run ends is theirs entirely, hop and claim both, since
+taking over a run mid-flight is exactly the way to say so.
 
 ## Configuration
 
@@ -279,9 +284,11 @@ LINEAR_API_KEY=... lerp
 `lerp` opens the TUI, and the TUI is the engine: the loop runs while it
 is open, and there is no daemon. Each pass reads the run evidence on
 disk, adopts live agents a previous lerp left behind, reaps dead ones —
-disposing the workspace and releasing the claim, when the board still
-looks exactly as the dead run left it — and starts eligible tickets
-as capacity frees. `-concurrency N` caps how many agents run at once
+disposing the workspace, then settling the ticket exactly as the process
+that started the run would have: a run that recorded its own exit status
+takes its queue's hop, and one that never got that far has its claim
+released instead, when the board still looks exactly as the dead run
+left it — and starts eligible tickets as capacity frees. `-concurrency N` caps how many agents run at once
 (default 3). The TUI needs a terminal: in a pipe or a script, `lerp` prints
 usage and exits 2 rather than quietly starting to claim tickets.
 
@@ -412,7 +419,8 @@ and `lerp init` complete the surface.
 the model, and [SCOPE.md](SCOPE.md) invariant 1 holds it. Locally lerp
 keeps exactly two things: `lerp.toml` (config, checked in) and an
 evidence store, `.lerp/` at the repo root — one record per run under
-`.lerp/runs` (pid, log file, ticket, workspace path), workspaces under
+`.lerp/runs` (pid, log file, ticket, workspace path, and the exit status
+the run records for itself as it ends), workspaces under
 `.lerp/workspaces`, an advisory lock at `.lerp/lock` that keeps it to
 one loop per clone, and the loop's diagnostics in `.lerp/loop.log`.
 Local state is evidence, never truth: losing all of it may cost
@@ -425,11 +433,16 @@ boundaries, as artifacts in Linear — the plan in the ticket, a PR link — so
 the worst case is a re-run stage, never a lost ticket
 ([SCOPE.md](SCOPE.md) invariants 3 and 4 carry the full argument).
 That includes killing lerp itself: agents outlive it, and the next
-`lerp` adopts the live ones and reaps the dead — releasing a dead
-run's claim so its ticket becomes eligible again. One caveat: a `lerp
-once` killed mid-run has no evidence for a later loop to reap, so it
-leaves the ticket assigned — unassign it in Linear yourself to make it
-eligible again.
+`lerp` adopts the live ones and reaps the dead. An adopted run that
+reaches its own last line records its exit status beside its log, so
+reaping it applies the queue's move rule — restarting lerp across a
+run's finish costs nothing, rather than a whole re-run stage. A run
+killed before it got that far records nothing, and reaping it releases
+the claim so its ticket becomes eligible again; a failed run whose queue
+has no `on_failure` route keeps its claim and waits on you, as it does
+when lerp watched it fail. One caveat: a `lerp once` killed mid-run has
+no evidence for a later loop to reap, so it leaves the ticket assigned —
+unassign it in Linear yourself to make it eligible again.
 
 **Why isn't my ticket being picked up?** Check the three eligibility
 conditions from step 3 of [Getting started](#getting-started): a
