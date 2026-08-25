@@ -1281,7 +1281,7 @@ func (m *model) panelWant(p panel, rows int) int {
 	if m.focus != p && m.panelEmpty(p) {
 		return collapsedH
 	}
-	if m.focus == p && m.keyHints() {
+	if m.focus == p && m.keyHints(p) {
 		rows++ // the focused panel spends its last line on the key hints
 	}
 	return rows + 2
@@ -1458,21 +1458,41 @@ func (m *model) panelBody(p panel, rows []string, sel, width, ih int) []string {
 // truncates to the panel rather than overflowing it. The model's own help
 // component draws it, on a copy: the ? overlay owns m.help.Width.
 func (m model) keyHint(p panel, width int) string {
-	if width < 1 || !m.keyHints() {
+	if width < 1 || !m.keyHints(p) {
 		return ""
 	}
 	h := m.help
 	h.Width = width
-	return h.ShortHelpView(m.keys.panelHelp(p))
+	return h.ShortHelpView(m.panelKeys(p))
 }
 
-// keyHints reports whether the focused panel is carrying its key line at
-// all. The promote picker owns the keyboard while it is open — handleKey
-// routes everything to it — so those keys are dead and the panel would be
-// advertising them; the status bar carries the picker's own instead. Both
-// the height panelWant buys and the line panelBody draws ask this, so the
-// two can never disagree about whether the line is there.
-func (m model) keyHints() bool { return !m.promoting }
+// panelKeys is the focused panel's key line as bindings: what the row under
+// its cursor answers to. A panel with no row under the cursor has none —
+// the first frame, before any pass has reported, and the settled empty
+// states, where every one of these keys is dead.
+func (m *model) panelKeys(p panel) []key.Binding {
+	switch p {
+	case panelAttention:
+		if m.selectedAttention() == nil {
+			return nil
+		}
+	case panelWork:
+		if m.selectedWork() == nil {
+			return nil
+		}
+	}
+	return m.keys.panelHelp(p, m.selectedLogPath() != "", m.selectedURL() != "")
+}
+
+// keyHints reports whether the focused panel is carrying a key line at all:
+// the promote picker must not have taken the keyboard — handleKey routes
+// everything to it, so those keys would be dead — and the row under the
+// cursor has to answer to something. Both the height panelWant buys and the
+// line panelBody draws ask this, so the two can never disagree about
+// whether the line is there.
+func (m *model) keyHints(p panel) bool {
+	return !m.promoting && len(m.panelKeys(p)) > 0
+}
 
 // marker renders the selection arrow for one row of a focused panel.
 func marker(on bool) string {

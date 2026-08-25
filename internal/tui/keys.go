@@ -64,21 +64,32 @@ func (k keymap) FullHelp() [][]key.Binding {
 	}
 }
 
-// panelHelp is the line a focused panel carries: the keys that act on that
-// panel's own selection. These used to live in the main pane under a
+// panelHelp is the line a focused panel carries: the keys that act on the
+// row under its cursor. These used to live in the main pane under a
 // selected ticket, which made sort and project look like they did not exist
 // until the operator had already picked a row. Navigation and the two global
 // keys are left out — the status bar already carries "? help · q quit", and
 // a hint that gets truncated away is a hint that was not there.
-func (k keymap) panelHelp(p panel) []key.Binding {
+//
+// hasLog and hasURL say which of these keys the row under the cursor
+// actually answers to: r is inert on a ticket that has never run, and o on
+// a run whose ticket the pass no longer lists. An advertised key that does
+// nothing is worse than one left out, because pressing it is how the
+// operator finds out — and r would flip the raw toggle invisibly.
+func (k keymap) panelHelp(p panel, hasLog, hasURL bool) []key.Binding {
+	var b []key.Binding
 	switch p {
 	case panelAttention:
-		return []key.Binding{k.Promote, short(k.Sort, "sort"),
-			short(k.Project, "project"), short(k.Open, "open")}
+		b = []key.Binding{k.Promote, short(k.Sort, "sort"), short(k.Project, "project")}
 	case panelWork:
-		return []key.Binding{short(k.Raw, "raw"), short(k.Open, "open")}
+		if hasLog {
+			b = append(b, short(k.Raw, "raw"))
+		}
 	}
-	return nil
+	if hasURL {
+		b = append(b, short(k.Open, "open"))
+	}
+	return b
 }
 
 // short re-labels a binding for the panel line: the ? overlay has room for

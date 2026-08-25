@@ -1086,6 +1086,15 @@ func TestTheHeavyBoxFollowsFocus(t *testing.T) {
 func TestFocusedPanelCarriesItsKeys(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
+			{ID: "id-9", Identifier: "LERP-9", Title: "queued", Eligible: true,
+				URL: "https://linear.app/acme/issue/LERP-9"},
+		}}}}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		TicketID: "id-9", Ticket: "LERP-9", Queue: "implement", LogPath: "/dev/null"}})
+
 	view := m.View()
 	for _, want := range []string{"p promote", "s sort", "P project", "o open"} {
 		if !strings.Contains(view, want) {
@@ -1101,6 +1110,49 @@ func TestFocusedPanelCarriesItsKeys(t *testing.T) {
 	}
 	if !strings.Contains(view, "r raw") {
 		t.Fatalf("the work panel does not offer its own keys:\n%s", view)
+	}
+}
+
+// A key on the panel is a key you can press. With nothing under the cursor
+// every one of them is dead — p is gated on there being a row, o has no URL
+// to open, s and P reorder and filter nothing — so the line is not drawn.
+// This is the first frame a new operator sees.
+func TestAPanelWithNothingSelectedOffersNoKeys(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	for _, key := range []string{"1", "2"} {
+		m = update(t, m, keyMsg(key))
+		for _, dead := range []string{"p promote", "s sort", "P project", "r raw", "o open"} {
+			if view := m.View(); strings.Contains(view, dead) {
+				t.Fatalf("panel %s offers %q with nothing under the cursor:\n%s", key, dead, view)
+			}
+		}
+	}
+}
+
+// r is inert on a ticket that has never run, and pressing it there would
+// flip the raw toggle invisibly — so the work panel only offers it once the
+// selected row has a log to render either way.
+func TestRawIsOfferedOnlyWhereThereIsALog(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("2"))
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
+			{ID: "id-9", Identifier: "LERP-9", Title: "queued", Eligible: true,
+				URL: "https://linear.app/acme/issue/LERP-9"},
+		}}}}})
+
+	view := m.View()
+	if strings.Contains(view, "r raw") {
+		t.Fatalf("a ticket that has never run offers the raw toggle:\n%s", view)
+	}
+	if !strings.Contains(view, "o open") {
+		t.Fatalf("the row has a URL but the panel does not offer o:\n%s", view)
+	}
+
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		TicketID: "id-9", Ticket: "LERP-9", Queue: "implement", LogPath: "/dev/null"}})
+	if view := m.View(); !strings.Contains(view, "r raw") {
+		t.Fatalf("a running ticket with a log does not offer the raw toggle:\n%s", view)
 	}
 }
 
