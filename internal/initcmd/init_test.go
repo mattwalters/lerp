@@ -261,7 +261,7 @@ func TestInitDeclinedReviewDropsThePassNotAQueue(t *testing.T) {
 	// reviews still owes the board one of the two endings. Its prose is all
 	// verdict-comment and draft-state vocabulary, so it is the paragraph most
 	// likely to be tidied into the review section by mistake.
-	for _, ending := range []string{"ends one of exactly two ways", "marked ready for review", "{{on_failure}}"} {
+	for _, ending := range []string{"ends one of exactly two ways", "marked ready for review", "looking finished when it is not"} {
 		if !strings.Contains(c.Queues["implement"].Prompt, ending) {
 			t.Errorf("declined-review implement prompt lost its exit contract: no %q", ending)
 		}
