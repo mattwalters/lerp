@@ -552,11 +552,16 @@ func TestEscClosesAnOverlayBeforeItClearsTheFilter(t *testing.T) {
 		t.Fatalf("esc reached past the overlay and cleared the filter: %q", m.search)
 	}
 
-	// From the work panel, with no overlay in the way.
-	m = update(t, m, keyMsg("2"))
+	// From the work panel, with no overlay in the way but with work's own
+	// pane open — the filter is what esc reaches first there too, or the
+	// panel it is not even on would swallow the key.
+	m = openMain(t, update(t, m, keyMsg("2")))
 	m = update(t, m, keyMsg("esc"))
 	if m.search != "" || len(m.shown) != 6 {
 		t.Fatalf("esc off the inbox panel left the filter on: %q, %d rows", m.search, len(m.shown))
+	}
+	if !m.mainOpen() {
+		t.Fatal("esc closed work's pane before it cleared the filter")
 	}
 }
 

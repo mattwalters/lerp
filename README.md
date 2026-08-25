@@ -315,26 +315,33 @@ previous `lerp` reads as `running` like any other, and shows its true
 age rather than the moment it was adopted. Under it, once the run
 has a log, a second line reads how that run is going: how long since
 the log last said anything, and a sparkline of the agent's recent
-activity, so a run that has fallen quiet reads as a flat line. Those
-are numbers to read, not a timeout — lerp sets no threshold on them and
-never acts on one; ejecting a run that has stopped making progress
-stays the operator's call. A waiting row is shown faint with the reason
-it waits, blocked or claimed. The panel title
+activity, so a run that has fallen quiet reads as a flat line. The
+line takes the width the row is given: on a wide terminal's
+full-width list it draws back about a quarter of an hour, and beside
+an open main pane it shows the recent end of that same history. A
+cell is fifteen seconds wherever it is drawn, so a narrow row reaches
+less far back rather than reading more coarsely. Those are numbers to
+read, not a timeout — lerp sets no
+threshold on them and never acts on one; ejecting a run that has
+stopped making progress stays the operator's call. A waiting row is
+shown faint with the reason it waits, blocked or claimed. The panel title
 and the status bar carry the capacity, `2/3 running`, which is what
 says whether anything can start — every live run counts against it,
 whichever lane it landed on, with `· +1 over` beside it while more runs
-are live than the limit allows. Selecting a running ticket shows a
-live tail of its log in the main pane, with scrollback that survives
-the run's exit; selecting a waiting one shows where it sits in pickup
-order and what gates it. The tail reads as agent activity rather than
-as bytes: tool calls one line each, prose as prose, and thinking
-collapsed to a single line with its token count. A runner whose output
-lerp does not recognize is shown exactly as it was written, with no
-configuration, and `r` toggles the pane back to the runner's raw
-output — the log on disk is untouched either way. Selecting a queued
-ticket and pressing `S` starts it now, past the lane limit: force-start
-overrides the lane count and nothing else, so the claim protocol still
-runs and a blocked or already-claimed ticket is refused with the reason.
+are live than the limit allows. The list owns the screen until you ask
+for a run: `enter` on a running ticket opens a live tail of its log in
+the main pane, with scrollback that survives the run's exit, and `esc`
+gives the screen back; `enter` on a waiting one shows where it sits in
+pickup order and what gates it. The tail reads as agent activity
+rather than as bytes: tool calls one line each, prose as prose, and
+thinking collapsed to a single line with its token count. A runner
+whose output lerp does not recognize is shown exactly as it was
+written, with no configuration, and `r` toggles the pane back to the
+runner's raw output — the log on disk is untouched either way.
+Selecting a queued ticket and pressing `S` starts it now, past the
+lane limit: force-start overrides the lane count and nothing else, so
+the claim protocol still runs and a blocked or already-claimed ticket
+is refused with the reason.
 Ordering is not a keystroke; to change what runs *next*, move tickets in
 Linear. `e`, eject, is the other key the list answers to: on a running
 row it stops that agent, frees the lane and hands back the runner's own
@@ -393,16 +400,16 @@ queue statuses or a pipeline exit, and lerp moves it there. That
 MoveIssue and force-start's claim are the only writes any view makes;
 everything else about a ticket still happens in Linear. Keys: `1`/`2`
 choose a panel and `tab` cycles. `↑`/`↓` pick a row, `enter` opens the
-main pane on it and `esc` closes it again — each panel remembers its
-own answer, and the Inbox starts closed while Work starts open — `s`
-sorts the Inbox, `P` scopes it to a project and `/` searches it, `o`
-opens the selected ticket in Linear, `S` force-starts the selected
-queued ticket, `e` ejects the selected run, `pgup`/`pgdn` scroll the
-log or the ticket, `end` resumes following, `r` shows the raw log, `q`
-quits (or backs out of the promote picker or an eject). With a filter
-on, `esc` clears it before it closes the pane. While the search prompt
-is open it has the keyboard — a `p` or a `q` typed into it is text —
-and `ctrl+c` still quits.
+main pane on it and `esc` closes it again — both panels start closed,
+and each remembers its own answer — `s` sorts the Inbox, `P` scopes it
+to a project and `/` searches it, `o` opens the selected ticket in
+Linear, `S` force-starts the selected queued ticket, `e` ejects the
+selected run, `pgup`/`pgdn` scroll the log or the ticket, `end`
+resumes following, `r` shows the raw log, `q` quits (or backs out of
+the promote picker or an eject). With a filter on, `esc` clears it
+before it closes the pane. While the search prompt is open it has the
+keyboard — a `p` or a `q` typed into it is text — and `ctrl+c` still
+quits.
 
 Quitting (`q` or `ctrl+c`) closes the screen, stops future passes, and
 waits briefly for a pass already in flight to settle. The agents are
