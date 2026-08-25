@@ -1496,8 +1496,13 @@ func (m *model) attentionRows(width int) ([]string, int) {
 	var rows []string
 	sel := -1
 	header := ""
+	// A header separates one group from the next, so a list with a single
+	// group draws none: the line would repeat the status every row already
+	// carries, and on a squeezed panel it costs the row or the key hint
+	// that line was worth more as.
+	grouped := m.sortMode.grouped() && !m.oneGroup()
 	for i, it := range m.shown {
-		if m.sortMode.grouped() {
+		if grouped {
 			if h, note := m.sortMode.header(it); h != header {
 				header = h
 				row := styleTicket.Render(h)
@@ -1513,6 +1518,19 @@ func (m *model) attentionRows(width int) ([]string, int) {
 		rows = append(rows, attentionRow(it, focused && i == m.attnSel, idW, statusW, projW, width))
 	}
 	return rows, sel
+}
+
+// oneGroup reports whether every shown row falls under the same header.
+// The rows are already in group order, so a single header over all of them
+// means there is exactly one group. Only called with a non-empty list.
+func (m model) oneGroup() bool {
+	first, _ := m.sortMode.header(m.shown[0])
+	for _, it := range m.shown[1:] {
+		if h, _ := m.sortMode.header(it); h != first {
+			return false
+		}
+	}
+	return true
 }
 
 // titleFloor is how much of a title has to survive for the project column

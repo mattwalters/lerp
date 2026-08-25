@@ -731,6 +731,36 @@ func TestInboxSortModesCycle(t *testing.T) {
 	}
 }
 
+// Done-when: a grouped mode with a single group draws no header — the line
+// says nothing the rows do not, and a panel squeezed to two lines spends it
+// on the key hint instead of on a header over one row.
+func TestSingleGroupDrawsNoHeader(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-1", TicketID: "id-1", Title: "Fix the build", Status: "Needs Attention",
+			Relevance: loop.StatusFailed, Priority: 3,
+			Reason: `claimed in "Needs Attention" — a run failed here`},
+	}}})
+
+	panel := m.attentionPanel(60, 4) // two lines inside the border
+	if strings.Contains(panel, "a run failed here") {
+		t.Fatalf("one group still drew a header:\n%s", panel)
+	}
+	if !strings.Contains(panel, "s sort") {
+		t.Fatalf("a header displaced the key hint on a squeezed panel:\n%s", panel)
+	}
+	if !strings.Contains(rowOf(t, panel, "LERP-1"), "Needs Attention") {
+		t.Fatalf("the row lost the status the header would have carried:\n%s", panel)
+	}
+
+	// A second status is a second group, so the headers come back.
+	m = update(t, m, eventMsg{ev: board()})
+	if !strings.Contains(m.attentionPanel(96, 16), "a run failed here") {
+		t.Fatalf("more than one group draws no headers:\n%s", m.attentionPanel(96, 16))
+	}
+}
+
 // Done-when: the sort key moves the rows, not the cursor. The selection is
 // a ticket, so re-sorting keeps the operator on the one they were reading.
 func TestSortKeepsTheSelectedTicket(t *testing.T) {
@@ -838,10 +868,16 @@ func TestInboxRowsCarryLeverageAndPriority(t *testing.T) {
 	if strings.Contains(narrow, "Open-source readiness") {
 		t.Fatalf("a narrow panel kept the project column:\n%s", narrow)
 	}
-	for _, want := range []string{"Urgent", "↓3", "Backlog", "LERP-22"} {
-		if !strings.Contains(narrow, want) {
-			t.Fatalf("a narrow panel dropped %q:\n%s", want, narrow)
+	// Scoped to the row, not to the panel: a grouped mode draws the status
+	// in a header too, and an assertion the header can satisfy would not
+	// notice the status column going missing from the row itself.
+	for _, want := range []string{"↓3", "Backlog"} {
+		if got := rowOf(t, narrow, "LERP-22"); !strings.Contains(got, want) {
+			t.Fatalf("a narrow panel dropped %q from the row:\n%s", want, narrow)
 		}
+	}
+	if !strings.Contains(narrow, "Urgent") {
+		t.Fatalf("a narrow panel dropped the priority column:\n%s", narrow)
 	}
 	if strings.Contains(narrow, "GoReleaser: tagged releases") {
 		t.Fatalf("a narrow panel did not truncate the title:\n%s", narrow)
@@ -851,9 +887,9 @@ func TestInboxRowsCarryLeverageAndPriority(t *testing.T) {
 	// columns a routing decision cannot start without are the last things
 	// standing.
 	tiny := m.attentionPanel(30, 8)
-	for _, want := range []string{"LERP-22", "↓3", "Backlog"} {
-		if !strings.Contains(tiny, want) {
-			t.Fatalf("the narrowest panel dropped %q:\n%s", want, tiny)
+	for _, want := range []string{"↓3", "Backlog"} {
+		if got := rowOf(t, tiny, "LERP-22"); !strings.Contains(got, want) {
+			t.Fatalf("the narrowest panel dropped %q from the row:\n%s", want, tiny)
 		}
 	}
 	for _, gone := range []string{"Urgent", "High"} {
