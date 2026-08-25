@@ -441,6 +441,12 @@ func TestTickAdoptsLiveOrphans(t *testing.T) {
 	if got := h.disposedIdentities(); len(got) != 0 {
 		t.Fatalf("adoption disposed workspaces %v, want none", got)
 	}
+	// The work panel draws an adopted run as running, so the loop log is the
+	// only record that a successor took this run over.
+	// Once, across both ticks: a run already adopted is not adopted again.
+	if got := h.logs.String(); strings.Count(got, "adopted run "+record.RunID) != 1 {
+		t.Errorf("loop log does not record the adoption exactly once:\n%s", got)
+	}
 
 	// The adopted process dies: the lane's occupant is reaped, its claim is
 	// released, and the freed lane picks the ticket straight back up.

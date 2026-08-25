@@ -297,9 +297,10 @@ claim tickets.
 The Work view is one list of what the machine is doing with the
 board, grouped by queue: every ticket sitting in each queue's status,
 in the loop's own pickup order, with the ones running now at the top
-of their own group. A running row carries its state — provisioning,
-running, or adopted — and the run's elapsed time (an adopted run shows
-its true age, not the moment it was adopted); a waiting row is shown
+of their own group. A running row carries its state — provisioning
+or running — and the run's elapsed time. A run inherited from a
+previous `lerp` reads as `running` like any other, and shows its true
+age rather than the moment it was adopted; a waiting row is shown
 faint with the reason it waits, blocked or claimed. The panel title
 and the status bar carry the capacity, `2/3 running`, which is what
 says whether anything can start — with `· +1 over` beside it while any
