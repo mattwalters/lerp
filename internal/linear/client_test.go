@@ -142,14 +142,20 @@ func TestListAssignedIssues(t *testing.T) {
 			t.Errorf("query does not exclude finished states: %q", req.Query)
 		}
 		// The inbox table has a project column, so this is one of the
-		// two queries that asks for one.
+		// two queries that asks for one — and the one place the state's
+		// own category is read, which is what tells a ticket nothing has
+		// routed yet from one that left the pipeline.
 		if !strings.Contains(req.Query, "project { name }") {
 			t.Errorf("query does not read the project: %q", req.Query)
+		}
+		if !strings.Contains(req.Query, "state { name type }") {
+			t.Errorf("query does not read the state category: %q", req.Query)
 		}
 		writeData(t, w, `{"issues":{
 			"pageInfo":{"hasNextPage":false,"endCursor":""},
 			"nodes":[{
-				"id":"iss-1","identifier":"LERP-1","title":"First","state":{"name":"Needs Help"},
+				"id":"iss-1","identifier":"LERP-1","title":"First",
+				"state":{"name":"Needs Help","type":"unstarted"},
 				"url":"https://linear.app/acme/issue/LERP-1/first",
 				"assignee":{"id":"user-9"},
 				"project":{"name":"Open-source readiness"},
@@ -164,7 +170,8 @@ func TestListAssignedIssues(t *testing.T) {
 	}
 	want := []Issue{
 		{ID: "iss-1", Identifier: "LERP-1", Title: "First", Status: "Needs Help",
-			AssigneeID: "user-9", URL: "https://linear.app/acme/issue/LERP-1/first",
+			StatusType: "unstarted", AssigneeID: "user-9",
+			URL:     "https://linear.app/acme/issue/LERP-1/first",
 			Project: "Open-source readiness"},
 	}
 	if !reflect.DeepEqual(issues, want) {
@@ -187,12 +194,16 @@ func TestListUnassignedIssues(t *testing.T) {
 		if !strings.Contains(req.Query, "project { name }") {
 			t.Errorf("query does not read the project: %q", req.Query)
 		}
+		if !strings.Contains(req.Query, "state { name type }") {
+			t.Errorf("query does not read the state category: %q", req.Query)
+		}
 		// A ticket in no project decodes as a null, which is the empty
 		// name the table draws as a dash.
 		writeData(t, w, `{"issues":{
 			"pageInfo":{"hasNextPage":false,"endCursor":""},
 			"nodes":[{
-				"id":"iss-1","identifier":"LERP-1","title":"First","state":{"name":"Backlog"},
+				"id":"iss-1","identifier":"LERP-1","title":"First",
+				"state":{"name":"Backlog","type":"backlog"},
 				"url":"https://linear.app/acme/issue/LERP-1/first",
 				"assignee":null,
 				"project":null,
@@ -207,7 +218,7 @@ func TestListUnassignedIssues(t *testing.T) {
 	}
 	want := []Issue{
 		{ID: "iss-1", Identifier: "LERP-1", Title: "First", Status: "Backlog",
-			URL: "https://linear.app/acme/issue/LERP-1/first"},
+			StatusType: CategoryBacklog, URL: "https://linear.app/acme/issue/LERP-1/first"},
 	}
 	if !reflect.DeepEqual(issues, want) {
 		t.Errorf("issues = %+v, want %+v", issues, want)

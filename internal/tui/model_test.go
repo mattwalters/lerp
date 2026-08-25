@@ -563,20 +563,24 @@ func board() loop.Event {
 			Project: "Open-source readiness", Relevance: loop.StatusFailed, Priority: 3,
 			Reason: `claimed in "Needs Attention" — a run failed here`},
 		{Ticket: "LERP-22", TicketID: "id-22", Title: "GoReleaser: tagged releases", Status: "Backlog",
-			Project: "Open-source readiness", Relevance: loop.StatusUnnamed, Priority: 2,
+			Project: "Open-source readiness", Relevance: loop.StatusBacklog, Priority: 2,
 			Unblocks: 2, Blocks: []string{"LERP-23"}},
 		{Ticket: "LERP-23", TicketID: "id-23", Title: "curl install", Status: "Backlog",
-			Project: "Open-source readiness", Relevance: loop.StatusUnnamed, Priority: 3,
+			Project: "Open-source readiness", Relevance: loop.StatusBacklog, Priority: 3,
 			Unblocks: 1, BlockedBy: []string{"LERP-22"}},
 		{Ticket: "LERP-48", TicketID: "id-48", Title: "Read the ticket in the TUI", Status: "In Review",
 			Project: "TUI redesign", Relevance: loop.StatusFinished, Priority: 1},
-		{Ticket: "LERP-60", TicketID: "id-60", Title: "Unfiled work", Status: "Backlog",
+		// The one ticket the pipeline lost: a status no queue serves, no
+		// on_success or on_failure points at, and Linear does not file as
+		// waiting either — so something moved it out from under lerp. Most
+		// of a board looks like the Backlog rows above instead.
+		{Ticket: "LERP-60", TicketID: "id-60", Title: "Unfiled work", Status: "In Progress",
 			Relevance: loop.StatusUnnamed, Priority: 4},
 		// Priority 0 is Linear's "No priority", not its highest: it must sort
 		// below Low, never above Urgent. This is the only fixture carrying it,
 		// and the order assertions below are what guard priorityRank.
 		{Ticket: "LERP-70", TicketID: "id-70", Title: "Unprioritized work", Status: "Backlog",
-			Relevance: loop.StatusUnnamed, Priority: 0},
+			Relevance: loop.StatusBacklog, Priority: 0},
 	}}
 }
 
@@ -628,15 +632,18 @@ func TestInboxRowsCarryTheRealStatus(t *testing.T) {
 			t.Fatalf("inbox panel is missing the status %q:\n%s", want, panel)
 		}
 	}
-	// Backlog is named by no queue and by no on_success or on_failure
-	// target, so every ticket resting in one is marked; the statuses the
-	// pipeline does name are not.
-	if !strings.Contains(rowOf(t, panel, "LERP-22"), "⚠") {
-		t.Fatalf("a status the pipeline never names is unmarked:\n%s", panel)
+	// The mark is for a ticket the pipeline lost, and only that: LERP-60
+	// rests in a status no queue serves, that nothing points at, and that
+	// Linear does not file as waiting either. The Backlog rows are the
+	// ordinary state of most of a board — a mark on those would be texture,
+	// not a warning — and the statuses the pipeline does name are not
+	// marked at all.
+	if !strings.Contains(rowOf(t, panel, "LERP-60"), "⚠") {
+		t.Fatalf("the one ticket that left the pipeline is unmarked:\n%s", panel)
 	}
-	for _, named := range []string{"LERP-1", "LERP-48"} {
-		if strings.Contains(rowOf(t, panel, named), "⚠") {
-			t.Fatalf("%s rests in a status the pipeline names, but the row marks it:\n%s", named, panel)
+	for _, unmarked := range []string{"LERP-1", "LERP-48", "LERP-22", "LERP-23", "LERP-70"} {
+		if strings.Contains(rowOf(t, panel, unmarked), "⚠") {
+			t.Fatalf("%s did not leave the pipeline, but the row marks it:\n%s", unmarked, panel)
 		}
 	}
 	// Every column on one line, no selection required.
@@ -648,6 +655,95 @@ func TestInboxRowsCarryTheRealStatus(t *testing.T) {
 	}
 	if got := rowOf(t, panel, "LERP-60"); !strings.Contains(got, "—") {
 		t.Fatalf("a ticket in no project does not read as one:\n%s", got)
+	}
+}
+
+// Done-when: the inbox table says what its columns are. Six columns and no
+// header row is a table the reader has to decode from the values in it —
+// and two of the six carry marks that decode to nothing at all. One faint
+// line names every column, stands over the column it names, and stays put
+// when the list under it scrolls.
+func TestInboxTableNamesItsColumns(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: board()})
+
+	// Display columns, not byte offsets: the cells carry ↓ and — , which
+	// are wider in bytes than on screen.
+	col := func(line, s string) int {
+		t.Helper()
+		i := strings.Index(line, s)
+		if i < 0 {
+			t.Fatalf("%q is not on the line:\n%s", s, line)
+		}
+		return lipgloss.Width(line[:i])
+	}
+
+	panel := m.attentionPanel(120, 14)
+	// The header is the panel's first body line, above every row.
+	header := ansi.Strip(strings.Split(panel, "\n")[1])
+	row := ansi.Strip(rowOf(t, panel, "LERP-1"))
+	for _, c := range []struct{ name, cell string }{
+		{hdrTicket, "LERP-1"}, {hdrLeverage, "↓0"}, {hdrStatus, "Needs Attention"},
+		{hdrProject, "Open-source readiness"}, {hdrPriority, "Medium"}, {hdrTitle, "Fix the build"},
+	} {
+		if h, r := col(header, c.name), col(row, c.cell); h != r {
+			t.Fatalf("%q is at column %d and the %q it names at %d:\n%s\n%s",
+				c.name, h, c.cell, r, header, row)
+		}
+	}
+
+	// Pinned, not listed: a panel too short for its rows windows them, and
+	// a header windowed with them would come and go — worse than none,
+	// because then its absence has to be read too.
+	for i := 0; i < len(m.shown)-1; i++ {
+		m = update(t, m, keyMsg("j"))
+	}
+	scrolled := m.attentionPanel(120, 6)
+	if !strings.Contains(scrolled, "⋯") {
+		t.Fatalf("the short panel did not window its rows, so nothing scrolled:\n%s", scrolled)
+	}
+	if got := ansi.Strip(strings.Split(scrolled, "\n")[1]); !strings.Contains(got, hdrTicket) {
+		t.Fatalf("the header scrolled away with the rows:\n%s", scrolled)
+	}
+	// And no header over an empty state, which is a sentence and not a table.
+	empty, _, _ := newTestModel(t, 1)
+	empty = update(t, empty, keyMsg("1"))
+	empty = update(t, empty, eventMsg{ev: loop.Event{Type: loop.EventAttention}})
+	if got := empty.attentionPanel(120, 8); strings.Contains(got, hdrPriority) {
+		t.Fatalf("an empty inbox drew column headers over no columns:\n%s", got)
+	}
+}
+
+// Done-when: the ? overlay decodes every mark the inbox draws inside a
+// column. A header can name a column; only a sentence can say what a glyph
+// standing in one means, and the overlay is the one place with the room.
+func TestHelpOverlayDecodesTheInboxMarks(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	m = update(t, resized.(model), keyMsg("?"))
+
+	view := ansi.Strip(m.View())
+	for _, want := range []struct{ glyph, says string }{
+		{"↓n", "frees"}, {"⊘", "blocks"}, {"⚠", "never named"},
+	} {
+		// A row of the table can carry the same glyph, so it is the line
+		// that also carries the sentence that has to exist.
+		shown, decoded := false, false
+		for _, l := range strings.Split(view, "\n") {
+			if !strings.Contains(l, want.glyph) {
+				continue
+			}
+			shown = true
+			decoded = decoded || strings.Contains(l, want.says)
+		}
+		if !shown {
+			t.Fatalf("the help overlay does not show %q at all:\n%s", want.glyph, view)
+		}
+		if !decoded {
+			t.Fatalf("no line says %q beside %s, so the mark is still undecoded:\n%s",
+				want.says, want.glyph, view)
+		}
 	}
 }
 
@@ -684,15 +780,17 @@ func TestInboxSortModesCycle(t *testing.T) {
 	}
 
 	// Status: pipeline-relevance first — a failure route, then where a
-	// clean run comes to rest, then the statuses the pipeline never names —
-	// with a header per status carrying the note that explains the rank.
+	// clean run comes to rest, then the statuses the pipeline never named
+	// the ticket into, and last the backlog it never left — with a header
+	// per status carrying the note that explains the rank.
 	m = update(t, m, keyMsg("s"))
 	panel = m.attentionPanel(96, 16)
-	want = []string{"LERP-1", "LERP-48", "LERP-22", "LERP-60", "LERP-70", "LERP-23"}
+	want = []string{"LERP-1", "LERP-48", "LERP-60", "LERP-22", "LERP-70", "LERP-23"}
 	if got := order(panel, want...); !slices.Equal(got, want) {
 		t.Fatalf("status order = %v, want %v:\n%s", got, want, panel)
 	}
-	for _, note := range []string{"a run failed here", "a run finished here", "the pipeline never names it"} {
+	for _, note := range []string{"a run failed here", "a run finished here",
+		"the pipeline never names it", "not routed into the pipeline yet"} {
 		if !strings.Contains(panel, note) {
 			t.Fatalf("status headers do not carry %q:\n%s", note, panel)
 		}
@@ -823,7 +921,7 @@ func TestInboxRowsCarryLeverageAndPriority(t *testing.T) {
 
 	// Narrow enough that the project no longer fits: it goes, the title is
 	// cut, and the three columns a routing decision starts from survive.
-	narrow := m.attentionPanel(44, 8)
+	narrow := m.attentionPanel(50, 8)
 	if strings.Contains(narrow, "Open-source readiness") {
 		t.Fatalf("a narrow panel kept the project column:\n%s", narrow)
 	}
@@ -839,7 +937,7 @@ func TestInboxRowsCarryLeverageAndPriority(t *testing.T) {
 	// Narrower than a title-less row: the priority goes too, and the three
 	// columns a routing decision cannot start without are the last things
 	// standing.
-	tiny := m.attentionPanel(30, 8)
+	tiny := m.attentionPanel(34, 8)
 	for _, want := range []string{"LERP-22", "↓3", "Backlog"} {
 		if !strings.Contains(tiny, want) {
 			t.Fatalf("the narrowest panel dropped %q:\n%s", want, tiny)
@@ -1266,9 +1364,11 @@ func TestRawIsOfferedOnlyWhereThereIsALog(t *testing.T) {
 
 // A panel squeezed too short drops the hints and keeps its rows: windowRows
 // needs two lines to keep the selection visible, so a panel that spent one
-// of three on the key line would show "⋯ n more" and nothing else — losing
+// of them on the key line would show "⋯ n more" and nothing else — losing
 // the cursor that j/k move and p promotes. One row further up it can afford
-// both, and does.
+// both, and does. The inbox spends a line on its column header before any
+// of this, so the height it can afford both at is one higher than the two
+// lines windowRows needs.
 func TestAShortPanelKeepsItsRowsOverItsKeys(t *testing.T) {
 	// The window height a panel's three rows fall out of is the layout's
 	// business, not this test's: sweep the short end and assert the rule
@@ -1287,10 +1387,10 @@ func TestAShortPanelKeepsItsRowsOverItsKeys(t *testing.T) {
 
 		view := m.View()
 		inner := m.geometry().attnH - 2
-		if inner < 2 || inner > 3 || strings.HasPrefix(view, "lerp — window too small") {
+		if inner < 2 || inner > 4 || strings.HasPrefix(view, "lerp — window too small") {
 			continue // not the squeeze this test is about
 		}
-		want := inner >= 3
+		want := inner >= 4
 		seen[want] = true
 		if !strings.Contains(view, "LERP-1 ") {
 			t.Fatalf("a %d-row panel dropped the selected row to make room:\n%s", inner, view)
@@ -1305,9 +1405,9 @@ func TestAShortPanelKeepsItsRowsOverItsKeys(t *testing.T) {
 }
 
 // One ticket waiting while the queues are full is an ordinary state, and it
-// gives the focused panel exactly two rows. They are enough: the row fits
-// without windowing, so the key line — the whole point of putting it on the
-// panel — is still there.
+// gives the focused panel exactly three rows: the column header, the ticket,
+// and the key line. They are enough: the row fits without windowing, so the
+// key line — the whole point of putting it on the panel — is still there.
 func TestOneRowStillGetsItsKeys(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, keyMsg("1"))
@@ -1323,8 +1423,8 @@ func TestOneRowStillGetsItsKeys(t *testing.T) {
 	}}})
 
 	view := m.View()
-	if g := m.geometry(); g.attnH != 4 {
-		t.Fatalf("needs-you is %d lines, want the 4 this case is about:\n%s", g.attnH, view)
+	if g := m.geometry(); g.attnH != 5 {
+		t.Fatalf("needs-you is %d lines, want the 5 this case is about:\n%s", g.attnH, view)
 	}
 	if !strings.Contains(view, "LERP-1 ") {
 		t.Fatalf("the one waiting ticket is not on screen:\n%s", view)

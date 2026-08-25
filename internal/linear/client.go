@@ -22,6 +22,12 @@ type Issue struct {
 	Identifier string // human identifier, e.g. LERP-7
 	Title      string
 	Status     string // workflow state name, e.g. "In Progress"
+	// StatusType is Linear's own category for that state — one of the
+	// Category constants below. Requested only by the two queries the
+	// attention pass runs, and empty everywhere else: it is what separates
+	// a ticket that has not entered the pipeline yet from one that fell
+	// out of it, and nothing else asks.
+	StatusType string
 	AssigneeID string // empty when unassigned
 	URL        string // Linear's own web URL for the issue
 	Blocked    bool   // true when any incomplete issue blocks this one
@@ -41,6 +47,15 @@ type Issue struct {
 	// its project filter matches.
 	Project string
 }
+
+// Linear's own workflow-state categories, as its API spells them. A ticket
+// in either of these is waiting to be started at all — nothing has routed
+// it anywhere — which is a different thing from a ticket resting in a
+// status something moved it to.
+const (
+	CategoryTriage  = "triage"
+	CategoryBacklog = "backlog"
+)
 
 // IssueDetail is one ticket as the inbox pane reads it: the body the
 // operator has to judge, and the comments on it — which, by SCOPE.md

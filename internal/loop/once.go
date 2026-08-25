@@ -141,7 +141,13 @@ func servedStatuses(repo *config.RepoConfig) map[string]bool {
 // and a status the config never names at all is one the pipeline did not
 // put the ticket in. It is derived, never declared — there is no new key in
 // lerp.toml, and rewriting the on_success pointers rewrites this with them.
-func statusRelevance(repo *config.RepoConfig) func(string) StatusRelevance {
+//
+// The one thing config cannot say is which of the statuses it never names
+// a ticket was already sitting in before anything routed it. Linear's own
+// state category answers that, so it is the second argument: a status the
+// pipeline does not name is only news when Linear does not file it under
+// triage or backlog.
+func statusRelevance(repo *config.RepoConfig) func(status, category string) StatusRelevance {
 	rank := make(map[string]StatusRelevance, len(repo.Queues)*3)
 	// The worse news wins: a status that is one queue's exit and another's
 	// failure route is somewhere a run failed.
@@ -163,9 +169,12 @@ func statusRelevance(repo *config.RepoConfig) func(string) StatusRelevance {
 	for _, q := range repo.Queues {
 		rank[q.Status] = StatusOther
 	}
-	return func(status string) StatusRelevance {
+	return func(status, category string) StatusRelevance {
 		if r, ok := rank[status]; ok {
 			return r
+		}
+		if category == linear.CategoryTriage || category == linear.CategoryBacklog {
+			return StatusBacklog
 		}
 		return StatusUnnamed
 	}

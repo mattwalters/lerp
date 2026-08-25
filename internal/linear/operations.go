@@ -15,6 +15,10 @@ type issueNode struct {
 	URL        string `json:"url"`
 	State      struct {
 		Name string `json:"name"`
+		// Type is Linear's own category for the state — "backlog",
+		// "started" and the rest. Requested only by the two queries the
+		// attention pass runs; it decodes as "" everywhere else.
+		Type string `json:"type"`
 	} `json:"state"`
 	Assignee *struct {
 		ID string `json:"id"`
@@ -57,6 +61,7 @@ func (n issueNode) toIssue() Issue {
 		Title:      n.Title,
 		URL:        n.URL,
 		Status:     n.State.Name,
+		StatusType: n.State.Type,
 		Priority:   int(n.Priority),
 	}
 	if n.Project != nil {
@@ -160,7 +165,7 @@ query ListAssignedIssues($team: String!, $assignee: ID!, $after: String) {
       identifier
       title
       url
-      state { name }
+      state { name type }
       assignee { id }
       priority
       project { name }
@@ -209,7 +214,7 @@ query ListUnassignedIssues($team: String!, $after: String) {
       identifier
       title
       url
-      state { name }
+      state { name type }
       assignee { id }
       priority
       project { name }

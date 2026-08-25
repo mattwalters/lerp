@@ -17,6 +17,7 @@ type Fake struct {
 	issues       map[string]*fakeIssue
 	comments     map[string][]Comment
 	doneStatuses map[string]bool
+	categories   map[string]string
 	teamStates   map[string][]string
 }
 
@@ -29,15 +30,29 @@ type fakeIssue struct {
 
 var _ Client = (*Fake)(nil)
 
-// NewFake returns an empty fake whose viewer is "fake-viewer" and whose
-// completed statuses are "Done" and "Canceled".
+// NewFake returns an empty fake whose viewer is "fake-viewer", whose
+// completed statuses are "Done" and "Canceled", and whose "Backlog" and
+// "Triage" statuses carry Linear's categories of those names — the stock
+// board every Linear team starts with.
 func NewFake() *Fake {
 	return &Fake{
 		viewerID:     "fake-viewer",
 		issues:       map[string]*fakeIssue{},
 		comments:     map[string][]Comment{},
 		doneStatuses: map[string]bool{"Done": true, "Canceled": true},
+		categories:   map[string]string{"Backlog": CategoryBacklog, "Triage": CategoryTriage},
 		teamStates:   map[string][]string{},
+	}
+}
+
+// SetStatusCategory declares Linear's state category for status names, the
+// way a real board does: the category is a property of the status, so it
+// follows a ticket moved into one rather than being set per issue.
+func (f *Fake) SetStatusCategory(category string, statuses ...string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, s := range statuses {
+		f.categories[s] = category
 	}
 }
 
@@ -124,9 +139,11 @@ func (f *Fake) SetDescription(issueID, body string) {
 
 // view materializes the caller-visible Issue, computing Blocked from the
 // current statuses of the declared blockers and Blocks by reading the same
-// declarations backwards. Callers hold f.mu.
+// declarations backwards, and reading the state category off the status the
+// issue is in now. Callers hold f.mu.
 func (f *Fake) view(fi *fakeIssue) Issue {
 	is := fi.issue
+	is.StatusType = f.categories[is.Status]
 	is.Blocked = false
 	is.BlockedBy = nil
 	is.Blocks = nil
