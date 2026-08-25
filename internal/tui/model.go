@@ -1281,7 +1281,7 @@ func (m *model) panelWant(p panel, rows int) int {
 	if m.focus != p && m.panelEmpty(p) {
 		return collapsedH
 	}
-	if m.focus == p {
+	if m.focus == p && m.keyHints() {
 		rows++ // the focused panel spends its last line on the key hints
 	}
 	return rows + 2
@@ -1426,11 +1426,13 @@ func (m *model) panelBody(p panel, rows []string, sel, width, ih int) []string {
 	if m.focus != p {
 		return rows
 	}
-	// Three lines is the floor: the hint takes one, and windowRows needs the
-	// two it leaves to keep the selection visible. Below that the rows win —
-	// a panel showing only "⋯ n more" has lost the cursor the keys move.
+	// The hint costs a line, and it is only affordable when the rows can
+	// still be shown in what is left: either they fit outright, or two lines
+	// remain, which is the least windowRows needs to keep the selection
+	// visible. Below that the rows win — a panel showing only "⋯ n more" has
+	// lost the cursor the keys move.
 	hint := ""
-	if ih >= 3 {
+	if ih >= 3 || (ih == 2 && len(rows) <= 1) {
 		hint = m.keyHint(p, width)
 	}
 	if hint != "" {
@@ -1456,16 +1458,21 @@ func (m *model) panelBody(p panel, rows []string, sel, width, ih int) []string {
 // truncates to the panel rather than overflowing it. The model's own help
 // component draws it, on a copy: the ? overlay owns m.help.Width.
 func (m model) keyHint(p panel, width int) string {
-	// The promote picker owns the keyboard while it is open — handleKey
-	// routes everything to it — so these four keys are dead and the panel
-	// would be advertising them. The status bar carries the picker's own.
-	if width < 1 || m.promoting {
+	if width < 1 || !m.keyHints() {
 		return ""
 	}
 	h := m.help
 	h.Width = width
 	return h.ShortHelpView(m.keys.panelHelp(p))
 }
+
+// keyHints reports whether the focused panel is carrying its key line at
+// all. The promote picker owns the keyboard while it is open — handleKey
+// routes everything to it — so those keys are dead and the panel would be
+// advertising them; the status bar carries the picker's own instead. Both
+// the height panelWant buys and the line panelBody draws ask this, so the
+// two can never disagree about whether the line is there.
+func (m model) keyHints() bool { return !m.promoting }
 
 // marker renders the selection arrow for one row of a focused panel.
 func marker(on bool) string {
