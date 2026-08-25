@@ -133,12 +133,14 @@ has just been reading. Push with `git push origin HEAD:<branch>`.
 
 Make the tests and whatever this repository uses as its check pass before you
 push. If there is no pull request yet, open one as a draft
-(`gh pr create --draft`). Title it with `{{ticket}}`, a colon, and a short
-description of the change: a pull request's number and its ticket's
-identifier are unrelated numbers, and the title is the only place a human
-ever sees the two together. It stays a draft until the work is ready for a
+(`gh pr create --draft`). It stays a draft until the work is ready for a
 human — which also keeps a pull-request automation on your Linear team from
 moving {{ticket}} out from under this run while you are still working.
+
+Title the pull request with {{ticket}}, a colon, and a short description of
+the change. A pull request's number and its ticket's identifier are unrelated
+numbers, and on GitHub's side — the pull request list, notifications, review
+requests — the title is the only place the ticket appears.
 
 Now review what you built, before a human has to. Read the diff with fresh
 eyes: hand it to a subagent that gets the brief and the diff and none of
