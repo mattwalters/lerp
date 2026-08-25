@@ -1497,9 +1497,11 @@ func (m *model) attentionRows(width int) ([]string, int) {
 	sel := -1
 	header := ""
 	// A header separates one group from the next, so a list with a single
-	// group draws none: the line would repeat the status every row already
-	// carries, and on a squeezed panel it costs the row or the key hint
-	// that line was worth more as.
+	// group draws none: there is no boundary left for it to mark, and on a
+	// squeezed panel it costs the row or the key hint that line was worth
+	// more as. It costs the group's derived note, which no row column
+	// carries — but that note explains why a group ranks where it does, and
+	// with one group there is no ranking to explain.
 	grouped := m.sortMode.grouped() && !m.oneGroup()
 	for i, it := range m.shown {
 		if grouped {
@@ -1523,7 +1525,7 @@ func (m *model) attentionRows(width int) ([]string, int) {
 // oneGroup reports whether every shown row falls under the same header.
 // The rows are already in group order, so a single header over all of them
 // means there is exactly one group. Only called with a non-empty list.
-func (m model) oneGroup() bool {
+func (m *model) oneGroup() bool {
 	first, _ := m.sortMode.header(m.shown[0])
 	for _, it := range m.shown[1:] {
 		if h, _ := m.sortMode.header(it); h != first {

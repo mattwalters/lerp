@@ -326,8 +326,9 @@ rows rather than two of sixteen. Within a group, rows fall through to
 leverage: how many other listed tickets promoting this one would
 transitively unblock, then priority, then identifier — so the promote
 worth making is the top row of its group. `s` cycles that to project,
-leverage or priority; the two grouping modes draw a header per group,
-the two flat ones order the whole list. `P`
+leverage or priority; the two grouping modes draw a header per
+boundary — none, when every row is in the same group — and the two flat
+ones order the whole list. `P`
 scopes the panel to one project and cycles back to all. Both are
 session-only: no saved views, no filter syntax, and neither changes
 which tickets are fetched. Selecting a row
