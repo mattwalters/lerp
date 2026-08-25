@@ -3048,11 +3048,10 @@ func (m model) statusBar() string {
 	if line := m.noteLine(); line != "" {
 		return ansi.Truncate(line, m.width, "…")
 	}
-	// The corner is the bar's one fixed point: same text, same colour, same
+	// The corner is the bar's one fixed point: same text, same weight, same
 	// width, every frame. Which panel holds the keys is already drawn by the
 	// panel borders, so the focus badge that used to sit here said it twice.
-	brand := lipgloss.NewStyle().Bold(true).Foreground(colorBadgeText).
-		Background(colorFocus).Render(" lerp ")
+	brand := styleMark.Render("lerp")
 
 	// The heartbeat speaks only when there is something to say. "Is the
 	// board fresh?" is the bar's real question, and yes is silence: a pass
@@ -3065,19 +3064,27 @@ func (m model) statusBar() string {
 		heart = styleRunning.Render(heartbeatFrames[m.frame%len(heartbeatFrames)]) + " pass running…"
 	case m.lastPass.IsZero():
 		heart = styleFaint.Render("starting…")
-	case time.Since(m.lastPass) > m.overdueAfter():
+	// Wall clock on purpose. A machine that slept stops the monotonic
+	// reading time.Since would otherwise use — and stops the pending tick
+	// with it — so the one case that leaves a board hours out of date is the
+	// one case a monotonic comparison cannot see. Round(0) drops the
+	// monotonic reading from the copy this compares.
+	case time.Since(m.lastPass.Round(0)) > m.overdueAfter():
 		// A state, not a clock: that the board is stale is the whole fact,
 		// and how stale changes nothing the operator would do about it.
 		heart = styleAttention.Render("pass overdue")
 	}
 
-	left := brand
-	if heart != "" {
-		left += " " + heart
-	}
-	left += "  " + styleFaint.Render(m.capacityLabel())
+	// The heartbeat is the only segment here that comes and goes, so it goes
+	// last: appearing at the end of the left side pushes nothing, where in
+	// front of the capacity and the inbox count it shoved both of them a
+	// spinner's width sideways every time a pass started.
+	left := brand + "  " + styleFaint.Render(m.capacityLabel())
 	if len(m.attention) > 0 {
 		left += "  " + styleAttention.Render(fmt.Sprintf("● %d in the inbox", len(m.attention)))
+	}
+	if heart != "" {
+		left += "  " + heart
 	}
 	// The bar offers what this window and this frame actually answer to. ?
 	// draws its overlay in the main pane, so a window with no room for the
@@ -3111,9 +3118,9 @@ func (m model) statusBar() string {
 	right := styleFaint.Render(hint)
 
 	// The pane's segment is the first thing the bar gives up. Below it the
-	// truncation takes the left side instead, and what it would take is
-	// "● n in the inbox" — the one number the needs-you panel exists for,
-	// spent on advertising a key. A modal's line is not a hint but its
+	// truncation takes the left side instead, from its tail: the heartbeat,
+	// then "● n in the inbox" — the one number the needs-you panel exists
+	// for, spent on advertising a key. A modal's line is not a hint but its
 	// instructions, so it is not up for this.
 	if !m.modal() && m.width-lipgloss.Width(left)-lipgloss.Width(right) < 1 {
 		right = styleFaint.Render(globals)

@@ -1596,7 +1596,6 @@ func TestStatusBarAndHelp(t *testing.T) {
 	if !strings.Contains(m.View(), "pass running") {
 		t.Fatalf("status bar hides the in-flight first pass:\n%s", m.View())
 	}
-	m = update(t, m, tickedMsg{})
 
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
 		{Ticket: "LERP-1", Title: "one"}, {Ticket: "LERP-2", Title: "two"},
@@ -3849,6 +3848,34 @@ func TestStatusBarGoesQuietBetweenPasses(t *testing.T) {
 	}
 }
 
+// The other way the bar could shove its kept segments around: the heartbeat
+// appears and vanishes once an interval, so anything drawn after it slides a
+// spinner's width and back every pass. Second-cadence jitter traded for
+// pass-cadence jitter is still jitter.
+func TestAPassStartingDoesNotMoveTheCountsAlong(t *testing.T) {
+	m, _, _ := newTestModel(t, 2)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-1", Title: "one"}, {Ticket: "LERP-2", Title: "two"},
+	}}})
+	// Columns, not string offsets: both bars are full of styling.
+	col := func(m model, want string) int {
+		at := strings.Index(ansi.Strip(m.statusBar()), want)
+		if at < 0 {
+			t.Fatalf("the bar lost %q:\n%s", want, m.statusBar())
+		}
+		return at
+	}
+
+	if !m.inFlight {
+		t.Fatal("the first pass is not in flight")
+	}
+	inFlight := [2]int{col(m, "0/2 running"), col(m, "● 2 in the inbox")}
+	settled := update(t, m, tickedMsg{})
+	if got := [2]int{col(settled, "0/2 running"), col(settled, "● 2 in the inbox")}; got != inFlight {
+		t.Errorf("the pass landing moved the counts from %v to %v", inFlight, got)
+	}
+}
+
 // Silence means fresh, so it has to stop being silence when the board is
 // not: a wedged tick chain — or a laptop that slept through a few hundred
 // intervals — would otherwise read exactly like a board keeping up.
@@ -3871,6 +3898,24 @@ func TestStatusBarSaysWhenAPassIsOverdue(t *testing.T) {
 	m.inFlight = true
 	if strings.Contains(m.statusBar(), "pass overdue") {
 		t.Errorf("a running pass still reads as overdue:\n%s", m.statusBar())
+	}
+}
+
+// Twice the interval alone would make a board polled every second or two
+// call itself stale over ordinary scheduling slack, so a floor sits under
+// it — and a floor no test names is a floor the next edit drops.
+func TestAFastIntervalDoesNotCryStale(t *testing.T) {
+	m, _, _ := newTestModel(t, 2)
+	m.o.Interval = time.Second
+	m = update(t, m, tickedMsg{})
+
+	m.lastPass = time.Now().Add(-59 * time.Second)
+	if strings.Contains(m.statusBar(), "pass overdue") {
+		t.Errorf("a board 59s behind a 1s interval already reads as stale:\n%s", m.statusBar())
+	}
+	m.lastPass = time.Now().Add(-61 * time.Second)
+	if !strings.Contains(m.statusBar(), "pass overdue") {
+		t.Errorf("a board a minute behind still reads as fresh:\n%s", m.statusBar())
 	}
 }
 
