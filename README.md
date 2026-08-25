@@ -298,9 +298,14 @@ The Work view is one list of what the machine is doing with the
 board, grouped by queue: every ticket sitting in each queue's status,
 in the loop's own pickup order, with the ones running now at the top
 of their own group. A running row carries its state — provisioning,
-running, or adopted — and the run's elapsed time (an adopted run shows
-its true age, not the moment it was adopted); a waiting row is shown
-faint with the reason it waits, blocked or claimed. The panel title
+running, or adopted — and a second line reading how that run is going:
+its elapsed time (an adopted run shows its true age, not the moment it
+was adopted), how long since its log last said anything, and a
+sparkline of the agent's recent activity, so a run that has fallen
+quiet reads as a flat line. Those are numbers to read, not a timeout —
+lerp sets no threshold on them and never acts on one; ejecting a run
+that has stopped making progress stays the operator's call. A waiting
+row is shown faint with the reason it waits, blocked or claimed. The panel title
 and the status bar carry the capacity, `2/3 running`, which is what
 says whether anything can start. Selecting a running ticket shows a
 live tail of its log in the main pane, with scrollback that survives

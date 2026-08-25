@@ -162,6 +162,11 @@ type lane struct {
 	queue    string
 	logPath  string // survives the run, so the tail outlives the agent
 	since    time.Time
+	// pulse reads that log for what the run's row shows beyond its age: when
+	// it last said anything, and the activity behind it. Nil until the first
+	// poll finds a log path; a new run gets a new lane, so it never inherits
+	// the last occupant's counts.
+	pulse *pulse
 }
 
 const (
@@ -239,6 +244,10 @@ type workRow struct {
 	lane  int
 	state laneState
 	since time.Time
+	// heard is when that run's log last grew, zero while it has none; rate
+	// is its recent activity per bucket, oldest first, for the sparkline.
+	heard time.Time
+	rate  []int
 	// The pickup gate, for a ticket that is not running: where it sits in
 	// its queue's order, and what holds it there.
 	pos, of   int
@@ -452,6 +461,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// The poll is also the clock: elapsed times and the heartbeat
 		// re-render even when the log is quiet.
 		m.frame++
+		m.readPulses()
 		if m.tail.read() && m.showingLog() {
 			m.refreshLog()
 		}
@@ -908,6 +918,28 @@ func (m *model) retarget() {
 	m.refreshLog()
 }
 
+// readPulses reads every live lane's log for what its row shows about the
+// run: when the log last grew, and the activity behind it. It rides the same
+// 250ms poll as the tail and the heartbeat — one clock for everything.
+//
+// The selected lane's log is read twice, once here and once by the tail. The
+// two want different positions in the same file — the tail holds a
+// scrollback, the pulse only counts what arrives — and a poll that finds
+// nothing new costs a stat, so the duplication buys each of them its own
+// place for a price the poll was already paying.
+func (m *model) readPulses() {
+	now := time.Now()
+	for _, ln := range m.lanes {
+		if ln.state == laneIdle || ln.logPath == "" {
+			continue
+		}
+		if ln.pulse == nil {
+			ln.pulse = newPulse(ln.logPath)
+		}
+		ln.pulse.read(now)
+	}
+}
+
 // selectedLogPath is the log behind the selected row: the live lane's while a
 // run holds it, then the one that run left behind.
 func (m *model) selectedLogPath() string {
@@ -990,6 +1022,9 @@ func (m *model) workGroups() []workGroup {
 		}
 		row := workRow{ticketID: ln.ticketID, ticket: ln.name(), queue: ln.queue,
 			lane: n, state: ln.state, since: ln.since}
+		if ln.pulse != nil {
+			row.heard, row.rate = ln.pulse.heard, ln.pulse.window()
+		}
 		// A running ticket normally still sits in its queue's listing,
 		// claimed and ineligible: that listing is the group, and it carries
 		// the ticket's title and URL. Failing that, the queue the run started
@@ -1712,7 +1747,7 @@ func (m *model) workListRows(width int) ([]string, int) {
 			if idx == selRow {
 				sel = len(rows)
 			}
-			rows = append(rows, m.workRowLine(r, focused && idx == selRow, width))
+			rows = append(rows, m.workRowLines(r, focused && idx == selRow, width)...)
 			idx++
 		}
 	}
@@ -1736,11 +1771,13 @@ func groupHeader(g workGroup) string {
 		styleFaint.Render(fmt.Sprintf(" · %s · %s · %s", g.status, g.team, count))
 }
 
-// workRowLine is one ticket as a line of the panel: what is running it, or
-// what it waits on. The state and the elapsed clock are right-aligned so the
-// fact that is changing is never the one truncated away; the state is a
-// colored dot plus a word, since color alone would not carry it.
-func (m model) workRowLine(r workRow, selected bool, width int) string {
+// workRowLines is one ticket as the panel draws it: a line naming it and
+// what is running it or what it waits on, and — for a ticket a lane holds —
+// a second line of how that run is going. The right-hand column is
+// right-aligned so the fact that is changing is never the one truncated
+// away; the state is a colored dot plus a word, since color alone would not
+// carry it.
+func (m model) workRowLines(r workRow, selected bool, width int) []string {
 	name := styleTicket.Render(r.ticket) + " " + r.title
 	if r.lane == 0 {
 		if !r.eligible {
@@ -1755,7 +1792,7 @@ func (m model) workRowLine(r workRow, selected bool, width int) string {
 		}
 		// Two spaces where a running row draws its dot, so identifiers line
 		// up down the group whether or not a lane holds them.
-		return splitRow(marker(selected)+"  "+name, right, width)
+		return []string{splitRow(marker(selected)+"  "+name, right, width)}
 	}
 	var dot, state string
 	switch r.state {
@@ -1772,8 +1809,29 @@ func (m model) workRowLine(r workRow, selected bool, width int) string {
 		dot = styleRunning.Render("●")
 		state = styleFaint.Render("running")
 	}
-	right := state + " " + styleFaint.Render(elapsed(r.since))
-	return splitRow(marker(selected)+dot+" "+name, right, width)
+	return []string{
+		splitRow(marker(selected)+dot+" "+name, state, width),
+		runLine(r, width),
+	}
+}
+
+// runLine is the second line of a row a lane holds: how long the run has been
+// going, how long since its log last said anything, and a sparkline of the
+// activity behind that. Together they answer what the first line cannot —
+// whether a run that started four minutes ago is still doing something.
+//
+// They are a reading, not a verdict. Nothing here compares the number to a
+// threshold or calls a run stuck; SCOPE defers hang detection, and this shows
+// the operator what the log already knows and leaves the decision to eject
+// theirs.
+func runLine(r workRow, width int) string {
+	left := elapsed(r.since)
+	if !r.heard.IsZero() {
+		left += " · last heard " + elapsed(r.heard) + " ago"
+	}
+	// Four spaces: the cursor column and the state dot, so the line starts
+	// under the ticket identifier rather than under the cursor.
+	return splitRow("    "+styleFaint.Render(left), styleFaint.Render(sparkline(r.rate)), width)
 }
 
 // mainPanel is the lens: the promote picker while it is open, the ? overlay,
@@ -2087,7 +2145,9 @@ func (m model) statusBar() string {
 }
 
 func elapsed(since time.Time) string {
-	return time.Since(since).Truncate(time.Second).String()
+	// A clock that disagrees with the filesystem's can put a log's mtime a
+	// moment in the future; "-1s ago" would read as a bug in the board.
+	return max(time.Since(since), 0).Truncate(time.Second).String()
 }
 
 // name is the ticket column: the human identifier when the loop knows it, a

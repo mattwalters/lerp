@@ -2332,3 +2332,73 @@ func TestOffBoardRunsFromOneQueueShareAHeader(t *testing.T) {
 		}
 	}
 }
+
+// A running row's second line is the question the first one cannot answer:
+// not "did it start" but "is it still doing something". Elapsed, when the log
+// last grew, and the activity behind it.
+func TestRunningRowShowsHowTheRunIsGoing(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.log")
+	writeLog(t, path, []byte(
+		`{"type":"system","subtype":"init","model":"claude-opus-5","session_id":"abc"}`+"\n"))
+
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
+			{ID: "id-1", Identifier: "LERP-1", Title: "one", Assigned: true}}},
+	}}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		TicketID: "id-1", Ticket: "LERP-1", Queue: "implement", LogPath: path,
+		StartedAt: time.Now().Add(-90 * time.Second)}})
+
+	// The first poll attaches the pulse; the agent then does something.
+	m = update(t, m, pollMsg{})
+	appendLog(t, path,
+		`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"/a/b.go"}}]}}`+"\n")
+	m = update(t, m, pollMsg{})
+
+	view := m.View()
+	for _, want := range []string{"running", "1m30s", "last heard", "ago", "█"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("the running row is missing %q:\n%s", want, view)
+		}
+	}
+	// The row is two lines and the panel counts them, or the list would
+	// draw more rows than it has room for.
+	rows, _ := m.workListRows(40)
+	if len(rows) != 3 {
+		t.Fatalf("work list drew %d lines, want a header and a two-line row: %q", len(rows), rows)
+	}
+	if !strings.Contains(rows[1], "LERP-1") || strings.Contains(rows[2], "LERP-1") {
+		t.Fatalf("the run's two lines are not the ticket then its reading: %q", rows)
+	}
+}
+
+// A ticket nothing is running keeps its one line: the second line is a
+// reading of a run, and there is no run.
+func TestWaitingRowStaysOneLine(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
+			{ID: "id-1", Identifier: "LERP-1", Title: "one", Eligible: true}}},
+	}}})
+	rows, _ := m.workListRows(40)
+	if len(rows) != 2 {
+		t.Fatalf("work list drew %d lines, want a header and a one-line row: %q", len(rows), rows)
+	}
+}
+
+// A lane still provisioning has no log to read, so its row shows the clock it
+// has and claims nothing about a stream that does not exist yet.
+func TestProvisioningRowClaimsNoReading(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventProvisioning, RunID: "r1", Lane: 1,
+		TicketID: "id-9", Ticket: "LERP-9", Queue: "plan", StartedAt: time.Now()}})
+	m = update(t, m, pollMsg{})
+	view := m.View()
+	if strings.Contains(view, "last heard") {
+		t.Fatalf("a provisioning row reports a log it does not have:\n%s", view)
+	}
+	if !strings.Contains(view, "provisioning") {
+		t.Fatalf("a provisioning row lost its state:\n%s", view)
+	}
+}

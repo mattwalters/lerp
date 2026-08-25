@@ -3,6 +3,7 @@ package tui
 import (
 	"bytes"
 	"os"
+	"time"
 )
 
 const (
@@ -15,73 +16,128 @@ const (
 	tailChunk = 64 * 1024
 )
 
-// tail follows one log file by polling: read whatever was appended since last
-// time, keep a bounded scrollback. Polling is the design — no watcher
-// machinery for a file that one other local process appends to.
+// follower reads one log file by polling: each call hands back the bytes
+// appended since the last one. Polling is the design — no watcher machinery
+// for a file that one other local process appends to.
 //
 // The file disappearing is not an error. A run's log is deleted with its run
-// record, and an empty path means the selected lane has no log at all; in
-// both cases the buffer simply stops growing.
-type tail struct {
+// record, and an empty path means there is no log at all; in both cases the
+// follower simply reports nothing new.
+type follower struct {
 	path   string
-	offset int64 // next byte to read; negative until the first read
-	buf    []byte
-	chunk  []byte  // scratch for reads, reused across polls
-	view   logView // the same bytes, decoded as agent activity
+	back   int64  // bytes of history the first read attaches with
+	offset int64  // next byte to read; negative until the first read
+	chunk  []byte // scratch for reads, reused across polls
+	// mod is the file's modification time as of the last poll, zero while
+	// the file cannot be read. It is the file's own answer to when it last
+	// grew, which a reader that attached a moment ago has no other way to
+	// know.
+	mod time.Time
 }
 
-func newTail(path string) tail {
-	return tail{path: path, offset: -1}
+func newFollower(path string, back int64) follower {
+	return follower{path: path, back: back, offset: -1}
 }
 
-// read pulls newly appended bytes into the scrollback and reports whether the
-// buffer changed. The first read attaches near the end of an existing file; a
-// file that shrank was truncated and rewritten, so the tail starts over. A
-// file the same size is assumed unchanged — log files are append-only per
-// run and paths are never reused, so a same-size rewrite cannot happen.
-func (t *tail) read() bool {
-	if t.path == "" {
-		return false
+// next returns the bytes appended since the last call, nil when the file has
+// not grown. The slice is the scratch buffer, which the next call overwrites:
+// a caller that keeps the bytes must copy them.
+//
+// mid reports that the read starts partway through a line — a reader that
+// attaches into the middle of a file finds whatever the writer was in the
+// middle of — and reset that the file shrank,
+// so it was truncated and rewritten and whatever a caller built from it
+// belongs to the old file. A file the same size is assumed unchanged: log
+// files are append-only per run and paths are never reused, so a same-size
+// rewrite cannot happen.
+func (f *follower) next() (b []byte, mid, reset bool) {
+	if f.path == "" {
+		return nil, false, false
 	}
 	// Stat first: most polls find nothing new, and every poll paying an open
 	// for that answer would be waste.
-	info, err := os.Stat(t.path)
+	info, err := os.Stat(f.path)
 	if err != nil {
-		return false
+		return nil, false, false
 	}
+	f.mod = info.ModTime()
 	size := info.Size()
 	switch {
-	case t.offset < 0:
-		t.offset = max(0, size-tailScrollback)
-		if t.offset > 0 {
-			// Attaching to a log already being written lands mid-line.
-			t.view.skipLine()
-		}
-	case size < t.offset:
-		t.offset = 0
-		t.buf, t.view = t.buf[:0], logView{}
+	case f.offset < 0:
+		f.offset = max(0, size-f.back)
+		// Attaching at a line boundary is not attaching mid-line, and a
+		// reader that attaches at the end of a log is normally at one:
+		// costing it its next whole line would be a real event lost.
+		mid = f.offset > 0 && !f.closesLine(f.offset)
+	case size < f.offset:
+		f.offset, reset = 0, true
 	}
-	if size <= t.offset {
-		return false
+	if size <= f.offset {
+		return nil, mid, reset
 	}
-	f, err := os.Open(t.path)
+	file, err := os.Open(f.path)
+	if err != nil {
+		return nil, mid, reset
+	}
+	defer file.Close()
+	if f.chunk == nil {
+		f.chunk = make([]byte, tailChunk)
+	}
+	n, _ := file.ReadAt(f.chunk[:min(size-f.offset, tailChunk)], f.offset)
+	if n == 0 {
+		return nil, mid, reset
+	}
+	f.offset += int64(n)
+	return f.chunk[:n], mid, reset
+}
+
+// closesLine reports whether the byte before off ends a line — how a reader
+// about to attach at off tells a line it will see whole from the tail of one
+// somebody else started. One read, once, when the follower attaches.
+func (f *follower) closesLine(off int64) bool {
+	file, err := os.Open(f.path)
 	if err != nil {
 		return false
 	}
-	defer f.Close()
-	if t.chunk == nil {
-		t.chunk = make([]byte, tailChunk)
-	}
-	n, _ := f.ReadAt(t.chunk[:min(size-t.offset, tailChunk)], t.offset)
-	if n == 0 {
+	defer file.Close()
+	var b [1]byte
+	if _, err := file.ReadAt(b[:], off-1); err != nil {
 		return false
 	}
-	t.offset += int64(n)
-	t.buf = append(t.buf, t.chunk[:n]...)
+	return b[0] == '\n'
+}
+
+// tail follows one log file for the main pane: whatever was appended since
+// last time, kept as a bounded scrollback.
+type tail struct {
+	follower
+	buf  []byte
+	view logView // the same bytes, decoded as agent activity
+}
+
+func newTail(path string) tail {
+	return tail{follower: newFollower(path, tailScrollback)}
+}
+
+// read pulls newly appended bytes into the scrollback and reports whether the
+// buffer changed.
+func (t *tail) read() bool {
+	b, mid, reset := t.follower.next()
+	if reset {
+		t.buf, t.view = t.buf[:0], logView{}
+	}
+	if mid {
+		// Attaching to a log already being written lands mid-line.
+		t.view.skipLine()
+	}
+	if len(b) == 0 {
+		return false
+	}
+	t.buf = append(t.buf, b...)
 	t.trim()
 	// The decoder sees every byte the tail reads, once, as it arrives: it is
 	// the one thing here that cannot be rebuilt from the trimmed scrollback.
-	t.view.feed(t.chunk[:n])
+	t.view.feed(b)
 	return true
 }
 
