@@ -852,6 +852,43 @@ func TestTheHelpOverlayIsNotWrittenOverByALiveLog(t *testing.T) {
 	}
 }
 
+// Done-when: reading the help costs the operator nothing in the pane it is
+// drawn over — the ticket lens as much as the log. A parked ticket's plan is
+// the one thing that reliably overflows the pane, and it is decided from
+// that one screen, so being dropped back at the top of it is a real loss.
+func TestTheHelpOverlayGivesTheTicketPaneBackWhereItWas(t *testing.T) {
+	m, _, reader := newReadingTestModel(t)
+	resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
+	m = update(t, resized.(model), keyMsg("1"))
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+	body := strings.Repeat("a line of the plan\n", 80)
+	m = selectAndRead(t, m, 0, linear.IssueDetail{Body: body}, nil, reader)
+
+	m = update(t, m, keyMsg("f"))
+	m = update(t, m, keyMsg("f"))
+	want := m.vp.YOffset
+	if want == 0 {
+		t.Fatal("paging into the ticket did not move the viewport")
+	}
+
+	m = update(t, m, keyMsg("?"))
+	m = update(t, m, keyMsg("?"))
+	if got := m.vp.YOffset; got != want {
+		t.Errorf("offset after reading the help = %d, want %d — the plan came back at the top", got, want)
+	}
+
+	// Unless the operator re-aimed the pane while the overlay was up: what
+	// comes back is then a different ticket, and a scroll position measured
+	// against the last one would be meaningless.
+	m = update(t, m, keyMsg("f"))
+	m = update(t, m, keyMsg("?"))
+	m = update(t, m, keyMsg("j"))
+	m = update(t, m, keyMsg("?"))
+	if got := m.vp.YOffset; got != 0 {
+		t.Errorf("a different ticket came back scrolled to %d, want the top", got)
+	}
+}
+
 // Done-when: scrolling the overlay, and moving the cursor behind it, are
 // not the log's business. Follow is the log's state alone — the rule the
 // scroll keys already hold to for the detail lens — and the place the

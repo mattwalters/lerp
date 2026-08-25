@@ -306,18 +306,25 @@ read-only; to change what runs next, move tickets in Linear. The
 Inbox view lists what waits on a
 human: unclaimed tickets, and the operator's own claimed tickets,
 sitting in a status no queue serves. It is a table, one row per
-ticket, carrying the identifier, the leverage, the title, the real
-Linear status, the project and the priority — the vocabulary is
+ticket, under a header naming its columns: the identifier, the
+leverage, the real Linear status, the project, the priority, and then
+the title, which takes whatever the panel has left — the vocabulary is
 Linear's own, never a category invented by lerp. A status the
 configured pipeline never names — neither a queue's status nor any
-`on_success` or `on_failure` target — is marked, because that is the
-fingerprint of a ticket that left the pipeline. Rows are ordered by
+`on_success` or `on_failure` target — is marked, but only where
+Linear files it as started: a ticket resting in a backlog, a triage or
+a Todo column has not entered the pipeline, which is the ordinary
+state of most of a board, while one moved into a status that means
+work is under way by something the pipeline knows nothing about is the
+fingerprint of a ticket that left it. `?` spells out that mark and the
+other two the table draws. Rows are ordered by
 leverage by default: how many other listed tickets promoting this one
 would transitively unblock, then priority, then identifier — so the
 promote worth making is the top row. `s` cycles that to priority,
 status or project; the two grouping modes draw a header per group, and
 the status order is derived from the pipeline itself — where runs
-fail, then where they finish, then the statuses it never names. `P`
+fail, then where they finish, then the statuses it never named the
+ticket into, and last the intake it never left. `P`
 scopes the panel to one project and cycles back to all. Both are
 session-only: no saved views, no filter syntax, and neither changes
 which tickets are fetched. Selecting a row

@@ -259,6 +259,12 @@ type model struct {
 	width, height int
 	ready         bool
 	helpOn        bool
+	// helpOffset is where the main pane was scrolled to when the ? overlay
+	// took it over, and helpLens is what it was showing, so closing the
+	// overlay gives the operator back the place they were reading — and
+	// knows not to, when they re-aimed the pane behind it.
+	helpOffset int
+	helpLens   mainLens
 
 	lanes map[int]*lane
 	order []int // lane numbers, sorted; adopted runs may sit above N
@@ -477,17 +483,26 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// The overlay is one more thing the pane holds, so it goes through
 		// the viewport the log and the detail already scroll in: a legend
 		// under the key table is only a legend if a short terminal can
-		// reach it. Leaving parks a log's offset and arriving puts it
-		// back, the same as stepping onto a row with no log.
-		if m.helpOn && m.logLens() && !m.follow {
-			m.logOffset = m.vp.YOffset
+		// reach it. Which means it is drawn over the place the operator
+		// was reading — a plan halfway down a ticket as much as a tail
+		// scrolled back through — so that place is parked on the way in
+		// and put back on the way out. A followed tail needs nothing put
+		// back: refreshLog has already pinned it to the bottom.
+		if m.helpOn {
+			m.helpOffset, m.helpLens = m.vp.YOffset, m.lens()
 		}
 		m.refreshMain()
 		switch {
-		case m.helpOn || !m.showingLog():
+		case m.helpOn:
 			m.vp.GotoTop()
-		case !m.follow:
-			m.vp.SetYOffset(m.logOffset)
+		case m.showingLog() && m.follow:
+			// refreshLog has pinned the tail to the bottom.
+		case m.lens() != m.helpLens:
+			// The operator re-aimed the pane behind the overlay, so what
+			// comes back is not what was parked, and comes back at its top.
+			m.vp.GotoTop()
+		default:
+			m.vp.SetYOffset(m.helpOffset)
 		}
 	case key.Matches(msg, m.keys.Attention):
 		m.setFocus(panelAttention)
@@ -649,7 +664,7 @@ func (m *model) setFocus(p panel) {
 	if m.helpOn {
 		// The overlay is nobody's row. Moving between panels behind it
 		// re-aims the lens under it — which refreshMain draws on the way
-		// out — but must not scroll the help the operator is reading.
+		// out — but must not scroll the help the operator is reading. The
 		return
 	}
 	m.refreshMain()
@@ -940,6 +955,25 @@ func (m *model) selectedLogPath() string {
 	return m.lastLog[r.ticketID]
 }
 
+// mainLens identifies what the main pane is showing: the panel whose cursor
+// it follows, and the row under that cursor. It is an identity and not a
+// position — the inbox's selection follows its ticket through a re-sort —
+// so it answers one question: is the pane still showing what it was?
+type mainLens struct {
+	panel  panel
+	ticket string
+}
+
+func (m *model) lens() mainLens {
+	if m.focus == panelWork {
+		return mainLens{panelWork, m.workSel}
+	}
+	if it := m.selectedAttention(); it != nil {
+		return mainLens{panelAttention, it.Ticket}
+	}
+	return mainLens{panel: panelAttention}
+}
+
 // showingLog reports whether the main pane is the log rather than a detail.
 // The lens is the selected row's, not the panel's: a ticket with a log shows
 // it, a ticket without shows what the pass knows about it. The ? overlay is
@@ -949,13 +983,7 @@ func (m *model) selectedLogPath() string {
 // something that is not the log neither freezes the tail nor gets written
 // over by it — and the overlay is one more detour.
 func (m *model) showingLog() bool {
-	return !m.helpOn && m.logLens()
-}
-
-// logLens is the lens the selection asks for whatever is drawn over it:
-// what the main pane goes back to when the overlay closes.
-func (m *model) logLens() bool {
-	return m.focus == panelWork && m.selectedLogPath() != ""
+	return !m.helpOn && m.focus == panelWork && m.selectedLogPath() != ""
 }
 
 // refreshMain points the main pane's viewport at whatever the selection asks
