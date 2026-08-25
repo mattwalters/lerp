@@ -36,14 +36,31 @@ Type "lerp"
 Sleep 800ms
 Enter
 
-# The board opens: the inbox above with what is waiting on a human, the work
-# panel below with the queues, and three lanes already picking tickets up.
+# The board opens on the inbox: what waits on a human, at full width, with
+# every column the table packs in — the leverage, the real Linear status, the
+# project, the priority. Below it the work panel, three lanes already picking
+# tickets up.
 Sleep 5s
 
-# Up to the first of the running lanes, then down through them. Each one opens
-# its own log tail in the main pane, formatted from the agent's stream —
+# Down to a review that has landed, then `enter` to read it. The list owns the
+# screen until you ask for the ticket; the main pane opens beside the table
+# with the ticket's body, and `esc` gives the width back.
+Down
+Sleep 2500ms
+Down
+Sleep 3s
+Enter
+Sleep 4500ms
+Escape
+Sleep 2s
+
+# `2` focuses the work panel, whose pane is open by default — no `enter`
+# behind the log. Up to the first of the running lanes, then down through
+# them. Each one opens its own log tail, formatted from the agent's stream —
 # thinking, tool calls, the result. (Up clamps at the first row, so the count
 # only has to be at least the distance.)
+Type "2"
+Sleep 3s
 Up 6
 Sleep 4s
 Down
@@ -55,22 +72,12 @@ Sleep 4s
 # three come off the queue into the lanes that just freed.
 Sleep 5s
 
-# `1` focuses the inbox, where the finished tickets have just landed under
-# "In Review — a run finished here". The main pane reads the selected ticket.
+# `1` back to the inbox, where the finished tickets have just landed under
+# "In Review — a run finished here", and the table is at full width again.
 Type "1"
 Sleep 4s
 Down
 Sleep 3s
-Down
-Sleep 3500ms
-
-# Back to the work panel: the implement queue has drained into the lanes, and
-# the plan queue is next in line behind it.
-Type "2"
-Sleep 3s
-Up 6
-Down 2
-Sleep 6s
 
 Type "q"
 Sleep 2s

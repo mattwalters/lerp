@@ -2,7 +2,7 @@
 
 [![ci](https://github.com/mattwalters/lerp/actions/workflows/ci.yml/badge.svg)](https://github.com/mattwalters/lerp/actions/workflows/ci.yml)
 
-![The lerp board: an inbox of tickets waiting on a human above, three lanes running coding agents below, and one lane's log tail streaming beside them](docs/demo.gif)
+![The lerp board: an inbox of tickets waiting on a human above, three lanes running coding agents below, and, once the work panel has focus, one lane's log tail streaming beside them](docs/demo.gif)
 
 <sub>Recorded from [`docs/demo.tape`](docs/demo.tape) against a fake board and
 a stub agent; `make demo` regenerates it.</sub>
@@ -298,6 +298,13 @@ caps how many agents run at once (default 10; each lane is a whole
 workspace, so lower it in a repo whose `provision` command is heavy). The TUI needs a terminal: in a pipe or a
 script, `lerp` prints usage and exits 2 rather than quietly starting to
 claim tickets.
+
+Two panels share the screen, and lerp opens focused on the Inbox: the
+loop runs the board on its own, so what is worth the first look is
+what needs *you*. The list owns that screen — the Inbox's pane starts
+closed, so the table opens at full width — and `2` moves to the Work
+panel, whose pane starts open, so a running ticket's log is that one
+key away and no `enter` behind it.
 
 The Work view is one list of what the machine is doing with the
 board, grouped by queue: every ticket sitting in each queue's status,

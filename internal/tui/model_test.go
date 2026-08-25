@@ -115,6 +115,10 @@ func (r *recordingReader) returns(detail linear.IssueDetail, err error) {
 // care which ones — two, so up/down has somewhere to go.
 var defaultTestStatuses = []string{"Planning", "Implementing"}
 
+// newTestModel is the stock model at a stock window size. Lerp opens focused
+// on the inbox with the inbox's pane closed, so a test about the work panel,
+// its main pane or the geometry that pane drives presses "2" first — without
+// it, it is asserting against the wrong panel.
 func newTestModel(t *testing.T, lanes int) (model, *countingTicker, chan loop.Event) {
 	t.Helper()
 	m, ticker, events := newTestModelWith(t, lanes, defaultTestStatuses, &recordingPromoter{}, &recordingStarter{}, &recordingReader{})
@@ -335,8 +339,12 @@ func TestAdoptedRunOccupiesAndFreesItsRow(t *testing.T) {
 // the key that used to open one is bound to nothing.
 func TestFocusSwitching(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	if m.focus != panelAttention {
+		t.Fatalf("lerp opens focused on %v, want inbox", m.focus)
+	}
+	m = update(t, m, keyMsg("2"))
 	if m.focus != panelWork {
-		t.Fatalf("lerp opens focused on %v, want work", m.focus)
+		t.Fatalf("key 2 focused %v, want work", m.focus)
 	}
 	if !strings.Contains(m.View(), "waiting for the first pass") {
 		t.Fatalf("empty work lens missing its state text:\n%s", m.View())
@@ -368,6 +376,7 @@ func TestFocusSwitching(t *testing.T) {
 // ticket, including why it will not run.
 func TestWorkPanelShowsWhatRunsNext(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("2"))
 
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
 		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
@@ -468,6 +477,7 @@ func TestTheLensFollowsTheRowNotThePanel(t *testing.T) {
 	writeLog(t, path, []byte("agent at work\n"))
 
 	m, _, _ := newTestModel(t, 2)
+	m = update(t, m, keyMsg("2"))
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
 		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
 			{ID: "id-1", Identifier: "LERP-1", Title: "running one", Assigned: true},
@@ -515,6 +525,7 @@ func TestTheLensFollowsTheRowNotThePanel(t *testing.T) {
 // of its own, and it selects like any other row.
 func TestAdoptedRunAboveCapacityIsOnThePanel(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("2"))
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
 		{Team: "LERP", Name: "plan", Status: "Planning", Tickets: []loop.QueueTicket{
 			{ID: "id-1", Identifier: "LERP-1", Title: "one", Eligible: true}}},
@@ -1511,6 +1522,10 @@ func TestPromotePickerClosesWhenTheListEmpties(t *testing.T) {
 // main pane for the full keymap.
 func TestStatusBarAndHelp(t *testing.T) {
 	m, _, _ := newTestModel(t, 2)
+	if !strings.Contains(m.View(), "INBOX") {
+		t.Fatalf("status bar does not name the panel lerp opens on:\n%s", m.View())
+	}
+	m = update(t, m, keyMsg("2"))
 	if !strings.Contains(m.View(), "WORK") {
 		t.Fatalf("status bar does not name the focused panel:\n%s", m.View())
 	}
@@ -1705,10 +1720,13 @@ func TestThePaneIsRememberedPerPanel(t *testing.T) {
 	}
 }
 
-// Done-when: work starts open, so the startup screen is unchanged — a
-// running ticket's live log is the point of watching it, and no key is
-// needed to see it.
-func TestWorkStartsWithItsLogOnScreen(t *testing.T) {
+// Done-when: lerp opens on the inbox, and the inbox's pane is closed, so the
+// startup screen is two full-width lists and no main pane. Work's pane
+// default is untouched by that — it is still open — so reaching the log is
+// the one key that changes panel, with no `enter` behind it. A running
+// ticket's live log is the point of watching it; what changed is that
+// watching it is now something you ask for.
+func TestTheLogIsOnePanelKeyAway(t *testing.T) {
 	log := filepath.Join(t.TempDir(), "one.log")
 	writeLog(t, log, []byte("agent one says hello\n"))
 
@@ -1716,14 +1734,22 @@ func TestWorkStartsWithItsLogOnScreen(t *testing.T) {
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 		TicketID: "id-1", Ticket: "LERP-1", Queue: "plan", LogPath: log}})
 
-	if m.focus != panelWork {
-		t.Fatalf("focus starts on %v, not work", m.focus)
+	if m.focus != panelAttention {
+		t.Fatalf("focus starts on %v, not the inbox", m.focus)
 	}
+	if g := m.geometry(); g.mainH != 0 {
+		t.Fatalf("the startup screen opened a main pane: %+v", g)
+	}
+	if strings.Contains(m.View(), "agent one says hello") {
+		t.Fatalf("the opening screen is a log, not the inbox:\n%s", m.View())
+	}
+
+	m = update(t, m, keyMsg("2"))
 	if g := m.geometry(); g.mainH == 0 {
 		t.Fatalf("work started with its pane closed: %+v", g)
 	}
 	if !strings.Contains(m.View(), "agent one says hello") {
-		t.Fatalf("the log is not on screen without a key:\n%s", m.View())
+		t.Fatalf("focusing work did not put the log on screen without an enter:\n%s", m.View())
 	}
 }
 
@@ -1908,6 +1934,7 @@ func TestTheReopenedPaneIsCurrent(t *testing.T) {
 	writeLog(t, two, []byte("agent two says hello\n"))
 
 	m, _, _ := newTestModel(t, 2)
+	m = update(t, m, keyMsg("2"))
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 		TicketID: "id-1", Ticket: "LERP-1", Queue: "plan", LogPath: one}})
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r2", Lane: 2,
@@ -2022,6 +2049,7 @@ func TestShrinkingTheWindowClosesWhatTookThePane(t *testing.T) {
 // with work's pane open — so without this the only way out is a guess.
 func TestTheTooSmallScreenNamesTheWayOut(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("2"))
 	resized, _ := m.Update(tea.WindowSizeMsg{Width: 70, Height: 12})
 	m = resized.(model)
 	view := m.View()
@@ -2049,6 +2077,7 @@ func TestTheTooSmallScreenNamesTheWayOut(t *testing.T) {
 // number the needs-you panel exists for.
 func TestTheStatusBarKeepsTheCountOverTheHint(t *testing.T) {
 	m, _, _ := newTestModel(t, 3)
+	m = update(t, m, keyMsg("2"))
 	resized, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 30})
 	m = resized.(model)
 	m = update(t, m, tickedMsg{})
@@ -2171,6 +2200,7 @@ func TestAClosedPaneIsNotRefreshed(t *testing.T) {
 	writeLog(t, log, []byte("agent one says hello\n"))
 
 	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("2"))
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 		TicketID: "id-1", Ticket: "LERP-1", Queue: "plan", LogPath: log}})
 	m = update(t, m, keyMsg("esc"))
@@ -2799,6 +2829,7 @@ func TestSmallestWindowTheGuardAdmits(t *testing.T) {
 		{w: 70, h: 2*panelFloor + 1, closed: true},
 	} {
 		m, _, _ := newTestModel(t, 3)
+		m = update(t, m, keyMsg("2"))
 		resized, _ := m.Update(tea.WindowSizeMsg{Width: tc.w, Height: tc.h})
 		m = fillBoard(t, resized.(model), 20)
 		if tc.closed {
@@ -2921,6 +2952,7 @@ func TestSelectingARunningTicketTailsItsLog(t *testing.T) {
 	writeLog(t, two, []byte("agent two says hello\n"))
 
 	m, _, _ := newTestModel(t, 2)
+	m = update(t, m, keyMsg("2"))
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 		TicketID: "id-1", Ticket: "LERP-1", Queue: "plan", LogPath: one}})
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r2", Lane: 2,
@@ -2958,6 +2990,7 @@ func TestRunLogRendersActivityAndTogglesToRaw(t *testing.T) {
 	writeLog(t, path, []byte(claudeStream))
 
 	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("2"))
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 		Ticket: "LERP-1", Queue: "plan", LogPath: path}})
 
@@ -3062,6 +3095,7 @@ func TestSelectionFollowsTheTicket(t *testing.T) {
 	zero := loop.QueueTicket{ID: "id-0", Identifier: "LERP-0", Title: "zero", Eligible: true}
 
 	m, _, _ := newTestModel(t, 2)
+	m = update(t, m, keyMsg("2"))
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues,
 		Queues: []loop.QueueSnapshot{plan(one, two), {Team: "LERP", Name: "implement", Status: "Todo"}}}})
 	m = update(t, m, keyMsg("down"))
@@ -3447,6 +3481,7 @@ func TestHostileLogOutputCannotRepaintTheScreen(t *testing.T) {
 	writeLog(t, path, []byte("\x1b[31mcolored output\x1b[0m\n"+hostile+"\n"))
 
 	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("2"))
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 		Ticket: "LERP-1", Queue: "plan", LogPath: path}})
 

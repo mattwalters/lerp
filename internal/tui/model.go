@@ -429,7 +429,14 @@ func newModel(ctx context.Context, o Options) model {
 	h.Styles.ShortDesc = styleFaint
 	h.Styles.ShortSeparator = styleFaint
 	h.Styles.Ellipsis = styleFaint
-	m := model{o: o, ctx: ctx, focus: panelWork, lanes: make(map[int]*lane),
+	// Focus opens on the inbox: the loop runs the board on its own, so what
+	// the operator is at the terminal for the moment they open it is what
+	// needs them. It agrees with the panel numbering, and it leaves the
+	// inbox table at full width, which is the only width its project and
+	// priority columns fit in. The pane defaults below are unchanged, so
+	// the first screen is two lists and no main pane — the log is one `2`
+	// away, with no `enter` behind it, because work's pane stays open.
+	m := model{o: o, ctx: ctx, focus: panelAttention, lanes: make(map[int]*lane),
 		details: make(map[string]*ticketDetail), lastLog: make(map[string]string),
 		vp: viewport.New(0, 0), follow: true, keys: newKeymap(), help: h,
 		sortMode:    defaultSort,
