@@ -303,9 +303,9 @@ previous `lerp` reads as `running` like any other, and shows its true
 age rather than the moment it was adopted; a waiting row is shown
 faint with the reason it waits, blocked or claimed. The panel title
 and the status bar carry the capacity, `2/3 running`, which is what
-says whether anything can start — with `· +1 over` beside it while any
-run sits above the limit, forced or adopted from a lerp that ran with
-more lanes. Selecting a running ticket shows a
+says whether anything can start — every live run counts against it,
+whichever lane it landed on, with `· +1 over` beside it while more runs
+are live than the limit allows. Selecting a running ticket shows a
 live tail of its log in the main pane, with scrollback that survives
 the run's exit; selecting a waiting one shows where it sits in pickup
 order and what gates it. The tail reads as agent activity rather than

@@ -520,13 +520,41 @@ func (r *Reconciler) ForceStart(ctx context.Context, ticketID string) error {
 		// Eligible's rule, and force-start overrides the lane count alone.
 		return fmt.Errorf("force-start %s: already claimed", issue.Identifier)
 	}
-	lr, ok := r.registerForce(issue.ID)
+	lr, ok := r.registerForce(issue.ID, r.recordedLanes())
 	if !ok {
 		return fmt.Errorf("force-start %s: already running here", issue.Identifier)
 	}
 	r.wg.Add(1)
 	go r.runLane(ctx, lr, candidate{issue: issue, name: name, queue: queue})
 	return nil
+}
+
+// recordedLanes is the set of lane numbers live run records hold, whether or
+// not this process has adopted them yet. Every other lane number is chosen on
+// the tick goroutine, after reconcileEvidence has adopted every live run it
+// can see; force-start chooses between passes, so it reads the same evidence
+// itself. Without this, pressing S while a pass is partway through adopting
+// an orphan takes the lane that orphan is already running on, and two live
+// runs share the LERP_LANE a project's provision isolates on.
+//
+// A record another lerp writes in the window after this read is still
+// possible, exactly as it is for fill: lane numbers are not coordinated
+// across processes, and this does not pretend otherwise.
+func (r *Reconciler) recordedLanes() map[int]bool {
+	records, err := r.o.Evidence.List()
+	if err != nil {
+		// A listing that cannot be read is reported, not fatal: the active
+		// lanes registerForce checks under its own lock still hold.
+		r.fail(fmt.Errorf("list run evidence: %w", err))
+		return nil
+	}
+	taken := make(map[int]bool, len(records))
+	for _, record := range records {
+		if r.o.Alive(record) {
+			taken[record.Lane] = true
+		}
+	}
+	return taken
 }
 
 // queueForStatus finds the queue that picks up from status. RepoConfig's
@@ -785,8 +813,12 @@ func (r *Reconciler) fill(ctx context.Context) {
 		r.fail(err)
 	}
 	r.emit(Event{Type: EventQueues, Queues: snapshotQueues(listings)})
-	lanes := r.freeLanes()
 	for _, c := range candidatesFrom(listings) {
+		// The free lanes are read per candidate rather than once for the
+		// pass: register occupies its lane before this loop comes round, and
+		// a force-start can take one mid-pass, which a snapshot taken up
+		// front would keep handing out.
+		lanes := r.freeLanes()
 		if len(lanes) == 0 {
 			return
 		}
@@ -794,10 +826,11 @@ func (r *Reconciler) fill(ctx context.Context) {
 		if !ok {
 			// This ticket is already occupying a lane — typically a run whose
 			// claim Linear had not reflected when the board was listed — or a
-			// force-start took this lane number after the snapshot was taken.
+			// force-start took this lane number in the window since the read
+			// just above. Either way the next candidate reads the lanes
+			// again, so one refusal costs one candidate, not the pass.
 			continue
 		}
-		lanes = lanes[1:]
 		r.wg.Add(1)
 		go r.runLane(ctx, lr, c)
 	}
@@ -1026,11 +1059,18 @@ func (r *Reconciler) register(lane int, ticketID string) (*laneRun, bool) {
 // the highest occupied lane when every configured one is busy. Choosing
 // inside the hold is the point — two force-starts a frame apart must not pick
 // the same number. Like register, it refuses a ticket already in a lane.
-func (r *Reconciler) registerForce(ticketID string) (*laneRun, bool) {
+//
+// reserved is recordedLanes' answer: lanes held by live runs this process has
+// not adopted yet, which are as occupied as the ones in r.active.
+func (r *Reconciler) registerForce(ticketID string, reserved map[int]bool) (*laneRun, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	used := make(map[int]bool, len(r.active))
+	used := make(map[int]bool, len(r.active)+len(reserved))
 	highest := 0
+	for lane := range reserved {
+		used[lane] = true
+		highest = max(highest, lane)
+	}
 	for _, lr := range r.active {
 		if lr.ticketID == ticketID {
 			return nil, false

@@ -1377,7 +1377,7 @@ func TestRegisterRefusesALaneAForceStartTook(t *testing.T) {
 		t.Fatalf("free lanes = %v, want [2]", lanes)
 	}
 
-	lr, ok := h.rec.registerForce("forced")
+	lr, ok := h.rec.registerForce("forced", nil)
 	if !ok {
 		t.Fatal("registerForce: no lane")
 	}
@@ -1389,6 +1389,11 @@ func TestRegisterRefusesALaneAForceStartTook(t *testing.T) {
 	if _, ok := h.rec.register(lanes[0], "candidate"); ok {
 		t.Fatal("register handed out a lane a forced run already holds")
 	}
+	// And the pass is not over: fill reads the lanes again per candidate, so
+	// a taken number costs one candidate rather than every one behind it.
+	if free := h.rec.freeLanes(); len(free) != 0 {
+		t.Fatalf("free lanes with both lanes occupied = %v, want none", free)
+	}
 
 	h.rec.mu.Lock()
 	defer h.rec.mu.Unlock()
@@ -1398,6 +1403,91 @@ func TestRegisterRefusesALaneAForceStartTook(t *testing.T) {
 			t.Fatalf("lane %d held by both %s and %s", a.lane, prev, a.ticketID)
 		}
 		held[a.lane] = a.ticketID
+	}
+}
+
+// An orphan's lane is occupied whether or not this process has adopted it
+// yet. Every other lane number is chosen on the tick goroutine, after
+// reconcileEvidence has adopted everything live; force-start chooses between
+// passes, so it must read the same evidence — otherwise pressing S in that
+// window puts a second run on the lane an orphan is already using, and both
+// get the same LERP_LANE a project's provision isolates on.
+func TestForceStartAvoidsALaneAnUnadoptedOrphanHolds(t *testing.T) {
+	execute, release, _ := blockingExecute(t, "")
+	h := newHarness(t, 2, execute)
+	h.fake.AddIssue("LERP", linear.Issue{ID: "two", Identifier: "LERP-2", Status: "Todo"})
+	ctx := context.Background()
+
+	// A previous lerp's run, live on lane 1, that no pass here has adopted.
+	orphan, err := h.evidence.Create(evidence.Record{
+		Lane: 1, TicketID: "orphan-ticket", Queue: "todo", StartingStatus: "Todo",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.alive[orphan.RunID] = true
+
+	if err := h.rec.ForceStart(ctx, "two"); err != nil {
+		t.Fatalf("ForceStart: %v", err)
+	}
+	forced := h.waitEvents(t, EventStarted, 1)[0]
+	if forced.Lane == orphan.Lane {
+		t.Fatalf("forced run took lane %d, which a live orphan already holds", forced.Lane)
+	}
+	if forced.Lane != 2 {
+		t.Errorf("forced lane = %d, want the lowest one no live run holds", forced.Lane)
+	}
+
+	// And the pass that follows adopts the orphan onto its own lane, with no
+	// two live runs sharing a number.
+	h.rec.Tick(ctx)
+	h.waitEvents(t, EventAdopted, 1)
+	h.rec.mu.Lock()
+	held := map[int]string{}
+	for _, a := range h.rec.active {
+		if prev, dup := held[a.lane]; dup {
+			t.Errorf("lane %d held by both %s and %s", a.lane, prev, a.ticketID)
+		}
+		held[a.lane] = a.ticketID
+	}
+	h.rec.mu.Unlock()
+
+	release()
+	waitIdle(t, h.rec)
+}
+
+// A forced run occupies a lane, it does not close the board: the pass that
+// follows still fills what is left.
+func TestFillFillsTheLanesAForcedRunLeaves(t *testing.T) {
+	execute, release, ran := blockingExecute(t, "")
+	h := newHarness(t, 3, execute)
+	for _, id := range []string{"one", "two", "three"} {
+		h.fake.AddIssue("LERP", linear.Issue{ID: id, Identifier: "LERP-" + id, Status: "Todo"})
+	}
+	ctx := context.Background()
+
+	if err := h.rec.ForceStart(ctx, "three"); err != nil {
+		t.Fatalf("ForceStart: %v", err)
+	}
+	h.waitEvents(t, EventStarted, 1)
+
+	h.rec.Tick(ctx)
+	started := h.waitEvents(t, EventStarted, 2)
+	lanes := map[int]bool{}
+	for _, ev := range started {
+		if lanes[ev.Lane] {
+			t.Fatalf("two runs started on lane %d", ev.Lane)
+		}
+		lanes[ev.Lane] = true
+	}
+	if free := h.rec.freeLanes(); len(free) != 0 {
+		t.Errorf("free lanes on a full board = %v, want none", free)
+	}
+
+	release()
+	waitIdle(t, h.rec)
+	if got := ran(); len(got) != 3 {
+		t.Errorf("executed runs = %v, want all three", got)
 	}
 }
 
