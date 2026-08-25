@@ -111,10 +111,16 @@ func openTUI(ctx context.Context, lanes int) error {
 	// status exists on its team (SCOPE invariant 2's refuse-at-startup
 	// spirit): a misspelled queue status would poll as a permanently empty
 	// queue, not an error, and a missing on_success target would fail only
-	// after an agent's whole run.
+	// after an agent's whole run. What the same check merely warns about — a
+	// team git automation that would move a ticket mid-stage — is printed
+	// here, before the screen opens, and the run starts anyway.
 	client := linear.New(apiKey, nil)
-	if err := loop.VerifyStatuses(ctx, client, repo); err != nil {
+	warnings, err := loop.Verify(ctx, client, repo)
+	if err != nil {
 		return err
+	}
+	for _, line := range warnings {
+		fmt.Fprintln(os.Stderr, line)
 	}
 
 	ev := evidence.New(repoDir)

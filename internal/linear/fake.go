@@ -19,6 +19,7 @@ type Fake struct {
 	doneStatuses map[string]bool
 	categories   map[string]string
 	teamStates   map[string][]string
+	automations  map[string][]GitAutomation
 }
 
 type fakeIssue struct {
@@ -42,6 +43,7 @@ func NewFake() *Fake {
 		doneStatuses: map[string]bool{"Done": true, "Canceled": true},
 		categories:   map[string]string{"Backlog": CategoryBacklog, "Triage": CategoryTriage},
 		teamStates:   map[string][]string{},
+		automations:  map[string][]GitAutomation{},
 	}
 }
 
@@ -102,6 +104,23 @@ func (f *Fake) TeamStates(_ context.Context, teamKey string) ([]string, error) {
 		return nil, fmt.Errorf("team states: team %q: %w", teamKey, ErrNotFound)
 	}
 	return append([]string(nil), names...), nil
+}
+
+// SetGitAutomations declares the git automations TeamGitAutomations reports
+// for a team, the way a team's git settings hold them.
+func (f *Fake) SetGitAutomations(teamKey string, automations ...GitAutomation) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.automations[teamKey] = append([]GitAutomation(nil), automations...)
+}
+
+// TeamGitAutomations mirrors the real client for the declared automations. A
+// team with none declared reports none rather than an error: a team whose git
+// settings are untouched is the ordinary case, not a missing team.
+func (f *Fake) TeamGitAutomations(_ context.Context, teamKey string) ([]GitAutomation, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]GitAutomation(nil), f.automations[teamKey]...), nil
 }
 
 // SetDoneStatuses replaces the set of status names that count as

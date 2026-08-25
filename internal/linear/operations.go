@@ -528,3 +528,61 @@ func (c *HTTP) Viewer(ctx context.Context) (string, error) {
 	}
 	return resp.Viewer.ID, nil
 }
+
+const teamGitAutomationsQuery = `
+query TeamGitAutomations($key: String!) {
+  teams(filter: { key: { eq: $key } }, first: 1) {
+    nodes {
+      gitAutomationStates(first: 50) {
+        nodes {
+          event
+          state { name }
+          targetBranch { branchPattern }
+        }
+      }
+    }
+  }
+}`
+
+// TeamGitAutomations reads the team's git automations (see Client). Fifty is
+// past any real configuration: Linear offers five events, and the rest of the
+// connection is branch-scoped overrides of them.
+func (c *HTTP) TeamGitAutomations(ctx context.Context, teamKey string) ([]GitAutomation, error) {
+	var resp struct {
+		Teams struct {
+			Nodes []struct {
+				GitAutomationStates struct {
+					Nodes []struct {
+						Event string `json:"event"`
+						// Null when the rule is set to take no action.
+						State *struct {
+							Name string `json:"name"`
+						} `json:"state"`
+						// Null for the team-wide rule.
+						TargetBranch *struct {
+							BranchPattern string `json:"branchPattern"`
+						} `json:"targetBranch"`
+					} `json:"nodes"`
+				} `json:"gitAutomationStates"`
+			} `json:"nodes"`
+		} `json:"teams"`
+	}
+	if err := c.do(ctx, teamGitAutomationsQuery, map[string]any{"key": teamKey}, &resp); err != nil {
+		return nil, fmt.Errorf("team git automations: %w", err)
+	}
+	if len(resp.Teams.Nodes) == 0 {
+		return nil, fmt.Errorf("team git automations: team %q: %w", teamKey, ErrNotFound)
+	}
+	var automations []GitAutomation
+	for _, n := range resp.Teams.Nodes[0].GitAutomationStates.Nodes {
+		a := GitAutomation{Event: n.Event}
+		if n.State != nil {
+			a.Status = n.State.Name
+		}
+		if n.TargetBranch != nil {
+			a.Branch = n.TargetBranch.BranchPattern
+		}
+		automations = append(automations, a)
+	}
+	return automations, nil
+}

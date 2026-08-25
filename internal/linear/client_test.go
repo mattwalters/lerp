@@ -533,3 +533,44 @@ func TestRetryAfter(t *testing.T) {
 		t.Errorf("retryAfter(%q) = %v, want in (0, 90s]", future, got)
 	}
 }
+
+func TestTeamGitAutomations(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		req := decodeRequest(t, r)
+		if !strings.Contains(req.Query, "TeamGitAutomations") {
+			t.Errorf("unexpected query: %s", req.Query)
+		}
+		if req.Variables["key"] != "LERP" {
+			t.Errorf("key = %v", req.Variables["key"])
+		}
+		// A team-wide rule, a rule switched off (no target state), and a
+		// rule scoped to a target branch — the three shapes Linear returns.
+		writeData(t, w, `{"teams":{"nodes":[{"gitAutomationStates":{"nodes":[
+			{"event":"start","state":{"name":"In Progress"},"targetBranch":null},
+			{"event":"review","state":null,"targetBranch":null},
+			{"event":"merge","state":{"name":"Done"},"targetBranch":{"branchPattern":"main"}}
+		]}}]}}`)
+	})
+	automations, err := c.TeamGitAutomations(context.Background(), "LERP")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []GitAutomation{
+		{Event: GitEventStart, Status: "In Progress"},
+		{Event: GitEventReview},
+		{Event: GitEventMerge, Status: "Done", Branch: "main"},
+	}
+	if !reflect.DeepEqual(automations, want) {
+		t.Errorf("automations = %+v, want %+v", automations, want)
+	}
+}
+
+func TestTeamGitAutomationsReportsUnknownTeam(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		writeData(t, w, `{"teams":{"nodes":[]}}`)
+	})
+	_, err := c.TeamGitAutomations(context.Background(), "NOPE")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("error = %v, want ErrNotFound", err)
+	}
+}
