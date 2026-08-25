@@ -1067,7 +1067,7 @@ func TestWorkTakesTheRoomNeedsYouCannotUse(t *testing.T) {
 	resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
 	m = resized.(model)
 	m = fillBoard(t, m, 20)
-	// Four items waiting, twenty tickets queued: needs-you cannot fill two
+	// Two items waiting, twenty tickets queued: needs-you cannot fill two
 	// thirds of this column and work has more list than a third holds.
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
 		{Ticket: "LERP-1", Title: "one", Status: "Backlog"},
