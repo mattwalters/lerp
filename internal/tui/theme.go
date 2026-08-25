@@ -12,8 +12,9 @@ import (
 // The palette: one accent, three semantic states, a faint ramp. Adaptive
 // pairs keep light terminals legible without a theme system. Color marks
 // state, never decoration — and every state also has a shape or a label
-// (● ◍ ○, "running", "idle"), so the screen still reads on a 16-color
-// terminal or to a color-blind operator.
+// (a filled dot against a spinner frame, "running", "provisioning"), so
+// the screen still reads on a 16-color terminal or to a color-blind
+// operator.
 var (
 	colorFocus        = lipgloss.AdaptiveColor{Light: "#6E4BC7", Dark: "#A78BFA"}
 	colorRunning      = lipgloss.AdaptiveColor{Light: "#14855F", Dark: "#3DDC97"}

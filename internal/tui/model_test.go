@@ -255,10 +255,16 @@ func TestAdoptedRunReadsAsRunning(t *testing.T) {
 	// would be in: identical output is the whole claim, and it holds the dot
 	// as well as the word — under the Ascii profile a test sees the shape but
 	// not the colour, so an assertion on either alone would miss the other.
+	// Without the trailing clock: elapsed is recomputed per render, so a
+	// second falling between the two calls would fail this for no reason.
+	line := func(r workRow) string {
+		s := m.workRowLine(r, false, 80)
+		return s[:strings.LastIndex(s, " ")]
+	}
 	row := rows[0]
-	adopted := m.workRowLine(row, false, 80)
+	adopted := line(row)
 	row.state = laneRunning
-	started := m.workRowLine(row, false, 80)
+	started := line(row)
 	if adopted != started {
 		t.Errorf("adopted row is drawn differently from a started one:\n%q\n%q", adopted, started)
 	}
