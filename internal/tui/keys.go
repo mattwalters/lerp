@@ -15,6 +15,8 @@ type keymap struct {
 	PageDown   key.Binding
 	Top        key.Binding
 	Bottom     key.Binding
+	Detail     key.Binding
+	Close      key.Binding
 	Promote    key.Binding
 	ForceStart key.Binding
 	Sort       key.Binding
@@ -37,14 +39,23 @@ func newKeymap() keymap {
 		PageDown:  key.NewBinding(key.WithKeys("pgdown", "f"), key.WithHelp("pgdn/f", "scroll down")),
 		Top:       key.NewBinding(key.WithKeys("home", "g"), key.WithHelp("home/g", "top")),
 		Bottom:    key.NewBinding(key.WithKeys("end", "G"), key.WithHelp("end/G", "follow")),
-		Promote:   key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "promote")),
+		// Open is already o, open in Linear, so the pane's own keys take
+		// names of their own. enter opens and esc closes; neither is a
+		// flip-flop, so an operator who has lost track of the state can
+		// press either and know what they will get.
+		Detail:  key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open detail")),
+		Close:   key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "close detail")),
+		Promote: key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "promote")),
 		// S, not s: a letter that means two different things depending on
 		// which panel has focus is worse than a letter nothing else uses.
 		// The description is "past the limit", not LERP-53's "past the lane
 		// limit": "lane" is the noun the TUI keeps to itself, and the longer
 		// phrase is wide enough to push this whole help column off a
-		// hundred-column terminal — every key in it, not just this one.
-		ForceStart: key.NewBinding(key.WithKeys("S"), key.WithHelp("S", "start it past the limit")),
+		// hundred-column terminal — every key in it, not just this one. It
+		// is trimmed again now that enter shares the column: the widest key
+		// and the widest description are added together, so the detail
+		// pane's own keys cost this one three characters back.
+		ForceStart: key.NewBinding(key.WithKeys("S"), key.WithHelp("S", "start past the limit")),
 		Sort:       key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort inbox")),
 		Project:    key.NewBinding(key.WithKeys("P"), key.WithHelp("P", "filter by project")),
 		Open:       key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "open in Linear")),
@@ -68,7 +79,8 @@ func (k keymap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Attention, k.Work, k.NextPanel, k.PrevPanel,
 			k.Up, k.Down, k.PageUp, k.PageDown, k.Top, k.Bottom},
-		{k.Promote, k.ForceStart, k.Sort, k.Project, k.Open, k.Raw, k.Help, k.Quit},
+		{k.Detail, k.Close, k.Promote, k.ForceStart, k.Sort, k.Project,
+			k.Open, k.Raw, k.Help, k.Quit},
 	}
 }
 
@@ -79,16 +91,20 @@ func (k keymap) FullHelp() [][]key.Binding {
 // keys are left out — the status bar already carries "? help · q quit", and
 // a hint that gets truncated away is a hint that was not there.
 //
-// hasLog and hasURL say which of these keys the row under the cursor
-// actually answers to: r is inert on a ticket that has never run, and o on
-// a run whose ticket the pass no longer lists. An advertised key that does
-// nothing is worse than one left out, because pressing it is how the
-// operator finds out — and r would flip the raw toggle invisibly.
-func (k keymap) panelHelp(p panel, hasLog, hasURL bool) []key.Binding {
+// hasLog, hasURL and canPromote say which of these keys the row under the
+// cursor actually answers to: r is inert on a ticket that has never run, o on
+// a run whose ticket the pass no longer lists, and p where there is no status
+// to promote into or no room for the picker the key opens. An advertised key
+// that does nothing is worse than one left out, because pressing it is how
+// the operator finds out — and r would flip the raw toggle invisibly.
+func (k keymap) panelHelp(p panel, hasLog, hasURL, canPromote bool) []key.Binding {
 	var b []key.Binding
 	switch p {
 	case panelAttention:
-		b = []key.Binding{k.Promote, short(k.Sort, "sort"), short(k.Project, "project")}
+		b = []key.Binding{short(k.Sort, "sort"), short(k.Project, "project")}
+		if canPromote {
+			b = append([]key.Binding{k.Promote}, b...)
+		}
 	case panelWork:
 		if hasLog {
 			b = append(b, short(k.Raw, "raw"))

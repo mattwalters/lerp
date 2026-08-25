@@ -345,17 +345,20 @@ boundary — none, when every row is in the same group — and the two flat
 ones order the whole list. `P`
 scopes the panel to one project and cycles back to all. Both are
 session-only: no saved views, no filter syntax, and neither changes
-which tickets are fetched. Selecting a row
-reads the ticket itself into the main pane: its body — where the plan
-lives — and the comments on it, the verdict a run left behind, so a
-parked ticket can be decided from that one screen. That is a read
+which tickets are fetched. The list owns the screen until you ask for a
+ticket: selecting a row and pressing `enter` reads it into a main pane
+that opens beside the table and closes again with `esc` — its body,
+where the plan lives, and the comments on it, the verdict a run left
+behind, so a parked ticket can be decided from that one screen. That is a read
 and stays one: nothing composes, replies, or navigates on to another
 ticket, and `o` opens the ticket in Linear for everything else. Select
 one and press `p` to promote it: pick a target from the configured
 queue statuses or a pipeline exit, and lerp moves it there. That
 MoveIssue and force-start's claim are the only writes any view makes;
 everything else about a ticket still happens in Linear. Keys: `1`/`2` choose a panel and
-`tab` cycles. `↑`/`↓` pick a row, `s` sorts
+`tab` cycles. `↑`/`↓` pick a row, `enter` opens the main pane on it and
+`esc` closes it again — each panel remembers its own answer, and the
+Inbox starts closed while Work starts open — `s` sorts
 the Inbox and `P` scopes it to a project, `o` opens the selected ticket
 in Linear, `S` force-starts the selected queued ticket,
 `pgup`/`pgdn` scroll the log or the ticket, `end` resumes
