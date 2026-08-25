@@ -174,6 +174,11 @@ type lane struct {
 	queue    string
 	logPath  string // survives the run, so the tail outlives the agent
 	since    time.Time
+	// pulse reads that log for what the run's row shows beyond its age: when
+	// it last said anything, and the activity behind it. Nil until the first
+	// poll finds a log path; a new run gets a new lane, so it never inherits
+	// the last occupant's counts.
+	pulse *pulse
 }
 
 const (
@@ -258,6 +263,10 @@ type workRow struct {
 	lane  int
 	state laneState
 	since time.Time
+	// heard is when that run's log last grew, zero while it has none; rate
+	// is its recent activity per bucket, oldest first, for the sparkline.
+	heard time.Time
+	rate  []int
 	// The pickup gate, for a ticket that is not running: where it sits in
 	// its queue's order, and what holds it there.
 	pos, of   int
@@ -338,6 +347,15 @@ type model struct {
 	details    map[string]*ticketDetail
 	detailWant string
 
+	// detailOpen is whether the main pane is open, per panel — a panel
+	// doubles as its index, the way geometry's wants and floors are indexed.
+	// The list owns the screen until the operator asks for the detail, and
+	// each panel remembers the answer: the inbox's detail is something you
+	// open once you have decided to read a ticket, a running ticket's live
+	// log is the point of watching it. A display default, not a rule about
+	// process, and session-only like sort and the project filter.
+	detailOpen [2]bool
+
 	// promoting is the promote picker's open/closed state; promoteSel is its
 	// selected index into o.Statuses. Opened by "p" on a selected inbox
 	// item, closed by confirming, cancelling, or the list going empty.
@@ -401,9 +419,10 @@ func newModel(ctx context.Context, o Options) model {
 	m := model{o: o, ctx: ctx, focus: panelWork, lanes: make(map[int]*lane),
 		details: make(map[string]*ticketDetail), lastLog: make(map[string]string),
 		vp: viewport.New(0, 0), follow: true, keys: newKeymap(), help: h,
-		sortMode: defaultSort,
-		inFlight: true, // Init starts the first pass immediately
-		passes:   &sync.WaitGroup{}}
+		sortMode:   defaultSort,
+		detailOpen: [2]bool{panelAttention: false, panelWork: true},
+		inFlight:   true, // Init starts the first pass immediately
+		passes:     &sync.WaitGroup{}}
 	for n := 1; n <= o.Lanes; n++ {
 		m.lanes[n] = &lane{}
 	}
@@ -448,6 +467,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.ready = true
+		// A window that shrank below the pane's floor closes the two things
+		// that took it modally. detailOpen is the operator's own preference
+		// and survives — esc is on the too-small screen — but a picker left
+		// live behind that screen would still take the enter that writes to
+		// Linear, and the overlay would still eat the keyboard.
+		if !m.roomForMain() {
+			m.promoting, m.helpOn = false, false
+		}
 		m.layout()
 		m.refreshMain()
 		return m, nil
@@ -477,6 +504,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// The poll is also the clock: elapsed times and the heartbeat
 		// re-render even when the log is quiet.
 		m.frame++
+		m.readPulses()
 		if m.tail.read() && m.showingLog() {
 			m.refreshLog()
 		}
@@ -515,30 +543,9 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Quit):
 		return m, tea.Quit
 	case key.Matches(msg, m.keys.Help):
-		m.helpOn = !m.helpOn
-		// The overlay is one more thing the pane holds, so it goes through
-		// the viewport the log and the detail already scroll in: a legend
-		// under the key table is only a legend if a short terminal can
-		// reach it. Which means it is drawn over the place the operator
-		// was reading — a plan halfway down a ticket as much as a tail
-		// scrolled back through — so that place is parked on the way in
-		// and put back on the way out. A followed tail needs nothing put
-		// back: refreshLog has already pinned it to the bottom.
-		if m.helpOn {
-			m.helpOffset, m.helpLens = m.vp.YOffset, m.lens()
-		}
-		m.refreshMain()
-		switch {
-		case m.helpOn:
-			m.vp.GotoTop()
-		case m.showingLog() && m.follow:
-			// refreshLog has pinned the tail to the bottom.
-		case m.lens() != m.helpLens:
-			// The operator re-aimed the pane behind the overlay, so what
-			// comes back is not what was parked, and comes back at its top.
-			m.vp.GotoTop()
-		default:
-			m.vp.SetYOffset(m.helpOffset)
+		// Closing it never needs the room opening it did.
+		if m.helpOn || m.roomForMain() {
+			m.setHelp(!m.helpOn)
 		}
 	case key.Matches(msg, m.keys.Attention):
 		m.setFocus(panelAttention)
@@ -552,8 +559,29 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.moveSelection(-1)
 	case key.Matches(msg, m.keys.Down):
 		m.moveSelection(1)
+	// enter opens the focused panel's detail and esc closes it — neither
+	// flips. esc inside the promote picker still cancels the picker, because
+	// handlePromoteKey ran before this switch and returned.
+	case key.Matches(msg, m.keys.Detail):
+		// Not under the overlay: it is what is on screen, and enter behind it
+		// would open a pane nobody asked for and read a ticket nobody sees.
+		if m.roomForMain() && !m.helpOn {
+			m.detailOpen[m.focus] = true
+			// Size before filling: the viewport was zero-width while the
+			// pane was closed, and refreshMain wraps to that width.
+			m.layout()
+			m.refreshMain()
+		}
+	case key.Matches(msg, m.keys.Close):
+		// esc closes the overlay first, the way it cancels the picker: a key
+		// acts on what is on screen.
+		if m.helpOn {
+			m.setHelp(false)
+			break
+		}
+		m.detailOpen[m.focus] = false
 	case key.Matches(msg, m.keys.Promote):
-		if m.focus == panelAttention && len(m.shown) > 0 && len(m.o.Statuses) > 0 {
+		if m.focus == panelAttention && len(m.shown) > 0 && len(m.o.Statuses) > 0 && m.roomForMain() {
 			m.promoting = true
 			m.promoteSel = 0
 		}
@@ -579,6 +607,11 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.cycleProject()
 			m.refreshMain()
 		}
+	// A closed pane shows nothing to scroll, so these keys are inert rather
+	// than silently unfollowing a log the operator cannot see and parking it
+	// at the top for when it reopens.
+	case !m.mainOpen() && (key.Matches(msg, m.keys.PageUp) || key.Matches(msg, m.keys.PageDown) ||
+		key.Matches(msg, m.keys.Top) || key.Matches(msg, m.keys.Bottom)):
 	// The scroll keys move whatever the main pane shows; follow is the log's
 	// state alone, so a detour through a detail lens can never freeze the tail.
 	case key.Matches(msg, m.keys.PageUp):
@@ -616,7 +649,11 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // schedules: the read waits for the selection to settle, so holding j down
 // a fifteen-row list schedules fifteen ticks and fires one fetch.
 func (m *model) wantDetail() tea.Cmd {
-	if m.focus != panelAttention {
+	// A shut pane is nobody reading: walking the inbox with it closed costs
+	// no Linear calls at all, and enter is what asks for one. The panel's own
+	// flag, not mainOpen: the promote picker and the ? overlay take the pane
+	// for themselves and never render the detail, so neither should fetch it.
+	if m.focus != panelAttention || !m.detailOpen[m.focus] {
 		return nil
 	}
 	it := m.selectedAttention()
@@ -634,6 +671,15 @@ func (m *model) wantDetail() tea.Cmd {
 // entry is retried when the pane comes back to it; a loaded one never is.
 func (m *model) fetchDetail(ticketID string) tea.Cmd {
 	if ticketID != m.detailWant {
+		return nil
+	}
+	// The pane may have closed inside the debounce, which is a quarter of a
+	// second the operator can shut it in. Forget what it wanted as well as
+	// dropping the read: wantDetail refuses to schedule the ticket it is
+	// already pointed at, so a detailWant left standing for a read that
+	// never happened is a row that stays blank however often it is reopened.
+	if !m.detailOpen[panelAttention] {
+		m.detailWant = ""
 		return nil
 	}
 	if d := m.details[ticketID]; d != nil && d.state != detailFailed {
@@ -718,9 +764,52 @@ func (m model) doForceStart(ticketID, ticket string) tea.Cmd {
 	}
 }
 
+// setHelp opens or closes the ? overlay. The overlay is one more thing the
+// pane holds, so it goes through the viewport the log and the detail already
+// scroll in: a legend under the key table is only a legend if a short
+// terminal can reach it. Which means it is drawn over the place the operator
+// was reading — a plan halfway down a ticket as much as a tail scrolled back
+// through — so that place is parked on the way in and put back on the way
+// out. A followed tail needs nothing put back: refreshLog has already pinned
+// it to the bottom.
+//
+// Both keys that leave the overlay come through here, so ? and esc cannot
+// put the pane back differently.
+func (m *model) setHelp(on bool) {
+	if m.helpOn == on {
+		return
+	}
+	m.helpOn = on
+	if on {
+		m.helpOffset, m.helpLens = m.vp.YOffset, m.lens()
+	}
+	// Size before filling, as enter does: the overlay changes whether the
+	// pane is open at all, and refreshMain fills the viewport that height
+	// and width leave it.
+	m.layout()
+	m.refreshMain()
+	switch {
+	case on:
+		m.vp.GotoTop()
+	case m.showingLog() && m.follow:
+		// refreshLog has pinned the tail to the bottom.
+	case m.lens() != m.helpLens:
+		// The operator re-aimed the pane behind the overlay, so what comes
+		// back is not what was parked, and comes back at its top.
+		m.vp.GotoTop()
+	default:
+		m.vp.SetYOffset(m.helpOffset)
+	}
+}
+
 func (m *model) setFocus(p panel) {
 	m.focus = p
 	m.retarget()
+	// Size before filling. The two panels remember the pane separately, so
+	// focus moves the width the viewport wraps to — and content wrapped to
+	// the outgoing panel's width would stay wrong until the next byte of log
+	// or the next keystroke.
+	m.layout()
 	if m.helpOn {
 		// The overlay is nobody's row. Moving between panels behind it
 		// re-aims the lens under it — which refreshMain draws on the way
@@ -1000,6 +1089,34 @@ func (m *model) retarget() {
 	m.refreshLog()
 }
 
+// readPulses reads every live lane's log for what its row shows about the
+// run: when the log last grew, and the activity behind it. It rides the same
+// 250ms poll as the tail and the heartbeat — one clock for everything.
+//
+// The selected lane's log is read twice, once here and once by the tail. The
+// two want different positions in the same file — the tail holds a
+// scrollback, the pulse only counts what arrives — and a poll that finds
+// nothing new costs a stat, so the duplication buys each of them its own
+// place for a price the poll was already paying.
+//
+// This does decode every live lane's log, where before only the selected
+// one was parsed at all. That is the count being of events rather than of
+// bytes, which is what makes it degrade with logfmt; an agent writes a few
+// kilobytes a second and a whole tool result is one line, so the poll's
+// share of a 250ms budget stays small.
+func (m *model) readPulses() {
+	now := time.Now()
+	for _, ln := range m.lanes {
+		if ln.state == laneIdle || ln.logPath == "" {
+			continue
+		}
+		if ln.pulse == nil {
+			ln.pulse = newPulse(ln.logPath)
+		}
+		ln.pulse.read(now)
+	}
+}
+
 // selectedLogPath is the log behind the selected row: the live lane's while a
 // run holds it, then the one that run left behind.
 func (m *model) selectedLogPath() string {
@@ -1046,12 +1163,38 @@ func (m *model) showingLog() bool {
 	return !m.helpOn && m.focus == panelWork && m.selectedLogPath() != ""
 }
 
+// mainOpen is the single question everything else asks: is the main pane on
+// screen? The focused panel's own state, forced open by the promote picker
+// and the ? overlay — both live in that pane, so they take the width while
+// they are up and hand it back when they close. That keeps p working from a
+// closed inbox, the default, without a second rendering path.
+func (m *model) mainOpen() bool {
+	return m.promoting || m.helpOn || m.detailOpen[m.focus]
+}
+
+// roomForMain reports whether this window can hold the main pane at all —
+// View's own guard, asked of the pane rather than of the frame in hand.
+//
+// The keys that open the pane ask first. With the pane shut a short terminal
+// is a usable screen, which is the point — but a key that turned that screen
+// into "window too small" would take the panels away, and with the promote
+// picker it would take them away while the picker was still live and still
+// taking the enter that writes to Linear. A key that does nothing, and that
+// the panel line and the status bar both stop offering, is the better half
+// of that trade.
+func (m *model) roomForMain() bool {
+	return m.width >= minWidth && m.height >= m.minHeight(true)
+}
+
 // refreshMain points the main pane's viewport at whatever the selection asks
 // for. Scroll position is the caller's concern — focus and selection changes
 // jump to the top; a data refresh keeps the operator's place.
 func (m *model) refreshMain() {
 	if m.helpOn {
 		m.vp.SetContent(m.helpText())
+		return
+	}
+	if !m.mainOpen() {
 		return
 	}
 	if m.showingLog() {
@@ -1078,7 +1221,7 @@ func (m *model) detail(width int) string {
 // wrote. Nothing but the rendering differs between the two; the file on disk
 // and the scrollback are the same either way.
 func (m *model) refreshLog() {
-	if !m.showingLog() {
+	if !m.mainOpen() || !m.showingLog() {
 		return
 	}
 	if m.rawLog {
@@ -1109,6 +1252,9 @@ func (m *model) workGroups() []workGroup {
 		}
 		row := workRow{ticketID: ln.ticketID, ticket: ln.name(), queue: ln.queue,
 			lane: n, state: ln.state, since: ln.since}
+		if ln.pulse != nil {
+			row.heard, row.rate = ln.pulse.heard, ln.pulse.window()
+		}
 		// A running ticket normally still sits in its queue's listing,
 		// claimed and ineligible: that listing is the group, and it carries
 		// the ticket's title and URL. Failing that, the queue the run started
@@ -1364,20 +1510,43 @@ const (
 	// it shares the body with the panels.
 	panelFloor = 4
 	mainFloor  = 5
+	// minWidth is where four columns of table and a border stop being a
+	// screen at all, whatever the height.
+	minWidth = 24
 )
+
+// minHeight is the shortest window View will draw: both panels' floors and
+// the status bar, plus the main pane's floor when the layout stacks and the
+// pane is on screen — stacked, the pane comes out of the same body. withMain
+// is the caller's question: View asks about the pane it is about to draw,
+// roomForMain about the pane a key would open.
+func (m *model) minHeight(withMain bool) int {
+	h := 2*panelFloor + 1
+	if withMain && m.width < narrowWidth {
+		h += mainFloor
+	}
+	return h
+}
 
 func (m *model) geometry() geometry {
 	g := geometry{bodyH: max(4, m.height-1)}
 	g.wide = m.width >= narrowWidth
 	// Widths first: the row builders lay their rows out to the panel width,
 	// and work's want is counted from those very rows.
-	g.sideW, g.mainW = m.width, m.width
-	if g.wide {
-		// Four columns need the room: a third of the terminal truncated the
-		// status column out of a real backlog. No resize key — the split is
-		// a proportion of the window, and the window is the knob.
-		g.sideW = max(28, m.width*45/100)
-		g.mainW = m.width - g.sideW
+	// A closed pane is not a claimant: the panels take the whole width, which
+	// is the point of the key — a 45% column spent on something nobody is
+	// reading is why titles truncate.
+	open := m.mainOpen()
+	g.sideW, g.mainW = m.width, 0
+	if open {
+		g.mainW = m.width
+		if g.wide {
+			// Four columns need the room: a third of the terminal truncated
+			// the status column out of a real backlog. No resize key — the
+			// split is a proportion of the window, and the window is the knob.
+			g.sideW = max(28, m.width*45/100)
+			g.mainW = m.width - g.sideW
+		}
 	}
 	// Wants come from the same row builders the panels draw with, so the
 	// counts can never drift from what lands on screen.
@@ -1391,7 +1560,11 @@ func (m *model) geometry() geometry {
 	}
 
 	stackH := g.bodyH
-	if g.wide {
+	switch {
+	case !open:
+		// mainH stays 0 and the whole body is the stack's: fitPanels hands
+		// it to the two panels exactly as it does the rest of the time.
+	case g.wide:
 		// The main pane has the other column to itself, so it takes the whole
 		// of it. Fitting it to its content ended the box a third of the way
 		// down the screen on a short ticket and at the bottom on a long one,
@@ -1400,7 +1573,7 @@ func (m *model) geometry() geometry {
 		// rule. It competes with nothing here, so there was nothing to win by
 		// fitting. What it holds scrolls.
 		g.mainH = g.bodyH
-	} else {
+	default:
 		// Stacked, the body is split rather than fitted: half the screen is
 		// the board, half is whatever the selected row opens. Fitting the
 		// main pane to its content here would put focus straight back into
@@ -1474,25 +1647,33 @@ func (m model) View() string {
 		return "starting lerp…\n"
 	}
 	// Below every panel's floor plus the status bar — plus the main pane's
-	// floor when the layout stacks — geometry can only produce a screen
-	// taller than the terminal. Say so instead of rendering one.
-	minH := 2*panelFloor + 1
-	if m.width < narrowWidth {
-		minH += mainFloor
-	}
-	if m.width < 24 || m.height < minH {
+	// floor when the layout stacks and the pane is on screen — geometry can
+	// only produce a screen taller than the terminal. Say so instead of
+	// rendering one.
+	if m.width < minWidth || m.height < m.minHeight(m.mainOpen()) {
+		// When the pane is the whole of what does not fit, name the key that
+		// gives the window back: this frame has no status bar to carry the
+		// hint, and a terminal that starts this short starts with work's
+		// pane open.
+		if m.width >= minWidth && m.height >= m.minHeight(false) {
+			return "lerp — window too small\nesc closes the pane\n"
+		}
 		return "lerp — window too small\n"
 	}
 	g := m.geometry()
 	side := lipgloss.JoinVertical(lipgloss.Left,
 		m.attentionPanel(g.sideW, g.attnH),
 		m.workPanel(g.sideW, g.workH))
-	main := m.mainPanel(g.mainW, g.mainH)
-	var body string
-	if g.wide {
-		body = lipgloss.JoinHorizontal(lipgloss.Top, side, main)
-	} else {
-		body = lipgloss.JoinVertical(lipgloss.Left, side, main)
+	// With the pane closed, side is the whole body — joined with an empty
+	// string it would still cost a column or a row.
+	body := side
+	if m.mainOpen() {
+		main := m.mainPanel(g.mainW, g.mainH)
+		if g.wide {
+			body = lipgloss.JoinHorizontal(lipgloss.Top, side, main)
+		} else {
+			body = lipgloss.JoinVertical(lipgloss.Left, side, main)
+		}
 	}
 	return body + "\n" + m.statusBar()
 }
@@ -1514,7 +1695,7 @@ func panelTitle(n int, name string, focused bool, extra string) string {
 // — the key hints on the last line. A panel squeezed down to a single row
 // keeps the row and drops the hints: a key line over an empty body says what
 // the keys do to nothing.
-func (m *model) panelBody(p panel, rows []string, sel, width, ih int) []string {
+func (m *model) panelBody(p panel, rows []string, cur cursor, width, ih int) []string {
 	if m.focus != p {
 		return rows
 	}
@@ -1530,8 +1711,8 @@ func (m *model) panelBody(p panel, rows []string, sel, width, ih int) []string {
 	if hint != "" {
 		ih--
 	}
-	if sel >= 0 {
-		rows = windowRows(rows, sel, ih)
+	if cur.at >= 0 {
+		rows = windowRows(rows, cur, ih)
 	}
 	if hint == "" {
 		return rows
@@ -1573,7 +1754,8 @@ func (m *model) panelKeys(p panel) []key.Binding {
 			return nil
 		}
 	}
-	return m.keys.panelHelp(p, m.selectedLogPath() != "", m.selectedURL() != "")
+	return m.keys.panelHelp(p, m.selectedLogPath() != "", m.selectedURL() != "",
+		len(m.o.Statuses) > 0 && m.roomForMain())
 }
 
 // keyHints reports whether the focused panel is carrying a key line at all:
@@ -1595,11 +1777,11 @@ func marker(on bool) string {
 }
 
 // attentionRows builds the inbox table's rows — under a grouping mode,
-// a header above each run of them; sel is the selected row's index (-1 with
-// nothing to select), for the focus window.
-func (m *model) attentionRows(width int) ([]string, int) {
+// a header above each run of them — and where the cursor sits among them,
+// for the focus window. Every inbox row is one line.
+func (m *model) attentionRows(width int) ([]string, cursor) {
 	if line := m.attentionEmptyLine(); line != "" {
-		return []string{line}, -1
+		return []string{line}, cursor{at: -1}
 	}
 	focused := m.focus == panelAttention
 	cols := m.attentionColumns()
@@ -1629,7 +1811,7 @@ func (m *model) attentionRows(width int) ([]string, int) {
 		}
 		rows = append(rows, attentionRow(it, focused && i == m.attnSel, cols, width))
 	}
-	return rows, sel
+	return rows, cursor{at: sel, span: 1}
 }
 
 // oneGroup reports whether every shown row falls under the same header.
@@ -1876,7 +2058,7 @@ func (m model) attentionPanel(w, h int) string {
 		}
 	}
 	inner := padList.inner(w)
-	rows, sel := m.attentionRows(inner)
+	rows, cur := m.attentionRows(inner)
 	// The header is pinned rather than listed: windowing a header is how a
 	// header scrolls away. It costs the rows a line, and — by the same rule
 	// panelBody holds the key hint to — only when what is left can still
@@ -1891,7 +2073,7 @@ func (m model) attentionPanel(w, h int) string {
 			ih--
 		}
 	}
-	rows = m.panelBody(panelAttention, rows, sel, inner, ih)
+	rows = m.panelBody(panelAttention, rows, cur, inner, ih)
 	if header != "" {
 		rows = append([]string{header}, rows...)
 	}
@@ -1942,16 +2124,17 @@ func (m model) workPanel(w, h int) string {
 }
 
 // workListRows renders the merged list: each queue's header, then its
-// tickets — running first, then what runs next. sel is the selected row's
-// index among the rendered lines (-1 with nothing to select), for the focus
-// window.
-func (m *model) workListRows(width int) ([]string, int) {
+// tickets — running first, then what runs next — and where the cursor sits
+// among the rendered lines, for the focus window. A ticket a lane holds
+// draws two lines, so the cursor carries that span rather than a bare index.
+func (m *model) workListRows(width int) ([]string, cursor) {
+	none := cursor{at: -1}
 	groups := m.workGroups()
 	if len(groups) == 0 {
 		if m.queues == nil {
-			return []string{styleFaint.Render("waiting for the first pass…")}, -1
+			return []string{styleFaint.Render("waiting for the first pass…")}, none
 		}
-		return []string{styleFaint.Render("no queues configured")}, -1
+		return []string{styleFaint.Render("no queues configured")}, none
 	}
 	n := 0
 	for _, g := range groups {
@@ -1963,18 +2146,23 @@ func (m *model) workListRows(width int) ([]string, int) {
 	}
 	focused := m.focus == panelWork
 	var rows []string
-	sel, idx := -1, 0
+	var cont []bool
+	at, span, idx := -1, 1, 0
 	for _, g := range groups {
-		rows = append(rows, groupHeader(g))
+		rows, cont = append(rows, groupHeader(g)), append(cont, false)
 		for _, r := range g.rows {
+			lines := m.workRowLines(r, focused && idx == selRow, width)
 			if idx == selRow {
-				sel = len(rows)
+				at, span = len(rows), len(lines)
 			}
-			rows = append(rows, m.workRowLine(r, focused && idx == selRow, width))
+			for i := range lines {
+				cont = append(cont, i > 0)
+			}
+			rows = append(rows, lines...)
 			idx++
 		}
 	}
-	return rows, sel
+	return rows, cursor{at: at, span: span, cont: cont}
 }
 
 // groupHeader is one queue's line: its name, the Linear status a ticket
@@ -1994,11 +2182,13 @@ func groupHeader(g workGroup) string {
 		styleFaint.Render(fmt.Sprintf(" · %s · %s · %s", g.status, g.team, count))
 }
 
-// workRowLine is one ticket as a line of the panel: what is running it, or
-// what it waits on. The state and the elapsed clock are right-aligned so the
-// fact that is changing is never the one truncated away; the state is a
-// colored dot plus a word, since color alone would not carry it.
-func (m model) workRowLine(r workRow, selected bool, width int) string {
+// workRowLines is one ticket as the panel draws it: a line naming it and
+// what is running it or what it waits on, and — for a ticket a lane holds —
+// a second line of how that run is going. The right-hand column is
+// right-aligned so the fact that is changing is never the one truncated
+// away; the state is a colored dot plus a word, since color alone would not
+// carry it.
+func (m model) workRowLines(r workRow, selected bool, width int) []string {
 	name := styleTicket.Render(r.ticket) + " " + r.title
 	if r.lane == 0 {
 		if !r.eligible {
@@ -2013,7 +2203,7 @@ func (m model) workRowLine(r workRow, selected bool, width int) string {
 		}
 		// Two spaces where a running row draws its dot, so identifiers line
 		// up down the group whether or not a lane holds them.
-		return splitRow(marker(selected)+"  "+name, right, width)
+		return []string{splitRow(marker(selected)+"  "+name, right, width)}
 	}
 	var dot, state string
 	switch r.state {
@@ -2039,8 +2229,48 @@ func (m model) workRowLine(r workRow, selected bool, width int) string {
 		dot = styleRunning.Render("●")
 		state = styleFaint.Render("running")
 	}
+	// The elapsed clock stays on this line, where it already was: a squeezed
+	// panel keeps the first line of a row and cuts the second, and the row
+	// that survives that cut must not say less than it did before the
+	// second line existed.
 	right := state + " " + styleFaint.Render(elapsed(r.since))
-	return splitRow(marker(selected)+dot+" "+name, right, width)
+	lines := []string{splitRow(marker(selected)+dot+" "+name, right, width)}
+	if reading := runLine(r, width); reading != "" {
+		lines = append(lines, reading)
+	}
+	return lines
+}
+
+// runLine is the second line of a row a lane holds: how long since its log
+// last said anything, and a sparkline of the activity behind that. Beside the
+// elapsed clock on the line above, they answer what elapsed alone cannot —
+// whether a run that started four minutes ago is still doing something.
+//
+// It is empty for a run with no log to read, which is a lane still
+// provisioning: a blank line under the row would claim a reading that does
+// not exist, and cost the panel a row to say nothing.
+//
+// This is a reading, not a verdict. Nothing here compares the number to a
+// threshold or calls a run stuck; SCOPE defers hang detection, and this shows
+// the operator what the log already knows and leaves the decision to eject
+// theirs.
+func runLine(r workRow, width int) string {
+	if r.heard.IsZero() {
+		return ""
+	}
+	// Four spaces: the cursor column and the state dot, so the line starts
+	// under the ticket identifier rather than under the cursor.
+	left := "    heard " + elapsed(r.heard) + " ago"
+	// The number is the reading; the sparkline is the shape behind it.
+	// splitRow protects its right column against a narrow panel, and here
+	// the right column is the one that can be spared — a panel too narrow
+	// for both drops the line rather than truncate the digits.
+	right := ""
+	spark := sparkline(r.rate)
+	if spark != "" && lipgloss.Width(left)+1+lipgloss.Width(spark) <= width {
+		right = styleFaint.Render(spark)
+	}
+	return splitRow(styleFaint.Render(left), right, width)
 }
 
 // mainPanel is the lens: the promote picker while it is open, the ? overlay,
@@ -2098,7 +2328,7 @@ func (m model) promotePicker(it loop.AttentionItem, w, h int) string {
 		}
 	}
 	// The highlighted status must be on screen before enter can confirm it.
-	rows = windowRows(rows, 2+m.promoteSel, h-2)
+	rows = windowRows(rows, cursor{at: 2 + m.promoteSel, span: 1}, h-2)
 	return panelBox(styleTitleFocus.Render("promote "+it.Ticket), true, w, h, rows, padMain)
 }
 
@@ -2360,9 +2590,36 @@ func (m model) statusBar() string {
 	if len(m.attention) > 0 {
 		left += "  " + styleAttention.Render(fmt.Sprintf("● %d in the inbox", len(m.attention)))
 	}
-	right := styleFaint.Render("? help · q quit")
+	// The bar offers what this window and this frame actually answer to. ?
+	// draws its overlay in the main pane, so a window with no room for the
+	// pane has none for the overlay either — though closing one never needs
+	// the room opening it did.
+	globals := "? help · q quit"
+	if !m.helpOn && !m.roomForMain() {
+		globals = "q quit"
+	}
+	hint := globals
+	switch {
+	// Behind the overlay, esc and ? are the overlay's and enter is inert, so
+	// the pane has no key here to offer.
+	case m.helpOn:
+	case m.detailOpen[m.focus]:
+		hint = "esc close · " + hint
+	case m.roomForMain():
+		hint = "enter detail · " + hint
+	}
 	if m.promoting {
-		right = styleFaint.Render("↑/↓ choose · enter promote · esc cancel")
+		hint = "↑/↓ choose · enter promote · esc cancel"
+	}
+	right := styleFaint.Render(hint)
+
+	// The pane's segment is the first thing the bar gives up. Below it the
+	// truncation takes the left side instead, and what it would take is
+	// "● n in the inbox" — the one number the needs-you panel exists for,
+	// spent on advertising a key. The picker's line is not a hint but its
+	// instructions, so it is not up for this.
+	if !m.promoting && m.width-lipgloss.Width(left)-lipgloss.Width(right) < 1 {
+		right = styleFaint.Render(globals)
 	}
 
 	pad := m.width - lipgloss.Width(left) - lipgloss.Width(right)
@@ -2375,7 +2632,9 @@ func (m model) statusBar() string {
 }
 
 func elapsed(since time.Time) string {
-	return time.Since(since).Truncate(time.Second).String()
+	// A clock that disagrees with the filesystem's can put a log's mtime a
+	// moment in the future; "-1s ago" would read as a bug in the board.
+	return max(time.Since(since), 0).Truncate(time.Second).String()
 }
 
 // name is the ticket column: the human identifier when the loop knows it, a
