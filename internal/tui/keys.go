@@ -5,19 +5,20 @@ import "github.com/charmbracelet/bubbles/key"
 // keymap declares every binding once; the status bar hint and the ? overlay
 // both render from it, so the help can never drift from the keys.
 type keymap struct {
-	Attention key.Binding
-	Work      key.Binding
-	NextPanel key.Binding
-	PrevPanel key.Binding
-	Up        key.Binding
-	Down      key.Binding
-	PageUp    key.Binding
-	PageDown  key.Binding
-	Top       key.Binding
-	Bottom    key.Binding
-	Promote   key.Binding
-	Sort      key.Binding
-	Project   key.Binding
+	Attention  key.Binding
+	Work       key.Binding
+	NextPanel  key.Binding
+	PrevPanel  key.Binding
+	Up         key.Binding
+	Down       key.Binding
+	PageUp     key.Binding
+	PageDown   key.Binding
+	Top        key.Binding
+	Bottom     key.Binding
+	Promote    key.Binding
+	ForceStart key.Binding
+	Sort       key.Binding
+	Project    key.Binding
 	// Search opens the inbox's prompt; ClearSearch is the way back out of a
 	// filter the prompt already closed on.
 	Search      key.Binding
@@ -30,17 +31,27 @@ type keymap struct {
 
 func newKeymap() keymap {
 	return keymap{
-		Attention:   key.NewBinding(key.WithKeys("1"), key.WithHelp("1", "inbox")),
-		Work:        key.NewBinding(key.WithKeys("2"), key.WithHelp("2", "work")),
-		NextPanel:   key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next panel")),
-		PrevPanel:   key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "prev panel")),
-		Up:          key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "select up")),
-		Down:        key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "select down")),
-		PageUp:      key.NewBinding(key.WithKeys("pgup", "b"), key.WithHelp("pgup/b", "scroll up")),
-		PageDown:    key.NewBinding(key.WithKeys("pgdown", "f"), key.WithHelp("pgdn/f", "scroll down")),
-		Top:         key.NewBinding(key.WithKeys("home", "g"), key.WithHelp("home/g", "top")),
-		Bottom:      key.NewBinding(key.WithKeys("end", "G"), key.WithHelp("end/G", "follow")),
-		Promote:     key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "promote")),
+		Attention: key.NewBinding(key.WithKeys("1"), key.WithHelp("1", "inbox")),
+		Work:      key.NewBinding(key.WithKeys("2"), key.WithHelp("2", "work")),
+		NextPanel: key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next panel")),
+		PrevPanel: key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "prev panel")),
+		Up:        key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "select up")),
+		Down:      key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "select down")),
+		PageUp:    key.NewBinding(key.WithKeys("pgup", "b"), key.WithHelp("pgup/b", "scroll up")),
+		PageDown:  key.NewBinding(key.WithKeys("pgdown", "f"), key.WithHelp("pgdn/f", "scroll down")),
+		Top:       key.NewBinding(key.WithKeys("home", "g"), key.WithHelp("home/g", "top")),
+		Bottom:    key.NewBinding(key.WithKeys("end", "G"), key.WithHelp("end/G", "follow")),
+		Promote:   key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "promote")),
+		// S, not s: a letter that means two different things depending on
+		// which panel has focus is worse than a letter nothing else uses.
+		// The description is "past the limit", not LERP-53's "past the lane
+		// limit": "lane" is the noun the TUI keeps to itself, and the longer
+		// phrase is wide enough to push this whole help column off a
+		// hundred-column terminal — every key in it, not just this one. It
+		// is trimmed again now that esc shares the column: the widest key
+		// and the widest description are added together, so the search's
+		// three-column key costs this one three characters back.
+		ForceStart:  key.NewBinding(key.WithKeys("S"), key.WithHelp("S", "start past the limit")),
 		Sort:        key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort inbox")),
 		Project:     key.NewBinding(key.WithKeys("P"), key.WithHelp("P", "filter by project")),
 		Search:      key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "search inbox")),
@@ -66,7 +77,7 @@ func (k keymap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Attention, k.Work, k.NextPanel, k.PrevPanel,
 			k.Up, k.Down, k.PageUp, k.PageDown, k.Top, k.Bottom},
-		{k.Promote, k.Sort, k.Project, k.Search, k.ClearSearch,
+		{k.Promote, k.ForceStart, k.Sort, k.Project, k.Search, k.ClearSearch,
 			k.Open, k.Raw, k.Help, k.Quit},
 	}
 }

@@ -2,6 +2,11 @@
 
 [![ci](https://github.com/mattwalters/lerp/actions/workflows/ci.yml/badge.svg)](https://github.com/mattwalters/lerp/actions/workflows/ci.yml)
 
+![The lerp board: an inbox of tickets waiting on a human above, three lanes running coding agents below, and one lane's log tail streaming beside them](docs/demo.gif)
+
+<sub>Recorded from [`docs/demo.tape`](docs/demo.tape) against a fake board and
+a stub agent; `make demo` regenerates it.</sub>
+
 Lerp is a small, reliable CLI, written in Go, that orchestrates
 software work through Linear. You put tickets on a board; lerp runs
 coding agents to move them across it.
@@ -288,21 +293,24 @@ disposing the workspace, then settling the ticket exactly as the process
 that started the run would have: a run that recorded its own exit status
 takes its queue's hop, and one that never got that far has its claim
 released instead, when the board still looks exactly as the dead run
-left it — and starts eligible tickets as capacity frees. `-concurrency N` caps how many agents run at once
-(default 5; each lane is a whole workspace, so lower it in a repo whose
-`provision` command is heavy). The TUI needs a terminal: in a pipe or a
+left it — and starts eligible tickets as capacity frees. `-concurrency N`
+caps how many agents run at once (default 10; each lane is a whole
+workspace, so lower it in a repo whose `provision` command is heavy). The TUI needs a terminal: in a pipe or a
 script, `lerp` prints usage and exits 2 rather than quietly starting to
 claim tickets.
 
 The Work view is one list of what the machine is doing with the
 board, grouped by queue: every ticket sitting in each queue's status,
 in the loop's own pickup order, with the ones running now at the top
-of their own group. A running row carries its state — provisioning,
-running, or adopted — and the run's elapsed time (an adopted run shows
-its true age, not the moment it was adopted); a waiting row is shown
+of their own group. A running row carries its state — provisioning
+or running — and the run's elapsed time. A run inherited from a
+previous `lerp` reads as `running` like any other, and shows its true
+age rather than the moment it was adopted; a waiting row is shown
 faint with the reason it waits, blocked or claimed. The panel title
 and the status bar carry the capacity, `2/3 running`, which is what
-says whether anything can start. Selecting a running ticket shows a
+says whether anything can start — every live run counts against it,
+whichever lane it landed on, with `· +1 over` beside it while more runs
+are live than the limit allows. Selecting a running ticket shows a
 live tail of its log in the main pane, with scrollback that survives
 the run's exit; selecting a waiting one shows where it sits in pickup
 order and what gates it. The tail reads as agent activity rather than
@@ -310,8 +318,12 @@ as bytes: tool calls one line each, prose as prose, and thinking
 collapsed to a single line with its token count. A runner whose output
 lerp does not recognize is shown exactly as it was written, with no
 configuration, and `r` toggles the pane back to the runner's raw
-output — the log on disk is untouched either way. The list is
-read-only; to change what runs next, move tickets in Linear. The
+output — the log on disk is untouched either way. Selecting a queued
+ticket and pressing `S` starts it now, past the lane limit: force-start
+overrides the lane count and nothing else, so the claim protocol still
+runs and a blocked or already-claimed ticket is refused with the reason.
+Ordering is not a keystroke; to change what runs *next*, move tickets in
+Linear. The
 Inbox view lists what waits on a
 human: unclaimed tickets, and the operator's own claimed tickets,
 sitting in a status no queue serves. It is a table, one row per
@@ -347,11 +359,13 @@ one screen. That is a read and stays one: nothing composes, replies,
 or navigates on to another ticket, and `o` opens the ticket in Linear
 for everything else. Select one and press `p` to promote it: pick a
 target from the configured queue statuses or a pipeline exit, and lerp
-moves it there. That MoveIssue is the only write any view makes;
-everything else about a ticket still happens in Linear. Keys: `1`/`2`
+moves it there. That MoveIssue and force-start's claim are the only
+writes any view makes; everything else about a ticket still happens in
+Linear. Keys: `1`/`2`
 choose a panel and `tab` cycles. `↑`/`↓` pick a row, `s` sorts the
 Inbox, `P` scopes it to a project and `/` searches it, `o` opens the
-selected ticket in Linear, `pgup`/`pgdn` scroll the log or the ticket,
+selected ticket in Linear, `S` force-starts the selected queued
+ticket, `pgup`/`pgdn` scroll the log or the ticket,
 `end` resumes following, `r` shows the raw log, `q` quits (or backs
 out of the promote picker). While the search prompt is open it has the
 keyboard — a `p` or a `q` typed into it is text — and `ctrl+c` still
@@ -439,8 +453,8 @@ run it:
 opens it, and the reconciling loop of the mental model — N lanes,
 adopting live runs, reaping dead ones, repairing drift — is real,
 running behavior while it is open (see [Running](#running)). Both
-panels are built, and the Inbox's promote is the TUI's one write
-action. `lerp once` is the single-shot alternative: one ticket through
+panels are built, and the TUI's two write actions are the Inbox's
+promote and the Work panel's force-start. `lerp once` is the single-shot alternative: one ticket through
 its queue, no loop, no evidence store. Beyond those, `lerp version`
 and `lerp init` complete the surface.
 

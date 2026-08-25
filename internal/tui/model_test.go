@@ -59,6 +59,28 @@ func (p *recordingPromoter) last() promoteCall {
 	return p.calls[len(p.calls)-1]
 }
 
+// recordingStarter stands in for the reconciler's force-start: it records
+// every ticket it was asked to run past the limit, and returns whatever err
+// is set to — the refusals themselves are the reconciler's, not the TUI's.
+type recordingStarter struct {
+	mu    sync.Mutex
+	calls []string
+	err   error
+}
+
+func (s *recordingStarter) ForceStart(_ context.Context, ticketID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls = append(s.calls, ticketID)
+	return s.err
+}
+
+func (s *recordingStarter) started() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.calls...)
+}
+
 // recordingReader stands in for the reconciler's one read beyond the pass.
 // It records every ticket it was asked for — so a test can prove that
 // walking the list does not fire a fetch per row — and hands back whatever
@@ -95,7 +117,7 @@ var defaultTestStatuses = []string{"Planning", "Implementing"}
 
 func newTestModel(t *testing.T, lanes int) (model, *countingTicker, chan loop.Event) {
 	t.Helper()
-	m, ticker, events := newTestModelWith(t, lanes, defaultTestStatuses, &recordingPromoter{}, &recordingReader{})
+	m, ticker, events := newTestModelWith(t, lanes, defaultTestStatuses, &recordingPromoter{}, &recordingStarter{}, &recordingReader{})
 	return m, ticker, events
 }
 
@@ -104,7 +126,7 @@ func newTestModel(t *testing.T, lanes int) (model, *countingTicker, chan loop.Ev
 func newPromoteTestModel(t *testing.T, lanes int, statuses []string) (model, *countingTicker, chan loop.Event, *recordingPromoter) {
 	t.Helper()
 	promoter := &recordingPromoter{}
-	m, ticker, events := newTestModelWith(t, lanes, statuses, promoter, &recordingReader{})
+	m, ticker, events := newTestModelWith(t, lanes, statuses, promoter, &recordingStarter{}, &recordingReader{})
 	return m, ticker, events, promoter
 }
 
@@ -113,17 +135,27 @@ func newPromoteTestModel(t *testing.T, lanes int, statuses []string) (model, *co
 func newReadingTestModel(t *testing.T) (model, chan loop.Event, *recordingReader) {
 	t.Helper()
 	reader := &recordingReader{}
-	m, _, events := newTestModelWith(t, 1, defaultTestStatuses, &recordingPromoter{}, reader)
+	m, _, events := newTestModelWith(t, 1, defaultTestStatuses, &recordingPromoter{}, &recordingStarter{}, reader)
 	return m, events, reader
 }
 
-func newTestModelWith(t *testing.T, lanes int, statuses []string, promoter *recordingPromoter, reader *recordingReader) (model, *countingTicker, chan loop.Event) {
+// newStartingTestModel is newTestModel plus the recording starter, for tests
+// that press the force-start key and need to see what it sent.
+func newStartingTestModel(t *testing.T, lanes int) (model, chan loop.Event, *recordingStarter) {
+	t.Helper()
+	starter := &recordingStarter{}
+	m, _, events := newTestModelWith(t, lanes, defaultTestStatuses, &recordingPromoter{}, starter, &recordingReader{})
+	return m, events, starter
+}
+
+func newTestModelWith(t *testing.T, lanes int, statuses []string, promoter *recordingPromoter, starter *recordingStarter, reader *recordingReader) (model, *countingTicker, chan loop.Event) {
 	t.Helper()
 	ticker := &countingTicker{}
 	events := make(chan loop.Event, 8)
 	m := newModel(context.Background(), Options{
 		Ticker:   ticker,
 		Promoter: promoter,
+		Starter:  starter,
 		Reader:   reader,
 		Statuses: statuses,
 		Interval: time.Millisecond,
@@ -234,8 +266,45 @@ func TestAdoptedRowShowsTrueRunAge(t *testing.T) {
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAdopted, RunID: "r1", Lane: 1,
 		TicketID: "id-1", Queue: "plan", StartedAt: time.Now().Add(-2 * time.Hour)}})
 	view := m.View()
-	if !strings.Contains(view, "adopted") || !strings.Contains(view, "2h0m") {
+	if !strings.Contains(view, "2h0m") {
 		t.Fatalf("adopted row does not show the run's true age:\n%s", view)
+	}
+}
+
+// An adopted run is a live agent on a ticket, which is all the operator acts
+// on, so the work panel draws it exactly as it draws a run this process
+// started. That a successor took the run over stays a diagnostic fact, in
+// .lerp/loop.log; it is not a badge on the screen.
+func TestAdoptedRunReadsAsRunning(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAdopted, RunID: "r1", Lane: 1,
+		TicketID: "id-1", Queue: "plan", LogPath: "/dev/null"}})
+	rows := m.workRows()
+	if len(rows) != 1 {
+		t.Fatalf("panel has %d rows, want the one adopted run", len(rows))
+	}
+	// Rendered against the same row in the state a run this process started
+	// would be in: identical output is the whole claim, and it holds the dot
+	// as well as the word — under the Ascii profile a test sees the shape but
+	// not the colour, so an assertion on either alone would miss the other.
+	// Without the trailing clock: elapsed is recomputed per render, so a
+	// second falling between the two calls would fail this for no reason.
+	line := func(r workRow) string {
+		s := m.workRowLine(r, false, 80)
+		return s[:strings.LastIndex(s, " ")]
+	}
+	row := rows[0]
+	adopted := line(row)
+	row.state = laneRunning
+	started := line(row)
+	if adopted != started {
+		t.Errorf("adopted row is drawn differently from a started one:\n%q\n%q", adopted, started)
+	}
+	if !strings.Contains(started, styleFaint.Render("running")) {
+		t.Errorf("neither row reads as running: %q", started)
+	}
+	if view := m.View(); strings.Contains(view, "adopted") {
+		t.Errorf("the word adopted is on the operator's screen:\n%s", view)
 	}
 }
 
@@ -243,12 +312,15 @@ func TestAdoptedRunOccupiesAndFreesItsRow(t *testing.T) {
 	m, _, _ := newTestModel(t, 2)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAdopted, RunID: "r9", Lane: 5,
 		TicketID: "abcdef1234567890", Queue: "review", LogPath: "/dev/null"}})
-	view := m.View()
-	if !strings.Contains(view, "adopted") {
-		t.Fatalf("adopted run not on the board:\n%s", view)
+	rows := m.workRows()
+	if len(rows) != 1 {
+		t.Fatalf("panel has %d rows, want the one adopted run", len(rows))
 	}
-	if len(m.workRows()) != 1 {
-		t.Fatalf("panel has %d rows, want the one adopted run", len(m.workRows()))
+	// The row itself, not the view: the main pane titles the selected row's
+	// log with the same shortened ID, so a view check would pass even with
+	// the ticket column gone.
+	if line := m.workRowLine(rows[0], false, 80); !strings.Contains(line, "abcdef12…") {
+		t.Fatalf("adopted run not on the board: %q", line)
 	}
 
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventReaped, RunID: "r9", Lane: 5,
@@ -437,9 +509,10 @@ func TestTheLensFollowsTheRowNotThePanel(t *testing.T) {
 	}
 }
 
-// An adopted run may sit on a lane above N — outside the capacity fraction,
-// but never off the panel. Its queue is not on the board, so it keeps a
-// group of its own, and it selects like any other row.
+// An adopted run may sit on a lane above N. It still costs a lane of the
+// budget — nothing downstream can tell it from a forced run — and it is
+// never off the panel. Its queue is not on the board, so it keeps a group
+// of its own, and it selects like any other row.
 func TestAdoptedRunAboveCapacityIsOnThePanel(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
@@ -449,7 +522,10 @@ func TestAdoptedRunAboveCapacityIsOnThePanel(t *testing.T) {
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAdopted, RunID: "r9", Lane: 4,
 		TicketID: "abcdef1234567890", Queue: "review", LogPath: "/dev/null"}})
 	view := m.View()
-	for _, want := range []string{"adopted", "review · off the board", "0/1 running"} {
+	// One live run against a budget of one is full, whatever lane number it
+	// landed on: freeLanes charges every active run against N, so "0/1"
+	// here would advertise a lane no pass can fill.
+	for _, want := range []string{"abcdef12…", "review · off the board", "1/1 running"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("adopted run above capacity is missing %q:\n%s", want, view)
 		}
@@ -834,7 +910,7 @@ func TestInboxProjectFilter(t *testing.T) {
 // Done-when: leverage, priority and blocked-ness are readable on the row
 // itself, without selecting it — and the columns elide from the right, so a
 // narrow panel truncates the title first, then drops the project, and never
-// costs the identifier, the leverage or the status.
+// costs the identifier or the leverage.
 func TestInboxRowsCarryLeverageAndPriority(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, keyMsg("1"))
@@ -896,6 +972,160 @@ func TestInboxRowsCarryLeverageAndPriority(t *testing.T) {
 		if strings.Contains(tiny, gone) {
 			t.Fatalf("the narrowest panel kept the priority column at the cost of %q:\n%s", gone, tiny)
 		}
+	}
+}
+
+// Done-when: every fixed-width column sits on the left in a stable order and
+// the title is the last column, elastic, taking whatever the panel has left.
+// The cut then lands at the right edge, on the title, instead of on the one
+// column whose whole value is the part being cut off.
+func TestInboxTitleIsTheLastColumn(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: board()})
+
+	panel := m.attentionPanel(120, 14)
+	row := ansi.Strip(rowOf(t, panel, "LERP-1"))
+	cols := []struct{ name, cell string }{
+		{"identifier", "LERP-1"}, {"leverage", "\u2193" + "0"}, {"status", "Needs Attention"},
+		{"project", "Open-source readiness"}, {"priority", "Medium"}, {"title", "Fix the build"},
+	}
+	for i := 1; i < len(cols); i++ {
+		if strings.Index(row, cols[i].cell) <= strings.Index(row, cols[i-1].cell) {
+			t.Fatalf("the %s column is not left of the %s column:\n%s", cols[i-1].name, cols[i].name, row)
+		}
+	}
+	if got := strings.Trim(row, " \u2502\u2503"); !strings.HasSuffix(got, "Fix the build") {
+		t.Fatalf("something follows the title, so it is not the last column:\n%s", row)
+	}
+
+	// Elastic: the same row in a narrower panel spends the width on the fixed
+	// columns and cuts the title at the right edge.
+	narrow := ansi.Strip(rowOf(t, m.attentionPanel(90, 14), "LERP-22"))
+	if !strings.HasSuffix(strings.Trim(narrow, " \u2502\u2503"), "\u2026") {
+		t.Fatalf("the narrower panel did not cut the title at the right edge:\n%s", narrow)
+	}
+
+	// A column holds its width only while the title still reads as one: at
+	// no width does a row spend columns on the project or the priority while
+	// the title itself has been cut to less than they cost. Sweeping every
+	// width crosses both boundaries of the elision ladder, where the row
+	// prefix actually changes.
+	const full22, status22 = "GoReleaser: tagged releases", "Backlog \u26a0"
+	for w := 24; w <= 120; w++ {
+		row := ansi.Strip(rowOf(t, m.attentionPanel(w, 14), "LERP-22"))
+		body := strings.Trim(row, " \u2502\u2503")
+		// A cut title is exactly as wide as the space the row left it, so it
+		// measures the ladder's decision; a whole one only measures the
+		// fixture. Below the ladder the cut reaches the fixed columns
+		// themselves — the status and its gutter stop being whole — and
+		// there is no title left to measure; the narrowest row is asserted
+		// on its own below. The title is the tail past the last gutter, and
+		// has to still read as the head of the real one to be measured at
+		// all — a fixture that grew a double space would otherwise be
+		// silently mismeasured here.
+		gutter := strings.LastIndex(body, "  ")
+		if gutter < 0 || !strings.HasSuffix(body, "\u2026") || !strings.Contains(body, status22+"  ") {
+			continue
+		}
+		tail := body[gutter+2:]
+		if !strings.HasPrefix(full22, strings.TrimSuffix(tail, "\u2026")) {
+			t.Fatalf("a %d-column panel did not end in a cut of %q:\n%s", w, full22, row)
+		}
+		switch title := lipgloss.Width(tail); {
+		case strings.Contains(body, "Open-source readiness") && title < titleFloor:
+			t.Fatalf("a %d-column panel kept the project for a %d-column title:\n%s", w, title, row)
+		case strings.Contains(body, "High") && title < titleStub:
+			t.Fatalf("a %d-column panel kept the priority for a %d-column title:\n%s", w, title, row)
+		}
+	}
+
+	// Narrower than the fixed columns themselves and the cut reaches them:
+	// it takes the status, and the identifier and the leverage — the two
+	// facts a row is useless without — still read.
+	tight := ansi.Strip(rowOf(t, m.attentionPanel(22, 14), "LERP-22"))
+	if !strings.Contains(tight, "LERP-22") || !strings.Contains(tight, "\u21932") {
+		t.Fatalf("the identifier and the leverage did not survive the narrowest row:\n%s", tight)
+	}
+
+	// The status column carries a gutter of its own, so the mark on a status
+	// the pipeline never names cannot run into the title on the narrowest
+	// row, where the status is the last column before it.
+	marked, _, _ := newTestModel(t, 1)
+	marked = update(t, marked, keyMsg("1"))
+	marked = update(t, marked, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-22", Title: "curl", Status: "Waiting for review", Relevance: loop.StatusUnnamed},
+		{Ticket: "LERP-23", Title: "tags", Status: "In Review"},
+	}}})
+	if got := ansi.Strip(rowOf(t, marked.attentionPanel(46, 12), "LERP-22")); !strings.Contains(got, "\u26a0  curl") {
+		t.Fatalf("the unnamed-status mark runs into the title:\n%s", got)
+	}
+
+	// The column is measured with the mark, so a marked status wide enough to
+	// set the column does not push its own row's columns two past every other
+	// row's. LERP-22 carries the widest status on this list and the mark:
+	// the only arrangement where a column measured without it comes up short.
+	wide := marked.attentionPanel(70, 12)
+	at22, at23 := ansi.Strip(rowOf(t, wide, "LERP-22")), ansi.Strip(rowOf(t, wide, "LERP-23"))
+	i22, i23 := strings.Index(at22, "curl"), strings.Index(at23, "tags")
+	if i22 < 0 || i23 < 0 {
+		t.Fatalf("a title is not on its row whole:\n%s", wide)
+	}
+	if lipgloss.Width(at22[:i22]) != lipgloss.Width(at23[:i23]) {
+		t.Fatalf("the marked status pushed its row's title out of the column:\n%s", wide)
+	}
+
+	// The priority column carries a gutter of its own for the same reason
+	// the status column does: an Urgent row fills priorityCell's pad exactly,
+	// so nothing is left between the widest label and the title.
+	urgent, _, _ := newTestModel(t, 1)
+	urgent = update(t, urgent, keyMsg("1"))
+	urgent = update(t, urgent, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-36", Title: "Sanitize config", Status: "Backlog", Priority: 1},
+	}}})
+	if got := ansi.Strip(rowOf(t, urgent.attentionPanel(44, 8), "LERP-36")); !strings.Contains(got, "Urgent  Sanitize") {
+		t.Fatalf("the priority runs into the title:\n%s", got)
+	}
+
+	// A leverage count wider than leverageCell's own pad widens the column
+	// rather than its own row: every column hangs off the head now, so a row
+	// measured short would take its own rung of the ladder and carry every
+	// column after it one place right.
+	big, _, _ := newTestModel(t, 1)
+	big = update(t, big, keyMsg("1"))
+	big = update(t, big, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-1", Title: "hundred blocker", Status: "Backlog", Unblocks: 100},
+		{Ticket: "LERP-2", Title: "ordinary row", Status: "Backlog", Unblocks: 2},
+	}}})
+	hundreds := big.attentionPanel(76, 10)
+	many, few := ansi.Strip(rowOf(t, hundreds, "LERP-1")), ansi.Strip(rowOf(t, hundreds, "LERP-2"))
+	iMany, iFew := strings.Index(many, "hundred blocker"), strings.Index(few, "ordinary row")
+	if iMany < 0 || iFew < 0 {
+		t.Fatalf("a title is not on its row whole:\n%s", hundreds)
+	}
+	if lipgloss.Width(many[:iMany]) != lipgloss.Width(few[:iFew]) {
+		t.Fatalf("a three-digit leverage count moved its own row's columns:\n%s", hundreds)
+	}
+
+	// Fixed columns to the left means every title starts in the same place,
+	// whatever the rows around it carry — LERP-23, the blocked row, is the
+	// one whose leverage cell is the ⊘ rather than a count.
+	at := -1
+	for _, tc := range []struct{ ticket, title string }{
+		{"LERP-1", "Fix the build"}, {"LERP-48", "Read the ticket in the TUI"},
+		{"LERP-60", "Unfiled work"}, {"LERP-23", "curl install"},
+	} {
+		row := ansi.Strip(rowOf(t, panel, tc.ticket))
+		start := strings.Index(row, tc.title)
+		if start < 0 {
+			t.Fatalf("the %s title is not on its row whole, so the rows cannot be lined up:\n%s", tc.ticket, row)
+		}
+		i := lipgloss.Width(row[:start])
+		if at >= 0 && i != at {
+			t.Fatalf("the %s title starts at column %d, the rows above it at %d:\n%s",
+				tc.ticket, i, at, panel)
+		}
+		at = i
 	}
 }
 
@@ -1070,8 +1300,7 @@ func TestInboxTakesTheRoomAndFocusDoesNotMoveIt(t *testing.T) {
 	}
 
 	// Focus moves and the stack does not: work never grows past its share
-	// just because it is the panel being worked in. (The main pane still
-	// fits its own content, and focus changes which row that content is.)
+	// just because it is the panel being worked in.
 	m = update(t, m, keyMsg("2"))
 	if g2 := m.geometry(); g2.attnH != g.attnH || g2.workH != g.workH {
 		t.Fatalf("focus moved the stack: inbox %d→%d, work %d→%d",
@@ -1588,6 +1817,57 @@ func TestStackedLayoutKeepsBothPanelsReadable(t *testing.T) {
 	first := strings.TrimRight(ansi.Strip(attn[0]), " ")
 	if !strings.Contains(ansi.Strip(view), first) {
 		t.Fatalf("inbox lost its list to the log lens:\n%s", view)
+	}
+}
+
+// Wide, the main pane has its column to itself, so it fills the body rather
+// than floating at content height: a one-line ticket, a ticket longer than
+// the screen and a running row's log tail all draw the same box, ending on
+// the last line above the status bar. A pane that changed size with its
+// contents read as a glitch rather than as a rule.
+func TestWideMainPaneFillsTheBody(t *testing.T) {
+	m, _, _ := newTestModel(t, 3)
+	resized, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
+	m = resized.(model)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-1", Title: "short", Status: "Backlog", Reason: "waiting"},
+		{Ticket: "LERP-2", Title: "long", Status: "Backlog",
+			Reason: strings.Repeat("a reason that runs on and on and on. ", 60)},
+	}}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		TicketID: "t0", Ticket: "QUEUED-1", Queue: "implement", LogPath: "/dev/null"}})
+
+	m = update(t, m, keyMsg("1"))
+	if !m.geometry().wide {
+		t.Fatal("140 columns is not the wide layout")
+	}
+	// The short ticket is the case that used to leave dead space: its detail
+	// is a handful of lines in a 39-line body.
+	if lines := strings.Count(m.detail(padMain.inner(m.geometry().mainW)), "\n") + 1; lines > 10 {
+		t.Fatalf("the short ticket draws %d lines: it is not short enough to test with", lines)
+	}
+	for _, tc := range []struct {
+		name string
+		keys []string
+	}{
+		{"a short ticket", nil},
+		{"a long ticket", []string{"down"}},
+		{"a running row's log", []string{"2"}},
+		{"the help overlay", []string{"?"}},
+	} {
+		for _, k := range tc.keys {
+			m = update(t, m, keyMsg(k))
+		}
+		g := m.geometry()
+		if g.mainH != g.bodyH {
+			t.Fatalf("%s: the main pane is %d lines of a %d-line body",
+				tc.name, g.mainH, g.bodyH)
+		}
+		body := strings.Split(ansi.Strip(m.View()), "\n")[:g.bodyH]
+		if n := strings.Count(body[g.bodyH-1], "\u2570") + strings.Count(body[g.bodyH-1], "\u2517"); n != 2 {
+			t.Fatalf("%s: %d panels end on the body's last line, want the side column and the main pane:\n%s",
+				tc.name, n, m.View())
+		}
 	}
 }
 
@@ -2382,5 +2662,147 @@ func TestOffBoardRunsFromOneQueueShareAHeader(t *testing.T) {
 		if !strings.Contains(view, want) {
 			t.Errorf("adopted run %q vanished:\n%s", want, view)
 		}
+	}
+}
+
+// Force-start is the work panel's one write: S on the selected queued
+// ticket sends that row's ticket ID and reports the start on the status bar.
+func TestForceStartKeySendsTheSelectedTicket(t *testing.T) {
+	m, _, starter := newStartingTestModel(t, 1)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
+			{ID: "t1", Identifier: "LERP-1", Title: "first", Assigned: true},
+			{ID: "t2", Identifier: "LERP-2", Title: "the one to force", Eligible: true},
+		}},
+	}}})
+	m = update(t, m, keyMsg("2"))
+	m = update(t, m, keyMsg("down"))
+	if r := m.selectedWork(); r == nil || r.ticketID != "t2" {
+		t.Fatalf("selected row = %+v, want the second ticket", r)
+	}
+
+	m, cmd := updateCmd(t, m, keyMsg("S"))
+	if cmd == nil {
+		t.Fatal("S on a queued row produced no command")
+	}
+	msg := cmd()
+	if got := starter.started(); len(got) != 1 || got[0] != "t2" {
+		t.Fatalf("force-started tickets = %v, want exactly the selected one", got)
+	}
+	m = update(t, m, msg)
+	if !strings.Contains(m.View(), "force-started LERP-2") {
+		t.Fatalf("status bar does not report the force-start:\n%s", m.View())
+	}
+}
+
+// Every refusal is the reconciler's — the TUI gates nothing — so a refusal
+// has to arrive somewhere the operator will read it.
+func TestForceStartRefusalLandsOnTheStatusBar(t *testing.T) {
+	m, _, starter := newStartingTestModel(t, 1)
+	starter.err = errors.New(`force-start LERP-2: blocked by LERP-1`)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
+			{ID: "t2", Identifier: "LERP-2", Title: "gated work", BlockedBy: []string{"LERP-1"}},
+		}},
+	}}})
+	m = update(t, m, keyMsg("2"))
+	m, cmd := updateCmd(t, m, keyMsg("S"))
+	if cmd == nil {
+		t.Fatal("S on a queued row produced no command")
+	}
+	m = update(t, m, cmd())
+	if !strings.Contains(m.View(), "blocked by LERP-1") {
+		t.Fatalf("status bar does not carry the refusal:\n%s", m.View())
+	}
+	if m.lastErr == "" {
+		t.Errorf("refusal did not land on lastErr: %+v", m.notes)
+	}
+}
+
+// The work panel's key, and only the work panel's: S with the inbox focused
+// is not a promote by another name.
+func TestForceStartKeyIsInertOnTheInbox(t *testing.T) {
+	m, _, starter := newStartingTestModel(t, 1)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-7", TicketID: "id-7", Title: "waiting", Status: "Plan Review"},
+	}}})
+	m = update(t, m, keyMsg("1"))
+	if _, cmd := updateCmd(t, m, keyMsg("S")); cmd != nil {
+		if msg := cmd(); msg != nil {
+			t.Fatalf("S on the inbox produced %T", msg)
+		}
+	}
+	if got := starter.started(); len(got) != 0 {
+		t.Fatalf("S on the inbox force-started %v, want nothing", got)
+	}
+}
+
+// A key nobody can discover may as well not exist: the binding renders from
+// the keymap, so the overlay documents it for free.
+func TestForceStartIsInTheHelpOverlay(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("?"))
+	view := m.View()
+	if !strings.Contains(view, "start past the limit") {
+		t.Fatalf("the force-start key is missing from the help overlay:\n%s", view)
+	}
+}
+
+// Capacity is one label in two places, and it has to be able to say the
+// board is over the limit — the state force-start puts it in, and the state
+// an adopted run from a bigger lerp arrives in.
+func TestCapacityLabelReportsRunsAboveTheLimit(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		TicketID: "t1", Ticket: "LERP-1", Queue: "implement", LogPath: "/dev/null"}})
+	if got := m.capacityLabel(); got != "1/1 running" {
+		t.Fatalf("capacity label within the limit = %q", got)
+	}
+
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r2", Lane: 2,
+		TicketID: "t2", Ticket: "LERP-2", Queue: "implement", LogPath: "/dev/null"}})
+	if got := m.capacityLabel(); got != "1/1 running · +1 over" {
+		t.Fatalf("capacity label over the limit = %q, want the fraction plus the overage", got)
+	}
+	if !strings.Contains(m.View(), "1/1 running · +1 over") {
+		t.Fatalf("the screen does not say the board is over capacity:\n%s", m.View())
+	}
+
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventExited, RunID: "r2", Lane: 2,
+		TicketID: "t2", Ticket: "LERP-2", Queue: "implement", ExitCode: 0}})
+	if got := m.capacityLabel(); got != "1/1 running" {
+		t.Fatalf("capacity label after the forced run ended = %q, want the overage gone", got)
+	}
+}
+
+// The fraction is the loop's own arithmetic, not a count of lane numbers in
+// range. When a lane inside the limit frees while a forced run is still up
+// above it, freeLanes still returns nothing — so the label must still read
+// full. Counting only lanes 1..N here said "1/2 running", which is a lane
+// the operator would wait on and never get.
+func TestCapacityLabelStaysFullWhileAForcedRunHoldsTheBudget(t *testing.T) {
+	m, _, _ := newTestModel(t, 2)
+	for _, ev := range []loop.Event{
+		{Type: loop.EventStarted, RunID: "r1", Lane: 1, TicketID: "t1", Ticket: "LERP-1", Queue: "implement", LogPath: "/dev/null"},
+		{Type: loop.EventStarted, RunID: "r2", Lane: 2, TicketID: "t2", Ticket: "LERP-2", Queue: "implement", LogPath: "/dev/null"},
+		{Type: loop.EventStarted, RunID: "r3", Lane: 3, TicketID: "t3", Ticket: "LERP-3", Queue: "implement", LogPath: "/dev/null"},
+	} {
+		m = update(t, m, eventMsg{ev: ev})
+	}
+	if got := m.capacityLabel(); got != "2/2 running · +1 over" {
+		t.Fatalf("capacity label with a forced run past N = %q", got)
+	}
+
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventExited, RunID: "r1", Lane: 1,
+		TicketID: "t1", Ticket: "LERP-1", Queue: "implement", ExitCode: 0}})
+	if got := m.capacityLabel(); got != "2/2 running" {
+		t.Fatalf("capacity label after a lane inside the limit freed = %q, want it still full: "+
+			"two runs are live against a budget of two, so nothing can start", got)
+	}
+
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventExited, RunID: "r3", Lane: 3,
+		TicketID: "t3", Ticket: "LERP-3", Queue: "implement", ExitCode: 0}})
+	if got := m.capacityLabel(); got != "1/2 running" {
+		t.Fatalf("capacity label once the forced run ended = %q, want a lane free again", got)
 	}
 }

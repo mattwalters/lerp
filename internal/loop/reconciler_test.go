@@ -89,6 +89,49 @@ func newHarnessWith(t *testing.T, lanes int, execute ExecuteFunc, fake *linear.F
 	return h
 }
 
+// newSecondLerp is another reconciler over the same clone — same evidence
+// store, same board — with its own lanes, events, and liveness map. It is
+// how a test plays the successor process that finds another lerp's records
+// on disk.
+func newSecondLerp(t *testing.T, h *harness, lanes int) *harness {
+	t.Helper()
+	next := &harness{
+		fake:     h.fake,
+		evidence: h.evidence,
+		root:     h.root,
+		events:   make(chan Event, 64),
+		alive:    map[string]bool{},
+		logs:     &logBuffer{},
+	}
+	rec, err := NewReconciler(ReconcilerOptions{
+		Client:   h.fake,
+		Repo:     testRepo(),
+		RepoDir:  "/repo",
+		Evidence: next.evidence,
+		Lanes:    lanes,
+		Events:   func(ev Event) { next.events <- ev },
+		Log:      next.logs,
+		Execute: func(context.Context, run.Invocation) (run.Result, error) {
+			return run.Result{ExitCode: 0}, nil
+		},
+		Provision: func(context.Context, string, string, workspace.Identity, io.Writer) error {
+			return nil
+		},
+		Dispose: func(_ context.Context, _ string, _ string, id workspace.Identity, _ io.Writer) {
+			next.mu.Lock()
+			next.disposed = append(next.disposed, id)
+			next.mu.Unlock()
+		},
+		Alive: func(record evidence.Record) bool { return next.alive[record.RunID] },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	next.rec = rec
+	t.Cleanup(func() { waitIdle(t, rec) })
+	return next
+}
+
 // logBuffer is a Log a test can read while lanes are still writing to it.
 type logBuffer struct {
 	mu sync.Mutex
@@ -397,6 +440,12 @@ func TestTickAdoptsLiveOrphans(t *testing.T) {
 	}
 	if got := h.disposedIdentities(); len(got) != 0 {
 		t.Fatalf("adoption disposed workspaces %v, want none", got)
+	}
+	// The work panel draws an adopted run as running, so the loop log is the
+	// only record that a successor took this run over.
+	// Once, across both ticks: a run already adopted is not adopted again.
+	if got := h.logs.String(); strings.Count(got, "adopted run "+record.RunID) != 1 {
+		t.Errorf("loop log does not record the adoption exactly once:\n%s", got)
 	}
 
 	// The adopted process dies: the lane's occupant is reaped, its claim is
@@ -1082,6 +1131,415 @@ type countingDetailClient struct {
 func (c *countingDetailClient) GetIssueDetail(ctx context.Context, issueID string) (linear.IssueDetail, error) {
 	c.details.Add(1)
 	return c.Client.GetIssueDetail(ctx, issueID)
+}
+
+// Done-when: with every lane busy, force-starting a queued ticket runs it
+// past the limit — and the forced run concludes exactly as an ordinary one
+// does: claimed, moved by the queue's rule, record removed, workspace
+// disposed.
+func TestForceStartRunsPastTheLaneLimitAndConcludes(t *testing.T) {
+	execute, release, ran := blockingExecute(t, "")
+	h := newHarness(t, 1, execute)
+	h.fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Todo"})
+	h.fake.AddIssue("LERP", linear.Issue{ID: "two", Identifier: "LERP-2", Status: "Todo"})
+	ctx := context.Background()
+
+	h.rec.Tick(ctx)
+	if got := h.waitEvents(t, EventStarted, 1); got[0].Lane != 1 || got[0].TicketID != "one" {
+		t.Fatalf("first start = %+v, want LERP-1 in lane 1", got[0])
+	}
+	if got := h.issue(t, "two"); got.AssigneeID != "" {
+		t.Fatalf("ticket beyond the limit = %+v, want it still waiting unclaimed", got)
+	}
+
+	if err := h.rec.ForceStart(ctx, "two"); err != nil {
+		t.Fatalf("ForceStart: %v", err)
+	}
+	forced := h.waitEvents(t, EventStarted, 1)[0]
+	if forced.TicketID != "two" || forced.Lane != 2 {
+		t.Fatalf("forced start = %+v, want LERP-2 on lane 2, one above the limit", forced)
+	}
+	record, err := h.evidence.Read(forced.RunID)
+	if err != nil {
+		t.Fatalf("forced run's record: %v", err)
+	}
+	if record.Lane != 2 || record.Queue != "todo" || record.StartingStatus != "Todo" {
+		t.Errorf("forced run's record = %+v, want an ordinary record on lane 2", record)
+	}
+	if got := h.issue(t, "two"); got.AssigneeID != "fake-viewer" {
+		t.Errorf("forced ticket = %+v, want it claimed: the claim protocol still runs", got)
+	}
+
+	release()
+	h.waitEvents(t, EventExited, 2)
+	waitIdle(t, h.rec)
+
+	// Settled by the queue's own rule, claim and all: "Done" is a pipeline
+	// exit no queue serves, so conclude parks the ticket there still
+	// claimed — exactly what an ordinary run in this queue does.
+	if got := h.issue(t, "two"); got.Status != "Done" || got.AssigneeID != "fake-viewer" {
+		t.Errorf("forced ticket after its run = %+v, want it parked in Done still claimed", got)
+	}
+	assertReaped(t, h, record)
+	if got := ran(); len(got) != 2 || !slices.Contains(got, "LERP-2") {
+		t.Errorf("executed runs = %v, want both tickets", got)
+	}
+}
+
+// A forced run is an ordinary run in every later pass: the lerp that finds
+// its record knows nothing about how it started, adopts it on its
+// out-of-range lane, and reaps it when the process dies.
+func TestForceStartRunIsAdoptedAndReapedOnItsOutOfRangeLane(t *testing.T) {
+	execute, release, _ := blockingExecute(t, "")
+	h := newHarness(t, 1, execute)
+	h.fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Todo"})
+	h.fake.AddIssue("LERP", linear.Issue{ID: "two", Identifier: "LERP-2", Status: "Todo"})
+	ctx := context.Background()
+
+	h.rec.Tick(ctx)
+	h.waitEvents(t, EventStarted, 1)
+	if err := h.rec.ForceStart(ctx, "two"); err != nil {
+		t.Fatalf("ForceStart: %v", err)
+	}
+	forced := h.waitEvents(t, EventStarted, 1)[0]
+	record, err := h.evidence.Read(forced.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A second lerp over the same clone, with a smaller idea of capacity than
+	// the lane it is about to inherit.
+	next := newSecondLerp(t, h, 1)
+	next.alive[record.RunID] = true
+	next.rec.Tick(ctx)
+	adopted := waitEventsOn(t, next.events, EventAdopted, 1)[0]
+	if adopted.RunID != record.RunID || adopted.Lane != 2 {
+		t.Fatalf("adopted event = %+v, want the forced run on lane 2", adopted)
+	}
+	if free := next.rec.freeLanes(); len(free) != 0 {
+		t.Errorf("free lanes under an adopted out-of-range run = %v, want none", free)
+	}
+
+	// Its process dies: the reap is the ordinary one, workspace and all.
+	next.alive[record.RunID] = false
+	next.rec.Tick(ctx)
+	waitEventsOn(t, next.events, EventReaped, 1)
+	if _, err := h.evidence.Read(record.RunID); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("reaped forced record read error = %v, want not exist", err)
+	}
+	release()
+	waitIdle(t, h.rec)
+}
+
+// The fence: force-start overrides the lane count and nothing else. Each
+// refusal must leave the board and the evidence store exactly as it found
+// them — no claim, no record, no lane.
+func TestForceStartRefusals(t *testing.T) {
+	ctx := context.Background()
+	cases := []struct {
+		name  string
+		setup func(t *testing.T, h *harness)
+		want  string
+		// lanes still occupied once the refusal has come back — zero
+		// everywhere except the case whose setup occupies one itself.
+		lanes int
+	}{{
+		name: "blocked names its blocker",
+		setup: func(_ *testing.T, h *harness) {
+			h.fake.AddIssue("LERP", linear.Issue{ID: "blocker", Identifier: "LERP-9", Status: "Todo"})
+			h.fake.Block("one", "blocker")
+		},
+		want: "blocked by LERP-9",
+	}, {
+		name: "claimed by someone else",
+		setup: func(_ *testing.T, h *harness) {
+			if err := h.fake.AssignIssue(ctx, "one", "someone-else"); err != nil {
+				panic(err)
+			}
+		},
+		want: "already claimed",
+	}, {
+		name: "already occupying a lane here",
+		setup: func(t *testing.T, h *harness) {
+			if _, ok := h.rec.register(1, "one"); !ok {
+				t.Fatal("register: the lane was not free")
+			}
+		},
+		want:  "already running here",
+		lanes: 1,
+	}, {
+		name: "resting in a status no queue serves",
+		setup: func(_ *testing.T, h *harness) {
+			if err := h.fake.MoveIssue(ctx, "one", "Needs Help"); err != nil {
+				panic(err)
+			}
+		},
+		want: `no queue serves "Needs Help"`,
+	}}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			execute, ran := recordingExecute("")
+			h := newHarness(t, 2, execute)
+			h.fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Todo"})
+			tc.setup(t, h)
+
+			err := h.rec.ForceStart(ctx, "one")
+			if err == nil {
+				t.Fatalf("ForceStart on a %s ticket = nil, want a refusal", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("refusal = %q, want it to contain %q", err, tc.want)
+			}
+			waitIdle(t, h.rec)
+			records, listErr := h.evidence.List()
+			if listErr != nil {
+				t.Fatal(listErr)
+			}
+			if len(records) != 0 {
+				t.Errorf("run records after a refusal = %d, want 0", len(records))
+			}
+			if got := ran(); len(got) != 0 {
+				t.Errorf("executed runs after a refusal = %v, want none", got)
+			}
+			if got := h.issue(t, "one"); got.AssigneeID == "fake-viewer" {
+				t.Errorf("refused ticket = %+v, want no claim made", got)
+			}
+			// A refusal that left a lane behind would shrink capacity for
+			// the rest of the session without failing anything else here:
+			// waitIdle waits on the WaitGroup, which a leaked laneRun never
+			// touches.
+			h.rec.mu.Lock()
+			lanes := len(h.rec.active)
+			h.rec.mu.Unlock()
+			if lanes != tc.lanes {
+				t.Errorf("lanes occupied after a refusal = %d, want %d", lanes, tc.lanes)
+			}
+		})
+	}
+}
+
+// Over capacity throttles harder, never wraps into starting more: fill
+// computes capacity as Lanes - len(active), and a negative capacity must
+// yield no free lanes rather than every lane.
+func TestFillStartsNothingWhileOverCapacity(t *testing.T) {
+	execute, release, ran := blockingExecute(t, "")
+	h := newHarness(t, 1, execute)
+	h.fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Todo"})
+	h.fake.AddIssue("LERP", linear.Issue{ID: "two", Identifier: "LERP-2", Status: "Todo"})
+	ctx := context.Background()
+
+	h.rec.Tick(ctx)
+	h.waitEvents(t, EventStarted, 1)
+	if err := h.rec.ForceStart(ctx, "two"); err != nil {
+		t.Fatalf("ForceStart: %v", err)
+	}
+	h.waitEvents(t, EventStarted, 1)
+
+	// A third ticket arrives while two runs occupy a one-lane board.
+	h.fake.AddIssue("LERP", linear.Issue{ID: "three", Identifier: "LERP-3", Status: "Todo"})
+	h.drainEvents()
+	if free := h.rec.freeLanes(); len(free) != 0 {
+		t.Fatalf("free lanes over capacity = %v, want none", free)
+	}
+	h.rec.Tick(ctx)
+	for _, ev := range h.drainEvents() {
+		if ev.Type == EventStarted {
+			t.Fatalf("an over-capacity pass started %+v", ev)
+		}
+	}
+	if got := h.issue(t, "three"); got.Status != "Todo" || got.AssigneeID != "" {
+		t.Errorf("ticket queued behind an over-capacity board = %+v, want unclaimed in Todo", got)
+	}
+
+	release()
+	h.waitEvents(t, EventExited, 2)
+	waitIdle(t, h.rec)
+	if got := ran(); slices.Contains(got, "LERP-3") {
+		t.Errorf("executed runs = %v, want the third ticket never started", got)
+	}
+}
+
+// A lane number is one run's, and force-start is the first thing that
+// chooses one off the tick goroutine. fill takes its numbers from a
+// freeLanes snapshot and registers them one at a time, so a force-start
+// landing in that window can take a lane the snapshot still calls free. Two
+// live runs on one number would share the LERP_LANE a project's provision
+// isolates on, and the TUI would lose the first run's row to the second.
+func TestRegisterRefusesALaneAForceStartTook(t *testing.T) {
+	h := newHarness(t, 2, nil)
+
+	if _, ok := h.rec.register(1, "one"); !ok {
+		t.Fatal("register lane 1: the lane was not free")
+	}
+	lanes := h.rec.freeLanes() // what a pass would be holding
+	if len(lanes) != 1 || lanes[0] != 2 {
+		t.Fatalf("free lanes = %v, want [2]", lanes)
+	}
+
+	lr, ok := h.rec.registerForce("forced", nil)
+	if !ok {
+		t.Fatal("registerForce: no lane")
+	}
+	if lr.lane != 2 {
+		t.Fatalf("forced lane = %d, want the free one", lr.lane)
+	}
+
+	// The pass proceeds from its now-stale snapshot.
+	if _, ok := h.rec.register(lanes[0], "candidate"); ok {
+		t.Fatal("register handed out a lane a forced run already holds")
+	}
+	// And the pass is not over: fill reads the lanes again per candidate, so
+	// a taken number costs one candidate rather than every one behind it.
+	if free := h.rec.freeLanes(); len(free) != 0 {
+		t.Fatalf("free lanes with both lanes occupied = %v, want none", free)
+	}
+
+	h.rec.mu.Lock()
+	defer h.rec.mu.Unlock()
+	held := map[int]string{}
+	for _, a := range h.rec.active {
+		if prev, dup := held[a.lane]; dup {
+			t.Fatalf("lane %d held by both %s and %s", a.lane, prev, a.ticketID)
+		}
+		held[a.lane] = a.ticketID
+	}
+}
+
+// An orphan's lane is occupied whether or not this process has adopted it
+// yet. Every other lane number is chosen on the tick goroutine, after
+// reconcileEvidence has adopted everything live; force-start chooses between
+// passes, so it must read the same evidence — otherwise pressing S in that
+// window puts a second run on the lane an orphan is already using, and both
+// get the same LERP_LANE a project's provision isolates on.
+func TestForceStartAvoidsALaneAnUnadoptedOrphanHolds(t *testing.T) {
+	execute, release, _ := blockingExecute(t, "")
+	h := newHarness(t, 2, execute)
+	h.fake.AddIssue("LERP", linear.Issue{ID: "two", Identifier: "LERP-2", Status: "Todo"})
+	ctx := context.Background()
+
+	// A previous lerp's run, live on lane 1, that no pass here has adopted.
+	orphan, err := h.evidence.Create(evidence.Record{
+		Lane: 1, TicketID: "orphan-ticket", Queue: "todo", StartingStatus: "Todo",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.alive[orphan.RunID] = true
+
+	if err := h.rec.ForceStart(ctx, "two"); err != nil {
+		t.Fatalf("ForceStart: %v", err)
+	}
+	forced := h.waitEvents(t, EventStarted, 1)[0]
+	if forced.Lane == orphan.Lane {
+		t.Fatalf("forced run took lane %d, which a live orphan already holds", forced.Lane)
+	}
+	if forced.Lane != 2 {
+		t.Errorf("forced lane = %d, want the lowest one no live run holds", forced.Lane)
+	}
+
+	// And the pass that follows adopts the orphan onto its own lane, with no
+	// two live runs sharing a number.
+	h.rec.Tick(ctx)
+	h.waitEvents(t, EventAdopted, 1)
+	h.rec.mu.Lock()
+	held := map[int]string{}
+	for _, a := range h.rec.active {
+		if prev, dup := held[a.lane]; dup {
+			t.Errorf("lane %d held by both %s and %s", a.lane, prev, a.ticketID)
+		}
+		held[a.lane] = a.ticketID
+	}
+	h.rec.mu.Unlock()
+
+	release()
+	waitIdle(t, h.rec)
+}
+
+// Evidence this process cannot read is the one state reconcileEvidence bails
+// on, because live orphans may hold lanes it knows nothing about — and the
+// pass that bailed adopted nothing, so r.active is empty too. Force-start is
+// not allowed to be the one path that fills anyway: it refuses, and the
+// operator gets the reason.
+func TestForceStartRefusesWhenTheEvidenceCannotBeRead(t *testing.T) {
+	execute, ran := recordingExecute("")
+	h := newHarness(t, 2, execute)
+	h.fake.AddIssue("LERP", linear.Issue{ID: "two", Identifier: "LERP-2", Status: "Todo"})
+	ctx := context.Background()
+
+	// A live run from a previous lerp holds lane 1, and then the store stops
+	// being readable.
+	orphan, err := h.evidence.Create(evidence.Record{
+		Lane: 1, TicketID: "orphan-ticket", Queue: "todo", StartingStatus: "Todo",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.alive[orphan.RunID] = true
+	runs := filepath.Join(h.root, ".lerp", "runs")
+	if err := os.Chmod(runs, 0o300); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(runs, 0o700) })
+	if _, err := h.evidence.List(); err == nil {
+		t.Skip("the run store is still readable; not running as this test's user")
+	}
+
+	err = h.rec.ForceStart(ctx, "two")
+	if err == nil {
+		t.Fatal("ForceStart with unreadable evidence = nil, want a refusal")
+	}
+	if !strings.Contains(err.Error(), "list run evidence") {
+		t.Errorf("refusal = %q, want it to name the read that failed", err)
+	}
+	waitIdle(t, h.rec)
+	if got := ran(); len(got) != 0 {
+		t.Errorf("executed runs after the refusal = %v, want none", got)
+	}
+	h.rec.mu.Lock()
+	lanes := len(h.rec.active)
+	h.rec.mu.Unlock()
+	if lanes != 0 {
+		t.Errorf("lanes occupied after the refusal = %d, want 0", lanes)
+	}
+	if got := h.issue(t, "two"); got.AssigneeID == "fake-viewer" {
+		t.Errorf("refused ticket = %+v, want no claim made", got)
+	}
+}
+
+// A forced run occupies a lane, it does not close the board: the pass that
+// follows still fills what is left.
+func TestFillFillsTheLanesAForcedRunLeaves(t *testing.T) {
+	execute, release, ran := blockingExecute(t, "")
+	h := newHarness(t, 3, execute)
+	for _, id := range []string{"one", "two", "three"} {
+		h.fake.AddIssue("LERP", linear.Issue{ID: id, Identifier: "LERP-" + id, Status: "Todo"})
+	}
+	ctx := context.Background()
+
+	if err := h.rec.ForceStart(ctx, "three"); err != nil {
+		t.Fatalf("ForceStart: %v", err)
+	}
+	h.waitEvents(t, EventStarted, 1)
+
+	h.rec.Tick(ctx)
+	started := h.waitEvents(t, EventStarted, 2)
+	lanes := map[int]bool{}
+	for _, ev := range started {
+		if lanes[ev.Lane] {
+			t.Fatalf("two runs started on lane %d", ev.Lane)
+		}
+		lanes[ev.Lane] = true
+	}
+	if free := h.rec.freeLanes(); len(free) != 0 {
+		t.Errorf("free lanes on a full board = %v, want none", free)
+	}
+
+	release()
+	waitIdle(t, h.rec)
+	if got := ran(); len(got) != 3 {
+		t.Errorf("executed runs = %v, want all three", got)
+	}
 }
 
 func TestReconcilerIssueDetail(t *testing.T) {
