@@ -146,6 +146,13 @@ func TestSearchEnterKeepsTheFilterAndGivesTheKeysBack(t *testing.T) {
 	if m.search != "gore" || len(m.shown) != 1 {
 		t.Fatalf("enter dropped the filter: query %q, %d rows", m.search, len(m.shown))
 	}
+	// The line says how to get back: esc takes /'s place while a filter is
+	// applied, since / is the key the operator just used.
+	line := lineWith(t, m.View(), "p promote")
+	if !strings.Contains(line, "esc clear") || strings.Contains(line, "/ search") {
+		t.Fatalf("the key line does not offer the way out of the filter:\n%s", line)
+	}
+
 	m = update(t, m, keyMsg("p"))
 	if !m.promoting {
 		t.Fatal("p after an accepted search did not reach the list")
@@ -290,11 +297,32 @@ func TestSearchSurvivesAPass(t *testing.T) {
 		t.Fatalf("shown = %v, want the row the open prompt matched", got)
 	}
 
-	// An empty inbox takes the prompt and the query with it, so the pass
-	// that repopulates the board is not narrowed by a query nothing shows.
+	// An inbox that empties under an open prompt leaves the prompt alone:
+	// the keyboard is the operator's until they give it back, and a pass
+	// that took it mid-word would land their next letter on the list as a
+	// command.
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention}})
-	if m.searching || m.search != "" {
-		t.Fatalf("an empty inbox kept the prompt: open %v, query %q", m.searching, m.search)
+	if !m.searching {
+		t.Fatal("a pass closed the prompt from under the operator")
+	}
+	m, cmd := updateCmd(t, m, keyMsg("q"))
+	if cmd != nil {
+		if _, quit := cmd().(tea.QuitMsg); quit {
+			t.Fatal("the letter after the pass quit lerp instead of reaching the box")
+		}
+	}
+	if got := m.searchInput.Value(); got != "curlq" {
+		t.Fatalf("the box holds %q, want the letters that were typed into it", got)
+	}
+
+	// Closed, the query goes with the rows: the title stops carrying it, so
+	// the pass that repopulates the board must not arrive narrowed by a
+	// query nothing on screen shows.
+	m = update(t, m, keyMsg("esc"))
+	m = update(t, m, eventMsg{ev: board()})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention}})
+	if m.search != "" {
+		t.Fatalf("an empty inbox kept a filter nothing shows: %q", m.search)
 	}
 	m = update(t, m, eventMsg{ev: board()})
 	if got := len(m.shown); got != 6 {
@@ -346,6 +374,38 @@ func TestSearchWithNoMatchesSaysSo(t *testing.T) {
 	}
 	if view := m.View(); !strings.Contains(view, "(esc clears the search)") {
 		t.Fatalf("the main pane does not say how to get the list back:\n%s", view)
+	}
+}
+
+// Done-when: an inbox with nothing in it does not open a prompt. There are
+// no rows to narrow, the title carries no query while the list is empty,
+// and a box over "the inbox is empty" would take the keyboard to no end.
+func TestSearchDoesNotOpenOverAnEmptyInbox(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention}})
+
+	m = update(t, m, keyMsg("/"))
+	if m.searching {
+		t.Fatal("/ opened a prompt over an empty inbox")
+	}
+	if view := m.View(); strings.Contains(view, "filter the inbox") {
+		t.Fatalf("the prompt is on screen over an empty inbox:\n%s", view)
+	}
+}
+
+// Done-when: a query longer than the panel scrolls inside the box rather
+// than rendering from its first character, so what the operator is typing
+// now is what they can see.
+func TestALongQueryScrollsInTheBox(t *testing.T) {
+	m := searching(t, "the quick brown fox jumps over the lazy dog and keeps going")
+
+	line := lineWith(t, m.View(), "keeps going")
+	if strings.Contains(line, "the quick brown") {
+		t.Fatalf("the box rendered from the head of the query, not the cursor:\n%q", line)
+	}
+	if got := lipgloss.Width(line); got > m.width {
+		t.Fatalf("the prompt line is %d cells wide in a %d-column window:\n%q", got, m.width, line)
 	}
 }
 

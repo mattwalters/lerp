@@ -843,14 +843,17 @@ func (m *model) apply(ev loop.Event) {
 			m.project = ""
 		}
 		// An inbox with nothing in it has nothing to narrow, and the title
-		// stops carrying the query along with the count — so the prompt and
-		// the filter go with the rows. Otherwise the pass that repopulates
-		// the board arrives narrowed by a query the operator can no longer
-		// see.
-		if len(m.attention) == 0 && (m.searching || m.search != "") {
-			m.searching, m.search, m.searchWas = false, "", ""
-			m.searchInput.Blur()
-			m.searchInput.SetValue("")
+		// stops carrying the query along with the count — so a filter left
+		// behind by a closed prompt goes with the rows, rather than
+		// narrowing the pass that repopulates the board out of sight.
+		//
+		// An open prompt keeps its query, which is on screen in the box
+		// whatever the title says. Taking the keyboard back here would be
+		// taking it back mid-word, from a passing event rather than from a
+		// key the operator pressed, and their next letter would land on the
+		// list as a command — a `q` in the middle of "queue" would quit.
+		if len(m.attention) == 0 && !m.searching && m.search != "" {
+			m.search = ""
 		}
 		// A pass mid-picker may shrink or empty the list out from under it;
 		// resort clamps the selection, and the picker closes rather than
