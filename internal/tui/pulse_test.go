@@ -227,3 +227,26 @@ func TestSparkline(t *testing.T) {
 		})
 	}
 }
+
+// A log rewritten in place is a new log. Folding what was already in it into
+// the bucket now filling would draw one spike and flatten every real bucket
+// beside it, since the bars scale to the window's own tallest.
+func TestPulseStartsOverWhenTheLogIsRewritten(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.log")
+	appendLog(t, path, "one\ntwo\nthree\n")
+	start := time.Now()
+	p := newPulse(path)
+	p.read(start)
+	appendLog(t, path, "four\nfive\n")
+	p.read(start.Add(sparkBucket))
+	if got := len(p.window()); got != 2 {
+		t.Fatalf("window is %d buckets before the rewrite, want 2", got)
+	}
+
+	writeLog(t, path, []byte("a wholly new log\n"))
+	p.read(start.Add(2 * sparkBucket))
+	got := p.window()
+	if len(got) != 1 || got[0] != 1 {
+		t.Fatalf("the rewritten log carries the old ring: %v", got)
+	}
+}

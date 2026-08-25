@@ -73,7 +73,12 @@ func (p *pulse) read(now time.Time) {
 		return
 	}
 	if reset {
-		p.stream = logfmt.Stream{}
+		// The file was rewritten under us, so the counts are a picture of a
+		// log that is gone — and folding a whole new file into the bucket
+		// now filling would draw one spike and flatten every real one beside
+		// it. Start the reading over with the file.
+		p.stream, p.cells, p.head, p.seen = logfmt.Stream{}, [sparkCells]int{}, 0, 0
+		p.at = time.Time{}
 	}
 	if mid {
 		p.stream.SkipLine()

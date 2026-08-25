@@ -2390,16 +2390,44 @@ func TestWaitingRowStaysOneLine(t *testing.T) {
 // A lane still provisioning has no log to read, so its row shows the clock it
 // has and claims nothing about a stream that does not exist yet.
 func TestProvisioningRowClaimsNoReading(t *testing.T) {
+	// The loop hands a provisioning lane the path its log will have, and the
+	// runner does not create the file until the agent starts — so the row
+	// has a path pointing at nothing, which is the case that matters.
+	path := filepath.Join(t.TempDir(), "not-yet.log")
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventProvisioning, RunID: "r1", Lane: 1,
-		TicketID: "id-9", Ticket: "LERP-9", Queue: "plan", StartedAt: time.Now()}})
+		TicketID: "id-9", Ticket: "LERP-9", Queue: "plan", LogPath: path, StartedAt: time.Now()}})
 	m = update(t, m, pollMsg{})
 	view := m.View()
 	if strings.Contains(view, "heard") {
 		t.Fatalf("a provisioning row reports a log it does not have:\n%s", view)
 	}
+	if strings.ContainsAny(view, "▁█") {
+		t.Fatalf("a provisioning row draws activity for a log that does not exist:\n%s", view)
+	}
 	if !strings.Contains(view, "provisioning") {
 		t.Fatalf("a provisioning row lost its state:\n%s", view)
+	}
+}
+
+// A run whose log appears late — the ordinary case, since the lane is given
+// its path while the workspace is still being provisioned — starts its
+// reading when the file does. The buckets that passed before it existed are
+// not quiet buckets; they are no buckets.
+func TestPulseStartsWhenTheLogDoes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "late.log")
+	start := time.Now()
+	p := newPulse(path)
+	for i := 0; i < 20; i++ {
+		p.read(start.Add(time.Duration(i) * sparkBucket))
+	}
+	if got := p.window(); len(got) != 0 {
+		t.Fatalf("a log that never appeared drew %v", got)
+	}
+	appendLog(t, path, "the agent starts\n")
+	p.read(start.Add(20 * sparkBucket))
+	if got := p.window(); len(got) != 1 {
+		t.Fatalf("the run's first poll drew %d buckets, want 1: %v", len(got), got)
 	}
 }
 
@@ -2527,5 +2555,14 @@ func TestSqueezedRunRowKeepsItsClock(t *testing.T) {
 		if line := strings.Split(panel, "\n")[at]; !strings.Contains(line, "1m30s") {
 			t.Fatalf("%dx%d: the running row lost its clock: %q\n%s", size.w, size.h, line, panel)
 		}
+	}
+}
+
+// A log's modification time comes from the filesystem's clock, which may sit
+// a moment ahead of this process's. "-1s ago" would read as a bug in the
+// board rather than as the skew it is.
+func TestElapsedDoesNotRunBackwards(t *testing.T) {
+	if got := elapsed(time.Now().Add(2 * time.Second)); got != "0s" {
+		t.Fatalf("a time in the future reads as %q, want 0s", got)
 	}
 }
