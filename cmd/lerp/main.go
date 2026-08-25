@@ -31,8 +31,10 @@ const usage = `usage:
 `
 
 // defaultLanes is how many agents run at once unless -concurrency says so.
-// SCOPE keeps N small.
-const defaultLanes = 3
+// SCOPE keeps N small and leaves the number to this default; each lane is a
+// whole workspace, so a repo with a heavy provision command may want
+// -concurrency lower.
+const defaultLanes = 10
 
 func main() {
 	args := os.Args[1:]
@@ -160,6 +162,7 @@ func openTUI(ctx context.Context, lanes int) error {
 	return tui.Run(ctx, tui.Options{
 		Ticker:   rec,
 		Promoter: rec,
+		Starter:  rec,
 		Reader:   rec,
 		Statuses: repo.PromoteTargets(),
 		Interval: loop.DefaultInterval,

@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -37,12 +38,15 @@ const (
 	// still alive, and now occupies a lane here. The event carries the log
 	// path so a subscriber can reattach its tail.
 	EventAdopted EventType = "adopted"
-	// EventReaped reports that a recorded run's process is dead: its
-	// workspace was disposed and its record removed. The ticket is left
-	// wherever Linear says it is.
+	// EventReaped reports that a recorded run's process is dead without
+	// having recorded how it ended: its workspace was disposed and its
+	// record removed. The ticket is left wherever Linear says it is. A dead
+	// run that did record an exit status is settled instead, and reports
+	// EventExited.
 	EventReaped EventType = "reaped"
-	// EventExited reports that a run this process started finished and the
-	// queue's move rule was applied.
+	// EventExited reports that a run finished and the queue's move rule was
+	// applied — a run this process started, or an adopted run that finished
+	// with nobody waiting on it and recorded its own exit status.
 	EventExited EventType = "exited"
 	// EventError reports a pass or a run that failed in a way worth
 	// surfacing. The loop keeps ticking; whatever still needs repair is
@@ -185,7 +189,9 @@ type Event struct {
 	// that is the original start under a previous process, not the adoption.
 	// Zero when no run exists yet.
 	StartedAt time.Time
-	ExitCode  int // meaningful only for EventExited
+	// ExitCode is how the run ended: waited for on the live path, read back
+	// from the run's own exit file for an adopted one. EventExited only.
+	ExitCode int
 	// Note is a remark about how a run settled, for the operator to read:
 	// today, the on_success or on_failure hop conclude did not make because
 	// the ticket left the queue's status mid-run. Empty when there is
@@ -490,6 +496,96 @@ func (r *Reconciler) Promote(ctx context.Context, ticketID, status string) error
 	return nil
 }
 
+// ForceStart runs one selected ticket now, past the lane limit. It overrides
+// exactly one thing — the lane count — and nothing else that gates a pickup:
+// the claim protocol still runs in full (invariant 4), a ticket with an
+// unfinished blocker is still refused, and a ticket somebody else holds is
+// still left alone. Capacity is the operator's call; sequencing is not.
+//
+// The lane budget is already soft in the way this needs — adopted runs from a
+// previous process routinely sit above N (see freeLanes) — so a forced run is
+// an ordinary run on an out-of-range lane number, not a new kind of thing.
+// Nothing downstream can tell it apart: same evidence record, same adoption,
+// same reaping, same conclude.
+//
+// It returns once the run is launched; the refusals are what the operator
+// waits on. A claim lost in the race window after that resolves exactly as
+// fill's does — record removed, no run, no event, and the row simply never
+// starts.
+func (r *Reconciler) ForceStart(ctx context.Context, ticketID string) error {
+	issue, err := r.o.Client.GetIssue(ctx, ticketID)
+	if err != nil {
+		return fmt.Errorf("force-start %s: %w", ticketID, err)
+	}
+	name, queue, ok := queueForStatus(r.o.Repo, issue.Status)
+	if !ok {
+		return fmt.Errorf("force-start %s: no queue serves %q", issue.Identifier, issue.Status)
+	}
+	if issue.Blocked {
+		return fmt.Errorf("force-start %s: blocked by %s", issue.Identifier,
+			strings.Join(issue.BlockedBy, ", "))
+	}
+	if issue.AssigneeID != "" {
+		// Any assignee, including the operating user's own claim: that is
+		// Eligible's rule, and force-start overrides the lane count alone.
+		return fmt.Errorf("force-start %s: already claimed", issue.Identifier)
+	}
+	reserved, err := r.recordedLanes()
+	if err != nil {
+		return fmt.Errorf("force-start %s: %w", issue.Identifier, err)
+	}
+	lr, ok := r.registerForce(issue.ID, reserved)
+	if !ok {
+		return fmt.Errorf("force-start %s: already running here", issue.Identifier)
+	}
+	r.wg.Add(1)
+	go r.runLane(ctx, lr, candidate{issue: issue, name: name, queue: queue})
+	return nil
+}
+
+// recordedLanes is the set of lane numbers live run records hold, whether or
+// not this process has adopted them yet. Every other lane number is chosen on
+// the tick goroutine, after reconcileEvidence has adopted every live run it
+// can see; force-start chooses between passes, so it reads the same evidence
+// itself. Without this, pressing S while a pass is partway through adopting
+// an orphan takes the lane that orphan is already running on, and two live
+// runs share the LERP_LANE a project's provision isolates on.
+//
+// A record another lerp writes in the window after this read is still
+// possible, exactly as it is for fill: lane numbers are not coordinated
+// across processes, and this does not pretend otherwise.
+//
+// Evidence that cannot be read is a refusal, not an empty answer. It is the
+// same state reconcileEvidence bails on — live orphans may hold lanes this
+// process knows nothing about — and the pass that bailed left r.active empty
+// too, so an empty answer here would start the forced run on lane 1 on top
+// of whatever is already there.
+func (r *Reconciler) recordedLanes() (map[int]bool, error) {
+	records, err := r.o.Evidence.List()
+	if err != nil {
+		return nil, fmt.Errorf("list run evidence: %w", err)
+	}
+	taken := make(map[int]bool, len(records))
+	for _, record := range records {
+		if r.o.Alive(record) {
+			taken[record.Lane] = true
+		}
+	}
+	return taken, nil
+}
+
+// queueForStatus finds the queue that picks up from status. RepoConfig's
+// validation refuses two queues watching one status, so the answer is
+// unambiguous whenever there is one.
+func queueForStatus(repo *config.RepoConfig, status string) (string, config.Queue, bool) {
+	for name, q := range repo.Queues {
+		if q.Status == status {
+			return name, q, true
+		}
+	}
+	return "", config.Queue{}, false
+}
+
 // IssueDetail reads the selected ticket's body and its comments for the
 // TUI's inbox pane — the read SCOPE's "not a Linear client" bullet
 // licenses. Like Promote it is a passthrough to the client, touching no
@@ -571,6 +667,20 @@ func (r *Reconciler) adopt(record evidence.Record) {
 		record:   record,
 	})
 	r.mu.Unlock()
+	// The work panel draws an adopted run exactly as it draws one this
+	// process started, so the log is the only place the takeover is recorded.
+	// It is worth recording: an adopted run concludes from its exit file, so
+	// a torn or missing one is the one case where a finished run releases its
+	// claim without hopping, and this line is what says afterwards that the
+	// run had been taken over at all. The start time comes from the record,
+	// which an older lerp may have written without one.
+	if r.o.Log != nil {
+		when := "start time unrecorded"
+		if !record.StartedAt.IsZero() {
+			when = "started " + record.StartedAt.Format(time.RFC3339)
+		}
+		fmt.Fprintf(r.o.Log, "adopted run %s on lane %d, %s\n", record.RunID, record.Lane, when)
+	}
 	r.emit(Event{Type: EventAdopted, RunID: record.RunID, Lane: record.Lane,
 		TicketID: record.TicketID, Queue: record.Queue, LogPath: record.LogPath,
 		StartedAt: record.StartedAt})
@@ -583,9 +693,7 @@ func (r *Reconciler) adopt(record evidence.Record) {
 const reapDisposeTimeout = 2 * time.Minute
 
 // reap cleans up after a run whose process is dead: dispose the workspace,
-// release the dead run's claim when the board still shows it, and remove the
-// local record. The ticket's status is left wherever Linear says it is — a
-// crash is drift, and re-running the stage repairs it (SCOPE invariant 3).
+// settle the ticket, and remove the local record.
 //
 // It reports whether the reap finished. One that could not keeps the record,
 // so the next pass retries it.
@@ -597,21 +705,85 @@ func (r *Reconciler) reap(ctx context.Context, record evidence.Record) bool {
 	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), reapDisposeTimeout)
 	r.o.Dispose(dctx, r.o.RepoDir, r.o.Repo.Dispose, id, r.o.Log)
 	cancel()
-	if err := r.releaseDead(ctx, record); err != nil {
-		r.fail(fmt.Errorf("reap run %s: %w", record.RunID, err))
+	ev, ok := r.settleDead(ctx, record)
+	if !ok {
 		return false
 	}
 	if err := r.o.Evidence.Remove(record.RunID); err != nil {
 		r.fail(fmt.Errorf("reap run %s: %w", record.RunID, err))
 		return false
 	}
-	r.emit(Event{Type: EventReaped, RunID: record.RunID, Lane: record.Lane,
-		TicketID: record.TicketID, Queue: record.Queue, LogPath: record.LogPath})
+	r.emit(ev)
 	return true
 }
 
-// releaseDead releases a dead run's claim so its ticket becomes eligible
-// again — but only when the board still looks exactly as the run left it:
+// settleDead decides what a dead run's ticket is owed, and returns the
+// terminal event that says so. It reports false when the board could not be
+// settled, so the caller keeps the record and the next pass retries.
+//
+// A run that recorded its own exit status really finished, and gets the
+// queue's move rule exactly as a live run would — adoption that only ever
+// remembered would silently cost a whole stage every time lerp restarted
+// across a run's finish. Anything else — no file, a torn one, a run killed
+// before it could write — falls back to releasing the claim and leaving the
+// status alone: a crash is drift, and re-running the stage repairs it (SCOPE
+// invariant 3). Retrying is safe either way, since conclude only moves a
+// ticket still sitting in the queue's status and only releases a claim still
+// held by this user.
+//
+// "Exactly as a live run would" includes the one case where it differs from
+// the old reap: a failed run whose queue has no on_failure route keeps its
+// claim and stays put, rather than being released back into the queue. That
+// is conclude's deliberate rule — releasing a ticket that fails every time
+// would re-run it on every pass forever — and a run that really failed is the
+// case it was written for. The ticket then rests claimed in a served status,
+// which the inbox does not list (see attention); that gap is the one a live
+// failed run has always had, not a new one.
+func (r *Reconciler) settleDead(ctx context.Context, record evidence.Record) (Event, bool) {
+	reaped := Event{Type: EventReaped, RunID: record.RunID, Lane: record.Lane,
+		TicketID: record.TicketID, Queue: record.Queue, LogPath: record.LogPath}
+	code, recorded := evidence.ExitStatus(record)
+	// The queue the run started from may have been renamed, removed, or
+	// pointed at a different status in lerp.toml since it started. Only a
+	// queue still serving the status this run picked its ticket up from has a
+	// move rule that means anything here: concluding against a queue whose
+	// status has moved on would report a hop nobody skipped, and would judge
+	// the claim by a served set the run never ran under.
+	queue, configured := r.o.Repo.Queues[record.Queue]
+	if !recorded || !configured || queue.Status != record.StartingStatus || record.TicketID == "" {
+		if err := r.releaseDead(ctx, record); err != nil {
+			r.fail(fmt.Errorf("reap run %s: %w", record.RunID, err))
+			return Event{}, false
+		}
+		return reaped, true
+	}
+
+	issue, err := r.o.Client.GetIssue(ctx, record.TicketID)
+	if errors.Is(err, linear.ErrNotFound) {
+		return reaped, true // the ticket itself is gone; nothing to settle
+	}
+	if err != nil {
+		r.fail(fmt.Errorf("reap run %s: read ticket %s: %w", record.RunID, record.TicketID, err))
+		return Event{}, false
+	}
+	viewerID, err := r.o.Client.Viewer(ctx)
+	if err != nil {
+		r.fail(fmt.Errorf("reap run %s: read viewer: %w", record.RunID, err))
+		return Event{}, false
+	}
+	note, moveErr := conclude(ctx, r.o.Client, issue, queue, r.o.Repo, code, viewerID, r.o.Log)
+	if moveErr != nil {
+		r.fail(fmt.Errorf("reap run %s: %w", record.RunID, moveErr))
+		return Event{}, false
+	}
+	return Event{Type: EventExited, RunID: record.RunID, Lane: record.Lane,
+		TicketID: record.TicketID, Ticket: issue.Identifier, Queue: record.Queue,
+		LogPath: record.LogPath, ExitCode: code, Note: note}, true
+}
+
+// releaseDead releases the claim of a dead run that never said how it ended,
+// so its ticket becomes eligible again — but only when the board still looks
+// exactly as the run left it:
 // same status the run started from, still assigned to this operating user.
 // Anything else means a human, an agent, or an automation acted since, and
 // the loop leaves their work alone.
@@ -658,18 +830,24 @@ func (r *Reconciler) fill(ctx context.Context) {
 		r.fail(err)
 	}
 	r.emit(Event{Type: EventQueues, Queues: snapshotQueues(listings)})
-	lanes := r.freeLanes()
 	for _, c := range candidatesFrom(listings) {
+		// The free lanes are read per candidate rather than once for the
+		// pass: register occupies its lane before this loop comes round, and
+		// a force-start can take one mid-pass, which a snapshot taken up
+		// front would keep handing out.
+		lanes := r.freeLanes()
 		if len(lanes) == 0 {
 			return
 		}
 		lr, ok := r.register(lanes[0], c.issue.ID)
 		if !ok {
 			// This ticket is already occupying a lane — typically a run whose
-			// claim Linear had not reflected when the board was listed.
+			// claim Linear had not reflected when the board was listed — or a
+			// force-start took this lane number in the window since the read
+			// just above. Either way the next candidate reads the lanes
+			// again, so one refusal costs one candidate, not the pass.
 			continue
 		}
-		lanes = lanes[1:]
 		r.wg.Add(1)
 		go r.runLane(ctx, lr, c)
 	}
@@ -811,6 +989,11 @@ func (r *Reconciler) provisionAndRun(ctx context.Context, lr *laneRun, c candida
 		Ticket:  issue.Identifier,
 		Workdir: record.Workspace,
 		LogPath: record.LogPath,
+		// The run records its own exit status, so a lerp that restarts across
+		// its finish can still apply the move rule. The live path below keeps
+		// concluding from the code Wait() returned: the file is the fallback
+		// for runs nobody was waiting on, never a second source of truth.
+		ExitPath: record.ExitPath,
 		Started: func(pid int) {
 			// The PID makes the record adoptable; without it the run would be
 			// reaped by the next process even while the agent is alive. An
@@ -842,7 +1025,7 @@ func (r *Reconciler) provisionAndRun(ctx context.Context, lr *laneRun, c candida
 	// on the exit event; the ticket stays claimed for a human to settle. A
 	// move that was skipped because the ticket left mid-run rides along too,
 	// as a note: the run log alone is not somewhere anyone is looking.
-	note, moveErr := conclude(ctx, r.o.Client, issue, c.queue, r.o.Repo, result.ExitCode, r.o.Log)
+	note, moveErr := conclude(ctx, r.o.Client, issue, c.queue, r.o.Repo, result.ExitCode, viewerID, r.o.Log)
 	return Event{Type: EventExited, RunID: record.RunID, Lane: lr.lane, TicketID: issue.ID,
 		Ticket: issue.Identifier, Queue: c.name, LogPath: record.LogPath,
 		ExitCode: result.ExitCode, Note: note, Err: moveErr}, false, true
@@ -868,13 +1051,55 @@ func (r *Reconciler) freeLanes() []int {
 }
 
 // register occupies a lane for a ticket, refusing tickets already in a lane:
-// a just-claimed run's assignment may not be visible on the board yet.
+// a just-claimed run's assignment may not be visible on the board yet. It
+// refuses an occupied lane number too. fill picks its lanes from a freeLanes
+// snapshot and registers them one at a time, so a force-start landing in that
+// window can take a lane the snapshot still calls free; two live runs sharing
+// a lane number would share the LERP_LANE a project's provision isolates on.
+// The racing candidate is simply skipped — the next pass sees the lane gone
+// and picks another.
 func (r *Reconciler) register(lane int, ticketID string) (*laneRun, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, lr := range r.active {
+		if lr.ticketID == ticketID || lr.lane == lane {
+			return nil, false
+		}
+	}
+	lr := &laneRun{lane: lane, ticketID: ticketID}
+	r.active = append(r.active, lr)
+	return lr, true
+}
+
+// registerForce occupies a lane for a forced run, choosing the number under
+// the same lock that checks it: the lowest free lane in 1..N, or one above
+// the highest occupied lane when every configured one is busy. Choosing
+// inside the hold is the point — two force-starts a frame apart must not pick
+// the same number. Like register, it refuses a ticket already in a lane.
+//
+// reserved is recordedLanes' answer: lanes held by live runs this process has
+// not adopted yet, which are as occupied as the ones in r.active.
+func (r *Reconciler) registerForce(ticketID string, reserved map[int]bool) (*laneRun, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	used := make(map[int]bool, len(r.active)+len(reserved))
+	highest := 0
+	for lane := range reserved {
+		used[lane] = true
+		highest = max(highest, lane)
+	}
+	for _, lr := range r.active {
 		if lr.ticketID == ticketID {
 			return nil, false
+		}
+		used[lr.lane] = true
+		highest = max(highest, lr.lane)
+	}
+	lane := highest + 1
+	for n := 1; n <= r.o.Lanes; n++ {
+		if !used[n] {
+			lane = n
+			break
 		}
 	}
 	lr := &laneRun{lane: lane, ticketID: ticketID}

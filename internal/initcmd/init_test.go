@@ -257,6 +257,24 @@ func TestInitDeclinedReviewDropsThePassNotAQueue(t *testing.T) {
 	if strings.Contains(c.Queues["implement"].Prompt, "three rounds") {
 		t.Error("implement prompt still reviews its own work after the pass was declined")
 	}
+	// The exit contract is not part of the review pass: a run that never
+	// reviews still owes the board one of the two endings. Its prose is all
+	// verdict-comment and draft-state vocabulary, so it is the paragraph most
+	// likely to be tidied into the review section by mistake.
+	for _, ending := range []string{"ends one of exactly two ways", "marked ready for review", "looking finished when it is not"} {
+		if !strings.Contains(c.Queues["implement"].Prompt, ending) {
+			t.Errorf("declined-review implement prompt lost its exit contract: no %q", ending)
+		}
+	}
+	// The title convention is not part of the review pass either, and it is one
+	// of the paragraphs abutting a `#{{review}}` marker — the marker's
+	// neighbours are what a tidy-up folds into the section by accident.
+	// Matched against the prompt with its wrapping flattened, so rewrapping the
+	// sentence is not a failure and dropping the colon is.
+	flat := strings.Join(strings.Fields(c.Queues["implement"].Prompt), " ")
+	if !strings.Contains(flat, "Title the pull request you open with {{ticket}}, a colon") {
+		t.Error("declined-review implement prompt lost the pull request title convention")
+	}
 	// The declined pass costs the board nothing: no status disappears with it.
 	want := []linear.StateSpec{
 		{Name: "Implementing", Type: "started"},

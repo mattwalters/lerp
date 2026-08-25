@@ -2,6 +2,11 @@
 
 [![ci](https://github.com/mattwalters/lerp/actions/workflows/ci.yml/badge.svg)](https://github.com/mattwalters/lerp/actions/workflows/ci.yml)
 
+![The lerp board: an inbox of tickets waiting on a human above, three lanes running coding agents below, and one lane's log tail streaming beside them](docs/demo.gif)
+
+<sub>Recorded from [`docs/demo.tape`](docs/demo.tape) against a fake board and
+a stub agent; `make demo` regenerates it.</sub>
+
 Lerp is a small, reliable CLI, written in Go, that orchestrates
 software work through Linear. You put tickets on a board; lerp runs
 coding agents to move them across it.
@@ -151,7 +156,12 @@ rest in a status no queue serves keeps it assigned to you on purpose:
 that is the pipeline waiting on a human, and the stock config waits
 twice, in "Plan Review" for you to read the plan and in "In Review"
 for you to merge the PR. Promote it with `p` in the TUI, or move it in
-Linear; either way the loop carries it on from there.
+Linear; either way the loop carries it on from there. Two things call
+the whole rule off: a ticket an agent or a human moved out of the
+queue's status during the run keeps that move — the hop it skipped is
+reported rather than forced — and a ticket assigned to somebody else by
+the time the run ends is theirs entirely, hop and claim both, since
+taking over a run mid-flight is exactly the way to say so.
 
 ## Configuration
 
@@ -279,21 +289,28 @@ LINEAR_API_KEY=... lerp
 `lerp` opens the TUI, and the TUI is the engine: the loop runs while it
 is open, and there is no daemon. Each pass reads the run evidence on
 disk, adopts live agents a previous lerp left behind, reaps dead ones —
-disposing the workspace and releasing the claim, when the board still
-looks exactly as the dead run left it — and starts eligible tickets
-as capacity frees. `-concurrency N` caps how many agents run at once
-(default 3). The TUI needs a terminal: in a pipe or a script, `lerp` prints
-usage and exits 2 rather than quietly starting to claim tickets.
+disposing the workspace, then settling the ticket exactly as the process
+that started the run would have: a run that recorded its own exit status
+takes its queue's hop, and one that never got that far has its claim
+released instead, when the board still looks exactly as the dead run
+left it — and starts eligible tickets as capacity frees. `-concurrency N`
+caps how many agents run at once (default 10; each lane is a whole
+workspace, so lower it in a repo whose `provision` command is heavy). The TUI needs a terminal: in a pipe or a
+script, `lerp` prints usage and exits 2 rather than quietly starting to
+claim tickets.
 
 The Work view is one list of what the machine is doing with the
 board, grouped by queue: every ticket sitting in each queue's status,
 in the loop's own pickup order, with the ones running now at the top
-of their own group. A running row carries its state — provisioning,
-running, or adopted — and the run's elapsed time (an adopted run shows
-its true age, not the moment it was adopted); a waiting row is shown
+of their own group. A running row carries its state — provisioning
+or running — and the run's elapsed time. A run inherited from a
+previous `lerp` reads as `running` like any other, and shows its true
+age rather than the moment it was adopted; a waiting row is shown
 faint with the reason it waits, blocked or claimed. The panel title
 and the status bar carry the capacity, `2/3 running`, which is what
-says whether anything can start. Selecting a running ticket shows a
+says whether anything can start — every live run counts against it,
+whichever lane it landed on, with `· +1 over` beside it while more runs
+are live than the limit allows. Selecting a running ticket shows a
 live tail of its log in the main pane, with scrollback that survives
 the run's exit; selecting a waiting one shows where it sits in pickup
 order and what gates it. The tail reads as agent activity rather than
@@ -301,8 +318,12 @@ as bytes: tool calls one line each, prose as prose, and thinking
 collapsed to a single line with its token count. A runner whose output
 lerp does not recognize is shown exactly as it was written, with no
 configuration, and `r` toggles the pane back to the runner's raw
-output — the log on disk is untouched either way. The list is
-read-only; to change what runs next, move tickets in Linear. The
+output — the log on disk is untouched either way. Selecting a queued
+ticket and pressing `S` starts it now, past the lane limit: force-start
+overrides the lane count and nothing else, so the claim protocol still
+runs and a blocked or already-claimed ticket is refused with the reason.
+Ordering is not a keystroke; to change what runs *next*, move tickets in
+Linear. The
 Inbox view lists what waits on a
 human: unclaimed tickets, and the operator's own claimed tickets,
 sitting in a status no queue serves. It is a table, one row per
@@ -317,14 +338,18 @@ a Todo column has not entered the pipeline, which is the ordinary
 state of most of a board, while one moved into a status that means
 work is under way by something the pipeline knows nothing about is the
 fingerprint of a ticket that left it. `?` spells out that mark and the
-other two the table draws. Rows are ordered by
-leverage by default: how many other listed tickets promoting this one
-would transitively unblock, then priority, then identifier — so the
-promote worth making is the top row. `s` cycles that to priority,
-status or project; the two grouping modes draw a header per group, and
-the status order is derived from the pipeline itself — where runs
-fail, then where they finish, then the statuses it never named the
-ticket into, and last the intake it never left. `P`
+other two the table draws. Rows are grouped by
+status by default, in an order derived from the pipeline itself —
+where runs fail, then where they finish, then the statuses it never
+named the ticket into, and last the intake it never left — so the run
+to retriage and the review to read are the top rows rather than two of
+sixteen. Within a group, rows fall through to
+leverage: how many other listed tickets promoting this one would
+transitively unblock, then priority, then identifier — so the promote
+worth making is the top row of its group. `s` cycles that to project,
+leverage or priority; the two grouping modes draw a header per
+boundary — none, when every row is in the same group — and the two flat
+ones order the whole list. `P`
 scopes the panel to one project and cycles back to all. Both are
 session-only: no saved views, no filter syntax, and neither changes
 which tickets are fetched. Selecting a row
@@ -335,11 +360,12 @@ and stays one: nothing composes, replies, or navigates on to another
 ticket, and `o` opens the ticket in Linear for everything else. Select
 one and press `p` to promote it: pick a target from the configured
 queue statuses or a pipeline exit, and lerp moves it there. That
-MoveIssue is the only write any view makes; everything else about a
-ticket still happens in Linear. Keys: `1`/`2` choose a panel and
+MoveIssue and force-start's claim are the only writes any view makes;
+everything else about a ticket still happens in Linear. Keys: `1`/`2` choose a panel and
 `tab` cycles. `↑`/`↓` pick a row, `s` sorts
 the Inbox and `P` scopes it to a project, `o` opens the selected ticket
-in Linear, `pgup`/`pgdn` scroll the log or the ticket, `end` resumes
+in Linear, `S` force-starts the selected queued ticket,
+`pgup`/`pgdn` scroll the log or the ticket, `end` resumes
 following, `r` shows the raw log, `q` quits (or backs out of the
 promote picker).
 
@@ -361,7 +387,7 @@ rewriting them into a different shape needs no code change.
 | Backlog / Todo | you | promote a ticket into Planning, or into Implementing if it is small |
 | Planning | agent | writes the plan into the ticket's description, under `## Plan` → Plan Review |
 | Plan Review | you | read the plan — it is the top of the ticket — edit it where you disagree, then press `p` to promote: Implementing to build it, Planning to re-plan, Needs Attention to park it |
-| Implementing | agent | reads its brief — unanswered PR review threads, else the newest comment asking for changes, else the ticket — commits, pushes, opens a draft PR with `gh` or adds to the ticket's existing one, then reviews and fixes its own work until a round is clean or three rounds are up; marks the PR ready → In Review |
+| Implementing | agent | reads its brief — unanswered PR review threads, else the newest comment asking for changes, else the ticket — commits, pushes, opens a draft PR with `gh` or adds to the ticket's existing one, then reviews and fixes its own work until a round is clean or three rounds are up; ends by leaving a verdict comment on the ticket and then marking the PR ready → In Review, or moves itself → Needs Attention |
 | In Review | you | merge the PR; Linear's GitHub integration moves it to Done |
 | Needs Attention | you | where failed runs and reviews that three rounds could not settle park; no queue watches it, so nothing retries it — promote back to Implementing to rework |
 
@@ -376,6 +402,21 @@ Implementing reviews and fixes its own work inside one run — findings go on
 the pull request, as comments on the lines they concern, and the round count
 is the agent's own context, which costs the board nothing. One short verdict
 comment on the ticket says how it went.
+
+That comment is also what makes a skipped review visible. The hop out of
+Implementing keys on the run's exit code and the ticket's status, never on a
+pull request — so an agent that implements, opens the draft and stops
+still lands its ticket in In Review looking finished. The prompt answers that
+by leading with the contract rather than trailing it: a run ends either with
+a verdict on the ticket and the PR marked ready, or in Needs Attention saying
+what stopped it and the PR never marked ready. Nothing enforces that
+mechanically, but the verdict says how the review went — rounds run and what
+the last one found — which is what keeps it from reading the same whether the
+review happened or not, and the board reads a ticket's comments into the main
+pane. A ticket resting in In Review with no verdict on it reads as unfinished
+at a glance, without opening GitHub to find out. The comment goes on before
+the PR is marked ready, since that flip is what frees a PR automation to move
+the ticket.
 
 What reaches Needs Attention is only what three rounds could not settle, and
 that is a loop rather than the end of the line: say what you want on the pull
@@ -410,8 +451,8 @@ run it:
 opens it, and the reconciling loop of the mental model — N lanes,
 adopting live runs, reaping dead ones, repairing drift — is real,
 running behavior while it is open (see [Running](#running)). Both
-panels are built, and the Inbox's promote is the TUI's one write
-action. `lerp once` is the single-shot alternative: one ticket through
+panels are built, and the TUI's two write actions are the Inbox's
+promote and the Work panel's force-start. `lerp once` is the single-shot alternative: one ticket through
 its queue, no loop, no evidence store. Beyond those, `lerp version`
 and `lerp init` complete the surface.
 
@@ -419,7 +460,8 @@ and `lerp init` complete the surface.
 the model, and [SCOPE.md](SCOPE.md) invariant 1 holds it. Locally lerp
 keeps exactly two things: `lerp.toml` (config, checked in) and an
 evidence store, `.lerp/` at the repo root — one record per run under
-`.lerp/runs` (pid, log file, ticket, workspace path), workspaces under
+`.lerp/runs` (pid, log file, ticket, workspace path, and the exit status
+the run records for itself as it ends), workspaces under
 `.lerp/workspaces`, an advisory lock at `.lerp/lock` that keeps it to
 one loop per clone, and the loop's diagnostics in `.lerp/loop.log`.
 Local state is evidence, never truth: losing all of it may cost
@@ -432,11 +474,16 @@ boundaries, as artifacts in Linear — the plan in the ticket, a PR link — so
 the worst case is a re-run stage, never a lost ticket
 ([SCOPE.md](SCOPE.md) invariants 3 and 4 carry the full argument).
 That includes killing lerp itself: agents outlive it, and the next
-`lerp` adopts the live ones and reaps the dead — releasing a dead
-run's claim so its ticket becomes eligible again. One caveat: a `lerp
-once` killed mid-run has no evidence for a later loop to reap, so it
-leaves the ticket assigned — unassign it in Linear yourself to make it
-eligible again.
+`lerp` adopts the live ones and reaps the dead. An adopted run that
+reaches its own last line records its exit status beside its log, so
+reaping it applies the queue's move rule — restarting lerp across a
+run's finish costs nothing, rather than a whole re-run stage. A run
+killed before it got that far records nothing, and reaping it releases
+the claim so its ticket becomes eligible again; a failed run whose queue
+has no `on_failure` route keeps its claim and waits on you, as it does
+when lerp watched it fail. One caveat: a `lerp once` killed mid-run has
+no evidence for a later loop to reap, so it leaves the ticket assigned —
+unassign it in Linear yourself to make it eligible again.
 
 **Why isn't my ticket being picked up?** Check the three eligibility
 conditions from step 3 of [Getting started](#getting-started): a
