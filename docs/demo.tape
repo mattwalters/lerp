@@ -9,6 +9,9 @@
 # The stub agent replays a ~15s log, which sets the rhythm: three lanes fill
 # at once, run together, and turn over roughly every fifteen seconds.
 
+# `make demo` overrides this with `vhs -o`, rendering into the scratch dir and
+# moving the result here only once it is under the size cap. Running vhs on
+# this file by hand writes the committed asset straight out, uncapped.
 Output docs/demo.gif
 
 Set Shell "bash"

@@ -78,7 +78,7 @@ demo: ## Re-record docs/demo.gif from docs/demo.tape (needs vhs)
 	vhs -o $(DEMO_RENDER) $(DEMO_TAPE)
 	@size=$$(wc -c < $(DEMO_RENDER) | tr -d ' '); \
 	  test "$$size" -le $(DEMO_MAX_BYTES) || { \
-	    printf 'demo: %s is %s bytes, over the %s cap — shorten the tape or drop the framerate\n' \
-	      '$(DEMO_RENDER)' "$$size" '$(DEMO_MAX_BYTES)'; exit 1; }; \
-	  mv $(DEMO_RENDER) $(DEMO_GIF); \
+	    printf 'demo: %s came back %s bytes, over the %s cap — shorten the tape or drop the framerate (left at %s)\n' \
+	      '$(DEMO_GIF)' "$$size" '$(DEMO_MAX_BYTES)' '$(DEMO_RENDER)'; exit 1; }; \
+	  mv $(DEMO_RENDER) $(DEMO_GIF) && \
 	  printf 'rendered %s (%s bytes)\n' '$(DEMO_GIF)' "$$size"
