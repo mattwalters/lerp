@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/mattwalters/lerp/internal/config"
 	"github.com/mattwalters/lerp/internal/evidence"
@@ -30,6 +31,10 @@ import (
 // stdin held open runs until told otherwise. kill9 is the crash; finish is a
 // clean exit. Both wait for the process so its PID is released before the
 // test goes on — no timing, no flakes.
+//
+// It leads its own process group, exactly as a real run does (run.Execute
+// sets Setpgid), so a test may signal the group the way lerp's two kill sites
+// do rather than only the process.
 type fakeAgent struct {
 	t     *testing.T
 	cmd   *exec.Cmd
@@ -39,6 +44,7 @@ type fakeAgent struct {
 func startFakeAgent(t *testing.T) *fakeAgent {
 	t.Helper()
 	cmd := exec.Command("cat")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -78,6 +84,21 @@ func (a *fakeAgent) finish() {
 	}
 }
 
+// waitKilled reaps an agent somebody else killed — eject, rather than the
+// test — so its PID cannot be reused while the test goes on. An agent still
+// running is the failure it is written to catch, on the same 5-second
+// deadline every other wait in these tests uses.
+func (a *fakeAgent) waitKilled() {
+	a.t.Helper()
+	done := make(chan struct{})
+	go func() { _ = a.cmd.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		a.t.Fatal("the agent is still running")
+	}
+}
+
 // stop reaps the process at test end in whatever state the test left it.
 // os.Process.Kill — unlike a raw syscall.Kill — refuses to signal once the
 // process has been waited on, so a test that already reaped its agent can
@@ -91,16 +112,25 @@ func (a *fakeAgent) stop() {
 // still-live agent: a record created and then attached to the agent's PID.
 func orphanRecord(t *testing.T, h *harness, lane int, ticketID string, agent *fakeAgent) evidence.Record {
 	t.Helper()
-	record, err := h.evidence.Create(evidence.Record{
+	return orphanRun(t, h, evidence.Record{
 		Lane: lane, TicketID: ticketID, Queue: "todo", StartingStatus: "Todo",
-	})
+	}, agent)
+}
+
+// orphanRun is orphanRecord for a test that needs more on the record than
+// adoption itself reads — a session id, without which a run cannot be
+// ejected. It returns the record as Attach left it, PID and all.
+func orphanRun(t *testing.T, h *harness, record evidence.Record, agent *fakeAgent) evidence.Record {
+	t.Helper()
+	created, err := h.evidence.Create(record)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.evidence.Attach(record.RunID, agent.pid()); err != nil {
+	attached, err := h.evidence.Attach(created.RunID, agent.pid())
+	if err != nil {
 		t.Fatal(err)
 	}
-	return record
+	return attached
 }
 
 // Scenario 1 — kill -9 the agent mid-run. The next tick reaps the dead run:

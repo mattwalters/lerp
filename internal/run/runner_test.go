@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/mattwalters/lerp/internal/config"
+	"github.com/mattwalters/lerp/internal/evidence"
 )
 
 // Version 4, RFC 4122 variant: the shape --session-id will accept.
@@ -21,15 +22,15 @@ var uuidPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89a
 func TestSessionIDsAreDistinctUUIDs(t *testing.T) {
 	seen := map[string]bool{}
 	for range 100 {
-		id, err := newSessionID()
+		id, err := newUUID()
 		if err != nil {
 			t.Fatal(err)
 		}
 		if !uuidPattern.MatchString(id) {
-			t.Fatalf("newSessionID = %q, want a version 4 UUID", id)
+			t.Fatalf("newUUID = %q, want a version 4 UUID", id)
 		}
 		if seen[id] {
-			t.Fatalf("newSessionID repeated %q", id)
+			t.Fatalf("newUUID repeated %q", id)
 		}
 		seen[id] = true
 	}
@@ -413,4 +414,83 @@ func writeScript(t *testing.T, dir, name, body string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+// A caller that has to record the session before the agent starts — eject
+// can only resume a run whose id is on disk — supplies it on the invocation,
+// and Execute substitutes exactly that, minting nothing.
+func TestExecuteUsesTheCallersSessionID(t *testing.T) {
+	dir := t.TempDir()
+	script := writeScript(t, dir, "runner.sh", `printf 'session=%s\n' "$1"`)
+	logPath := filepath.Join(dir, "runner.log")
+
+	result, err := Execute(context.Background(), Invocation{
+		Runner:    config.Runner{Command: shellQuote(script) + " {{session}}"},
+		Queue:     config.Queue{Prompt: "prompt"},
+		Ticket:    "LERP-1",
+		Workdir:   dir,
+		LogPath:   logPath,
+		SessionID: "1e9a4a0e-0000-4000-8000-00000000abcd",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.SessionID != "1e9a4a0e-0000-4000-8000-00000000abcd" {
+		t.Errorf("SessionID = %q, want the caller's own", result.SessionID)
+	}
+	got, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "session=1e9a4a0e-0000-4000-8000-00000000abcd\n"; string(got) != want {
+		t.Errorf("log = %q, want %q", got, want)
+	}
+}
+
+// The rule about when a session exists at all lives in NewSessionID, so the
+// caller that records one before the run and Execute itself can never
+// disagree: a command that asks for {{session}} gets a UUID, one that does
+// not gets nothing to record.
+func TestNewSessionIDOnlyWhenTheCommandAsks(t *testing.T) {
+	id, err := NewSessionID(config.Runner{Command: "agent -p {{prompt}} --session-id {{session}}"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !uuidPattern.MatchString(id) {
+		t.Errorf("NewSessionID = %q, want a version 4 UUID", id)
+	}
+	id, err = NewSessionID(config.Runner{Command: "agent -p {{prompt}}"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != "" {
+		t.Errorf("NewSessionID = %q for a command with no {{session}}, want empty", id)
+	}
+}
+
+// The resume command is pasted into a shell by a human, so it is quoted the
+// way Execute quotes the command it ran — a workspace path with a space in it
+// resumes, and nothing a ticket carries can add a second command to it.
+func TestResumeCommandExpandsAndQuotes(t *testing.T) {
+	runner := config.Runner{Command: "agent {{session}}", Resume: "agent --resume {{session}} --ticket {{ticket}} --cwd {{workdir}}"}
+	record := evidence.Record{
+		SessionID: "1e9a4a0e-0000-4000-8000-00000000abcd",
+		Ticket:    "LERP-42; rm -rf /",
+		Workspace: "/tmp/lerp work/lane 1",
+	}
+	want := "agent --resume '1e9a4a0e-0000-4000-8000-00000000abcd' " +
+		"--ticket 'LERP-42; rm -rf /' --cwd '/tmp/lerp work/lane 1'"
+	if got := ResumeCommand(runner, record); got != want {
+		t.Errorf("ResumeCommand = %q, want %q", got, want)
+	}
+}
+
+// A runner with no resume template is what makes a run un-ejectable, and the
+// empty command is how that is reported.
+func TestResumeCommandIsEmptyWithoutATemplate(t *testing.T) {
+	got := ResumeCommand(config.Runner{Command: "agent {{session}}"},
+		evidence.Record{SessionID: "1e9a4a0e-0000-4000-8000-00000000abcd"})
+	if got != "" {
+		t.Errorf("ResumeCommand = %q for a runner with no resume, want empty", got)
+	}
 }

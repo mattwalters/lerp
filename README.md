@@ -201,10 +201,14 @@ dispose = "scripts/lerp-dispose"
 # lowest common denominator: takes a prompt and a working directory,
 # runs to exit, exit code means done or failed.
 [runners.claude]
-command = "claude -p"
+command = "claude -p {{prompt}} --session-id {{session}}"
 # Optional. Handed to you on eject so a headless run becomes your
-# interactive session.
-resume = "claude --resume"
+# interactive session. {{session}} is the id lerp generated for the
+# run — so a command without {{session}} cannot be ejected either,
+# however this line reads — and {{workdir}} is the workspace lerp
+# leaves standing, which Claude Code needs to be in to find the
+# session.
+resume = "cd {{workdir}} && claude --resume {{session}}"
 
 # A queue is a Linear status with instructions attached. Tickets
 # sitting in `status` are picked up, run through `runner` with
@@ -243,8 +247,11 @@ Notes:
   the workspace directory; lerp shell-quotes every value, so nothing in
   a ticket can alter the command you configured. If the runner accepts
   a caller-chosen session ID (for example, Claude Code's
-  `--session-id`), include `{{session}}` in its command. Lerp records
-  that generated ID with the run for a later eject/resume action.
+  `--session-id`), include `{{session}}` in its command. Lerp generates
+  that ID before the run starts and records it with the run, which is
+  what makes the run ejectable later — including by a `lerp` that did
+  not start it. `resume` may use `{{session}}`, `{{ticket}}` and
+  `{{workdir}}`, quoted the same way.
 - **Name the ticket in your prompt.** `{{ticket}}` is expanded inside
   the prompt as well as the command, and the identifier reaches the
   runner as `LERP_TICKET`. A prompt is shared by every ticket in its
@@ -301,10 +308,9 @@ claim tickets.
 
 Two panels share the screen, and lerp opens focused on the Inbox: the
 loop runs the board on its own, so what is worth the first look is
-what needs *you*. The list owns that screen — the Inbox's pane starts
-closed, so the table opens at full width — and `2` moves to the Work
-panel, whose pane starts open, so a running ticket's log is that one
-key away and no `enter` behind it.
+what needs *you*. The list owns that screen — both panels start with
+their pane closed, so each table opens at full width — and `2` moves
+to the Work panel, where `enter` opens the selected lane's log.
 
 The Work view is one list of what the machine is doing with the
 board, grouped by queue: every ticket sitting in each queue's status,
@@ -315,28 +321,44 @@ previous `lerp` reads as `running` like any other, and shows its true
 age rather than the moment it was adopted. Under it, once the run
 has a log, a second line reads how that run is going: how long since
 the log last said anything, and a sparkline of the agent's recent
-activity, so a run that has fallen quiet reads as a flat line. Those
-are numbers to read, not a timeout — lerp sets no threshold on them and
-never acts on one; ejecting a run that has stopped making progress
-stays the operator's call. A waiting row is shown faint with the reason
-it waits, blocked or claimed. The panel title
+activity, so a run that has fallen quiet reads as a flat line. The
+line takes the width the row is given: on a wide terminal's
+full-width list it draws back about a quarter of an hour, and beside
+an open main pane it shows the recent end of that same history. A
+cell is fifteen seconds wherever it is drawn, so a narrow row reaches
+less far back rather than reading more coarsely. Those are numbers to
+read, not a timeout — lerp sets no
+threshold on them and never acts on one; ejecting a run that has
+stopped making progress stays the operator's call. A waiting row is
+shown faint with the reason it waits, blocked or claimed. The panel title
 and the status bar carry the capacity, `2/3 running`, which is what
 says whether anything can start — every live run counts against it,
 whichever lane it landed on, with `· +1 over` beside it while more runs
-are live than the limit allows. Selecting a running ticket shows a
-live tail of its log in the main pane, with scrollback that survives
-the run's exit; selecting a waiting one shows where it sits in pickup
-order and what gates it. The tail reads as agent activity rather than
-as bytes: tool calls one line each, prose as prose, and thinking
-collapsed to a single line with its token count. A runner whose output
-lerp does not recognize is shown exactly as it was written, with no
-configuration, and `r` toggles the pane back to the runner's raw
-output — the log on disk is untouched either way. Selecting a queued
-ticket and pressing `S` starts it now, past the lane limit: force-start
-overrides the lane count and nothing else, so the claim protocol still
-runs and a blocked or already-claimed ticket is refused with the reason.
+are live than the limit allows. The list owns the screen until you ask
+for a run: `enter` on a running ticket opens a live tail of its log in
+the main pane, with scrollback that survives the run's exit, and `esc`
+gives the screen back; `enter` on a waiting one shows where it sits in
+pickup order and what gates it. The tail reads as agent activity
+rather than as bytes: tool calls one line each, prose as prose, and
+thinking collapsed to a single line with its token count. A runner
+whose output lerp does not recognize is shown exactly as it was
+written, with no configuration, and `r` toggles the pane back to the
+runner's raw output — the log on disk is untouched either way.
+Selecting a queued ticket and pressing `S` starts it now, past the
+lane limit: force-start overrides the lane count and nothing else, so
+the claim protocol still runs and a blocked or already-claimed ticket
+is refused with the reason.
 Ordering is not a keystroke; to change what runs *next*, move tickets in
-Linear. The
+Linear. `e`, eject, is the other key the list answers to: on a running
+row it stops that agent, frees the lane and hands back the runner's own
+`resume` command, so the headless run becomes your interactive session
+in the workspace lerp leaves standing. Nothing is written to Linear —
+the ticket keeps its claim and its status, because ejecting is taking
+the work over rather than abandoning it — and nothing is disposed, so
+the workspace, its git worktree included, is now yours to finish in and
+yours to remove. The command is shown until you dismiss it and also
+lands in `.lerp/loop.log`. A runner with no `resume` in its config
+cannot be ejected, so the key is not offered on its runs. The
 Inbox view lists what waits on a
 human: unclaimed tickets, and the operator's own claimed tickets,
 sitting in a status no queue serves. It is a table, one row per
@@ -384,15 +406,16 @@ queue statuses or a pipeline exit, and lerp moves it there. That
 MoveIssue and force-start's claim are the only writes any view makes;
 everything else about a ticket still happens in Linear. Keys: `1`/`2`
 choose a panel and `tab` cycles. `↑`/`↓` pick a row, `enter` opens the
-main pane on it and `esc` closes it again — each panel remembers its
-own answer, and the Inbox starts closed while Work starts open — `s`
-sorts the Inbox, `P` scopes it to a project and `/` searches it, `o`
-opens the selected ticket in Linear, `S` force-starts the selected
-queued ticket, `pgup`/`pgdn` scroll the log or the ticket, `end`
+main pane on it and `esc` closes it again — both panels start closed,
+and each remembers its own answer — `s` sorts the Inbox, `P` scopes it
+to a project and `/` searches it, `o` opens the selected ticket in
+Linear, `S` force-starts the selected queued ticket, `e` ejects the
+selected run, `pgup`/`pgdn` scroll the log or the ticket, `end`
 resumes following, `r` shows the raw log, `q` quits (or backs out of
-the promote picker). With a filter on, `esc` clears it before it
-closes the pane. While the search prompt is open it has the keyboard —
-a `p` or a `q` typed into it is text — and `ctrl+c` still quits.
+the promote picker or an eject). With a filter on, `esc` clears it
+before it closes the pane. While the search prompt is open it has the
+keyboard — a `p` or a `q` typed into it is text — and `ctrl+c` still
+quits.
 
 Quitting (`q` or `ctrl+c`) closes the screen, stops future passes, and
 waits briefly for a pass already in flight to settle. The agents are

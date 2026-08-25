@@ -8,15 +8,24 @@ import (
 )
 
 const (
-	// sparkCells is how many buckets a row's sparkline draws and sparkBucket
-	// how long each covers: two minutes of history, which is the span the
-	// question behind this — "has it been sitting there for four minutes" —
-	// is asked over, in cells narrow enough that a run falling quiet shows
-	// within a bucket or two. Eight of them, because the line shares a
-	// narrow panel with the numbers it illustrates and the numbers come
-	// first.
-	sparkCells  = 8
-	sparkBucket = 15 * time.Second
+	// sparkBucket is how long one bucket covers and sparkCells how many the
+	// ring holds: fifteen seconds each, in cells narrow enough that a run
+	// falling quiet shows within a bucket or two, and fifteen minutes of
+	// them — about what a wide terminal's full-width row has the columns
+	// for, and further back than the question ("has it been sitting there
+	// for four minutes") is ever asked over.
+	//
+	// A row draws the tail of the ring that fits the width it is given (see
+	// runLine), so the ring is one number for every layout rather than one
+	// per panel, and a row narrower than the ring reaches less far back
+	// rather than covering the same span more coarsely. sparkMinCells is
+	// where a line stops being worth its columns — a row with less room
+	// than that for history it has keeps its numbers and drops the line. A
+	// run too young to fill it still draws what it has, the way window's
+	// own short line does.
+	sparkBucket   = 15 * time.Second
+	sparkCells    = 60
+	sparkMinCells = 8
 )
 
 // sparkBars is the ramp, lowest first. Index 0 is an empty bucket, so a
@@ -112,10 +121,11 @@ func (p *pulse) roll(now time.Time) {
 }
 
 // window is the counts of the buckets that have existed, oldest first, which
-// is the order a sparkline draws. It is short while a run is young: a line
-// that has not had time to fall is not a line that has fallen, and a run
-// picked up ten seconds ago must not read like one that stopped two minutes
-// ago.
+// is the order a sparkline draws. It is the whole history the ring holds; a
+// row too narrow for all of it draws the tail, which is the recent end. It is
+// short while a run is young: a line that has not had time to fall is not a
+// line that has fallen, and a run picked up ten seconds ago must not read
+// like one that has been quiet since the ring began.
 func (p *pulse) window() []int {
 	if p.heard.IsZero() {
 		// No log behind the ring: it may not exist yet, or it may have been
@@ -140,6 +150,10 @@ func (p *pulse) window() []int {
 //
 // An empty bucket is always the floor bar and any activity at all clears it,
 // so one event is visibly not none however busy the rest of the window is.
+// A long line makes that the ordinary reading rather than the rare one: a
+// burst at the start of a run holds the scale for as long as it stays in the
+// window, and steady work under it sits on the bar above the floor. Alive
+// rather than how alive is what the row is for, with heard beside it.
 func sparkline(counts []int) string {
 	hi := 0
 	for _, c := range counts {

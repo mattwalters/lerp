@@ -36,6 +36,17 @@ type Promoter interface {
 	Promote(ctx context.Context, ticketID, status string) error
 }
 
+// Ejector is the escape hatch (SCOPE, "The interface"): stop a lane's agent
+// and hand back the runner's own resume command, so the headless run becomes
+// the operator's interactive session. It is Reconciler.Eject in production.
+// CanEject answers for a queue rather than a run, because the panel has to
+// know before the key is pressed whether to offer it, and with what reason
+// when it cannot.
+type Ejector interface {
+	Eject(ctx context.Context, ticketID string) (loop.Ejection, error)
+	CanEject(queue string) (bool, string)
+}
+
 // Starter is the TUI's other write action: running one selected queued
 // ticket now, past the lane limit. It is Reconciler.ForceStart in
 // production, and it overrides exactly one thing — the lane count. Every
@@ -58,6 +69,7 @@ type Reader interface {
 type Options struct {
 	Ticker   Ticker
 	Promoter Promoter
+	Ejector  Ejector
 	Starter  Starter
 	Reader   Reader
 	Statuses []string      // promote targets: configured queue statuses, plus the pipeline's exits
@@ -76,6 +88,8 @@ func (o Options) Validate() error {
 		return fmt.Errorf("tui: ticker is required")
 	case o.Promoter == nil:
 		return fmt.Errorf("tui: promoter is required")
+	case o.Ejector == nil:
+		return fmt.Errorf("tui: ejector is required")
 	case o.Starter == nil:
 		return fmt.Errorf("tui: starter is required")
 	case o.Reader == nil:
@@ -214,6 +228,13 @@ type (
 		ticket string
 		status string
 		err    error
+	}
+	// ejectedMsg reports the outcome of an eject: the agent is dead and the
+	// lane free, or it is untouched and err says why.
+	ejectedMsg struct {
+		ticket   string
+		ejection loop.Ejection
+		err      error
 	}
 	// forcedMsg reports the outcome of a force-start: the claim and the
 	// provision it kicks off run off the render loop, like every other
@@ -366,11 +387,16 @@ type model struct {
 
 	// detailOpen is whether the main pane is open, per panel — a panel
 	// doubles as its index, the way geometry's wants and floors are indexed.
-	// The list owns the screen until the operator asks for the detail, and
-	// each panel remembers the answer: the inbox's detail is something you
-	// open once you have decided to read a ticket, a running ticket's live
-	// log is the point of watching it. A display default, not a rule about
-	// process, and session-only like sort and the project filter.
+	// The list owns the screen until the operator asks for the detail, in
+	// both panels alike: a log is something you open to read a particular
+	// run, the way a ticket's body is something you open once you have
+	// decided to read that ticket. Work kept the pane open while the row
+	// said nothing about its run; the row answers that itself now — how
+	// long since the log grew, and the shape of the activity behind it —
+	// so the pane is no longer the only way to see a run is alive.
+	//
+	// Each panel still remembers its own answer, session-only like sort and
+	// the project filter. A display default, not a rule about process.
 	detailOpen [2]bool
 
 	// promoting is the promote picker's open/closed state; promoteSel is its
@@ -378,6 +404,21 @@ type model struct {
 	// item, closed by confirming, cancelling, or the list going empty.
 	promoting  bool
 	promoteSel int
+
+	// ejecting is the eject confirm overlay's open/closed state, and ejectRow
+	// the row it is about — captured when the key was pressed, not re-read
+	// when enter lands. A pass between the two moves the cursor (the row's
+	// own ticket may leave the panel entirely), and killing whatever agent
+	// the cursor ended up on is not what the operator confirmed.
+	//
+	// ejection is the result panel that replaces the confirm, nil when none
+	// is up. That panel is sticky — dismissed by esc, never by the next
+	// pass — because the resume command it holds is the one string the
+	// operator has to copy, and a status-bar note would be cleared out from
+	// under them.
+	ejecting bool
+	ejectRow workRow
+	ejection *loop.Ejection
 
 	vp     viewport.Model
 	tail   tail
@@ -445,7 +486,7 @@ func newModel(ctx context.Context, o Options) model {
 		vp: viewport.New(0, 0), follow: true, keys: newKeymap(), help: h,
 		sortMode:    defaultSort,
 		searchInput: newSearchInput(),
-		detailOpen:  [2]bool{panelAttention: false, panelWork: true},
+		detailOpen:  [2]bool{panelAttention: false, panelWork: false},
 		inFlight:    true, // Init starts the first pass immediately
 		passes:      &sync.WaitGroup{}}
 	for n := 1; n <= o.Lanes; n++ {
@@ -492,13 +533,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.ready = true
-		// A window that shrank below the pane's floor closes the two things
-		// that took it modally. detailOpen is the operator's own preference
-		// and survives — esc is on the too-small screen — but a picker left
-		// live behind that screen would still take the enter that writes to
-		// Linear, and the overlay would still eat the keyboard.
+		// A window that shrank below the pane's floor closes what took it
+		// modally. detailOpen is the operator's own preference and survives
+		// — esc is on the too-small screen — but a picker left live behind
+		// that screen would still take the enter that writes to Linear, an
+		// eject confirm the enter that kills an agent, and the overlay would
+		// still eat the keyboard. An eject that already happened is not
+		// cancellable and its panel is the only copy of the resume command,
+		// so it waits for the window to come back rather than being thrown
+		// away here.
 		if !m.roomForMain() {
-			m.promoting, m.helpOn = false, false
+			m.promoting, m.helpOn, m.ejecting = false, false, false
 		}
 		m.layout()
 		m.refreshMain()
@@ -542,6 +587,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case detailMsg:
 		m.applyDetail(msg)
 		return m, nil
+	case ejectedMsg:
+		if msg.err != nil {
+			m.lastErr = clean(fmt.Sprintf("eject %s: %v", msg.ticket, msg.err))
+		} else {
+			// No note here: the loop's own EventEjected leaves one as the
+			// lane frees, and the panel below says far more than a note can.
+			ej := msg.ejection
+			m.ejection = &ej
+			m.layout()
+		}
+		return m, nil
 	case promotedMsg:
 		if msg.err != nil {
 			m.lastErr = clean(fmt.Sprintf("promote %s to %s: %v", msg.ticket, msg.status, msg.err))
@@ -570,6 +626,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.promoting {
 		return m.handlePromoteKey(msg)
+	}
+	if m.ejecting || m.ejection != nil {
+		return m.handleEjectKey(msg)
 	}
 	if m.searching {
 		return m.handleSearchKey(msg)
@@ -628,6 +687,8 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.promoting = true
 			m.promoteSel = 0
 		}
+	case key.Matches(msg, m.keys.Eject):
+		m.startEject()
 	case key.Matches(msg, m.keys.ForceStart):
 		// No gate here beyond having a row: every refusal is the
 		// reconciler's, decided against the board rather than against a
@@ -685,6 +746,12 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.showingLog() {
 			m.follow = true
 		}
+	// The raw toggle acts on the log in the pane, so it is inert wherever
+	// that log is not on screen: the pane shut, the ? overlay covering it,
+	// or the inbox's own detail in it. Anywhere else the flip would change
+	// the decoding of a log nobody is reading, and the operator would meet
+	// it as a surprise the next time they opened the pane.
+	case !m.logOnScreen() && key.Matches(msg, m.keys.Raw):
 	case key.Matches(msg, m.keys.Raw):
 		m.rawLog = !m.rawLog
 		m.refreshLog()
@@ -803,6 +870,93 @@ func (m model) doPromote(ticketID, ticket, status string) tea.Cmd {
 		err := m.o.Promoter.Promote(m.ctx, ticketID, status)
 		return promotedMsg{ticket: ticket, status: status, err: err}
 	}
+}
+
+// handleEjectKey drives both halves of eject: the confirm overlay, where
+// enter stops the agent and esc backs out having touched nothing, and the
+// result panel that follows, which esc dismisses. Both are modal, like the
+// promote picker: the second one holds the resume command, and a keystroke
+// meant for the board must not throw it away.
+func (m model) handleEjectKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc", "q":
+		m.ejecting = false
+		m.ejection = nil
+	case "enter":
+		if m.ejecting {
+			m.ejecting = false
+			cmd = m.doEject(m.ejectRow.ticketID, m.ejectRow.ticket)
+		}
+	}
+	// Leaving either overlay hands the main pane back to a lens of a
+	// different height; re-fit before the next frame draws into the old one.
+	m.layout()
+	return m, cmd
+}
+
+// doEject stops the agent off the render loop, like every other call into the
+// loop. It writes nothing to Linear: the ticket keeps its claim and its
+// status, because ejecting is taking the work over rather than dropping it.
+func (m model) doEject(ticketID, ticket string) tea.Cmd {
+	return func() tea.Msg {
+		ejection, err := m.o.Ejector.Eject(m.ctx, ticketID)
+		return ejectedMsg{ticket: ticket, ejection: ejection, err: err}
+	}
+}
+
+// startEject opens the confirm for the selected row, capturing it, or says
+// why it cannot. A queue whose runner has no resume command is the one
+// refusal worth a word: the row looks exactly like an ejectable one, and the
+// key line's silence about "e" is easy to miss. The others — a ticket that
+// is not running, a lane still provisioning — are plain on the row itself.
+func (m *model) startEject() {
+	if m.focus != panelWork || !m.roomForMain() {
+		return
+	}
+	r := m.selectedWork()
+	if r == nil || r.lane == 0 || r.state == laneProvisioning {
+		return
+	}
+	if can, why := m.o.Ejector.CanEject(r.queue); !can {
+		m.note("cannot eject "+r.ticket+": "+clean(why), true)
+		return
+	}
+	m.ejectRow, m.ejecting = *r, true
+}
+
+// canEjectSelected reports whether the work panel's selected row is a run
+// eject could take over: a live agent, in a queue whose runner has a resume
+// command. A provisioning lane has no agent yet and a waiting ticket has no
+// run at all, so neither offers the key.
+func (m *model) canEjectSelected() bool {
+	// The confirm is drawn in the main pane, so a window with no room for
+	// the pane has none for it: the same trade p makes, and the same reason
+	// — a key that replaced the panels with "window too small" would leave
+	// a live confirm behind it, still holding the enter that kills an agent.
+	if m.focus != panelWork || !m.roomForMain() {
+		return false
+	}
+	r := m.selectedWork()
+	if r == nil || r.lane == 0 || r.state == laneProvisioning {
+		return false
+	}
+	can, _ := m.o.Ejector.CanEject(r.queue)
+	return can
+}
+
+// ejectRowIsRunning reports whether the row the confirm captured is still a
+// running row. A run that ended while the overlay was open has nothing left
+// to eject.
+func (m *model) ejectRowIsRunning() bool {
+	for _, r := range m.workRows() {
+		if r.ticketID == m.ejectRow.ticketID {
+			return r.lane > 0
+		}
+	}
+	return false
 }
 
 // doForceStart runs the second of the TUI's two writes off the render loop,
@@ -1016,6 +1170,13 @@ func (m *model) apply(ev loop.Event) {
 		m.note(note, warn)
 		m.settle(ev)
 		changed = panelWork
+	case loop.EventEjected:
+		// Not a warning: the operator asked for this, and the run ending is
+		// the point rather than a surprise. The resume command is on the
+		// result panel, which is where they are looking.
+		m.note(ejectedNote(ev), false)
+		m.settle(ev)
+		changed = panelWork
 	case loop.EventReaped:
 		m.note(reapedNote(ev), true)
 		m.settle(ev)
@@ -1071,6 +1232,12 @@ func (m *model) apply(ev loop.Event) {
 	}
 	m.reorder()
 	m.retargetWork()
+	// A run that ended while the confirm was open leaves nothing to kill, so
+	// the overlay closes rather than sending enter after a dead agent — the
+	// same care the promote picker takes when its list empties.
+	if m.ejecting && !m.ejectRowIsRunning() {
+		m.ejecting = false
+	}
 	m.layout()
 	m.retarget()
 	// Only the lens this event feeds is re-rendered; a live log also
@@ -1246,13 +1413,26 @@ func (m *model) showingLog() bool {
 	return !m.helpOn && m.focus == panelWork && m.selectedLogPath() != ""
 }
 
+// logOnScreen is showingLog with the pane's own state folded in: is a log
+// actually in front of the operator? showingLog answers what the selected
+// row would show, which is a different question — the pane may be shut, or
+// the overlay may have taken it — and everything that acts on the log the
+// operator can see asks this instead.
+func (m *model) logOnScreen() bool {
+	return m.mainOpen() && m.showingLog()
+}
+
 // mainOpen is the single question everything else asks: is the main pane on
-// screen? The focused panel's own state, forced open by the promote picker
-// and the ? overlay — both live in that pane, so they take the width while
-// they are up and hand it back when they close. That keeps p working from a
-// closed inbox, the default, without a second rendering path.
+// screen? The focused panel's own state, forced open by the promote picker,
+// the ? overlay and eject's two panels — every one of them is drawn in that
+// pane, so they take the width while they are up and hand it back when they
+// close. That keeps p and e working from a closed panel — which both panels
+// now are until the operator opens one — without a second rendering path.
+// Miss one here and the key still takes the keyboard while nothing it draws
+// reaches the screen.
 func (m *model) mainOpen() bool {
-	return m.promoting || m.helpOn || m.detailOpen[m.focus]
+	return m.promoting || m.helpOn || m.ejecting || m.ejection != nil ||
+		m.detailOpen[m.focus]
 }
 
 // roomForMain reports whether this window can hold the main pane at all —
@@ -1304,7 +1484,7 @@ func (m *model) detail(width int) string {
 // wrote. Nothing but the rendering differs between the two; the file on disk
 // and the scrollback are the same either way.
 func (m *model) refreshLog() {
-	if !m.mainOpen() || !m.showingLog() {
+	if !m.logOnScreen() {
 		return
 	}
 	if m.rawLog {
@@ -1674,8 +1854,8 @@ func (m *model) geometry() geometry {
 		// Stacked, the body is split rather than fitted: half the screen is
 		// the board, half is whatever the selected row opens. Fitting the
 		// main pane to its content here would put focus straight back into
-		// the arithmetic — the log lens asks for the whole body and opens on
-		// focusing work — and both panels would jump on the keystroke. What
+		// the arithmetic — the log lens asks for the whole body — and both
+		// panels would jump on the keystroke. What
 		// the lens holds scrolls; a panel that shrank under the operator
 		// does not.
 		g.mainH = fitH(g.bodyH/2, mainFloor, g.bodyH-2*panelFloor)
@@ -1754,9 +1934,10 @@ func (m model) View() string {
 	if m.width < minWidth || m.height < m.minHeight(m.mainOpen()) {
 		// When the pane is the whole of what does not fit, name the key that
 		// gives the window back: this frame has no status bar to carry the
-		// hint. Two routes reach it — moving focus to a panel whose pane is
-		// open, and shrinking a window under one — because neither a panel
-		// key nor a resize edits detailOpen.
+		// hint, and the pane is the operator's own state. Neither a panel
+		// key nor a resize edits detailOpen, so both routes here — moving
+		// focus to a panel whose pane is open, and shrinking a window under
+		// one — leave it open, and esc is the way out.
 		if m.width >= minWidth && m.height >= m.minHeight(false) {
 			// esc resolves nearest-first, so a live filter is what the first
 			// one takes. Say so rather than promise a pane it will not
@@ -1901,20 +2082,36 @@ func (m *model) panelKeys(p panel) []key.Binding {
 		}
 	}
 	return m.keys.panelHelp(p, rowKeys{
-		hasLog:     m.selectedLogPath() != "",
+		// The raw toggle acts on the log in the pane, so the line offers it
+		// where that log is on screen — the panel line advertises what this
+		// frame answers to, the way it drops p where the picker has no room
+		// to open. Under the ? overlay it is the one moment the pane is
+		// certainly not showing a log, and the key is inert to match.
+		hasLog:     m.logOnScreen(),
 		hasURL:     m.selectedURL() != "",
 		filtered:   m.search != "",
 		projects:   m.hasProjects(),
 		canPromote: len(m.o.Statuses) > 0 && m.roomForMain(),
+		canEject:   m.canEjectSelected(),
 	})
 }
 
 // keyHints reports whether the focused panel is carrying a key line at all:
-// neither the promote picker nor the search prompt may have taken the
-// keyboard — handleKey routes everything to those, so the keys would be
-// dead — and the row under the cursor has to answer to something.
+// nothing modal may have taken the keyboard — handleKey routes everything to
+// the promote picker, to the search prompt and to eject's two panels, so
+// those keys would be dead — and the row under the cursor has to answer to
+// something. Both the height panelWant buys and the line panelBody draws ask
+// this, so the two can never disagree about whether the line is there.
 func (m *model) keyHints(p panel) bool {
-	return !m.promoting && !m.searching && len(m.panelKeys(p)) > 0
+	return !m.modal() && len(m.panelKeys(p)) > 0
+}
+
+// modal reports whether something has taken the keyboard off the panels. The
+// picker and eject's two panels own the main pane with it; the search prompt
+// is a row of the inbox panel instead, but it takes every keystroke the same
+// way, which is what the key line is answering.
+func (m *model) modal() bool {
+	return m.promoting || m.searching || m.ejecting || m.ejection != nil
 }
 
 // marker renders the selection arrow for one row of a focused panel.
@@ -2453,10 +2650,21 @@ func runLine(r workRow, width int) string {
 	// splitRow protects its right column against a narrow panel, and here
 	// the right column is the one that can be spared — a panel too narrow
 	// for both drops the line rather than truncate the digits.
+	//
+	// The line takes the width it is given: one cell per free column, up to
+	// the whole history the ring holds. On a wide terminal's full-width
+	// list a row draws back a quarter of an hour; the same row beside an
+	// open detail pane draws the recent end of that history. What a cell
+	// covers is the same either way — fifteen seconds, wherever the line is
+	// drawn — so a narrow row is a shorter reach, never a coarser one. The
+	// bar heights are the drawn window's own scale, as they always were:
+	// narrowing the row rescales them to what is left in view, which is the
+	// same trade the row already makes against the run beside it.
 	right := ""
-	spark := sparkline(r.rate)
-	if spark != "" && lipgloss.Width(left)+1+lipgloss.Width(spark) <= width {
-		right = styleFaint.Render(spark)
+	if room := width - lipgloss.Width(left) - 1; room >= min(sparkMinCells, len(r.rate)) {
+		if cells := min(room, len(r.rate)); cells > 0 {
+			right = styleFaint.Render(sparkline(r.rate[len(r.rate)-cells:]))
+		}
 	}
 	return splitRow(styleFaint.Render(left), right, width)
 }
@@ -2468,6 +2676,12 @@ func (m model) mainPanel(w, h int) string {
 		if it := m.selectedAttention(); it != nil {
 			return m.promotePicker(*it, w, h)
 		}
+	}
+	if m.ejection != nil {
+		return m.ejectResult(*m.ejection, w, h)
+	}
+	if m.ejecting {
+		return m.ejectConfirm(m.ejectRow, w, h)
 	}
 	if m.helpOn {
 		return panelBox(styleTitleFocus.Render("help"), true, w, h,
@@ -2518,6 +2732,56 @@ func (m model) promotePicker(it loop.AttentionItem, w, h int) string {
 	// The highlighted status must be on screen before enter can confirm it.
 	rows = windowRows(rows, cursor{at: 2 + m.promoteSel, span: 1}, h-2)
 	return panelBox(styleTitleFocus.Render("promote "+it.Ticket), true, w, h, rows, padMain)
+}
+
+// ejectConfirm is the overlay eject opens: what pressing enter kills, and
+// what it deliberately leaves standing. The workspace and the ticket are
+// spelled out because they are the two things an operator expects a "stop"
+// to take away, and eject takes neither.
+func (m model) ejectConfirm(r workRow, w, h int) string {
+	rows := []string{
+		styleTicket.Render(r.ticket) + " " + r.title,
+		"",
+		styleAttention.Render("stops") + "  the agent in lane " + fmt.Sprintf("%d", r.lane) +
+			", running " + elapsed(r.since),
+		styleFaint.Render("keeps") + "  the workspace, the claim and the status — the ticket does not move",
+		"",
+		styleFaint.Render("lerp hands back the runner's resume command; the workspace, worktree"),
+		styleFaint.Render("and all, is yours to finish in and yours to remove."),
+	}
+	rows = fitRows(rows, h-2)
+	return panelBox(styleTitleFocus.Render("eject "+r.ticket), true, w, h, rows, padMain)
+}
+
+// ejectResult is the panel the eject leaves behind: the workspace it did not
+// dispose, and the command that reopens the run as the operator's own
+// session. It stays up until esc, because nothing else on screen keeps it.
+func (m model) ejectResult(ej loop.Ejection, w, h int) string {
+	// Wrapped, not truncated, and the command first: panelBox cuts a row to
+	// the pane's width and fitRows drops the tail on a short pane, either of
+	// which would hand back half a command. A resume command and a workspace
+	// path are both routinely wider than a 45%-of-the-terminal pane.
+	width := padMain.inner(w)
+	rows := []string{styleFaint.Render("resume")}
+	rows = append(rows, styleTicket.Render(ansi.Wrap(ej.Resume, max(8, width), " ")))
+	rows = append(rows, "", styleFaint.Render("workspace"))
+	rows = append(rows, wrapText(ej.Workspace, width)...)
+	// The log line is not an aside: a command wrapped across rows pastes as
+	// several commands, so the operator who wants to copy rather than read
+	// needs somewhere it exists on one line.
+	rows = append(rows, "")
+	for _, line := range wrapText("the agent is stopped; the ticket is untouched in Linear. "+
+		"esc dismisses this panel; the whole command is on one line in .lerp/loop.log", width) {
+		rows = append(rows, styleFaint.Render(line))
+	}
+	// Split back into single lines: a styled block is one string, and
+	// panelBox draws — and elides — by row.
+	rows = strings.Split(strings.Join(rows, "\n"), "\n")
+	title := "ejected"
+	if ej.Ticket != "" {
+		title += " " + ej.Ticket
+	}
+	return panelBox(styleTitleFocus.Render(title), true, w, h, rows, padMain)
 }
 
 func (m model) mainTitle() string {
@@ -2720,6 +2984,16 @@ func (m *model) note(text string, warn bool) {
 	m.notes = append(m.notes, note{text: text, warn: warn})
 }
 
+// ejectedNote names the run the operator took over. An adopted run whose
+// record never carried the identifier still names its lane, which is the row
+// the operator was looking at.
+func ejectedNote(ev loop.Event) string {
+	if ev.Ticket != "" {
+		return ev.Ticket + ": ejected, the agent is stopped"
+	}
+	return fmt.Sprintf("lane %d ejected, the agent is stopped", ev.Lane)
+}
+
 // reapedNote names the ticket when the record knew it, because "reaped a
 // dead run" told the operator nothing about which run.
 func reapedNote(ev loop.Event) string {
@@ -2799,6 +3073,10 @@ func (m model) statusBar() string {
 	switch {
 	case m.promoting:
 		hint = "↑/↓ choose · enter promote · esc cancel"
+	case m.ejecting:
+		hint = "enter eject · esc cancel"
+	case m.ejection != nil:
+		hint = "esc dismiss"
 	case m.searching:
 		hint = "type to filter · enter accept · esc cancel"
 	}
@@ -2809,7 +3087,7 @@ func (m model) statusBar() string {
 	// "● n in the inbox" — the one number the needs-you panel exists for,
 	// spent on advertising a key. A modal's line is not a hint but its
 	// instructions, so it is not up for this.
-	if !m.promoting && !m.searching && m.width-lipgloss.Width(left)-lipgloss.Width(right) < 1 {
+	if !m.modal() && m.width-lipgloss.Width(left)-lipgloss.Width(right) < 1 {
 		right = styleFaint.Render(globals)
 	}
 

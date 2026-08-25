@@ -166,6 +166,7 @@ func tuiOptions(rec *loop.Reconciler, repo *config.RepoConfig, events <-chan loo
 		Ticker:   rec,
 		Promoter: rec,
 		Starter:  rec,
+		Ejector:  rec,
 		Reader:   rec,
 		Statuses: repo.PromoteTargets(),
 		Interval: interval,

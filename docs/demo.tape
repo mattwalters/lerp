@@ -42,35 +42,36 @@ Enter
 # tickets up.
 Sleep 5s
 
-# Down to a review that has landed, then `enter` to read it. The list owns the
-# screen until you ask for the ticket; the main pane opens beside the table
-# with the ticket's body, and `esc` gives the width back.
+# Both lists own the screen until one is asked for a ticket. Down to a review
+# that has landed, then `enter` to read it: the main pane opens beside the
+# table with the ticket's body, its real Linear status and why it is sitting
+# with a human, and `esc` gives the width back.
 Down
 Sleep 2500ms
-Down
-Sleep 3s
 Enter
 Sleep 4500ms
 Escape
 Sleep 2s
 
-# `2` focuses the work panel, whose pane is open by default — no `enter`
-# behind the log. Up to the first of the running lanes, then down through
-# them. Each one opens its own log tail, formatted from the agent's stream —
-# thinking, tool calls, the result. (Up clamps at the first row, so the count
-# only has to be at least the distance.)
+# `2` focuses the work panel, which owns its screen the same way. Up to the
+# first of the running lanes — Up clamps at the first row, so the count only
+# has to be at least the distance — and `enter` opens that lane's log tail in
+# the main pane, formatted from the agent's stream: thinking, tool calls, the
+# result. Down walks the other lanes through the pane the same way.
 Type "2"
 Sleep 3s
 Up 6
+Sleep 2500ms
+Enter
 Sleep 4s
 Down
 Sleep 4s
 Down
 Sleep 4s
 
-# The first three lanes turned over while the ticket above was open — their
-# tickets are in the inbox now, under "In Review". This is the second set
-# finishing, and the queue behind them is down to what it cannot run.
+# The first three runs exit while their logs are on screen, their tickets move
+# to "In Review", and the next three come off the queue into the lanes that
+# just freed.
 Sleep 5s
 
 # `1` back to the inbox, where the finished tickets have just landed under
