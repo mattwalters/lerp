@@ -50,6 +50,36 @@ func TestClaimAPIError(t *testing.T) {
 	}
 }
 
+// A ticket that leaves the queue while being claimed must not keep the claim:
+// an assigned ticket is never eligible, so it would be stranded wherever it
+// now sits until a human noticed.
+func TestClaimForQueueReleasesATicketMovedDuringTheClaim(t *testing.T) {
+	ctx := context.Background()
+	f := linear.NewFake()
+	f.SetViewer("me")
+	f.AddIssue("LERP", linear.Issue{ID: "iss-1", Identifier: "LERP-1", Status: "Todo"})
+
+	client := movedOnAssign{Client: f, move: func(issueID string) {
+		if err := f.MoveIssue(ctx, issueID, "Escalated"); err != nil {
+			t.Error(err)
+		}
+	}}
+	viewerID, won, err := claimForQueue(ctx, client, "iss-1", "Todo")
+	if err != nil || won {
+		t.Fatalf("claimForQueue = (%v, %v), want the claim given up", won, err)
+	}
+	if viewerID != "me" {
+		t.Errorf("viewerID = %q, want the operating user for later claim bookkeeping", viewerID)
+	}
+	got, _ := f.GetIssue(ctx, "iss-1")
+	if got.Status != "Escalated" {
+		t.Errorf("status = %q, want Escalated", got.Status)
+	}
+	if got.AssigneeID != "" {
+		t.Errorf("assignee = %q, want the claim released so the ticket is not stranded", got.AssigneeID)
+	}
+}
+
 func TestEligible(t *testing.T) {
 	statuses := map[string]bool{"Todo": true}
 	tests := []struct {
@@ -81,6 +111,21 @@ func (c losingClient) AssignIssue(ctx context.Context, issueID, userID string) e
 		return err
 	}
 	return c.Fake.AssignIssue(ctx, issueID, c.rivalID)
+}
+
+// movedOnAssign is a Client whose AssignIssue succeeds and then lets the test
+// move the ticket, standing in for a human or agent racing the claim.
+type movedOnAssign struct {
+	linear.Client
+	move func(issueID string)
+}
+
+func (c movedOnAssign) AssignIssue(ctx context.Context, issueID, userID string) error {
+	if err := c.Client.AssignIssue(ctx, issueID, userID); err != nil {
+		return err
+	}
+	c.move(issueID)
+	return nil
 }
 
 type failingClient struct {
