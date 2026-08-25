@@ -163,6 +163,7 @@ func openTUI(ctx context.Context, lanes int) error {
 		Ticker:   rec,
 		Promoter: rec,
 		Ejector:  rec,
+		Starter:  rec,
 		Reader:   rec,
 		Statuses: repo.PromoteTargets(),
 		Interval: loop.DefaultInterval,

@@ -93,6 +93,28 @@ func (e *recordingEjector) ejected() []string {
 	return append([]string(nil), e.calls...)
 }
 
+// recordingStarter stands in for the reconciler's force-start: it records
+// every ticket it was asked to run past the limit, and returns whatever err
+// is set to — the refusals themselves are the reconciler's, not the TUI's.
+type recordingStarter struct {
+	mu    sync.Mutex
+	calls []string
+	err   error
+}
+
+func (s *recordingStarter) ForceStart(_ context.Context, ticketID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls = append(s.calls, ticketID)
+	return s.err
+}
+
+func (s *recordingStarter) started() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.calls...)
+}
+
 // recordingReader stands in for the reconciler's one read beyond the pass.
 // It records every ticket it was asked for — so a test can prove that
 // walking the list does not fire a fetch per row — and hands back whatever
@@ -129,7 +151,7 @@ var defaultTestStatuses = []string{"Planning", "Implementing"}
 
 func newTestModel(t *testing.T, lanes int) (model, *countingTicker, chan loop.Event) {
 	t.Helper()
-	m, ticker, events := newTestModelWith(t, lanes, defaultTestStatuses, &recordingPromoter{}, &recordingEjector{}, &recordingReader{})
+	m, ticker, events := newTestModelWith(t, lanes, defaultTestStatuses, &recordingPromoter{}, &recordingEjector{}, &recordingStarter{}, &recordingReader{})
 	return m, ticker, events
 }
 
@@ -138,7 +160,7 @@ func newTestModel(t *testing.T, lanes int) (model, *countingTicker, chan loop.Ev
 func newPromoteTestModel(t *testing.T, lanes int, statuses []string) (model, *countingTicker, chan loop.Event, *recordingPromoter) {
 	t.Helper()
 	promoter := &recordingPromoter{}
-	m, ticker, events := newTestModelWith(t, lanes, statuses, promoter, &recordingEjector{}, &recordingReader{})
+	m, ticker, events := newTestModelWith(t, lanes, statuses, promoter, &recordingEjector{}, &recordingStarter{}, &recordingReader{})
 	return m, ticker, events, promoter
 }
 
@@ -146,7 +168,7 @@ func newPromoteTestModel(t *testing.T, lanes int, statuses []string) (model, *co
 // that drive eject and need to see what it sent.
 func newEjectTestModel(t *testing.T, lanes int, ejector *recordingEjector) (model, chan loop.Event) {
 	t.Helper()
-	m, _, events := newTestModelWith(t, lanes, defaultTestStatuses, &recordingPromoter{}, ejector, &recordingReader{})
+	m, _, events := newTestModelWith(t, lanes, defaultTestStatuses, &recordingPromoter{}, ejector, &recordingStarter{}, &recordingReader{})
 	return m, events
 }
 
@@ -155,11 +177,20 @@ func newEjectTestModel(t *testing.T, lanes int, ejector *recordingEjector) (mode
 func newReadingTestModel(t *testing.T) (model, chan loop.Event, *recordingReader) {
 	t.Helper()
 	reader := &recordingReader{}
-	m, _, events := newTestModelWith(t, 1, defaultTestStatuses, &recordingPromoter{}, &recordingEjector{}, reader)
+	m, _, events := newTestModelWith(t, 1, defaultTestStatuses, &recordingPromoter{}, &recordingEjector{}, &recordingStarter{}, reader)
 	return m, events, reader
 }
 
-func newTestModelWith(t *testing.T, lanes int, statuses []string, promoter *recordingPromoter, ejector *recordingEjector, reader *recordingReader) (model, *countingTicker, chan loop.Event) {
+// newStartingTestModel is newTestModel plus the recording starter, for tests
+// that press the force-start key and need to see what it sent.
+func newStartingTestModel(t *testing.T, lanes int) (model, chan loop.Event, *recordingStarter) {
+	t.Helper()
+	starter := &recordingStarter{}
+	m, _, events := newTestModelWith(t, lanes, defaultTestStatuses, &recordingPromoter{}, &recordingEjector{}, starter, &recordingReader{})
+	return m, events, starter
+}
+
+func newTestModelWith(t *testing.T, lanes int, statuses []string, promoter *recordingPromoter, ejector *recordingEjector, starter *recordingStarter, reader *recordingReader) (model, *countingTicker, chan loop.Event) {
 	t.Helper()
 	ticker := &countingTicker{}
 	events := make(chan loop.Event, 8)
@@ -167,6 +198,7 @@ func newTestModelWith(t *testing.T, lanes int, statuses []string, promoter *reco
 		Ticker:   ticker,
 		Promoter: promoter,
 		Ejector:  ejector,
+		Starter:  starter,
 		Reader:   reader,
 		Statuses: statuses,
 		Interval: time.Millisecond,
@@ -520,9 +552,10 @@ func TestTheLensFollowsTheRowNotThePanel(t *testing.T) {
 	}
 }
 
-// An adopted run may sit on a lane above N — outside the capacity fraction,
-// but never off the panel. Its queue is not on the board, so it keeps a
-// group of its own, and it selects like any other row.
+// An adopted run may sit on a lane above N. It still costs a lane of the
+// budget — nothing downstream can tell it from a forced run — and it is
+// never off the panel. Its queue is not on the board, so it keeps a group
+// of its own, and it selects like any other row.
 func TestAdoptedRunAboveCapacityIsOnThePanel(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
@@ -532,7 +565,10 @@ func TestAdoptedRunAboveCapacityIsOnThePanel(t *testing.T) {
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAdopted, RunID: "r9", Lane: 4,
 		TicketID: "abcdef1234567890", Queue: "review", LogPath: "/dev/null"}})
 	view := m.View()
-	for _, want := range []string{"abcdef12…", "review · off the board", "0/1 running"} {
+	// One live run against a budget of one is full, whatever lane number it
+	// landed on: freeLanes charges every active run against N, so "0/1"
+	// here would advertise a lane no pass can fill.
+	for _, want := range []string{"abcdef12…", "review · off the board", "1/1 running"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("adopted run above capacity is missing %q:\n%s", want, view)
 		}
@@ -1307,8 +1343,7 @@ func TestInboxTakesTheRoomAndFocusDoesNotMoveIt(t *testing.T) {
 	}
 
 	// Focus moves and the stack does not: work never grows past its share
-	// just because it is the panel being worked in. (The main pane still
-	// fits its own content, and focus changes which row that content is.)
+	// just because it is the panel being worked in.
 	m = update(t, m, keyMsg("2"))
 	if g2 := m.geometry(); g2.attnH != g.attnH || g2.workH != g.workH {
 		t.Fatalf("focus moved the stack: inbox %d→%d, work %d→%d",
@@ -1773,6 +1808,57 @@ func TestStackedLayoutKeepsBothPanelsReadable(t *testing.T) {
 	first := strings.TrimRight(ansi.Strip(attn[0]), " ")
 	if !strings.Contains(ansi.Strip(view), first) {
 		t.Fatalf("inbox lost its list to the log lens:\n%s", view)
+	}
+}
+
+// Wide, the main pane has its column to itself, so it fills the body rather
+// than floating at content height: a one-line ticket, a ticket longer than
+// the screen and a running row's log tail all draw the same box, ending on
+// the last line above the status bar. A pane that changed size with its
+// contents read as a glitch rather than as a rule.
+func TestWideMainPaneFillsTheBody(t *testing.T) {
+	m, _, _ := newTestModel(t, 3)
+	resized, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
+	m = resized.(model)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-1", Title: "short", Status: "Backlog", Reason: "waiting"},
+		{Ticket: "LERP-2", Title: "long", Status: "Backlog",
+			Reason: strings.Repeat("a reason that runs on and on and on. ", 60)},
+	}}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		TicketID: "t0", Ticket: "QUEUED-1", Queue: "implement", LogPath: "/dev/null"}})
+
+	m = update(t, m, keyMsg("1"))
+	if !m.geometry().wide {
+		t.Fatal("140 columns is not the wide layout")
+	}
+	// The short ticket is the case that used to leave dead space: its detail
+	// is a handful of lines in a 39-line body.
+	if lines := strings.Count(m.detail(padMain.inner(m.geometry().mainW)), "\n") + 1; lines > 10 {
+		t.Fatalf("the short ticket draws %d lines: it is not short enough to test with", lines)
+	}
+	for _, tc := range []struct {
+		name string
+		keys []string
+	}{
+		{"a short ticket", nil},
+		{"a long ticket", []string{"down"}},
+		{"a running row's log", []string{"2"}},
+		{"the help overlay", []string{"?"}},
+	} {
+		for _, k := range tc.keys {
+			m = update(t, m, keyMsg(k))
+		}
+		g := m.geometry()
+		if g.mainH != g.bodyH {
+			t.Fatalf("%s: the main pane is %d lines of a %d-line body",
+				tc.name, g.mainH, g.bodyH)
+		}
+		body := strings.Split(ansi.Strip(m.View()), "\n")[:g.bodyH]
+		if n := strings.Count(body[g.bodyH-1], "\u2570") + strings.Count(body[g.bodyH-1], "\u2517"); n != 2 {
+			t.Fatalf("%s: %d panels end on the body's last line, want the side column and the main pane:\n%s",
+				tc.name, n, m.View())
+		}
 	}
 }
 
@@ -2802,5 +2888,147 @@ func TestEjectSaysWhyARunnerCannotResume(t *testing.T) {
 	}
 	if !strings.Contains(m.View(), "no resume command") {
 		t.Fatalf("pressing e said nothing about why it will not eject:\n%s", m.View())
+	}
+}
+
+// Force-start is the work panel's one write: S on the selected queued
+// ticket sends that row's ticket ID and reports the start on the status bar.
+func TestForceStartKeySendsTheSelectedTicket(t *testing.T) {
+	m, _, starter := newStartingTestModel(t, 1)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
+			{ID: "t1", Identifier: "LERP-1", Title: "first", Assigned: true},
+			{ID: "t2", Identifier: "LERP-2", Title: "the one to force", Eligible: true},
+		}},
+	}}})
+	m = update(t, m, keyMsg("2"))
+	m = update(t, m, keyMsg("down"))
+	if r := m.selectedWork(); r == nil || r.ticketID != "t2" {
+		t.Fatalf("selected row = %+v, want the second ticket", r)
+	}
+
+	m, cmd := updateCmd(t, m, keyMsg("S"))
+	if cmd == nil {
+		t.Fatal("S on a queued row produced no command")
+	}
+	msg := cmd()
+	if got := starter.started(); len(got) != 1 || got[0] != "t2" {
+		t.Fatalf("force-started tickets = %v, want exactly the selected one", got)
+	}
+	m = update(t, m, msg)
+	if !strings.Contains(m.View(), "force-started LERP-2") {
+		t.Fatalf("status bar does not report the force-start:\n%s", m.View())
+	}
+}
+
+// Every refusal is the reconciler's — the TUI gates nothing — so a refusal
+// has to arrive somewhere the operator will read it.
+func TestForceStartRefusalLandsOnTheStatusBar(t *testing.T) {
+	m, _, starter := newStartingTestModel(t, 1)
+	starter.err = errors.New(`force-start LERP-2: blocked by LERP-1`)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
+			{ID: "t2", Identifier: "LERP-2", Title: "gated work", BlockedBy: []string{"LERP-1"}},
+		}},
+	}}})
+	m = update(t, m, keyMsg("2"))
+	m, cmd := updateCmd(t, m, keyMsg("S"))
+	if cmd == nil {
+		t.Fatal("S on a queued row produced no command")
+	}
+	m = update(t, m, cmd())
+	if !strings.Contains(m.View(), "blocked by LERP-1") {
+		t.Fatalf("status bar does not carry the refusal:\n%s", m.View())
+	}
+	if m.lastErr == "" {
+		t.Errorf("refusal did not land on lastErr: %+v", m.notes)
+	}
+}
+
+// The work panel's key, and only the work panel's: S with the inbox focused
+// is not a promote by another name.
+func TestForceStartKeyIsInertOnTheInbox(t *testing.T) {
+	m, _, starter := newStartingTestModel(t, 1)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-7", TicketID: "id-7", Title: "waiting", Status: "Plan Review"},
+	}}})
+	m = update(t, m, keyMsg("1"))
+	if _, cmd := updateCmd(t, m, keyMsg("S")); cmd != nil {
+		if msg := cmd(); msg != nil {
+			t.Fatalf("S on the inbox produced %T", msg)
+		}
+	}
+	if got := starter.started(); len(got) != 0 {
+		t.Fatalf("S on the inbox force-started %v, want nothing", got)
+	}
+}
+
+// A key nobody can discover may as well not exist: the binding renders from
+// the keymap, so the overlay documents it for free.
+func TestForceStartIsInTheHelpOverlay(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("?"))
+	view := m.View()
+	if !strings.Contains(view, "start it past the limit") {
+		t.Fatalf("the force-start key is missing from the help overlay:\n%s", view)
+	}
+}
+
+// Capacity is one label in two places, and it has to be able to say the
+// board is over the limit — the state force-start puts it in, and the state
+// an adopted run from a bigger lerp arrives in.
+func TestCapacityLabelReportsRunsAboveTheLimit(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		TicketID: "t1", Ticket: "LERP-1", Queue: "implement", LogPath: "/dev/null"}})
+	if got := m.capacityLabel(); got != "1/1 running" {
+		t.Fatalf("capacity label within the limit = %q", got)
+	}
+
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r2", Lane: 2,
+		TicketID: "t2", Ticket: "LERP-2", Queue: "implement", LogPath: "/dev/null"}})
+	if got := m.capacityLabel(); got != "1/1 running · +1 over" {
+		t.Fatalf("capacity label over the limit = %q, want the fraction plus the overage", got)
+	}
+	if !strings.Contains(m.View(), "1/1 running · +1 over") {
+		t.Fatalf("the screen does not say the board is over capacity:\n%s", m.View())
+	}
+
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventExited, RunID: "r2", Lane: 2,
+		TicketID: "t2", Ticket: "LERP-2", Queue: "implement", ExitCode: 0}})
+	if got := m.capacityLabel(); got != "1/1 running" {
+		t.Fatalf("capacity label after the forced run ended = %q, want the overage gone", got)
+	}
+}
+
+// The fraction is the loop's own arithmetic, not a count of lane numbers in
+// range. When a lane inside the limit frees while a forced run is still up
+// above it, freeLanes still returns nothing — so the label must still read
+// full. Counting only lanes 1..N here said "1/2 running", which is a lane
+// the operator would wait on and never get.
+func TestCapacityLabelStaysFullWhileAForcedRunHoldsTheBudget(t *testing.T) {
+	m, _, _ := newTestModel(t, 2)
+	for _, ev := range []loop.Event{
+		{Type: loop.EventStarted, RunID: "r1", Lane: 1, TicketID: "t1", Ticket: "LERP-1", Queue: "implement", LogPath: "/dev/null"},
+		{Type: loop.EventStarted, RunID: "r2", Lane: 2, TicketID: "t2", Ticket: "LERP-2", Queue: "implement", LogPath: "/dev/null"},
+		{Type: loop.EventStarted, RunID: "r3", Lane: 3, TicketID: "t3", Ticket: "LERP-3", Queue: "implement", LogPath: "/dev/null"},
+	} {
+		m = update(t, m, eventMsg{ev: ev})
+	}
+	if got := m.capacityLabel(); got != "2/2 running · +1 over" {
+		t.Fatalf("capacity label with a forced run past N = %q", got)
+	}
+
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventExited, RunID: "r1", Lane: 1,
+		TicketID: "t1", Ticket: "LERP-1", Queue: "implement", ExitCode: 0}})
+	if got := m.capacityLabel(); got != "2/2 running" {
+		t.Fatalf("capacity label after a lane inside the limit freed = %q, want it still full: "+
+			"two runs are live against a budget of two, so nothing can start", got)
+	}
+
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventExited, RunID: "r3", Lane: 3,
+		TicketID: "t3", Ticket: "LERP-3", Queue: "implement", ExitCode: 0}})
+	if got := m.capacityLabel(); got != "1/2 running" {
+		t.Fatalf("capacity label once the forced run ended = %q, want a lane free again", got)
 	}
 }
