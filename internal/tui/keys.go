@@ -26,7 +26,7 @@ type keymap struct {
 
 func newKeymap() keymap {
 	return keymap{
-		Attention: key.NewBinding(key.WithKeys("1"), key.WithHelp("1", "needs you")),
+		Attention: key.NewBinding(key.WithKeys("1"), key.WithHelp("1", "inbox")),
 		Work:      key.NewBinding(key.WithKeys("2"), key.WithHelp("2", "work")),
 		NextPanel: key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next panel")),
 		PrevPanel: key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "prev panel")),
@@ -37,7 +37,7 @@ func newKeymap() keymap {
 		Top:       key.NewBinding(key.WithKeys("home", "g"), key.WithHelp("home/g", "top")),
 		Bottom:    key.NewBinding(key.WithKeys("end", "G"), key.WithHelp("end/G", "follow")),
 		Promote:   key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "promote")),
-		Sort:      key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort needs you")),
+		Sort:      key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort inbox")),
 		Project:   key.NewBinding(key.WithKeys("P"), key.WithHelp("P", "filter by project")),
 		Open:      key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "open in Linear")),
 		Raw:       key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "raw log")),
@@ -62,4 +62,40 @@ func (k keymap) FullHelp() [][]key.Binding {
 			k.Up, k.Down, k.PageUp, k.PageDown, k.Top, k.Bottom},
 		{k.Promote, k.Sort, k.Project, k.Open, k.Raw, k.Help, k.Quit},
 	}
+}
+
+// panelHelp is the line a focused panel carries: the keys that act on the
+// row under its cursor. These used to live in the main pane under a
+// selected ticket, which made sort and project look like they did not exist
+// until the operator had already picked a row. Navigation and the two global
+// keys are left out — the status bar already carries "? help · q quit", and
+// a hint that gets truncated away is a hint that was not there.
+//
+// hasLog and hasURL say which of these keys the row under the cursor
+// actually answers to: r is inert on a ticket that has never run, and o on
+// a run whose ticket the pass no longer lists. An advertised key that does
+// nothing is worse than one left out, because pressing it is how the
+// operator finds out — and r would flip the raw toggle invisibly.
+func (k keymap) panelHelp(p panel, hasLog, hasURL bool) []key.Binding {
+	var b []key.Binding
+	switch p {
+	case panelAttention:
+		b = []key.Binding{k.Promote, short(k.Sort, "sort"), short(k.Project, "project")}
+	case panelWork:
+		if hasLog {
+			b = append(b, short(k.Raw, "raw"))
+		}
+	}
+	if hasURL {
+		b = append(b, short(k.Open, "open"))
+	}
+	return b
+}
+
+// short re-labels a binding for the panel line: the ? overlay has room for
+// "sort inbox", a forty-column panel does not, and on the inbox panel the
+// noun is already in the title. The keys come from the binding
+// itself, so the two lines can never disagree about what to press.
+func short(b key.Binding, desc string) key.Binding {
+	return key.NewBinding(key.WithKeys(b.Keys()...), key.WithHelp(b.Help().Key, desc))
 }

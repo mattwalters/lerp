@@ -259,7 +259,7 @@ func TestOnceChainsThroughTwoQueues(t *testing.T) {
 }
 
 // Finishing into a status no queue serves keeps the claim: that is what parks
-// the ticket on the operator in the needs-you view, and it is how an unserved
+// the ticket on the operator in the inbox view, and it is how an unserved
 // status works as a human gate.
 func TestOnceKeepsClaimWhenFinishingOutsideEveryQueue(t *testing.T) {
 	fake := linear.NewFake()

@@ -141,7 +141,7 @@ func TestListAssignedIssues(t *testing.T) {
 		if !strings.Contains(req.Query, `nin: ["completed", "canceled"]`) {
 			t.Errorf("query does not exclude finished states: %q", req.Query)
 		}
-		// The needs-you table has a project column, so this is one of the
+		// The inbox table has a project column, so this is one of the
 		// two queries that asks for one.
 		if !strings.Contains(req.Query, "project { name }") {
 			t.Errorf("query does not read the project: %q", req.Query)
@@ -257,7 +257,7 @@ func TestGetIssueNullIssue(t *testing.T) {
 	}
 }
 
-// The needs-you pane's read: the body the operator judges from, and the
+// The inbox pane's read: the body the operator judges from, and the
 // stage-boundary artifacts lerp itself wrote on the ticket.
 func TestGetIssueDetail(t *testing.T) {
 	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {

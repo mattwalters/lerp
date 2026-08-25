@@ -150,7 +150,7 @@ its existence.
 Two panels on one screen, one per question an operator actually has,
 beside a main pane that details whichever row is selected:
 
-1. **Needs-you** — what waits on a human: unclaimed tickets, and the
+1. **Inbox** — what waits on a human: unclaimed tickets, and the
    operator's own claimed tickets, sitting in a status no queue serves
    — reviews to read, questions agents have raised, failed runs to
    retriage. It reads as a table, one row per ticket, and the Linear
@@ -203,7 +203,7 @@ that wants a scheduler wants a different product.
 - Not a server, daemon, or web service. Nothing listens on a port.
 - Not a database. See invariant 1.
 - Not an agent framework. Runners are command templates, not SDKs.
-- Not a Linear client, with one narrow exception: needs-you lists
+- Not a Linear client, with one narrow exception: the inbox lists
   unassigned tickets in statuses no queue serves, promote moves a ticket
   the operator selected and settles its claim by the same rule a finished
   run uses, and the main pane reads that selected ticket's body and
