@@ -99,8 +99,17 @@ runner = "claude"
 on_success = "In Review"
 on_failure = "Needs Attention"
 prompt = """
-Implement {{ticket}}. Establish the brief first — the first of these that
-exists is the brief, and the rest are not:
+Implement {{ticket}}. This run ends one of exactly two ways, and it is not
+finished until it reaches one of them: a verdict comment on {{ticket}} and
+the pull request marked ready for review, or {{ticket}} moved to
+{{on_failure}} with a comment saying what stopped you, having never marked
+the pull request ready. Nothing checks this for you: running out of prompt
+with the pull request still a draft and {{ticket}} where it started leaves
+it resting in "{{on_success}}" looking finished when it is not. Everything
+below is how to get to one of those two endings.
+
+Establish the brief first — the first of these that exists is the brief, and
+the rest are not:
 
 1. Unresolved review threads on the pull request for {{ticket}} that no later
    commit has answered, a human's before an agent's. Address exactly what
@@ -146,14 +155,29 @@ rounds — whichever comes first. A round that finds nothing is a good round;
 do not invent work to justify one.
 
 If three rounds leave something high or medium standing, this stops being
-yours: leave the pull request a draft, comment on {{ticket}} with what is
-still wrong and what you tried, and move it to {{on_failure}}.
+yours: leave the pull request as it stands and do not mark it ready, comment
+on {{ticket}} with what is still wrong and what you tried, and move it to
+{{on_failure}}.
 
-When the work is ready for a human, mark the pull request ready for review
-(`gh pr ready`) and leave one short comment on {{ticket}}: what changed,
-anything you know is still weak, and the pull request's link. That comment is
-the whole of what Linear gets — the pull request is the artifact, so never
-paste diffs or transcripts into a ticket.
+When the work is ready for a human, leave one short comment on {{ticket}}
+first: what changed, anything you know is still weak, and the pull request's
+link.
+Say in it how the review went, too — how many rounds you ran and what the
+last one found. That is what makes it a verdict rather than a summary;
+without it the comment reads exactly the same whether you reviewed or not,
+and it is the only artifact Linear gets showing the review happened. The
+findings themselves live on the pull request.
+Only then mark the pull request ready for review (`gh pr ready`). That order
+matters: the ready-flip is what lets a pull-request automation on your Linear
+team move {{ticket}}, so the comment has to already be on it when that
+happens. That comment is the verdict comment, and it is the whole of what
+Linear gets — the pull request is the artifact, so never paste diffs or
+transcripts into a ticket.
+
+The board reads a ticket's comments into the main pane, so a ticket resting
+in "{{on_success}}" with no verdict on it reads as unfinished at a glance,
+without anyone opening the pull request to find out. Leaving one is not
+optional.
 
 If the brief turns out to be wrong or missing, move {{ticket}} to
 {{on_failure}} and say why in a comment rather than inventing your own.

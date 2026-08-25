@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -38,6 +39,10 @@ type Invocation struct {
 	Ticket  string // human identifier, e.g. LERP-42
 	Workdir string
 	LogPath string
+	// ExitPath, when set, is where the run records its own exit status, for a
+	// lerp that was not the agent's parent and so can never wait() for it.
+	// Empty means no wrapper at all and byte-for-byte the configured command.
+	ExitPath string
 
 	// Started, when set, is called once with the runner's PID as soon as the
 	// process exists, before it is waited on. It is how run evidence learns
@@ -59,6 +64,10 @@ type Invocation struct {
 //
 // A session ID is generated and returned only when the command uses
 // {{session}}.
+//
+// When inv.ExitPath is set, the command is wrapped in a shell that writes the
+// command's own exit status to that file and then exits with it, so a
+// successor process can learn how a run it did not start ended.
 //
 // The command runs in its own process group. Cancelling ctx kills that entire
 // group, so child processes do not outlive the runner.
@@ -82,6 +91,13 @@ func Execute(ctx context.Context, inv Invocation) (Result, error) {
 	// whole prompt when it substitutes it into the command.
 	prompt := inv.Queue.ExpandPrompt(inv.Ticket)
 	command := expand(inv.Runner.Command, prompt, inv.Ticket, inv.Workdir, sessionID)
+	if inv.ExitPath != "" {
+		var err error
+		command, err = withExitStatus(command, inv.ExitPath)
+		if err != nil {
+			return result, err
+		}
+	}
 	log, err := os.OpenFile(inv.LogPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	if err != nil {
 		return result, fmt.Errorf("opening runner log: %w", err)
@@ -117,6 +133,35 @@ func Execute(ctx context.Context, inv Invocation) (Result, error) {
 	}
 	result.ExitCode = exitErr.ExitCode()
 	return result, nil
+}
+
+// withExitStatus wraps the configured command in a shell that records the
+// command's own exit status. The path is made absolute first — the command
+// runs with cwd set to the workspace, while the path points into the clone's
+// .lerp/runs — and quoted like every other substitution.
+//
+// The command is handed to a nested `sh -c` as a single quoted word rather
+// than pasted in ahead of the epilogue, so no configured text can parse as one
+// construct with what follows it. Appending would not be safe: a template
+// ending in a comment would swallow the epilogue, and one ending in `&&` — a
+// plausible typo — would join it, leaving `s` unset and reporting a broken
+// command as a clean exit 0. Nesting also means a template that ends in `exec`
+// replaces only the inner shell, so the status is still written.
+//
+// `exit $s` matters as much as the file: without it Execute's own Wait() would
+// report the echo's status, changing the result of every live run.
+//
+// One consequence is worth naming. The recorded PID is now the outer shell —
+// the very process that writes the file — rather than the agent. Alive
+// therefore goes false only after the status is on disk, which is what lets a
+// reader trust an absent file to mean "this run never finished". Both kill
+// sites signal the process group, so the extra shell changes nothing there.
+func withExitStatus(command, exitPath string) (string, error) {
+	abs, err := filepath.Abs(exitPath)
+	if err != nil {
+		return "", fmt.Errorf("resolving runner exit path: %w", err)
+	}
+	return "sh -c " + shellQuote(command) + "\ns=$?\necho \"$s\" > " + shellQuote(abs) + "\nexit $s\n", nil
 }
 
 // expand replaces the supported command-template placeholders. Values are
