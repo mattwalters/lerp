@@ -2614,7 +2614,7 @@ func (m *model) attentionHeader(width int) string {
 
 // headerCell is one column name padded out to its column.
 func headerCell(label string, w int) string {
-	return styleFaint.Render(label) + strings.Repeat(" ", max(0, w-lipgloss.Width(label)))
+	return padTo(styleFaint.Render(label), w)
 }
 
 // The two columns that are the same width on every row: wide enough for the
@@ -2653,11 +2653,19 @@ const (
 // survive any width.
 //
 // query is the search the row highlights its matches from, "" for no search.
+//
+// The selected row takes the band across the panel's whole inner width —
+// past the title's own cut, which is why the band is laid on the assembled
+// line rather than built into any one cell.
 func attentionRow(it loop.AttentionItem, selected bool, c attentionColumns, width int, query string) string {
-	id := highlight(it.Ticket, query, styleTicket) + strings.Repeat(" ", max(0, c.id-lipgloss.Width(it.Ticket)))
-	return inboxLine(marker(selected), id, leverageCell(it), statusCell(it, c.status, query),
+	id := padTo(highlight(it.Ticket, query, styleTicket), c.id)
+	row := inboxLine(marker(selected), id, leverageCell(it), statusCell(it, c.status, query),
 		projectCell(it.Project, c.project, query), priorityCell(it.Priority),
 		highlight(it.Title, query, stylePlain), width)
+	if selected {
+		row = selectRow(row, width)
+	}
+	return row
 }
 
 // inboxLine assembles one line of the inbox table from cells already padded
@@ -2707,7 +2715,7 @@ func statusCell(it loop.AttentionItem, w int, query string) string {
 	if it.Relevance == loop.StatusUnnamed {
 		cell += " " + styleAttention.Render("⚠")
 	}
-	return cell + strings.Repeat(" ", max(0, w-lipgloss.Width(cell)))
+	return padTo(cell, w)
 }
 
 // projectCell is the row's project column, a dash for a ticket filed under
@@ -2719,7 +2727,7 @@ func projectCell(project string, w int, query string) string {
 	if project == "" {
 		cell = styleFaint.Render(name)
 	}
-	return cell + strings.Repeat(" ", max(0, w-lipgloss.Width(name)))
+	return padTo(cell, w)
 }
 
 // projectName is how a project reads in a row: its name, or a dash. Saying
@@ -2740,14 +2748,13 @@ func projectName(project string) string {
 // the row pads out to that.
 func leverageCell(it loop.AttentionItem) string {
 	if len(it.BlockedBy) > 0 {
-		return styleAttention.Render("⊘") + strings.Repeat(" ", leverageW-1)
+		return padTo(styleAttention.Render("⊘"), leverageW)
 	}
 	cell := fmt.Sprintf("↓%d", it.Unblocks)
-	pad := strings.Repeat(" ", max(0, leverageW-lipgloss.Width(cell)))
 	if it.Unblocks > 0 {
-		return styleTicket.Render(cell) + pad
+		return padTo(styleTicket.Render(cell), leverageW)
 	}
-	return styleFaint.Render(cell) + pad
+	return padTo(styleFaint.Render(cell), leverageW)
 }
 
 // priorityCell renders Linear's priority scale as its own words. An unset
@@ -2766,7 +2773,7 @@ func priorityCell(p int) string {
 	case 4:
 		label = "Low"
 	}
-	return style.Render(label) + strings.Repeat(" ", max(0, priorityW-lipgloss.Width(label)))
+	return padTo(style.Render(label), priorityW)
 }
 
 func (m model) attentionPanel(w, h int) string {
@@ -2945,6 +2952,11 @@ func groupHeader(g workGroup) string {
 // right-aligned so the fact that is changing is never the one truncated
 // away; the state is a colored dot plus a word, since color alone would not
 // carry it.
+//
+// The selection band covers whatever the row actually drew — the one line
+// of a waiting ticket, both lines of a running one — so it never marks a
+// span the row does not own. A squeezed panel cuts the second line after
+// this, and the first keeps the band it was given.
 func (m model) workRowLines(r workRow, selected bool, width int) []string {
 	name := styleTicket.Render(r.ticket) + " " + r.title
 	if r.lane == 0 {
@@ -2960,7 +2972,7 @@ func (m model) workRowLines(r workRow, selected bool, width int) []string {
 		}
 		// Two spaces where a running row draws its dot, so identifiers line
 		// up down the group whether or not a lane holds them.
-		return []string{splitRow(marker(selected)+"  "+name, right, width)}
+		return selectLines([]string{splitRow(marker(selected)+"  "+name, right, width)}, selected, width)
 	}
 	var dot, state string
 	switch r.state {
@@ -3000,6 +3012,18 @@ func (m model) workRowLines(r workRow, selected bool, width int) []string {
 	lines := []string{splitRow(marker(selected)+dot+" "+name, right, width)}
 	if reading := runLine(r, width); reading != "" {
 		lines = append(lines, reading)
+	}
+	return selectLines(lines, selected, width)
+}
+
+// selectLines bands every line of a row the cursor is on, and hands back an
+// unselected row untouched.
+func selectLines(lines []string, selected bool, width int) []string {
+	if !selected {
+		return lines
+	}
+	for i, l := range lines {
+		lines[i] = selectRow(l, width)
 	}
 	return lines
 }
@@ -3170,8 +3194,7 @@ func inboxLegend() []string {
 		{styleAttention.Render("⊘"), "something unfinished still blocks it"},
 		{styleAttention.Render("⚠"), "the pipeline never named this status"},
 	} {
-		pad := strings.Repeat(" ", max(0, 2-lipgloss.Width(l.glyph)))
-		rows = append(rows, "  "+l.glyph+pad+"  "+styleFaint.Render(l.says))
+		rows = append(rows, "  "+padTo(l.glyph, 2)+"  "+styleFaint.Render(l.says))
 	}
 	return rows
 }

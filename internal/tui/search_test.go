@@ -627,7 +627,11 @@ func TestSearchHighlightsTheMatchInTheRow(t *testing.T) {
 	// Not rowOf: with the profile forced, the identifier cell carries the
 	// escapes that make it bold and the marks split the title, so the row is
 	// found by a span of it that neither touches.
-	row := lineWith(t, m.attentionPanel(96, 14), "tagged")
+	//
+	// unband: this is the selected row, so it carries the selection band,
+	// which re-opens between the runes of a mark. What is being asserted
+	// here is the mark, not what is laid under it.
+	row := unband(lineWith(t, m.attentionPanel(96, 14), "tagged"))
 
 	if !strings.Contains(row, "aser: tagged "+styleMatch.Render("rele")+"ases") {
 		t.Fatalf("the match is not marked inside the row:\n%q", row)

@@ -5554,6 +5554,52 @@ func TestShiftTabWalksTheCycleBackwards(t *testing.T) {
 	}
 }
 
+// bandOpen is the escape selectRow re-opens the selection background with,
+// and "" under a profile that renders no colour at all.
+func bandOpen() string { return strings.TrimSuffix(styleSelected.Render(""), ansiReset) }
+
+// unband strips the selection band back out of a rendered line, leaving the
+// row's own styling. lipgloss renders an underlined span one rune at a time,
+// so a banded row carries a re-open between the runes of a search match; an
+// assertion about the mark itself has to look past them.
+func unband(line string) string {
+	if open := bandOpen(); open != "" {
+		return strings.ReplaceAll(line, open, "")
+	}
+	return line
+}
+
+// assertBanded checks one line is banded end to end: it opens with the band,
+// it is padded out to the panel's width, and every reset the row's own spans
+// emit is followed by a re-open. The last is the whole difference between
+// this and wrapping a background around the outside — that stops at the
+// row's first coloured cell and leaves the rest of the line bare.
+func assertBanded(t *testing.T, line string, width int) {
+	t.Helper()
+	open := bandOpen()
+	if open == "" {
+		t.Fatal("the profile renders no colour: forceColour first")
+	}
+	if !strings.HasPrefix(line, open) {
+		t.Fatalf("the line does not open with the band:\n%q", line)
+	}
+	if got := lipgloss.Width(line); got != width {
+		t.Fatalf("the band runs %d columns, the panel is %d wide:\n%q", got, width, line)
+	}
+	for rest := line; ; {
+		i := strings.Index(rest, ansiReset)
+		if i < 0 {
+			t.Fatalf("the band never closes:\n%q", line)
+		}
+		if rest = rest[i+len(ansiReset):]; rest == "" {
+			return // the band's own closing reset, at the end of the line
+		}
+		if !strings.HasPrefix(rest, open) {
+			t.Fatalf("the band stops at a span the row draws, and the line goes bare from there:\n%q", line)
+		}
+	}
+}
+
 // Done-when: j/k scroll the pane a line at a time while it holds the keys —
 // the movement the page keys never had — and the tail follows the same rule
 // the page keys follow: a line off the bottom stops it, a line back on
@@ -5805,5 +5851,141 @@ func TestTheBarNamesTheWayOutOfThePane(t *testing.T) {
 	got := m.statusBar()
 	if !strings.Contains(got, "tab next") || !strings.Contains(got, "esc close") {
 		t.Fatalf("the bar does not name the way out of the pane:\n%s", got)
+	}
+}
+
+// Done-when: the selected row reads as one object across the full width of
+// the panel — the whole row, not the two characters of the marker — and
+// nothing else on the panel carries the band.
+func TestSelectedInboxRowTakesTheWholeWidth(t *testing.T) {
+	forceColour(t)
+	m, _, _ := newTestModel(t, 1)
+	// The selected row is the one with a coloured cell of its own: an
+	// "Urgent" priority mid-row is exactly where a band wrapped around the
+	// outside would stop.
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-1", Title: "first", Status: "Todo", Priority: 1},
+		{Ticket: "LERP-2", Title: "second", Status: "Todo", BlockedBy: []string{"LERP-1"}},
+	}}})
+	width := padList.inner(m.geometry().sideW)
+	rows, cur := m.attentionRows(width)
+	if cur.at < 0 {
+		t.Fatalf("the inbox has no selection to band: %q", rows)
+	}
+	assertBanded(t, rows[cur.at], width)
+	for i, r := range rows {
+		if i != cur.at && strings.Contains(r, bandOpen()) {
+			t.Fatalf("row %d is banded with the cursor on row %d: %q", i, cur.at, r)
+		}
+	}
+}
+
+// Done-when: a two-line running row highlights both its lines, and a row a
+// squeezed panel cuts down to one highlights the one that survived.
+func TestSelectionBandCoversEveryLineTheRowDrew(t *testing.T) {
+	forceColour(t)
+	path := filepath.Join(t.TempDir(), "run.log")
+	writeLog(t, path, []byte(
+		`{"type":"system","subtype":"init","model":"claude-opus-5","session_id":"abc"}`+"\n"))
+
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
+			{ID: "id-1", Identifier: "LERP-1", Title: "one", Assigned: true}}},
+	}}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		TicketID: "id-1", Ticket: "LERP-1", Queue: "implement", LogPath: path,
+		StartedAt: time.Now().Add(-90 * time.Second)}})
+	m = update(t, m, pollMsg{})
+	m = update(t, m, keyMsg("2"))
+
+	g := m.geometry()
+	width := padList.inner(g.sideW)
+	rows, cur := m.workListRows(width)
+	if cur.span != 2 {
+		t.Fatalf("the running row draws %d lines, want the row and its reading: %q", cur.span, rows)
+	}
+	for i := cur.at; i < cur.at+cur.span; i++ {
+		assertBanded(t, rows[i], width)
+	}
+
+	// And down the heights the panel actually draws at: whichever of the
+	// row's lines survive the cut carry the band, and a band on the reading
+	// line alone would be marking a run under a name that is no longer on
+	// screen. The heights are walked rather than picked so the cut and the
+	// whole row are both covered.
+	cut := false
+	for h := 4; h <= 12; h++ {
+		lines := strings.Split(m.workPanel(g.sideW, h), "\n")
+		at := slices.IndexFunc(lines, func(l string) bool { return strings.Contains(l, "LERP-1") })
+		if at < 0 {
+			continue
+		}
+		if !strings.Contains(lines[at], bandOpen()) {
+			t.Fatalf("h=%d: the selected row lost its band:\n%s", h, m.workPanel(g.sideW, h))
+		}
+		if at+1 < len(lines) && strings.Contains(lines[at+1], "heard") {
+			if !strings.Contains(lines[at+1], bandOpen()) {
+				t.Fatalf("h=%d: the row's reading is outside the band:\n%s", h, m.workPanel(g.sideW, h))
+			}
+			continue
+		}
+		cut = true
+	}
+	if !cut {
+		t.Fatal("no height cut the reading line, so nothing here tested the cut row")
+	}
+}
+
+// A row a lane does not hold draws one line, and the band is that line — the
+// band covers what the row drew, never a blank line under it.
+func TestAWaitingRowBandsTheOneLineItDraws(t *testing.T) {
+	forceColour(t)
+	m, _, _ := newTestModel(t, 1)
+	lines := m.workRowLines(workRow{ticket: "LERP-1", title: "one", pos: 1, of: 3}, true, 60)
+	if len(lines) != 1 {
+		t.Fatalf("a waiting row drew %d lines: %q", len(lines), lines)
+	}
+	assertBanded(t, lines[0], 60)
+}
+
+// The band is the cursor's, and the cursor is in the focused panel: an
+// unfocused list must not draw a second one for the operator to read.
+func TestAnUnfocusedPanelDrawsNoBand(t *testing.T) {
+	forceColour(t)
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
+			{ID: "id-1", Identifier: "LERP-1", Title: "one"}}},
+	}}})
+	if m.focus == panelWork {
+		t.Fatal("lerp opened on the work panel; this test needs it unfocused")
+	}
+	g := m.geometry()
+	if panel := m.workPanel(g.sideW, g.workH); strings.Contains(panel, bandOpen()) {
+		t.Fatalf("the unfocused work panel bands a row:\n%s", panel)
+	}
+}
+
+// The band is a background and nothing else, adaptive on both counts: a
+// foreground would paint over the very colours a row uses to say what it is,
+// and one picked tint reads as a band on a dark terminal and a smudge on a
+// light one. The ▸ marker stays beside it, so a terminal that renders the
+// background weakly still has a cursor on screen.
+func TestTheSelectionBandIsBackgroundOnlyAndAdaptive(t *testing.T) {
+	if colorSelected.Light == "" || colorSelected.Dark == "" || colorSelected.Light == colorSelected.Dark {
+		t.Fatalf("the selection band is not adaptive: %+v", colorSelected)
+	}
+	if fg := styleSelected.GetForeground(); fg != lipgloss.TerminalColor(lipgloss.NoColor{}) {
+		t.Fatalf("the selection band paints a foreground %v over the row's own colours", fg)
+	}
+	// Under a profile with no colour the band renders nothing, and the row
+	// comes back padded but bare — with the marker still on it.
+	row := selectRow(marker(true)+"LERP-1 one", 40)
+	if bandOpen() != "" {
+		t.Fatalf("the test binary is rendering colour; this case is the profile that does not")
+	}
+	if !strings.HasPrefix(row, "▸ ") || lipgloss.Width(row) != 40 {
+		t.Fatalf("a colourless profile lost the marker or the width: %q", row)
 	}
 }

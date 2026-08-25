@@ -31,6 +31,14 @@ var (
 	colorProvisioning = lipgloss.AdaptiveColor{Light: "#9A5E07", Dark: "#F2B84B"}
 	colorAttention    = lipgloss.AdaptiveColor{Light: "#C4275B", Dark: "#F2618E"}
 	colorFaint        = lipgloss.AdaptiveColor{Light: "#6E697C", Dark: "#9490A9"}
+	// colorSelected is the band under the row the cursor is on. It is a
+	// background, so it is not read — it is read *through*, by every colour
+	// a row already carries. The tint is therefore the quietest one that
+	// still finds itself across a panel: it costs styleFaint about a tenth
+	// of the contrast that colour has against a bare terminal, which is the
+	// combination with the least to spare. Adaptive, because the same tint
+	// that reads as a band on a dark terminal is a smudge on a light one.
+	colorSelected = lipgloss.AdaptiveColor{Light: "#E9E4F7", Dark: "#272138"}
 )
 
 // contrastFloor is the ratio every colour here has to clear against its
@@ -112,6 +120,12 @@ var (
 	// bar that reports nothing.
 	styleMark = lipgloss.NewStyle().Bold(true)
 
+	// styleSelected is the selection band and nothing else: no foreground,
+	// so the row's own colours are what the operator still reads. The ▸
+	// marker stays beside it — a terminal that renders the background
+	// weakly, or not at all, would otherwise leave no cursor on screen.
+	styleSelected = lipgloss.NewStyle().Background(colorSelected)
+
 	styleBorder      = lipgloss.NewStyle().Foreground(colorFaint)
 	styleBorderFocus = lipgloss.NewStyle().Foreground(colorFocus)
 	styleTitleFocus  = lipgloss.NewStyle().Foreground(colorFocus).Bold(true)
@@ -183,12 +197,46 @@ func panelBox(title string, focused bool, w, h int, rows []string, pad padding) 
 		if i < len(rows) {
 			row = ansi.Truncate(rows[i], cw, "…")
 		}
-		fill := strings.Repeat(" ", max(0, cw-lipgloss.Width(row)))
-		b.WriteString(border.Render(bd.Left) + lp + row + fill + rp + border.Render(bd.Right))
+		b.WriteString(border.Render(bd.Left) + lp + padTo(row, cw) + rp + border.Render(bd.Right))
 		b.WriteString("\n")
 	}
 	b.WriteString(border.Render(bd.BottomLeft + strings.Repeat(bd.Bottom, bw) + bd.BottomRight))
 	return b.String()
+}
+
+// ansiReset is the sequence every span lipgloss renders ends in. It turns
+// off the background as well as the foreground, which is why selectRow
+// cannot simply wrap a row that already carries spans.
+const ansiReset = "\x1b[0m"
+
+// padTo fills a rendered string out to w columns. The string already carries
+// ANSI, so its width is measured and never counted — one spelling of that
+// arithmetic for every caller that lays something out against a width.
+func padTo(s string, w int) string {
+	return s + strings.Repeat(" ", max(0, w-lipgloss.Width(s)))
+}
+
+// selectRow lays the selection band under one line of the row the cursor is
+// on, out to the panel's inner width so the whole line reads as one object.
+//
+// A row is a run of styled spans and every span ends in a full reset, so a
+// background wrapped around the outside would stop at the first one — the
+// row would be tinted up to its first faint or coloured cell and bare after
+// it. The band is re-opened after each reset instead, which tints a string
+// that is already ANSI without rebuilding the spans that made it.
+//
+// A colourless profile renders nothing to re-open; the row comes back
+// padded but untinted, and marker's ▸ is the cursor, as it was.
+func selectRow(row string, width int) string {
+	row = padTo(row, width)
+	open := strings.TrimSuffix(styleSelected.Render(""), ansiReset)
+	if open == "" {
+		return row
+	}
+	tinted := open + strings.ReplaceAll(row, ansiReset, ansiReset+open)
+	// The row's own last span leaves a re-open with nothing after it; drop
+	// it rather than emit a band over zero columns.
+	return strings.TrimSuffix(tinted, ansiReset+open) + ansiReset
 }
 
 // splitRow lays one list row out as left content and a right-hand column
@@ -204,8 +252,7 @@ func splitRow(left, right string, width int) string {
 	if right == "" {
 		return left
 	}
-	pad := strings.Repeat(" ", max(0, leftMax-lipgloss.Width(left)))
-	return left + pad + " " + right
+	return padTo(left, leftMax) + " " + right
 }
 
 // cursor is what the focus window needs to cut a list between its rows
