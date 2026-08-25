@@ -789,6 +789,126 @@ func TestHelpOverlayDecodesTheInboxMarks(t *testing.T) {
 	}
 }
 
+// Done-when: the ? overlay is a lens like the others, so a live log behind
+// it neither writes over it nor is disturbed by it. One viewport serves the
+// log, the detail and the overlay; the overlay is the one the operator
+// reads while an agent is running, which is exactly when the tail is busy.
+func TestTheHelpOverlayIsNotWrittenOverByALiveLog(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "one.log")
+	var body []byte
+	for i := 0; i < 200; i++ {
+		body = append(body, []byte(fmt.Sprintf("line %d\n", i))...)
+	}
+	writeLog(t, logPath, body)
+
+	m, _, _ := newTestModel(t, 1)
+	resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	m = resized.(model)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
+			{ID: "t1", Identifier: "LERP-1", Title: "running", Assigned: true},
+			{ID: "t2", Identifier: "LERP-2", Title: "waiting", Eligible: true},
+		}},
+	}}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		TicketID: "t1", Ticket: "LERP-1", Queue: "implement", LogPath: logPath}})
+	m = update(t, m, keyMsg("2"))
+	if !strings.Contains(m.View(), "line 199") {
+		t.Fatalf("the log lens is not up, so this test is not exercising the case:\n%s", m.View())
+	}
+
+	// The agent writes while the overlay is up: the poll reads the tail, and
+	// what it reads must not land in the pane the operator is reading.
+	m = update(t, m, keyMsg("?"))
+	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("brand new agent line\n"); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	m = update(t, m, pollMsg{})
+	if view := m.View(); strings.Contains(view, "brand new agent line") {
+		t.Fatalf("a live log wrote over the help overlay:\n%s", view)
+	}
+	// So must an event that re-aims the tail, and the raw toggle.
+	m = update(t, m, keyMsg("r"))
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventExited, RunID: "r1", Lane: 1,
+		TicketID: "t1", Ticket: "LERP-1", Queue: "implement"}})
+	if view := m.View(); !strings.Contains(view, "inbox marks") {
+		t.Fatalf("the overlay lost the pane to the log behind it:\n%s", view)
+	}
+
+	// Closing it puts the operator back on a following tail, with what the
+	// agent wrote while they were reading the help.
+	m = update(t, m, keyMsg("?"))
+	if view := m.View(); !strings.Contains(view, "brand new agent line") {
+		t.Fatalf("the log did not come back caught up:\n%s", view)
+	}
+	if !m.follow {
+		t.Error("reading the help froze the tail")
+	}
+}
+
+// Done-when: scrolling the overlay, and moving the cursor behind it, are
+// not the log's business. Follow is the log's state alone — the rule the
+// scroll keys already hold to for the detail lens — and the place the
+// operator had scrolled a log back to survives a detour through the help.
+func TestReadingTheHelpDoesNotDisturbTheLogBehindIt(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "one.log")
+	var body []byte
+	for i := 0; i < 200; i++ {
+		body = append(body, []byte(fmt.Sprintf("line %d\n", i))...)
+	}
+	writeLog(t, logPath, body)
+
+	m, _, _ := newTestModel(t, 1)
+	resized, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = resized.(model)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
+			{ID: "t1", Identifier: "LERP-1", Title: "running", Assigned: true},
+			{ID: "t2", Identifier: "LERP-2", Title: "waiting", Eligible: true},
+		}},
+	}}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		TicketID: "t1", Ticket: "LERP-1", Queue: "implement", LogPath: logPath}})
+	m = update(t, m, keyMsg("2"))
+	m = update(t, m, keyMsg("pgup"))
+	m = update(t, m, keyMsg("pgup"))
+	if m.follow {
+		t.Fatal("scrolling up left follow on, so this test is not exercising the case")
+	}
+	want := m.vp.YOffset
+	if want == 0 {
+		t.Fatal("scrolling up did not move the viewport")
+	}
+
+	// Read the help: page down to the legend, step the cursor about behind
+	// it, and page back. None of it is the log talking.
+	m = update(t, m, keyMsg("?"))
+	m = update(t, m, keyMsg("f"))
+	scrolled := m.vp.YOffset
+	m = update(t, m, keyMsg("down"))
+	m = update(t, m, keyMsg("up"))
+	if got := m.vp.YOffset; got != scrolled {
+		t.Errorf("moving the cursor behind the overlay scrolled it to %d, want %d", got, scrolled)
+	}
+	m = update(t, m, keyMsg("b"))
+	m = update(t, m, keyMsg("G"))
+
+	m = update(t, m, keyMsg("?"))
+	if m.follow {
+		t.Error("scrolling the help overlay turned log follow on")
+	}
+	if got := m.vp.YOffset; got != want {
+		t.Errorf("offset after reading the help = %d, want %d — the operator lost their place", got, want)
+	}
+}
+
 // Done-when: four sort modes cycle on one key, the two grouped ones draw
 // headers and the two flat ones do not, and the panel title says which is
 // in force. Sorting is the only grouping control there is.

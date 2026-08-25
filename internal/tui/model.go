@@ -479,7 +479,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// under the key table is only a legend if a short terminal can
 		// reach it. Leaving parks a log's offset and arriving puts it
 		// back, the same as stepping onto a row with no log.
-		if m.helpOn && m.showingLog() && !m.follow {
+		if m.helpOn && m.logLens() && !m.follow {
 			m.logOffset = m.vp.YOffset
 		}
 		m.refreshMain()
@@ -646,6 +646,12 @@ func (m model) doPromote(ticketID, ticket, status string) tea.Cmd {
 func (m *model) setFocus(p panel) {
 	m.focus = p
 	m.retarget()
+	if m.helpOn {
+		// The overlay is nobody's row. Moving between panels behind it
+		// re-aims the lens under it — which refreshMain draws on the way
+		// out — but must not scroll the help the operator is reading.
+		return
+	}
 	m.refreshMain()
 	if !m.showingLog() {
 		m.vp.GotoTop()
@@ -672,6 +678,9 @@ func (m *model) moveSelection(delta int) {
 		m.workPos = clampIndex(m.workPos+delta, len(rows))
 		m.workSel = rows[m.workPos].ticketID
 		m.retarget()
+		if m.helpOn {
+			return // see setFocus
+		}
 		m.refreshMain()
 		switch {
 		case !m.showingLog():
@@ -683,6 +692,9 @@ func (m *model) moveSelection(delta int) {
 		}
 	case panelAttention:
 		m.attnSel = clampIndex(m.attnSel+delta, len(m.shown))
+		if m.helpOn {
+			return // see setFocus
+		}
 		m.refreshMain()
 		m.vp.GotoTop()
 	}
@@ -930,8 +942,19 @@ func (m *model) selectedLogPath() string {
 
 // showingLog reports whether the main pane is the log rather than a detail.
 // The lens is the selected row's, not the panel's: a ticket with a log shows
-// it, a ticket without shows what the pass knows about it.
+// it, a ticket without shows what the pass knows about it. The ? overlay is
+// that same viewport holding neither, so while it is up the answer is no:
+// every caller is asking what the pane is showing, and what the pane is
+// showing is the help. It is the detail lens's own rule — a detour through
+// something that is not the log neither freezes the tail nor gets written
+// over by it — and the overlay is one more detour.
 func (m *model) showingLog() bool {
+	return !m.helpOn && m.logLens()
+}
+
+// logLens is the lens the selection asks for whatever is drawn over it:
+// what the main pane goes back to when the overlay closes.
+func (m *model) logLens() bool {
 	return m.focus == panelWork && m.selectedLogPath() != ""
 }
 
@@ -1355,7 +1378,7 @@ func (m *model) layout() {
 	// A pane that just changed height holds a scroll position measured
 	// against the old one: re-pin a followed log to the bottom, and clamp
 	// anything else back inside the new box.
-	if m.showingLog() && m.follow && !m.helpOn {
+	if m.showingLog() && m.follow {
 		m.vp.GotoBottom()
 		return
 	}
