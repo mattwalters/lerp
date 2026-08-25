@@ -1456,6 +1456,57 @@ func TestForceStartAvoidsALaneAnUnadoptedOrphanHolds(t *testing.T) {
 	waitIdle(t, h.rec)
 }
 
+// Evidence this process cannot read is the one state reconcileEvidence bails
+// on, because live orphans may hold lanes it knows nothing about — and the
+// pass that bailed adopted nothing, so r.active is empty too. Force-start is
+// not allowed to be the one path that fills anyway: it refuses, and the
+// operator gets the reason.
+func TestForceStartRefusesWhenTheEvidenceCannotBeRead(t *testing.T) {
+	execute, ran := recordingExecute("")
+	h := newHarness(t, 2, execute)
+	h.fake.AddIssue("LERP", linear.Issue{ID: "two", Identifier: "LERP-2", Status: "Todo"})
+	ctx := context.Background()
+
+	// A live run from a previous lerp holds lane 1, and then the store stops
+	// being readable.
+	orphan, err := h.evidence.Create(evidence.Record{
+		Lane: 1, TicketID: "orphan-ticket", Queue: "todo", StartingStatus: "Todo",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.alive[orphan.RunID] = true
+	runs := filepath.Join(h.root, ".lerp", "runs")
+	if err := os.Chmod(runs, 0o300); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(runs, 0o700) })
+	if _, err := h.evidence.List(); err == nil {
+		t.Skip("the run store is still readable; not running as this test's user")
+	}
+
+	err = h.rec.ForceStart(ctx, "two")
+	if err == nil {
+		t.Fatal("ForceStart with unreadable evidence = nil, want a refusal")
+	}
+	if !strings.Contains(err.Error(), "list run evidence") {
+		t.Errorf("refusal = %q, want it to name the read that failed", err)
+	}
+	waitIdle(t, h.rec)
+	if got := ran(); len(got) != 0 {
+		t.Errorf("executed runs after the refusal = %v, want none", got)
+	}
+	h.rec.mu.Lock()
+	lanes := len(h.rec.active)
+	h.rec.mu.Unlock()
+	if lanes != 0 {
+		t.Errorf("lanes occupied after the refusal = %d, want 0", lanes)
+	}
+	if got := h.issue(t, "two"); got.AssigneeID == "fake-viewer" {
+		t.Errorf("refused ticket = %+v, want no claim made", got)
+	}
+}
+
 // A forced run occupies a lane, it does not close the board: the pass that
 // follows still fills what is left.
 func TestFillFillsTheLanesAForcedRunLeaves(t *testing.T) {

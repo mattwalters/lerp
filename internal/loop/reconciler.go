@@ -520,7 +520,11 @@ func (r *Reconciler) ForceStart(ctx context.Context, ticketID string) error {
 		// Eligible's rule, and force-start overrides the lane count alone.
 		return fmt.Errorf("force-start %s: already claimed", issue.Identifier)
 	}
-	lr, ok := r.registerForce(issue.ID, r.recordedLanes())
+	reserved, err := r.recordedLanes()
+	if err != nil {
+		return fmt.Errorf("force-start %s: %w", issue.Identifier, err)
+	}
+	lr, ok := r.registerForce(issue.ID, reserved)
 	if !ok {
 		return fmt.Errorf("force-start %s: already running here", issue.Identifier)
 	}
@@ -540,13 +544,16 @@ func (r *Reconciler) ForceStart(ctx context.Context, ticketID string) error {
 // A record another lerp writes in the window after this read is still
 // possible, exactly as it is for fill: lane numbers are not coordinated
 // across processes, and this does not pretend otherwise.
-func (r *Reconciler) recordedLanes() map[int]bool {
+//
+// Evidence that cannot be read is a refusal, not an empty answer. It is the
+// same state reconcileEvidence bails on — live orphans may hold lanes this
+// process knows nothing about — and the pass that bailed left r.active empty
+// too, so an empty answer here would start the forced run on lane 1 on top
+// of whatever is already there.
+func (r *Reconciler) recordedLanes() (map[int]bool, error) {
 	records, err := r.o.Evidence.List()
 	if err != nil {
-		// A listing that cannot be read is reported, not fatal: the active
-		// lanes registerForce checks under its own lock still hold.
-		r.fail(fmt.Errorf("list run evidence: %w", err))
-		return nil
+		return nil, fmt.Errorf("list run evidence: %w", err)
 	}
 	taken := make(map[int]bool, len(records))
 	for _, record := range records {
@@ -554,7 +561,7 @@ func (r *Reconciler) recordedLanes() map[int]bool {
 			taken[record.Lane] = true
 		}
 	}
-	return taken
+	return taken, nil
 }
 
 // queueForStatus finds the queue that picks up from status. RepoConfig's
