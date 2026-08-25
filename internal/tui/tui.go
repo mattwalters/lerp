@@ -25,7 +25,7 @@ const quitWait = 30 * time.Second
 // run evidence on disk, so the next lerp adopts them (SCOPE invariant 3 —
 // everything is safe to kill, including lerp).
 func Run(ctx context.Context, o Options) error {
-	if err := o.validate(); err != nil {
+	if err := o.Validate(); err != nil {
 		return err
 	}
 	m := newModel(ctx, o)

@@ -148,11 +148,21 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return tui.Run(ctx, tui.Options{
-		// Every one of these is required, and a named-field literal that
-		// misses one still compiles: the harness then dies inside tui.Run
-		// with "X is required" before it draws a frame, which is what makes
-		// `make demo` fail rather than record a broken cast.
+	return tui.Run(ctx, tuiOptions(rec, repo, events))
+}
+
+// tuiOptions is the harness's wiring to the TUI, split out of run so a test
+// can put it through tui.Options.Validate without a terminal. A required
+// option the harness forgets is not a compile error — Options is a struct —
+// and Run rejects it at startup, which vhs records as a bash error and exits
+// 0 on. That is a blank cast under the size cap and a green CI job; the
+// guard for it is TestTheHarnessWiresEveryOptionTheTUIRequires.
+//
+// lanes and interval are read from the package constants rather than passed
+// in, so that guard covers the harness's own choice of them: a caller handing
+// this a zero lane count would otherwise validate here and be refused by Run.
+func tuiOptions(rec *loop.Reconciler, repo *config.RepoConfig, events <-chan loop.Event) tui.Options {
+	return tui.Options{
 		Ticker:   rec,
 		Promoter: rec,
 		Starter:  rec,
@@ -162,7 +172,7 @@ func run(ctx context.Context) error {
 		Interval: interval,
 		Lanes:    lanes,
 		Events:   events,
-	})
+	}
 }
 
 // boardStates are the DEMO team's workflow states in board order. The

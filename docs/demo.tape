@@ -36,15 +36,30 @@ Type "lerp"
 Sleep 800ms
 Enter
 
-# The board opens: the inbox above with what is waiting on a human, the work
-# panel below with the queues, and three lanes already picking tickets up.
+# The board opens on the inbox: what waits on a human, at full width, with
+# every column the table packs in — the leverage, the real Linear status, the
+# project, the priority. Below it the work panel, three lanes already picking
+# tickets up.
 Sleep 5s
 
-# The list has the whole screen until it is asked for a run. Up to the first
-# of the running lanes — Up clamps at the first row, so the count only has to
-# be at least the distance — and `enter` opens that lane's log tail in the
-# main pane, formatted from the agent's stream: thinking, tool calls, the
+# Both lists own the screen until one is asked for a ticket. Down to a review
+# that has landed, then `enter` to read it: the main pane opens beside the
+# table with the ticket's body, its real Linear status and why it is sitting
+# with a human, and `esc` gives the width back.
+Down
+Sleep 2500ms
+Enter
+Sleep 4500ms
+Escape
+Sleep 2s
+
+# `2` focuses the work panel, which owns its screen the same way. Up to the
+# first of the running lanes — Up clamps at the first row, so the count only
+# has to be at least the distance — and `enter` opens that lane's log tail in
+# the main pane, formatted from the agent's stream: thinking, tool calls, the
 # result. Down walks the other lanes through the pane the same way.
+Type "2"
+Sleep 3s
 Up 6
 Sleep 2500ms
 Enter
@@ -54,30 +69,19 @@ Sleep 4s
 Down
 Sleep 4s
 
-# The first three runs exit, their tickets move to "In Review", and the next
-# three come off the queue into the lanes that just freed.
+# The first three runs exit while their logs are on screen, their tickets move
+# to "In Review", and the next three come off the queue into the lanes that
+# just freed.
 Sleep 5s
 
-# `1` focuses the inbox, where the finished tickets have just landed under
-# "In Review — a run finished here". Its list owns the screen the same way,
-# so `enter` is what reads the selected ticket into the main pane — its body
-# and the verdict a run left in its comments.
+# `1` back to the inbox, where the finished tickets have just landed under
+# "In Review — a run finished here", and the table is at full width again.
 Type "1"
-Sleep 2s
-Enter
 Sleep 4s
+# Every run so far has landed here, which is the shape of the thing: the loop
+# works the board down, and what it finishes stacks up waiting on a human.
 Down
 Sleep 3s
-Down
-Sleep 3500ms
-
-# Back to the work panel: the implement queue has drained into the lanes, and
-# the plan queue is next in line behind it.
-Type "2"
-Sleep 3s
-Up 6
-Down 2
-Sleep 6s
 
 Type "q"
 Sleep 2s

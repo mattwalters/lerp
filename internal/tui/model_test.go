@@ -149,6 +149,10 @@ func (r *recordingReader) returns(detail linear.IssueDetail, err error) {
 // care which ones — two, so up/down has somewhere to go.
 var defaultTestStatuses = []string{"Planning", "Implementing"}
 
+// newTestModel is the stock model at a stock window size. Lerp opens focused
+// on the inbox with the inbox's pane closed, so a test about the work panel,
+// its main pane or the geometry that pane drives presses "2" first — without
+// it, it is asserting against the wrong panel.
 func newTestModel(t *testing.T, lanes int) (model, *countingTicker, chan loop.Event) {
 	t.Helper()
 	m, ticker, events := newTestModelWith(t, lanes, defaultTestStatuses, &recordingPromoter{}, &recordingEjector{}, &recordingStarter{}, &recordingReader{})
@@ -390,8 +394,12 @@ func TestAdoptedRunOccupiesAndFreesItsRow(t *testing.T) {
 // the key that used to open one is bound to nothing.
 func TestFocusSwitching(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	if m.focus != panelAttention {
+		t.Fatalf("lerp opens focused on %v, want inbox", m.focus)
+	}
+	m = update(t, m, keyMsg("2"))
 	if m.focus != panelWork {
-		t.Fatalf("lerp opens focused on %v, want work", m.focus)
+		t.Fatalf("key 2 focused %v, want work", m.focus)
 	}
 	if !strings.Contains(m.View(), "waiting for the first pass") {
 		t.Fatalf("empty work lens missing its state text:\n%s", m.View())
@@ -423,6 +431,7 @@ func TestFocusSwitching(t *testing.T) {
 // ticket, including why it will not run.
 func TestWorkPanelShowsWhatRunsNext(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("2"))
 	m = openMain(t, m)
 
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
@@ -535,6 +544,7 @@ func TestTheLensFollowsTheRowNotThePanel(t *testing.T) {
 	writeLog(t, path, []byte("agent at work\n"))
 
 	m, _, _ := newTestModel(t, 2)
+	m = update(t, m, keyMsg("2"))
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
 		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
 			{ID: "id-1", Identifier: "LERP-1", Title: "running one", Assigned: true},
@@ -583,6 +593,7 @@ func TestTheLensFollowsTheRowNotThePanel(t *testing.T) {
 // of its own, and it selects like any other row.
 func TestAdoptedRunAboveCapacityIsOnThePanel(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("2"))
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
 		{Team: "LERP", Name: "plan", Status: "Planning", Tickets: []loop.QueueTicket{
 			{ID: "id-1", Identifier: "LERP-1", Title: "one", Eligible: true}}},
@@ -1579,6 +1590,10 @@ func TestPromotePickerClosesWhenTheListEmpties(t *testing.T) {
 // main pane for the full keymap.
 func TestStatusBarAndHelp(t *testing.T) {
 	m, _, _ := newTestModel(t, 2)
+	if !strings.Contains(m.View(), "INBOX") {
+		t.Fatalf("status bar does not name the panel lerp opens on:\n%s", m.View())
+	}
+	m = update(t, m, keyMsg("2"))
 	if !strings.Contains(m.View(), "WORK") {
 		t.Fatalf("status bar does not name the focused panel:\n%s", m.View())
 	}
@@ -1759,6 +1774,7 @@ func TestEnterOpensTheDetailAndEscCloses(t *testing.T) {
 // away: the answer is the panel's and not the screen's.
 func TestThePaneIsRememberedPerPanel(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("2"))
 	m = update(t, m, keyMsg("enter")) // work
 	m = update(t, m, keyMsg("1"))
 	if m.mainOpen() {
@@ -1782,7 +1798,8 @@ func TestThePaneIsRememberedPerPanel(t *testing.T) {
 // Done-when: work starts with the list owning the screen, exactly as the
 // inbox does. The log is something the operator opens to read one run — the
 // row itself already says whether that run is alive — so it waits for enter
-// and gives the screen back on esc.
+// and gives the screen back on esc. Lerp opens on the inbox now, so work is
+// a panel key away before any of that.
 func TestWorkStartsWithTheListOnScreen(t *testing.T) {
 	log := filepath.Join(t.TempDir(), "one.log")
 	writeLog(t, log, []byte("agent one says hello\n"))
@@ -1791,9 +1808,17 @@ func TestWorkStartsWithTheListOnScreen(t *testing.T) {
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 		TicketID: "id-1", Ticket: "LERP-1", Queue: "plan", LogPath: log}})
 
-	if m.focus != panelWork {
-		t.Fatalf("focus starts on %v, not work", m.focus)
+	if m.focus != panelAttention {
+		t.Fatalf("focus starts on %v, not the inbox", m.focus)
 	}
+	if g := m.geometry(); g.mainH != 0 || g.sideW != m.width {
+		t.Fatalf("the startup screen opened a main pane: %+v", g)
+	}
+	if strings.Contains(m.View(), "agent one says hello") {
+		t.Fatalf("the opening screen is a log, not the inbox:\n%s", m.View())
+	}
+
+	m = update(t, m, keyMsg("2"))
 	if g := m.geometry(); g.mainH != 0 || g.sideW != m.width {
 		t.Fatalf("work started with its pane open: %+v", g)
 	}
@@ -1921,9 +1946,16 @@ func TestRefocusingRewrapsThePane(t *testing.T) {
 }
 
 // Done-when: a window too short to hold the pane keeps its screen. The keys
-// that would open one do nothing rather than trade the two panels for
-// "window too small" — and the promote picker, which is modal and writes to
-// Linear, is never live behind that message.
+// that *open* a pane — enter, p, ? — do nothing rather than trade the two
+// panels for "window too small", and the promote picker, which is modal and
+// writes to Linear, is never live behind that message. The panel keys are
+// the deliberate exception, since they edit nobody's pane: see
+// TestAFocusMoveNeverEditsAPanelsPane.
+//
+// The screen under test is the one lerp opens on — the inbox with its pane
+// closed, which is what makes twelve lines usable at all — so the pane those
+// twelve lines cannot hold is opened here and handed back with the esc that
+// frame names.
 func TestAWindowTooShortForThePaneKeepsItsScreen(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = openMain(t, m) // the pane 12 lines cannot hold
@@ -1948,6 +1980,10 @@ func TestAWindowTooShortForThePaneKeepsItsScreen(t *testing.T) {
 		t.Fatalf("the status bar dropped the key that still works:\n%s", view)
 	}
 
+	// Not "2" or "tab": a panel key edits nobody's pane, so with every pane
+	// closed it has no screen to take away. See
+	// TestAFocusMoveNeverEditsAPanelsPane for the case where one does land
+	// on that frame, and why that is the right end of the trade.
 	for _, k := range []string{"enter", "p", "?"} {
 		next := update(t, m, keyMsg(k))
 		if strings.Contains(next.View(), "too small") {
@@ -1967,6 +2003,7 @@ func TestScrollingAClosedPaneIsInert(t *testing.T) {
 	writeLog(t, log, []byte(strings.Repeat("a line of agent output\n", 200)))
 
 	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("2"))
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 		TicketID: "id-1", Ticket: "LERP-1", Queue: "plan", LogPath: log}})
 	if !m.follow {
@@ -2011,6 +2048,7 @@ func TestTheReopenedPaneIsCurrent(t *testing.T) {
 	writeLog(t, two, []byte("agent two says hello\n"))
 
 	m, _, _ := newTestModel(t, 2)
+	m = update(t, m, keyMsg("2"))
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 		TicketID: "id-1", Ticket: "LERP-1", Queue: "plan", LogPath: one}})
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r2", Lane: 2,
@@ -2034,6 +2072,120 @@ func TestTheReopenedPaneIsCurrent(t *testing.T) {
 	}
 }
 
+// Done-when: a focus move never edits either panel's pane, whatever the
+// window can hold. Both panels start closed, so the pane in question is one
+// the operator opened themselves — and `2` back to it, in a window too short
+// to hold it, lands on the too-small screen rather than quietly dropping it.
+// That is the same screen a shrink under an open pane lands on, naming the
+// same key, and `esc` gets the board back.
+//
+// The alternative — closing the pane on the operator's behalf — is a change
+// they did not ask for, at the moment they asked for something else, with no
+// line on screen to say it happened. `enter` would bring it back, but only
+// once they noticed the log was gone. A `2` typed ahead of the first
+// WindowSizeMsg, when width and height are still zero and nothing has room,
+// would shut a pane before any window had been measured.
+func TestAFocusMoveNeverEditsAPanelsPane(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = fillBoard(t, m, 5)
+	// Work's pane, opened in a window with room and then left behind.
+	m = update(t, m, keyMsg("2"))
+	m = openMain(t, m)
+	m = update(t, m, keyMsg("1"))
+	resized, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 12})
+	m = resized.(model)
+
+	m = update(t, m, keyMsg("2"))
+	if !m.detailOpen[panelWork] {
+		t.Fatal("moving focus to work closed the pane it remembers")
+	}
+	view := m.View()
+	if !strings.Contains(view, "too small") || !strings.Contains(view, "esc") {
+		t.Fatalf("the pane that does not fit is on nobody's screen and named by nothing:\n%s", view)
+	}
+
+	// esc is the key that frame names, and closing the pane is the
+	// operator's own answer — so it is theirs to keep at any later size.
+	m = update(t, m, keyMsg("esc"))
+	if m.detailOpen[panelWork] {
+		t.Fatal("esc did not close the pane the too-small screen named")
+	}
+	if strings.Contains(m.View(), "too small") {
+		t.Fatalf("esc did not give the window its screen back:\n%s", m.View())
+	}
+	grown, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	if m = grown.(model); m.detailOpen[panelWork] {
+		t.Fatal("a window with room reopened a pane the operator closed")
+	}
+
+	// The same in the other direction, which needs the inbox's pane opened
+	// first: a window with room, `enter` on the inbox, away to work, and
+	// then shrink under it. Coming back to the inbox still finds its answer.
+	back, _, _ := newTestModel(t, 1)
+	back = fillBoard(t, back, 5)
+	back = update(t, back, keyMsg("enter"))
+	if !back.detailOpen[panelAttention] {
+		t.Fatal("enter did not open the inbox's pane in a window with room")
+	}
+	back = update(t, back, keyMsg("2"))
+	shrunk, _ := back.Update(tea.WindowSizeMsg{Width: 80, Height: 12})
+	back = update(t, shrunk.(model), keyMsg("1"))
+	if !back.detailOpen[panelAttention] {
+		t.Fatal("moving focus back to the inbox closed the pane it remembers")
+	}
+
+	// And a panel key before the first WindowSizeMsg — no window has room
+	// for anything yet — leaves both defaults exactly where they started.
+	early := newModel(t.Context(), Options{Ticker: &countingTicker{}, Promoter: &recordingPromoter{},
+		Starter: &recordingStarter{}, Reader: &recordingReader{}, Statuses: defaultTestStatuses,
+		Lanes: 1, Events: make(chan loop.Event, 1)})
+	early = update(t, early, keyMsg("2"))
+	if early.detailOpen != ([2]bool{panelAttention: false, panelWork: false}) {
+		t.Fatalf("a keystroke before the first size edited the pane defaults: %v", early.detailOpen)
+	}
+}
+
+// Done-when: the too-small frame names the key that is actually next. esc
+// resolves nearest-first, so a filter still on the list is what the first one
+// takes — and that frame draws no status bar, so an esc that looks like it
+// did nothing is all the operator gets.
+func TestTheTooSmallScreenNamesTheFilterItWillClearFirst(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = fillBoard(t, m, 5)
+	m = update(t, m, keyMsg("2"))
+	m = openMain(t, m) // the pane `2` comes back to below
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, keyMsg("/"))
+	m = update(t, m, keyMsg("something"))
+	m = update(t, m, keyMsg("enter")) // keep the filter, hand the keys back
+	if m.search == "" {
+		t.Fatal("the filter did not survive the prompt closing")
+	}
+
+	// `2` goes back to the log the operator left open: on this window that
+	// lands on the too-small screen.
+	resized, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 12})
+	m = update(t, resized.(model), keyMsg("2"))
+	view := m.View()
+	if !strings.Contains(view, "too small") {
+		t.Fatalf("this window holds work's pane after all:\n%s", view)
+	}
+	if !strings.Contains(view, "clears the filter") {
+		t.Fatalf("the frame promises a pane the first esc will not close:\n%s", view)
+	}
+
+	// And it is telling the truth: esc takes the filter, esc takes the pane.
+	m = update(t, m, keyMsg("esc"))
+	if m.search != "" || !m.detailOpen[panelWork] {
+		t.Fatalf("the first esc did not take the filter alone: search %q, pane %v",
+			m.search, m.detailOpen[panelWork])
+	}
+	m = update(t, m, keyMsg("esc"))
+	if m.detailOpen[panelWork] || strings.Contains(m.View(), "too small") {
+		t.Fatalf("the second esc did not give the window its screen:\n%s", m.View())
+	}
+}
+
 // Done-when: roomForMain is View's own guard, asked of the pane instead of
 // the frame in hand. An off-by-one either way is a key that blanks the
 // screen or a window that refuses one it could draw.
@@ -2049,7 +2201,8 @@ func TestThePanesFloorIsTheGuardsFloor(t *testing.T) {
 		m, _, _ := newTestModel(t, 1)
 		resized, _ := m.Update(tea.WindowSizeMsg{Width: w, Height: tc.h})
 		m = fillBoard(t, resized.(model), 20)
-		m = update(t, m, keyMsg("1")) // both panels start closed: this is a screen
+		// No setup: lerp opens on the inbox with its pane closed, which is
+		// the screen this floor is measured against.
 		if strings.Contains(m.View(), "too small") {
 			t.Fatalf("height %d: a closed pane did not buy this window a screen", tc.h)
 		}
@@ -2158,6 +2311,7 @@ func TestTheTooSmallScreenNamesTheWayOut(t *testing.T) {
 // number the needs-you panel exists for.
 func TestTheStatusBarKeepsTheCountOverTheHint(t *testing.T) {
 	m, _, _ := newTestModel(t, 3)
+	m = update(t, m, keyMsg("2"))
 	resized, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 30})
 	m = openMain(t, resized.(model))
 	m = update(t, m, tickedMsg{})
@@ -2280,6 +2434,7 @@ func TestAClosedPaneIsNotRefreshed(t *testing.T) {
 	writeLog(t, log, []byte("agent one says hello\n"))
 
 	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("2"))
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 		TicketID: "id-1", Ticket: "LERP-1", Queue: "plan", LogPath: log}})
 	m = update(t, m, keyMsg("esc"))
@@ -2826,9 +2981,10 @@ func TestStackedLayoutKeepsBothPanelsReadable(t *testing.T) {
 
 	// Both panes open: this is about focus alone, not about the pane's
 	// per-panel state.
-	m = openMain(t, m) // work, where focus starts
+	m = update(t, m, keyMsg("2"))
+	m = openMain(t, m) // work
 	m = update(t, m, keyMsg("1"))
-	m = openMain(t, m)
+	m = openMain(t, m) // and the inbox
 	g := m.geometry()
 	if g.wide {
 		t.Fatal("80 columns is not the stacked layout")
@@ -2934,6 +3090,7 @@ func TestSmallestWindowTheGuardAdmits(t *testing.T) {
 		{w: 70, h: 2*panelFloor + 1, closed: true},
 	} {
 		m, _, _ := newTestModel(t, 3)
+		m = update(t, m, keyMsg("2"))
 		resized, _ := m.Update(tea.WindowSizeMsg{Width: tc.w, Height: tc.h})
 		m = fillBoard(t, resized.(model), 20)
 		// Both panels start with the pane closed, which is the closed case
@@ -3058,6 +3215,7 @@ func TestSelectingARunningTicketTailsItsLog(t *testing.T) {
 	writeLog(t, two, []byte("agent two says hello\n"))
 
 	m, _, _ := newTestModel(t, 2)
+	m = update(t, m, keyMsg("2"))
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 		TicketID: "id-1", Ticket: "LERP-1", Queue: "plan", LogPath: one}})
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r2", Lane: 2,
@@ -3096,6 +3254,7 @@ func TestRunLogRendersActivityAndTogglesToRaw(t *testing.T) {
 	writeLog(t, path, []byte(claudeStream))
 
 	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("2"))
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 		Ticket: "LERP-1", Queue: "plan", LogPath: path}})
 	m = openMain(t, m)
@@ -3145,6 +3304,7 @@ func TestLogSurvivesAFocusDetour(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 		Ticket: "LERP-1", Queue: "plan", LogPath: one}})
+	m = update(t, m, keyMsg("2"))
 	m = openMain(t, m)
 	m = update(t, m, keyMsg("1"))
 	if strings.Contains(m.View(), "first line") {
@@ -3202,6 +3362,7 @@ func TestSelectionFollowsTheTicket(t *testing.T) {
 	zero := loop.QueueTicket{ID: "id-0", Identifier: "LERP-0", Title: "zero", Eligible: true}
 
 	m, _, _ := newTestModel(t, 2)
+	m = update(t, m, keyMsg("2"))
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues,
 		Queues: []loop.QueueSnapshot{plan(one, two), {Team: "LERP", Name: "implement", Status: "Todo"}}}})
 	m = update(t, m, keyMsg("down"))
@@ -3587,6 +3748,7 @@ func TestHostileLogOutputCannotRepaintTheScreen(t *testing.T) {
 	writeLog(t, path, []byte("\x1b[31mcolored output\x1b[0m\n"+hostile+"\n"))
 
 	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("2"))
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 		Ticket: "LERP-1", Queue: "plan", LogPath: path}})
 	m = openMain(t, m)
@@ -3749,6 +3911,7 @@ func TestEjectConfirmAndResult(t *testing.T) {
 		Ticket: "LERP-42", Lane: 1, Workspace: "/tmp/lerp/lane-1", Resume: "agent --resume 'sid-42'",
 	}}
 	m, _ := newEjectTestModel(t, 1, ejector)
+	m = update(t, m, keyMsg("2")) // eject is the work panel's key
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 		TicketID: "id-42", Ticket: "LERP-42", Queue: "implement", LogPath: "/dev/null"}})
 	if !strings.Contains(m.View(), "e eject") {
@@ -4064,6 +4227,7 @@ func TestScrolledRunKeepsRowsWhole(t *testing.T) {
 func TestEjectConfirmHoldsItsRowAcrossAPass(t *testing.T) {
 	ejector := &recordingEjector{}
 	m, _ := newEjectTestModel(t, 2, ejector)
+	m = update(t, m, keyMsg("2")) // eject is the work panel's key
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 		TicketID: "id-42", Ticket: "LERP-42", Queue: "implement", LogPath: "/dev/null"}})
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r2", Lane: 2,
@@ -4091,6 +4255,7 @@ func TestEjectConfirmHoldsItsRowAcrossAPass(t *testing.T) {
 func TestEjectConfirmClosesWhenItsRunEnds(t *testing.T) {
 	ejector := &recordingEjector{}
 	m, _ := newEjectTestModel(t, 1, ejector)
+	m = update(t, m, keyMsg("2")) // eject is the work panel's key
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 		TicketID: "id-42", Ticket: "LERP-42", Queue: "implement", LogPath: "/dev/null"}})
 	m = update(t, m, keyMsg("e"))
@@ -4130,6 +4295,7 @@ func TestEjectIsNotOfferedWithoutASession(t *testing.T) {
 func TestEjectSaysWhyARunnerCannotResume(t *testing.T) {
 	ejector := &recordingEjector{resumable: []string{"implement"}}
 	m, _ := newEjectTestModel(t, 1, ejector)
+	m = update(t, m, keyMsg("2")) // eject is the work panel's key
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 		TicketID: "id-9", Ticket: "LERP-9", Queue: "plan", LogPath: "/dev/null"}})
 	m = update(t, m, keyMsg("e"))

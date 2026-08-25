@@ -78,7 +78,11 @@ type Options struct {
 	Events   <-chan loop.Event
 }
 
-func (o Options) validate() error {
+// Validate returns an error naming the first option Run needs and does not
+// have. Run calls it before opening the screen; it is exported because the
+// demo harness assembles its Options in a package of its own, and a test
+// there can only hold them to this contract if it can call it.
+func (o Options) Validate() error {
 	switch {
 	case o.Ticker == nil:
 		return fmt.Errorf("tui: ticker is required")
@@ -470,7 +474,14 @@ func newModel(ctx context.Context, o Options) model {
 	h.Styles.ShortDesc = styleFaint
 	h.Styles.ShortSeparator = styleFaint
 	h.Styles.Ellipsis = styleFaint
-	m := model{o: o, ctx: ctx, focus: panelWork, lanes: make(map[int]*lane),
+	// Focus opens on the inbox: the loop runs the board on its own, so what
+	// the operator is at the terminal for the moment they open it is what
+	// needs them, and it agrees with the panel numbering. The pane defaults
+	// below are unchanged, so the first screen is two lists and no main
+	// pane — the inbox table gets the full width, where it keeps the project
+	// column an open pane squeezes out of it, and the log is one `2` away
+	// with no `enter` behind it, because work's pane stays open.
+	m := model{o: o, ctx: ctx, focus: panelAttention, lanes: make(map[int]*lane),
 		details: make(map[string]*ticketDetail), lastLog: make(map[string]string),
 		vp: viewport.New(0, 0), follow: true, keys: newKeymap(), help: h,
 		sortMode:    defaultSort,
@@ -998,6 +1009,22 @@ func (m *model) setHelp(on bool) {
 
 func (m *model) setFocus(p panel) {
 	m.focus = p
+	// Deliberately no roomForMain check here, unlike the keys that open the
+	// pane. detailOpen is the operator's answer to whether they want a
+	// panel's detail, not a fact about the window: enter and esc are the
+	// keys that mean open and close, and a resize leaves it alone on
+	// purpose. A key that only moves between panels may not edit it either.
+	//
+	// The cost is that moving to a panel whose pane is open can land on the
+	// too-small screen in a short window. That screen is the existing answer
+	// to a pane that does not fit, it names its key, and a shrink under an
+	// open pane lands on the same one — one rule for both routes beats two.
+	// Closing the pane here instead would be a change the operator did not
+	// ask for at the moment they asked for something else, with no line on
+	// screen to say it happened; enter would bring it back, but only once
+	// they noticed the log was gone. Worst case, a panel key typed ahead of
+	// the first WindowSizeMsg — width and height still zero, so nothing has
+	// room — would close work's pane before any window had been measured.
 	m.retarget()
 	// Size before filling. The two panels remember the pane separately, so
 	// focus moves the width the viewport wraps to — and content wrapped to
@@ -1907,11 +1934,18 @@ func (m model) View() string {
 	if m.width < minWidth || m.height < m.minHeight(m.mainOpen()) {
 		// When the pane is the whole of what does not fit, name the key that
 		// gives the window back: this frame has no status bar to carry the
-		// hint, and the pane is the operator's own state — a window that
-		// shrank under an open one keeps it open, so esc is the way out. A
-		// filter on the list takes that esc first, as it does everywhere
-		// else, so under one it is the second press.
+		// hint, and the pane is the operator's own state. Neither a panel
+		// key nor a resize edits detailOpen, so both routes here — moving
+		// focus to a panel whose pane is open, and shrinking a window under
+		// one — leave it open, and esc is the way out.
 		if m.width >= minWidth && m.height >= m.minHeight(false) {
+			// esc resolves nearest-first, so a live filter is what the first
+			// one takes. Say so rather than promise a pane it will not
+			// close: with no status bar here, an esc that looks like it did
+			// nothing is the worse half of the trade.
+			if m.search != "" {
+				return "lerp — window too small\nesc clears the filter, then closes the pane\n"
+			}
 			return "lerp — window too small\nesc closes the pane\n"
 		}
 		return "lerp — window too small\n"
