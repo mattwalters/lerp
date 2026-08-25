@@ -1,0 +1,376 @@
+package tui
+
+import (
+	"slices"
+	"strings"
+	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+
+	"github.com/mattwalters/lerp/internal/loop"
+)
+
+// searching opens the prompt on a board-loaded inbox and types query into
+// it, one key at a time — the way an operator does, so every assertion after
+// it is about a list that narrowed incrementally.
+func searching(t *testing.T, query string) model {
+	t.Helper()
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: board()})
+	return typeSearch(t, update(t, m, keyMsg("/")), query)
+}
+
+func typeSearch(t *testing.T, m model, query string) model {
+	t.Helper()
+	for _, r := range query {
+		m = update(t, m, keyMsg(string(r)))
+	}
+	return m
+}
+
+// shownTickets is the inbox as the panel would draw it, by identifier.
+func shownTickets(m model) []string {
+	out := make([]string, 0, len(m.shown))
+	for _, it := range m.shown {
+		out = append(out, it.Ticket)
+	}
+	return out
+}
+
+// Done-when: the list narrows as the operator types, with no enter needed to
+// see it, and the panel title says how far it narrowed and what to.
+func TestSearchNarrowsAsYouType(t *testing.T) {
+	m := searching(t, "gore")
+
+	if !m.searching {
+		t.Fatal("/ did not open the prompt")
+	}
+	if got, want := shownTickets(m), []string{"LERP-22"}; !slices.Equal(got, want) {
+		t.Fatalf("shown = %v, want %v (filtering is incremental — no enter yet)", got, want)
+	}
+
+	panel := m.attentionPanel(96, 14)
+	if !strings.Contains(panel, "1/6") {
+		t.Fatalf("the title does not say how much of the list is on screen:\n%s", panel)
+	}
+	if !strings.Contains(panel, "/gore") {
+		t.Fatalf("the title does not carry the query:\n%s", panel)
+	}
+	if strings.Contains(panel, "LERP-1 ") {
+		t.Fatalf("a row that does not match is still on the panel:\n%s", panel)
+	}
+	// A deleted character widens the list again: the filter follows the box.
+	m = update(t, m, tea.KeyMsg{Type: tea.KeyBackspace})
+	if got := len(m.shown); got != 1 {
+		t.Fatalf(`"gor" shows %d rows, want the one GoReleaser ticket`, got)
+	}
+	m = typeSearch(t, m, "x")
+	if got := len(m.shown); got != 0 {
+		t.Fatalf(`"gorx" shows %d rows, want none`, got)
+	}
+}
+
+// Done-when: the four facts a row already shows are the four the search
+// matches, case-insensitively, as a plain substring.
+func TestSearchMatchesTheColumnsOnTheRow(t *testing.T) {
+	for _, tc := range []struct {
+		query string
+		want  []string
+	}{
+		{"lerp-48", []string{"LERP-48"}},         // identifier, folded
+		{"CURL", []string{"LERP-23"}},            // title, folded
+		{"in review", []string{"LERP-48"}},       // status, with a space in it
+		{"tui redesign", []string{"LERP-48"}},    // project
+		{"work", []string{"LERP-60", "LERP-70"}}, // a substring of two titles
+		{"zzz", nil},                             // nothing
+		{"", []string{"LERP-1", "LERP-22", "LERP-23", // every row, in the sort's order
+			"LERP-48", "LERP-60", "LERP-70"}},
+	} {
+		m := searching(t, tc.query)
+		got := shownTickets(m)
+		slices.Sort(got)
+		want := slices.Clone(tc.want)
+		slices.Sort(want)
+		if !slices.Equal(got, want) {
+			t.Fatalf("search %q shows %v, want %v", tc.query, got, want)
+		}
+	}
+}
+
+// Done-when: the prompt takes the keyboard while it is open. A p or a q
+// typed into a search is text, not a promote and not a quit — ctrl+c is the
+// one key that still means what it always means.
+func TestSearchSwallowsKeysWhileTheBoxIsOpen(t *testing.T) {
+	m := searching(t, "p")
+	m, cmd := updateCmd(t, m, keyMsg("q"))
+
+	if m.promoting {
+		t.Fatal("p typed into the search opened the promote picker")
+	}
+	if cmd != nil {
+		if _, quit := cmd().(tea.QuitMsg); quit {
+			t.Fatal("q typed into the search quit lerp")
+		}
+	}
+	if got := m.searchInput.Value(); got != "pq" {
+		t.Fatalf("the box holds %q, want the keys that were typed", got)
+	}
+	// The other panel keys are text too: none of them may act.
+	before := m.sortMode
+	m = typeSearch(t, m, "sP?2")
+	if m.sortMode != before || m.helpOn || m.focus != panelAttention {
+		t.Fatalf("a key typed into the search acted on the panel: sort=%v help=%v focus=%v",
+			m.sortMode, m.helpOn, m.focus)
+	}
+
+	m, cmd = updateCmd(t, m, tea.KeyMsg{Type: tea.KeyCtrlC})
+	if cmd == nil {
+		t.Fatal("ctrl+c in the search produced no command")
+	}
+	if _, quit := cmd().(tea.QuitMsg); !quit {
+		t.Fatal("ctrl+c in the search did not quit")
+	}
+}
+
+// Done-when: enter closes the box and keeps the rows narrowed, and the keys
+// go back to the list — the point of searching is to promote what you found.
+func TestSearchEnterKeepsTheFilterAndGivesTheKeysBack(t *testing.T) {
+	m := update(t, searching(t, "gore"), keyMsg("enter"))
+
+	if m.searching {
+		t.Fatal("enter left the prompt open")
+	}
+	if m.search != "gore" || len(m.shown) != 1 {
+		t.Fatalf("enter dropped the filter: query %q, %d rows", m.search, len(m.shown))
+	}
+	m = update(t, m, keyMsg("p"))
+	if !m.promoting {
+		t.Fatal("p after an accepted search did not reach the list")
+	}
+	if got := m.selectedAttention().Ticket; got != "LERP-22" {
+		t.Fatalf("the picker is aimed at %s, want the ticket the search found", got)
+	}
+}
+
+// Done-when: esc from the prompt puts back the list it opened over, and esc
+// with a filter applied and no prompt open clears the filter.
+func TestSearchEscCancelsThenClears(t *testing.T) {
+	m := update(t, searching(t, "gore"), keyMsg("enter"))
+
+	// A second search over the first: the prompt opens empty, so the list is
+	// whole again while it is being typed into.
+	m = update(t, m, keyMsg("/"))
+	if len(m.shown) != 6 {
+		t.Fatalf("the prompt opened onto %d rows, want the whole list", len(m.shown))
+	}
+	m = typeSearch(t, m, "curl")
+	if got := shownTickets(m); !slices.Equal(got, []string{"LERP-23"}) {
+		t.Fatalf("shown = %v, want the ticket the second search matched", got)
+	}
+
+	m = update(t, m, keyMsg("esc"))
+	if m.searching {
+		t.Fatal("esc left the prompt open")
+	}
+	if m.search != "gore" || !slices.Equal(shownTickets(m), []string{"LERP-22"}) {
+		t.Fatalf("esc did not put the list back as it was: query %q, rows %v",
+			m.search, shownTickets(m))
+	}
+
+	m = update(t, m, keyMsg("esc"))
+	if m.search != "" || len(m.shown) != 6 {
+		t.Fatalf("esc with no prompt open did not clear the filter: query %q, %d rows",
+			m.search, len(m.shown))
+	}
+}
+
+// Done-when: the three controls compose. Search filters, sort orders, the
+// project scope narrows — and none of them resets the others.
+func TestSearchComposesWithSortAndProject(t *testing.T) {
+	m := update(t, searching(t, "work"), keyMsg("enter"))
+
+	m = update(t, m, keyMsg("s")) // status -> project
+	if m.search != "work" {
+		t.Fatalf("sorting cleared the search: %q", m.search)
+	}
+	if got := shownTickets(m); !slices.Equal(got, []string{"LERP-60", "LERP-70"}) {
+		t.Fatalf("shown after sorting = %v, want the same two rows", got)
+	}
+
+	// Both filters at once intersect: the OSS project holds no row matching
+	// "work", and the panel says so with both facts on the line.
+	m = update(t, m, keyMsg("P"))
+	if m.project != "Open-source readiness" || m.search != "work" {
+		t.Fatalf("the two filters did not compose: project %q, query %q", m.project, m.search)
+	}
+	if len(m.shown) != 0 {
+		t.Fatalf("shown = %v, want no row in both the project and the search", shownTickets(m))
+	}
+	panel := m.attentionPanel(96, 14)
+	if !strings.Contains(panel, "no match for /work in Open-source readiness") {
+		t.Fatalf("the panel does not say why it is empty:\n%s", panel)
+	}
+
+	// Clearing the search leaves the project scope standing.
+	m = update(t, m, keyMsg("esc"))
+	if m.project != "Open-source readiness" {
+		t.Fatalf("clearing the search cleared the project scope: %q", m.project)
+	}
+	if got := len(m.shown); got != 3 {
+		t.Fatalf("the project scope shows %d rows, want the 3 it had", got)
+	}
+}
+
+// Done-when: the selected ticket survives the filter when it still matches,
+// and the cursor goes to the first row rather than vanishing when it does
+// not.
+func TestSearchKeepsTheSelectionOrTakesItToTheTop(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: board()})
+	m = update(t, m, keyMsg("j")) // LERP-48, second under the status default
+
+	m = typeSearch(t, update(t, m, keyMsg("/")), "read")
+	if got := m.selectedAttention().Ticket; got != "LERP-48" {
+		t.Fatalf("selection = %s, want the ticket the search kept", got)
+	}
+
+	// Typing on until it no longer matches: the cursor lands on the first
+	// row, not on whatever the old index now points at.
+	m = typeSearch(t, m, "@")
+	if m.selectedAttention() != nil {
+		t.Fatalf("a search matching nothing still has a selection: %v", *m.selectedAttention())
+	}
+	m = update(t, m, tea.KeyMsg{Type: tea.KeyBackspace})
+	m = typeSearch(t, m, "x") // "readx" matches nothing either
+	m.searchInput.SetValue("backlog")
+	m.setSearch("backlog")
+	if got := m.attnSel; got != 0 {
+		t.Fatalf("selection index = %d, want the first row", got)
+	}
+	if got := m.selectedAttention().Ticket; got != "LERP-22" {
+		t.Fatalf("selection = %s, want the first row of the filtered list", got)
+	}
+}
+
+// Done-when: a search that matches nothing says so. An empty box would read
+// as an empty board, which is the failure this feature has to design
+// against — and the way back out is on the panel and in the pane.
+func TestSearchWithNoMatchesSaysSo(t *testing.T) {
+	m := update(t, searching(t, "zzz"), keyMsg("enter"))
+
+	panel := m.attentionPanel(96, 14)
+	if !strings.Contains(panel, "no match for /zzz") {
+		t.Fatalf("a search that matched nothing renders an empty box:\n%s", panel)
+	}
+	if !strings.Contains(panel, "esc clear search") {
+		t.Fatalf("the panel does not offer the key that puts the rows back:\n%s", panel)
+	}
+	if strings.Contains(panel, "the inbox is empty") {
+		t.Fatalf("a filtered list claims the goal state:\n%s", panel)
+	}
+	if view := m.View(); !strings.Contains(view, "(esc clears the search)") {
+		t.Fatalf("the main pane does not say how to get the list back:\n%s", view)
+	}
+}
+
+// Done-when: `/` is on the panel's key line, and it is the prompt that line
+// carries once the box is open.
+func TestSearchIsOnTheKeyLineAndTakesIt(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: board()})
+
+	panel := m.attentionPanel(96, 14)
+	if !strings.Contains(panel, "/ search") {
+		t.Fatalf("the inbox panel does not offer /:\n%s", panel)
+	}
+
+	m = update(t, m, keyMsg("/"))
+	panel = m.attentionPanel(96, 14)
+	if strings.Contains(panel, "/ search") || strings.Contains(panel, "p promote") {
+		t.Fatalf("the key line is still there with the prompt open:\n%s", panel)
+	}
+	if !strings.Contains(panel, "filter the inbox") {
+		t.Fatalf("the prompt is not on the panel:\n%s", panel)
+	}
+	if !strings.Contains(m.View(), "enter accept · esc cancel") {
+		t.Fatalf("the status bar does not say how to leave the prompt:\n%s", m.View())
+	}
+
+	// A panel squeezed to two inner lines drops the key hints for its rows;
+	// the prompt outranks that rule, because typing blind costs more.
+	if got := m.attentionPanel(60, 4); !strings.Contains(got, "filter the inbox") {
+		t.Fatalf("a squeezed panel dropped the open prompt:\n%s", got)
+	}
+}
+
+// Done-when: matches are marked inside the row. Under a test binary's
+// colour profile the styles render as plain text, so this asserts the
+// segmentation highlight would paint — that the row still reads as itself,
+// with the matched span whole.
+func TestSearchHighlightsTheMatchInTheRow(t *testing.T) {
+	m := searching(t, "rele")
+	row := rowOf(t, m.attentionPanel(96, 14), "LERP-22")
+
+	if !strings.Contains(row, "GoReleaser: tagged "+styleMatch.Render("rele")+"ases") {
+		t.Fatalf("the match is not marked inside the row:\n%q", row)
+	}
+	if !strings.Contains(row, "Go"+styleMatch.Render("Rele")+"aser") {
+		t.Fatalf("the first occurrence in the same cell is not marked:\n%q", row)
+	}
+}
+
+func TestHighlightMarksEveryOccurrence(t *testing.T) {
+	mark := styleMatch.Render
+	for _, tc := range []struct{ s, query, want string }{
+		{"LERP-22", "22", "LERP-" + mark("22")},
+		{"GoReleaser", "e", "GoR" + mark("e") + "l" + mark("e") + "as" + mark("e") + "r"},
+		{"Needs Attention", "NEEDS", mark("Needs") + " Attention"},
+		{"curl install", "zzz", "curl install"},
+		{"curl install", "", "curl install"},
+		{"", "curl", ""},
+		// A rune that lowercases to a different byte length: folding
+		// rune-wise is what keeps the mark on the character it matched
+		// instead of splicing one in half.
+		{"KİLİM", "lim", "Kİ" + mark("LİM")},
+	} {
+		if got := highlight(tc.s, tc.query, stylePlain); got != tc.want {
+			t.Fatalf("highlight(%q, %q) = %q, want %q", tc.s, tc.query, got, tc.want)
+		}
+	}
+	// The cases above are exact either way, but a test binary writes to no
+	// terminal, so lipgloss renders every style as plain text and what they
+	// prove is that the text survives the splice whole. That the mark is
+	// visible at all is the part only the style itself can carry.
+	if !styleMatch.GetUnderline() {
+		t.Fatal("the search mark is colour alone: it has to read on a 16-colour terminal too")
+	}
+}
+
+// Done-when: highlighting runs after the sanitizing boundary, never before.
+// A hostile title is already inert in model state, so the escapes highlight
+// inserts are the only ones on the row — and searching it cannot put the
+// ticket's own back.
+func TestSearchOverAHostileTitleStaysInert(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-1", TicketID: "id-1", Title: hostile, Status: "Backlog", Reason: "unclaimed"},
+	}}})
+
+	m = typeSearch(t, update(t, m, keyMsg("/")), "pwn")
+	if len(m.shown) != 1 {
+		t.Fatalf("the cleaned title did not match its own text: %d rows", len(m.shown))
+	}
+	view := m.View()
+	escapeFree(t, "a highlighted hostile title", view)
+	for _, line := range strings.Split(view, "\n") {
+		if got := lipgloss.Width(line); got > m.width {
+			t.Fatalf("a highlighted row is %d cells wide in a %d-column window:\n%s",
+				got, m.width, view)
+		}
+	}
+}

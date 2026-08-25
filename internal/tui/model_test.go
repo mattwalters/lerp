@@ -1134,6 +1134,11 @@ func TestTheHeavyBoxFollowsFocus(t *testing.T) {
 // the whole reason they felt like they did not exist.
 func TestFocusedPanelCarriesItsKeys(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	// Wider than the default test window: five keys do not fit the
+	// 45-column panel a 100-column terminal leaves, and bubbles truncates
+	// the line rather than overflowing it. What is under test is which keys
+	// the panel offers, not where the truncation falls.
+	m = update(t, m, tea.WindowSizeMsg{Width: 140, Height: 30})
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: threeWaiting()})
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{

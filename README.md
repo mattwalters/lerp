@@ -330,24 +330,32 @@ transitively unblock, then priority, then identifier — so the promote
 worth making is the top row of its group. `s` cycles that to project,
 leverage or priority; the two grouping modes draw a header per
 boundary — none, when every row is in the same group — and the two flat
-ones order the whole list. `P`
-scopes the panel to one project and cycles back to all. Both are
-session-only: no saved views, no filter syntax, and neither changes
-which tickets are fetched. Selecting a row
-reads the ticket itself into the main pane: its body — where the plan
-lives — and the comments on it, the verdict a run left behind, so a
-parked ticket can be decided from that one screen. That is a read
-and stays one: nothing composes, replies, or navigates on to another
-ticket, and `o` opens the ticket in Linear for everything else. Select
-one and press `p` to promote it: pick a target from the configured
-queue statuses or a pipeline exit, and lerp moves it there. That
-MoveIssue is the only write any view makes; everything else about a
-ticket still happens in Linear. Keys: `1`/`2` choose a panel and
-`tab` cycles. `↑`/`↓` pick a row, `s` sorts
-the Inbox and `P` scopes it to a project, `o` opens the selected ticket
-in Linear, `pgup`/`pgdn` scroll the log or the ticket, `end` resumes
-following, `r` shows the raw log, `q` quits (or backs out of the
-promote picker).
+ones order the whole list. `P` scopes the panel to one project and
+cycles back to all. `/` opens a prompt on the panel and narrows it as
+you type — a plain case-insensitive substring over the identifier,
+title, status and project already on the row, with the matches marked
+inside it. `enter` keeps the filter and hands the keys back to the
+list, so you can promote what you found; `esc` cancels the prompt, and
+`esc` again clears a filter the prompt already closed on. The panel
+title carries the state — `● 4/17 · /goreleaser` — so a narrowed list
+is never mistaken for an empty board. All three are session-only: no
+saved views, no filter syntax, and none of them changes which tickets
+are fetched. Selecting a row reads the ticket itself into the main
+pane: its body — where the plan lives — and the comments on it, the
+verdict a run left behind, so a parked ticket can be decided from that
+one screen. That is a read and stays one: nothing composes, replies,
+or navigates on to another ticket, and `o` opens the ticket in Linear
+for everything else. Select one and press `p` to promote it: pick a
+target from the configured queue statuses or a pipeline exit, and lerp
+moves it there. That MoveIssue is the only write any view makes;
+everything else about a ticket still happens in Linear. Keys: `1`/`2`
+choose a panel and `tab` cycles. `↑`/`↓` pick a row, `s` sorts the
+Inbox, `P` scopes it to a project and `/` searches it, `o` opens the
+selected ticket in Linear, `pgup`/`pgdn` scroll the log or the ticket,
+`end` resumes following, `r` shows the raw log, `q` quits (or backs
+out of the promote picker). While the search prompt is open it has the
+keyboard — a `p` or a `q` typed into it is text — and `ctrl+c` still
+quits.
 
 Quitting (`q` or `ctrl+c`) closes the screen, stops future passes, and
 waits briefly for a pass already in flight to settle. The agents are

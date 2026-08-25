@@ -18,31 +18,37 @@ type keymap struct {
 	Promote   key.Binding
 	Sort      key.Binding
 	Project   key.Binding
-	Open      key.Binding
-	Raw       key.Binding
-	Help      key.Binding
-	Quit      key.Binding
+	// Search opens the inbox's prompt; ClearSearch is the way back out of a
+	// filter the prompt already closed on.
+	Search      key.Binding
+	ClearSearch key.Binding
+	Open        key.Binding
+	Raw         key.Binding
+	Help        key.Binding
+	Quit        key.Binding
 }
 
 func newKeymap() keymap {
 	return keymap{
-		Attention: key.NewBinding(key.WithKeys("1"), key.WithHelp("1", "inbox")),
-		Work:      key.NewBinding(key.WithKeys("2"), key.WithHelp("2", "work")),
-		NextPanel: key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next panel")),
-		PrevPanel: key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "prev panel")),
-		Up:        key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "select up")),
-		Down:      key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "select down")),
-		PageUp:    key.NewBinding(key.WithKeys("pgup", "b"), key.WithHelp("pgup/b", "scroll up")),
-		PageDown:  key.NewBinding(key.WithKeys("pgdown", "f"), key.WithHelp("pgdn/f", "scroll down")),
-		Top:       key.NewBinding(key.WithKeys("home", "g"), key.WithHelp("home/g", "top")),
-		Bottom:    key.NewBinding(key.WithKeys("end", "G"), key.WithHelp("end/G", "follow")),
-		Promote:   key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "promote")),
-		Sort:      key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort inbox")),
-		Project:   key.NewBinding(key.WithKeys("P"), key.WithHelp("P", "filter by project")),
-		Open:      key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "open in Linear")),
-		Raw:       key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "raw log")),
-		Help:      key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
-		Quit:      key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
+		Attention:   key.NewBinding(key.WithKeys("1"), key.WithHelp("1", "inbox")),
+		Work:        key.NewBinding(key.WithKeys("2"), key.WithHelp("2", "work")),
+		NextPanel:   key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next panel")),
+		PrevPanel:   key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "prev panel")),
+		Up:          key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "select up")),
+		Down:        key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "select down")),
+		PageUp:      key.NewBinding(key.WithKeys("pgup", "b"), key.WithHelp("pgup/b", "scroll up")),
+		PageDown:    key.NewBinding(key.WithKeys("pgdown", "f"), key.WithHelp("pgdn/f", "scroll down")),
+		Top:         key.NewBinding(key.WithKeys("home", "g"), key.WithHelp("home/g", "top")),
+		Bottom:      key.NewBinding(key.WithKeys("end", "G"), key.WithHelp("end/G", "follow")),
+		Promote:     key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "promote")),
+		Sort:        key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort inbox")),
+		Project:     key.NewBinding(key.WithKeys("P"), key.WithHelp("P", "filter by project")),
+		Search:      key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "search inbox")),
+		ClearSearch: key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "clear search")),
+		Open:        key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "open in Linear")),
+		Raw:         key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "raw log")),
+		Help:        key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
+		Quit:        key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
 	}
 }
 
@@ -60,7 +66,8 @@ func (k keymap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Attention, k.Work, k.NextPanel, k.PrevPanel,
 			k.Up, k.Down, k.PageUp, k.PageDown, k.Top, k.Bottom},
-		{k.Promote, k.Sort, k.Project, k.Open, k.Raw, k.Help, k.Quit},
+		{k.Promote, k.Sort, k.Project, k.Search, k.ClearSearch,
+			k.Open, k.Raw, k.Help, k.Quit},
 	}
 }
 
@@ -76,11 +83,19 @@ func (k keymap) FullHelp() [][]key.Binding {
 // a run whose ticket the pass no longer lists. An advertised key that does
 // nothing is worse than one left out, because pressing it is how the
 // operator finds out — and r would flip the raw toggle invisibly.
-func (k keymap) panelHelp(p panel, hasLog, hasURL bool) []key.Binding {
+//
+// filtered says a search is applied. It swaps / for esc rather than adding
+// it: / reopens the prompt from either state, where esc is the only way
+// back to the whole list and the only one the operator has not just used.
+func (k keymap) panelHelp(p panel, hasLog, hasURL, filtered bool) []key.Binding {
 	var b []key.Binding
 	switch p {
 	case panelAttention:
-		b = []key.Binding{k.Promote, short(k.Sort, "sort"), short(k.Project, "project")}
+		find := short(k.Search, "search")
+		if filtered {
+			find = short(k.ClearSearch, "clear")
+		}
+		b = []key.Binding{k.Promote, find, short(k.Sort, "sort"), short(k.Project, "project")}
 	case panelWork:
 		if hasLog {
 			b = append(b, short(k.Raw, "raw"))
