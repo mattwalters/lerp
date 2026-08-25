@@ -48,13 +48,16 @@ type Issue struct {
 	Project string
 }
 
-// Linear's own workflow-state categories, as its API spells them. A ticket
-// in either of these is waiting to be started at all — nothing has routed
-// it anywhere — which is a different thing from a ticket resting in a
-// status something moved it to.
+// Linear's own workflow-state categories, as its API spells them. These
+// three are the ones a ticket sits in before any work starts on it —
+// nothing has routed it anywhere — which is a different thing from a ticket
+// resting in a status something moved it to. The categories past them,
+// started and the two finished ones, are not named here because nothing
+// reads them.
 const (
-	CategoryTriage  = "triage"
-	CategoryBacklog = "backlog"
+	CategoryTriage    = "triage"
+	CategoryBacklog   = "backlog"
+	CategoryUnstarted = "unstarted"
 )
 
 // IssueDetail is one ticket as the inbox pane reads it: the body the

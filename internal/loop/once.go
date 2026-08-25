@@ -145,8 +145,11 @@ func servedStatuses(repo *config.RepoConfig) map[string]bool {
 // The one thing config cannot say is which of the statuses it never names
 // a ticket was already sitting in before anything routed it. Linear's own
 // state category answers that, so it is the second argument: a status the
-// pipeline does not name is only news when Linear does not file it under
-// triage or backlog.
+// pipeline does not name is only news when Linear files it as started.
+// Every board keeps its intake somewhere — triage, a backlog, a Todo
+// column — and a whole board's worth of tickets resting where they were
+// filed is not something to mark; a ticket moved into a status that means
+// work is under way, by something the pipeline knows nothing about, is.
 func statusRelevance(repo *config.RepoConfig) func(status, category string) StatusRelevance {
 	rank := make(map[string]StatusRelevance, len(repo.Queues)*3)
 	// The worse news wins: a status that is one queue's exit and another's
@@ -173,7 +176,8 @@ func statusRelevance(repo *config.RepoConfig) func(status, category string) Stat
 		if r, ok := rank[status]; ok {
 			return r
 		}
-		if category == linear.CategoryTriage || category == linear.CategoryBacklog {
+		switch category {
+		case linear.CategoryTriage, linear.CategoryBacklog, linear.CategoryUnstarted:
 			return StatusBacklog
 		}
 		return StatusUnnamed

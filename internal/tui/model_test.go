@@ -706,6 +706,32 @@ func TestInboxTableNamesItsColumns(t *testing.T) {
 	if got := ansi.Strip(strings.Split(scrolled, "\n")[1]); !strings.Contains(got, hdrTicket) {
 		t.Fatalf("the header scrolled away with the rows:\n%s", scrolled)
 	}
+	// The header belongs to the table and not to the cursor: with one row
+	// in the inbox and a full work panel, the line the panel spends on it
+	// must not depend on which panel has focus. A header that appeared on
+	// tab would be exactly the header that comes and goes.
+	one, _, _ := newTestModel(t, 1)
+	resized, _ := one.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
+	one = update(t, resized.(model), keyMsg("1"))
+	one = update(t, one, eventMsg{ev: loop.Event{Type: loop.EventAttention,
+		Attention: []loop.AttentionItem{{Ticket: "LERP-1", Title: "waiting", Reason: "unclaimed"}}}})
+	tickets := make([]loop.QueueTicket, 40)
+	for i := range tickets {
+		tickets[i] = loop.QueueTicket{ID: fmt.Sprintf("t%d", i),
+			Identifier: fmt.Sprintf("QUEUED-%d", i+1), Title: "work", Eligible: true}
+	}
+	one = update(t, one, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: tickets},
+	}}})
+	for _, focus := range []string{"2", "1"} {
+		one = update(t, one, keyMsg(focus))
+		g := one.geometry()
+		panel := one.attentionPanel(g.sideW, g.attnH)
+		if !strings.Contains(strings.Split(ansi.Strip(panel), "\n")[1], hdrTicket) {
+			t.Fatalf("with focus on panel %s the inbox lost its column header:\n%s", focus, panel)
+		}
+	}
+
 	// And no header over an empty state, which is a sentence and not a table.
 	empty, _, _ := newTestModel(t, 1)
 	empty = update(t, empty, keyMsg("1"))
@@ -744,6 +770,22 @@ func TestHelpOverlayDecodesTheInboxMarks(t *testing.T) {
 			t.Fatalf("no line says %q beside %s, so the mark is still undecoded:\n%s",
 				want.says, want.glyph, view)
 		}
+	}
+
+	// A terminal too short to hold the overlay whole has to be able to
+	// scroll to the rest of it: the legend sits under the key table, so a
+	// pane that only ever showed its first screen would be a pane the
+	// legend is not in.
+	short, _, _ := newTestModel(t, 1)
+	small, _ := short.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	short = update(t, small.(model), keyMsg("?"))
+	reached := false
+	for i := 0; i < 8 && !reached; i++ {
+		reached = strings.Contains(ansi.Strip(short.View()), "never named")
+		short = update(t, short, keyMsg("f"))
+	}
+	if !reached {
+		t.Fatalf("the legend is out of reach on an 80x24 terminal:\n%s", short.View())
 	}
 }
 
@@ -790,7 +832,7 @@ func TestInboxSortModesCycle(t *testing.T) {
 		t.Fatalf("status order = %v, want %v:\n%s", got, want, panel)
 	}
 	for _, note := range []string{"a run failed here", "a run finished here",
-		"the pipeline never names it", "not routed into the pipeline yet"} {
+		"the pipeline never names it", "waiting to enter the pipeline"} {
 		if !strings.Contains(panel, note) {
 			t.Fatalf("status headers do not carry %q:\n%s", note, panel)
 		}

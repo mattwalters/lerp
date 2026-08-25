@@ -108,10 +108,11 @@ const (
 	// or a human dragged it.
 	StatusUnnamed
 	// StatusBacklog is a status the pipeline never names either, but one
-	// Linear files under triage or backlog: the ticket has not entered the
-	// pipeline, rather than fallen out of it. It is the ordinary resting
-	// place of most of a board, which is why it is not StatusUnnamed —
-	// a fingerprint the whole board carries identifies nothing.
+	// Linear files as somewhere work has not started: the ticket has not
+	// entered the pipeline, rather than fallen out of it. It is the
+	// ordinary resting place of most of a board, which is why it is not
+	// StatusUnnamed — a fingerprint the whole board carries identifies
+	// nothing.
 	StatusBacklog
 	// StatusOther is a status the pipeline serves. A waiting ticket is
 	// never in one, since attention lists only unserved statuses; the rank
@@ -130,7 +131,7 @@ func (r StatusRelevance) Note() string {
 	case StatusUnnamed:
 		return "the pipeline never names it"
 	case StatusBacklog:
-		return "not routed into the pipeline yet"
+		return "waiting to enter the pipeline"
 	case StatusOther:
 		return "a queue serves it"
 	}

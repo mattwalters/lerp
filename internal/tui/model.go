@@ -474,6 +474,21 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case key.Matches(msg, m.keys.Help):
 		m.helpOn = !m.helpOn
+		// The overlay is one more thing the pane holds, so it goes through
+		// the viewport the log and the detail already scroll in: a legend
+		// under the key table is only a legend if a short terminal can
+		// reach it. Leaving parks a log's offset and arriving puts it
+		// back, the same as stepping onto a row with no log.
+		if m.helpOn && m.showingLog() && !m.follow {
+			m.logOffset = m.vp.YOffset
+		}
+		m.refreshMain()
+		switch {
+		case m.helpOn || !m.showingLog():
+			m.vp.GotoTop()
+		case !m.follow:
+			m.vp.SetYOffset(m.logOffset)
+		}
 	case key.Matches(msg, m.keys.Attention):
 		m.setFocus(panelAttention)
 	case key.Matches(msg, m.keys.Work):
@@ -924,6 +939,10 @@ func (m *model) showingLog() bool {
 // for. Scroll position is the caller's concern — focus and selection changes
 // jump to the top; a data refresh keeps the operator's place.
 func (m *model) refreshMain() {
+	if m.helpOn {
+		m.vp.SetContent(m.helpText())
+		return
+	}
 	if m.showingLog() {
 		m.refreshLog()
 		return
@@ -1336,7 +1355,7 @@ func (m *model) layout() {
 	// A pane that just changed height holds a scroll position measured
 	// against the old one: re-pin a followed log to the bottom, and clamp
 	// anything else back inside the new box.
-	if m.showingLog() && m.follow {
+	if m.showingLog() && m.follow && !m.helpOn {
 		m.vp.GotoBottom()
 		return
 	}
@@ -1731,13 +1750,14 @@ func (m model) attentionPanel(w, h int) string {
 	rows, sel := m.attentionRows(inner)
 	// The header is pinned rather than listed: windowing a header is how a
 	// header scrolls away. It costs the rows a line, and — by the same rule
-	// panelBody holds the key hint to — only when two are left over, which
-	// is the least windowRows needs to keep the selection visible. A panel
-	// squeezed to a single row keeps the row: a column header over no
-	// columns names nothing.
+	// panelBody holds the key hint to — only when what is left can still
+	// show the rows: either two lines remain, the least windowRows needs to
+	// keep the selection visible, or the rows all fit in one line anyway.
+	// The rule reads the height and not the focus, so tabbing between
+	// panels can never be what makes a column header appear.
 	ih := h - 2
 	header := ""
-	if ih >= 3 {
+	if ih >= 3 || len(rows) <= ih-1 {
 		if header = m.attentionHeader(inner); header != "" {
 			ih--
 		}
@@ -1874,12 +1894,18 @@ func (m model) mainPanel(w, h int) string {
 		}
 	}
 	if m.helpOn {
-		rows := append(strings.Split(m.help.View(m.keys), "\n"), inboxLegend()...)
-		return panelBox(styleTitleFocus.Render("help"), true, w, h, rows, padMain)
+		return panelBox(styleTitleFocus.Render("help"), true, w, h,
+			strings.Split(m.vp.View(), "\n"), padMain)
 	}
 	title := m.mainTitle()
 	return panelBox(styleFaint.Render(title), false, w, h,
 		strings.Split(m.vp.View(), "\n"), padMain)
+}
+
+// helpText is the ? overlay: every binding the keymap declares, and then
+// the legend for the marks the inbox draws inside its columns.
+func (m model) helpText() string {
+	return strings.Join(append(strings.Split(m.help.View(m.keys), "\n"), inboxLegend()...), "\n")
 }
 
 // inboxLegend spells out the three marks the inbox table draws inside its
