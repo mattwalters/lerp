@@ -7,7 +7,17 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # Both platforms are load-bearing: development happens on macOS, and
+    # `internal/evidence` shells out to `ps -o lstart=` and parses what comes
+    # back — exactly where BSD and GNU disagree — while the process-group and
+    # lock syscalls under it are platform-sensitive too. fail-fast is off
+    # because "does it break on one OS or both" is the whole question a red
+    # run here has to answer, and cancelling the sibling job hides it.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -16,6 +26,24 @@ jobs:
       # The gate lives in the Makefile so CI and a developer's local run can
       # never drift apart.
       - run: make check
+
+  # A dependency that turns out to be vulnerable should fail a build, not wait
+  # to be noticed. govulncheck reports only vulnerabilities actually reachable
+  # from this module's code, so a finding is a finding worth acting on rather
+  # than a version number to argue with. Its own job, not a step in `make
+  # check`: the gate stays something a contributor can run offline with
+  # nothing installed but Go.
+  vuln:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      # Deliberately unpinned. The scanner is only as good as the vulnerability
+      # database it fetches, which is current by definition; pinning the tool
+      # would freeze the analysis without freezing the data it reads.
+      - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
   # The cast rots silently: a tape whose keystrokes no longer drive the UI
   # they were written against still renders, it just renders the wrong thing.

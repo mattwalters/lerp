@@ -1,0 +1,15 @@
+version: 2
+
+# The dependency tree is small — the Bubble Tea ecosystem, BurntSushi/toml and
+# a handful of actions — so weekly is a couple of PRs a month rather than a
+# queue to triage, and it keeps the tree current without manual sweeps.
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

@@ -44,8 +44,10 @@ make install
 
 `make install` builds with the version stamped from `git describe` and
 installs into Go's bin dir — `GOBIN` when set, else `GOPATH/bin`;
-`lerp version` prints what you got. `make check` runs exactly what CI
-runs: gofmt, vet, build, test.
+`lerp version` prints what you got. `make check` is the gate — gofmt,
+vet, build, test — and CI runs it on Linux and macOS. CI also runs
+`govulncheck` and re-records the demo cast; both need tooling a local
+check deliberately does not, so neither is part of `make check`.
 
 ## Getting started
 
