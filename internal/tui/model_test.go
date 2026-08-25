@@ -1510,8 +1510,12 @@ func TestAWindowTooShortForThePaneKeepsItsScreen(t *testing.T) {
 	if strings.Contains(m.View(), "too small") {
 		t.Fatalf("a closed pane did not buy this window a screen:\n%s", m.View())
 	}
-	if strings.Contains(m.View(), "enter detail") {
-		t.Fatalf("the status bar advertises a key this window has no room for:\n%s", m.View())
+	view := m.View()
+	if strings.Contains(view, "enter detail") || strings.Contains(view, "? help") {
+		t.Fatalf("the status bar advertises a key this window has no room for:\n%s", view)
+	}
+	if !strings.Contains(view, "q quit") {
+		t.Fatalf("the status bar dropped the key that still works:\n%s", view)
 	}
 
 	for _, k := range []string{"enter", "p", "?"} {
@@ -1770,6 +1774,11 @@ func TestTheOverlayTakesEscAndEnter(t *testing.T) {
 	if next.detailOpen[panelAttention] || cmd != nil {
 		t.Fatal("enter under the overlay opened the pane behind it")
 	}
+	// Behind the overlay the pane has no key to offer: enter is inert and esc
+	// is the overlay's.
+	if view := m.View(); strings.Contains(view, "enter detail") || strings.Contains(view, "esc close") {
+		t.Fatalf("the bar offers the pane's keys from behind the overlay:\n%s", view)
+	}
 	m = update(t, m, keyMsg("esc"))
 	if m.helpOn {
 		t.Fatalf("esc did not close the overlay:\n%s", m.View())
@@ -1793,11 +1802,30 @@ func TestADebounceDoesNotOutliveThePane(t *testing.T) {
 	id := m.shown[m.attnSel].TicketID
 
 	m = update(t, m, keyMsg("esc"))
-	if _, cmd := updateCmd(t, m, detailDueMsg{ticketID: id}); cmd != nil {
+	m, cmd := updateCmd(t, m, detailDueMsg{ticketID: id})
+	if cmd != nil {
 		t.Fatalf("the debounce for %s fired into a closed pane", id)
 	}
 	if got := reader.fetched(); len(got) != 0 {
 		t.Fatalf("a closed pane read %v", got)
+	}
+
+	// And the row is not spent: reopening on it asks again. A dropped read
+	// that left the pane still pointed at the ticket would refuse to
+	// schedule a second one, and the row would stay blank however often the
+	// operator opened it.
+	m, cmd = updateCmd(t, m, keyMsg("enter"))
+	if cmd == nil {
+		t.Fatalf("reopening on %s scheduled nothing", id)
+	}
+	reader.returns(linear.IssueDetail{Body: "read on the second try"}, nil)
+	m, cmd = updateCmd(t, m, detailDueMsg{ticketID: id})
+	if cmd == nil {
+		t.Fatalf("the reopened row's debounce fired no fetch for %s", id)
+	}
+	m = update(t, m, cmd())
+	if !strings.Contains(m.View(), "read on the second try") {
+		t.Fatalf("the reopened row never read its ticket:\n%s", m.View())
 	}
 }
 
@@ -1830,6 +1858,21 @@ func TestAClosedPaneIsNotRefreshed(t *testing.T) {
 	m = update(t, m, keyMsg("enter"))
 	if !strings.Contains(m.View(), "and more") {
 		t.Fatalf("the reopened pane missed what arrived while it was shut:\n%s", m.View())
+	}
+
+	// The inbox lens is the same bargain, and refreshMain runs on focus, on s
+	// and on P as well as on the poll — against a closed pane that is prose
+	// wrapped to a zero-width viewport. A closed pane is not re-rendered at
+	// all, so it is still holding the log when none of those have touched it.
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+	m = update(t, m, keyMsg("esc"))
+	const logText = "agent one says hello\nand more"
+	for _, k := range []string{"1", "s", "P"} {
+		m = update(t, m, keyMsg(k))
+		shown := strings.TrimSpace(ansi.Strip(m.vp.View()))
+		if shown == "" || !strings.Contains(logText, shown) {
+			t.Fatalf("%q re-rendered a closed pane: %q", k, shown)
+		}
 	}
 }
 

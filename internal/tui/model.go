@@ -617,9 +617,16 @@ func (m *model) wantDetail() tea.Cmd {
 // off the render loop, so a slow Linear call never blocks a frame. A failed
 // entry is retried when the pane comes back to it; a loaded one never is.
 func (m *model) fetchDetail(ticketID string) tea.Cmd {
+	if ticketID != m.detailWant {
+		return nil
+	}
 	// The pane may have closed inside the debounce, which is a quarter of a
-	// second the operator can shut it in.
-	if ticketID != m.detailWant || !m.detailOpen[panelAttention] {
+	// second the operator can shut it in. Forget what it wanted as well as
+	// dropping the read: wantDetail refuses to schedule the ticket it is
+	// already pointed at, so a detailWant left standing for a read that
+	// never happened is a row that stays blank however often it is reopened.
+	if !m.detailOpen[panelAttention] {
+		m.detailWant = ""
 		return nil
 	}
 	if d := m.details[ticketID]; d != nil && d.state != detailFailed {
@@ -2227,12 +2234,19 @@ func (m model) statusBar() string {
 	if len(m.attention) > 0 {
 		left += "  " + styleAttention.Render(fmt.Sprintf("● %d in the inbox", len(m.attention)))
 	}
-	// The pane's key is contextual, and a key nobody can see is a key nobody
-	// presses. detailOpen, not mainOpen: it is what enter and esc actually
-	// set, so the hint never promises to close an overlay it cannot.
-	const globals = "? help · q quit"
+	// The bar offers what this window and this frame actually answer to. ?
+	// draws its overlay in the main pane, so a window with no room for the
+	// pane has none for the overlay either — though closing one never needs
+	// the room opening it did.
+	globals := "? help · q quit"
+	if !m.helpOn && !m.roomForMain() {
+		globals = "q quit"
+	}
 	hint := globals
 	switch {
+	// Behind the overlay, esc and ? are the overlay's and enter is inert, so
+	// the pane has no key here to offer.
+	case m.helpOn:
 	case m.detailOpen[m.focus]:
 		hint = "esc close · " + hint
 	case m.roomForMain():
