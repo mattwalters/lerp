@@ -112,13 +112,6 @@ const (
 	panelWork
 )
 
-func (p panel) String() string {
-	if p == panelAttention {
-		return "inbox"
-	}
-	return "work"
-}
-
 // sortMode is the inbox table's one control. Sorting is grouping: the
 // mode picks the row order and, with it, whether the table draws headers —
 // two flat modes for working a list top-down, two grouped ones for reading
@@ -3075,16 +3068,14 @@ func (m model) statusBar() string {
 		heart = styleAttention.Render("pass overdue")
 	}
 
-	// The heartbeat is the only segment here that comes and goes, so it goes
-	// last: appearing at the end of the left side pushes nothing, where in
-	// front of the capacity and the inbox count it shoved both of them a
-	// spinner's width sideways every time a pass started.
+	// The heartbeat is the only segment here that comes and goes, so the bar
+	// is laid out without it and it is fitted into the gap at the end — see
+	// below. In front of the capacity and the inbox count it shoved both of
+	// them a spinner's width sideways every time a pass started, and
+	// counting its width against the hints below moved those instead.
 	left := brand + "  " + styleFaint.Render(m.capacityLabel())
 	if len(m.attention) > 0 {
 		left += "  " + styleAttention.Render(fmt.Sprintf("● %d in the inbox", len(m.attention)))
-	}
-	if heart != "" {
-		left += "  " + heart
 	}
 	// The bar offers what this window and this frame actually answer to. ?
 	// draws its overlay in the main pane, so a window with no room for the
@@ -3118,9 +3109,9 @@ func (m model) statusBar() string {
 	right := styleFaint.Render(hint)
 
 	// The pane's segment is the first thing the bar gives up. Below it the
-	// truncation takes the left side instead, from its tail: the heartbeat,
-	// then "● n in the inbox" — the one number the needs-you panel exists
-	// for, spent on advertising a key. A modal's line is not a hint but its
+	// truncation takes the left side instead, and what it would take is
+	// "● n in the inbox" — the one number the needs-you panel exists for,
+	// spent on advertising a key. A modal's line is not a hint but its
 	// instructions, so it is not up for this.
 	if !m.modal() && m.width-lipgloss.Width(left)-lipgloss.Width(right) < 1 {
 		right = styleFaint.Render(globals)
@@ -3131,6 +3122,19 @@ func (m model) statusBar() string {
 		right = ansi.Truncate(right, max(0, m.width-1), "…")
 		left = ansi.Truncate(left, max(0, m.width-lipgloss.Width(right)-1), "…")
 		pad = max(1, m.width-lipgloss.Width(left)-lipgloss.Width(right))
+	}
+
+	// The heartbeat rides in the padding the bar was already holding open,
+	// so a pass starting moves nothing: the segments left of the gap are
+	// placed without it and the hints are right-aligned regardless of it.
+	// Sized in before the gap is measured it would instead have decided,
+	// once an interval, whether the hints had room for the pane's key — and
+	// a window too narrow to hold it whole gets no heartbeat rather than a
+	// sawn-off one, since "⠋ pa…" reports nothing and would drag the hints
+	// sideways to say it.
+	if w := lipgloss.Width(heart); heart != "" && pad-w-2 >= 1 {
+		left += "  " + heart
+		pad -= w + 2
 	}
 	return left + strings.Repeat(" ", pad) + right
 }

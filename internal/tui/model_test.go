@@ -3863,9 +3863,8 @@ func TestAPassStartingDoesNotMoveTheCountsAlong(t *testing.T) {
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
 		{Ticket: "LERP-1", Title: "one"}, {Ticket: "LERP-2", Title: "two"},
 	}}})
-	// Columns, not string offsets: both bars are full of styling.
 	col := func(m model, want string) int {
-		at := strings.Index(ansi.Strip(m.statusBar()), want)
+		at := statusCol(m.statusBar(), want)
 		if at < 0 {
 			t.Fatalf("the bar lost %q:\n%s", want, m.statusBar())
 		}
@@ -3879,6 +3878,74 @@ func TestAPassStartingDoesNotMoveTheCountsAlong(t *testing.T) {
 	settled := update(t, m, tickedMsg{})
 	if got := [2]int{col(settled, "0/2 running"), col(settled, "● 2 in the inbox")}; got != inFlight {
 		t.Errorf("the pass landing moved the counts from %v to %v", inFlight, got)
+	}
+}
+
+// statusCol is the column want starts at on the status bar. Neither offset
+// into the rendered string nor into the stripped one is a column: the bar is
+// full of styling, and its segments carry ●, ⠋ and … , each one byte-wide
+// three times over. -1 when the bar does not carry want at all.
+func statusCol(bar, want string) int {
+	plain := ansi.Strip(bar)
+	at := strings.Index(plain, want)
+	if at < 0 {
+		return -1
+	}
+	return lipgloss.Width(plain[:at])
+}
+
+// The counts are not the only thing right of the heartbeat: the hints are
+// too, and they are sized by what the left side leaves them. Counting the
+// heartbeat's width there put the jitter back at pass cadence — around
+// widths 48–64 a pass starting cost the bar "enter detail · " and slid
+// every remaining hint character sideways, once an interval, forever.
+func TestAPassStartingDoesNotMoveTheHintsEither(t *testing.T) {
+	for w := 30; w <= 120; w++ {
+		m, _, _ := newTestModel(t, 2)
+		m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+			{Ticket: "LERP-1", Title: "one"}, {Ticket: "LERP-2", Title: "two"},
+		}}})
+		sized, _ := m.Update(tea.WindowSizeMsg{Width: w, Height: 30})
+		running := sized.(model)
+		if !running.inFlight {
+			t.Fatal("the first pass is not in flight")
+		}
+		settled := update(t, running, tickedMsg{})
+
+		for _, seg := range []string{"0/2 running", "● 2 in the inbox", "enter detail", "q quit"} {
+			if a, b := statusCol(running.statusBar(), seg), statusCol(settled.statusBar(), seg); a != b {
+				t.Fatalf("at width %d a pass starting moved %q from %d to %d:\n%s\n%s",
+					w, seg, b, a, settled.statusBar(), running.statusBar())
+			}
+		}
+	}
+}
+
+// An alarm is legible or it is absent. Sized into the left side before the
+// truncation ran, "pass overdue" came out of a narrow window as "pass …" —
+// a warning shredded down to the word that is not the warning, having spent
+// the room the inbox count was holding to say it.
+func TestTheHeartbeatIsNeverSawnOff(t *testing.T) {
+	var attn []loop.AttentionItem
+	for i := 1; i <= 12; i++ {
+		attn = append(attn, loop.AttentionItem{Ticket: fmt.Sprintf("LERP-%d", i), Title: "waiting"})
+	}
+
+	for w := 30; w <= 120; w++ {
+		m, _, _ := newTestModel(t, 2)
+		m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: attn}})
+		sized, _ := m.Update(tea.WindowSizeMsg{Width: w, Height: 30})
+
+		running := ansi.Strip(sized.(model).statusBar())
+		if strings.Contains(running, "pass") && !strings.Contains(running, "pass running…") {
+			t.Errorf("at width %d the spinner came out sawn off:\n%s", w, running)
+		}
+
+		stale := update(t, sized.(model), tickedMsg{})
+		stale.lastPass = time.Now().Add(-stale.overdueAfter() - time.Second)
+		if bar := ansi.Strip(stale.statusBar()); strings.Contains(bar, "pass") && !strings.Contains(bar, "pass overdue") {
+			t.Errorf("at width %d the alarm came out sawn off:\n%s", w, bar)
+		}
 	}
 }
 
