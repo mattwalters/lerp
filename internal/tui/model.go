@@ -544,8 +544,14 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case key.Matches(msg, m.keys.ClearSearch):
 		// esc with the prompt already closed is the way back to the whole
-		// list; handleSearchKey has it while the prompt is open.
-		if m.focus == panelAttention && m.search != "" {
+		// list; handleSearchKey has it while the prompt is open. It is not
+		// the inbox panel's alone — the filter is on the list wherever the
+		// operator is standing — but it never reaches past an overlay,
+		// because closing one is what esc means first.
+		switch {
+		case m.helpOn:
+			m.helpOn = false
+		case m.search != "":
 			m.setSearch("")
 			m.refreshMain()
 		}
@@ -1520,8 +1526,13 @@ func (m *model) hasFooter(p panel) bool {
 }
 
 // keyHint is the focused panel's key line, rendered by bubbles/help so it
-// truncates to the panel rather than overflowing it. The model's own help
-// component draws it, on a copy: the ? overlay owns m.help.Width.
+// fits the panel rather than overflowing it. The model's own help component
+// draws it, on a copy: the ? overlay owns m.help.Width.
+//
+// bubbles drops whole hints off the end and marks what is left out with an
+// ellipsis, so no hint is ever half-shown — which makes panelHelp's order
+// the thing that decides what an inbox row's five keys lose on a narrow
+// panel, and the ? overlay the place that still has all of them.
 func (m model) keyHint(p panel, width int) string {
 	if width < 1 || !m.keyHints(p) {
 		return ""

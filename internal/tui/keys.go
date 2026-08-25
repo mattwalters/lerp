@@ -93,6 +93,12 @@ type rowKeys struct {
 // Which is also why a filter swaps / for esc rather than adding it, and why
 // P drops out of a list with no project in it: the line is about forty
 // columns wide, so a key that does nothing here costs one that does.
+//
+// The order is what survives a narrow panel, since bubbles drops hints off
+// the end to fit: what acts on the row under the cursor first, then the two
+// display cycles, whose state the panel title already carries in words. All
+// five fit from about 120 columns; under that the cycles go first and the
+// ellipsis says where to look for them.
 func (k keymap) panelHelp(p panel, live rowKeys) []key.Binding {
 	var b []key.Binding
 	switch p {
@@ -101,7 +107,11 @@ func (k keymap) panelHelp(p panel, live rowKeys) []key.Binding {
 		if live.filtered {
 			find = short(k.ClearSearch, "clear")
 		}
-		b = []key.Binding{k.Promote, find, short(k.Sort, "sort")}
+		b = []key.Binding{k.Promote, find}
+		if live.hasURL {
+			b = append(b, short(k.Open, "open"))
+		}
+		b = append(b, short(k.Sort, "sort"))
 		if live.projects {
 			b = append(b, short(k.Project, "project"))
 		}
@@ -109,9 +119,9 @@ func (k keymap) panelHelp(p panel, live rowKeys) []key.Binding {
 		if live.hasLog {
 			b = append(b, short(k.Raw, "raw"))
 		}
-	}
-	if live.hasURL {
-		b = append(b, short(k.Open, "open"))
+		if live.hasURL {
+			b = append(b, short(k.Open, "open"))
+		}
 	}
 	return b
 }

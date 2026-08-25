@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 
 	"github.com/mattwalters/lerp/internal/loop"
 )
@@ -407,15 +408,29 @@ func TestTheOpenPromptBuysItsOwnLine(t *testing.T) {
 	}
 }
 
-// Done-when: matches are marked inside the row. Under a test binary's
-// colour profile the styles render as plain text, so this asserts the
-// segmentation highlight would paint — that the row still reads as itself,
-// with the matched span whole.
-func TestSearchHighlightsTheMatchInTheRow(t *testing.T) {
-	m := searching(t, "rele")
-	row := rowOf(t, m.attentionPanel(96, 14), "LERP-22")
+// forceColour makes the styles render the escapes they would in a terminal.
+// A test binary writes to a pipe, so lipgloss picks the ASCII profile and
+// every style renders as plain text — which would let an assertion about a
+// mark pass over a highlight that marked nothing. The package runs its
+// tests in sequence and the old profile goes back on the way out.
+func forceColour(t *testing.T) {
+	t.Helper()
+	was := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.SetColorProfile(was) })
+}
 
-	if !strings.Contains(row, "GoReleaser: tagged "+styleMatch.Render("rele")+"ases") {
+// Done-when: matches are marked inside the row the panel draws — not just
+// by highlight in isolation.
+func TestSearchHighlightsTheMatchInTheRow(t *testing.T) {
+	forceColour(t)
+	m := searching(t, "rele")
+	// Not rowOf: with the profile forced, the identifier cell carries the
+	// escapes that make it bold and the marks split the title, so the row is
+	// found by a span of it that neither touches.
+	row := lineWith(t, m.attentionPanel(96, 14), "tagged")
+
+	if !strings.Contains(row, "aser: tagged "+styleMatch.Render("rele")+"ases") {
 		t.Fatalf("the match is not marked inside the row:\n%q", row)
 	}
 	if !strings.Contains(row, "Go"+styleMatch.Render("Rele")+"aser") {
@@ -424,6 +439,7 @@ func TestSearchHighlightsTheMatchInTheRow(t *testing.T) {
 }
 
 func TestHighlightMarksEveryOccurrence(t *testing.T) {
+	forceColour(t)
 	mark := styleMatch.Render
 	for _, tc := range []struct{ s, query, want string }{
 		{"LERP-22", "22", "LERP-" + mark("22")},
@@ -441,12 +457,39 @@ func TestHighlightMarksEveryOccurrence(t *testing.T) {
 			t.Fatalf("highlight(%q, %q) = %q, want %q", tc.s, tc.query, got, tc.want)
 		}
 	}
-	// The cases above are exact either way, but a test binary writes to no
-	// terminal, so lipgloss renders every style as plain text and what they
-	// prove is that the text survives the splice whole. That the mark is
-	// visible at all is the part only the style itself can carry.
 	if !styleMatch.GetUnderline() {
 		t.Fatal("the search mark is colour alone: it has to read on a 16-colour terminal too")
+	}
+	// The mark layers over the cell's own style rather than replacing it:
+	// the identifier column is bold, and the characters the search points at
+	// are the last ones that should lose their weight.
+	got := highlight("LERP-22", "22", styleTicket)
+	want := styleTicket.Render("LERP-") + styleMatch.Inherit(styleTicket).Render("22")
+	if got != want {
+		t.Fatalf("highlight over a bold cell = %q, want %q", got, want)
+	}
+}
+
+// Done-when: esc means "close what is open" before it means "clear the
+// filter", and clearing works from either panel — the filter is on the list
+// wherever the operator is standing.
+func TestEscClosesAnOverlayBeforeItClearsTheFilter(t *testing.T) {
+	m := update(t, searching(t, "gore"), keyMsg("enter"))
+
+	m = update(t, m, keyMsg("?"))
+	m = update(t, m, keyMsg("esc"))
+	if m.helpOn {
+		t.Fatal("esc did not close the help overlay")
+	}
+	if m.search != "gore" {
+		t.Fatalf("esc reached past the overlay and cleared the filter: %q", m.search)
+	}
+
+	// From the work panel, with no overlay in the way.
+	m = update(t, m, keyMsg("2"))
+	m = update(t, m, keyMsg("esc"))
+	if m.search != "" || len(m.shown) != 6 {
+		t.Fatalf("esc off the inbox panel left the filter on: %q, %d rows", m.search, len(m.shown))
 	}
 }
 

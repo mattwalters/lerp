@@ -1150,19 +1150,14 @@ func TestFocusedPanelCarriesItsKeys(t *testing.T) {
 			t.Fatalf("the needs-you panel does not offer %q:\n%s", want, view)
 		}
 	}
-	// Whole, in the 45-column panel a 100-column terminal leaves: the line
-	// is about forty columns wide, so a key that does nothing on this list
-	// would cost one that does. Nothing here is in a project, so P is that
-	// key — and the line it would truncate stays intact without it.
+	// Whole, in the 45-column panel a 100-column terminal leaves. Nothing
+	// here is in a project, so P is a key that would do nothing and the
+	// four that do fit without it.
 	if strings.Contains(view, "P project") {
 		t.Fatalf("P is offered over a list with no project to cycle to:\n%s", view)
 	}
 	if line := lineWith(t, view, "p promote"); strings.Contains(line, "…") {
 		t.Fatalf("the key line does not fit the panel it is drawn in:\n%s", line)
-	}
-	// A list with a project in it gets the key back.
-	if panel := update(t, m, eventMsg{ev: board()}).attentionPanel(96, 16); !strings.Contains(panel, "P project") {
-		t.Fatalf("P is not offered over a list that has projects:\n%s", panel)
 	}
 
 	// The line belongs to the focused panel, so it moves with focus rather
@@ -1175,6 +1170,48 @@ func TestFocusedPanelCarriesItsKeys(t *testing.T) {
 	if !strings.Contains(view, "r raw") {
 		t.Fatalf("the work panel does not offer its own keys:\n%s", view)
 	}
+}
+
+// Done-when: what a narrow line loses is a key the operator can do without.
+// Everything a real board has — a project to cycle to and a URL to open —
+// is more than the panel a 100-column terminal leaves can carry, so the
+// order decides: what acts on the row under the cursor stays, and the
+// display cycles, whose state the title already carries in words, go first.
+func TestTheKeyLineKeepsTheKeysThatAct(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: fullBoard()})
+
+	line := lineWith(t, m.View(), "p promote")
+	for _, want := range []string{"p promote", "/ search", "o open", "s sort"} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("the key line dropped %q, which acts on the row:\n%s", want, line)
+		}
+	}
+	// One key short of the room, and it is the display cycle that goes —
+	// with the ellipsis to say the ? overlay has the rest.
+	if strings.Contains(line, "P project") {
+		t.Fatalf("the whole line fits after all — this window should be one key short:\n%s", line)
+	}
+	if !strings.Contains(line, "…") {
+		t.Fatalf("a line with a key left out does not say so:\n%s", line)
+	}
+
+	// Given the room, the key comes back.
+	wide := update(t, m, tea.WindowSizeMsg{Width: 140, Height: 30})
+	if line := lineWith(t, wide.View(), "p promote"); !strings.Contains(line, "P project") {
+		t.Fatalf("a wide panel still drops the last key:\n%s", line)
+	}
+}
+
+// fullBoard is board() with the URL every real attention item carries, so
+// the key line has every hint a row can earn.
+func fullBoard() loop.Event {
+	ev := board()
+	for i := range ev.Attention {
+		ev.Attention[i].URL = "https://linear.app/acme/issue/" + ev.Attention[i].Ticket
+	}
+	return ev
 }
 
 // A key on the panel is a key you can press. With nothing under the cursor
