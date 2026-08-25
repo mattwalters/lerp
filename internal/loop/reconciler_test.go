@@ -1234,6 +1234,9 @@ func TestForceStartRefusals(t *testing.T) {
 		name  string
 		setup func(t *testing.T, h *harness)
 		want  string
+		// lanes still occupied once the refusal has come back — zero
+		// everywhere except the case whose setup occupies one itself.
+		lanes int
 	}{{
 		name: "blocked names its blocker",
 		setup: func(_ *testing.T, h *harness) {
@@ -1256,7 +1259,8 @@ func TestForceStartRefusals(t *testing.T) {
 				t.Fatal("register: the lane was not free")
 			}
 		},
-		want: "already running here",
+		want:  "already running here",
+		lanes: 1,
 	}, {
 		name: "resting in a status no queue serves",
 		setup: func(_ *testing.T, h *harness) {
@@ -1294,6 +1298,16 @@ func TestForceStartRefusals(t *testing.T) {
 			}
 			if got := h.issue(t, "one"); got.AssigneeID == "fake-viewer" {
 				t.Errorf("refused ticket = %+v, want no claim made", got)
+			}
+			// A refusal that left a lane behind would shrink capacity for
+			// the rest of the session without failing anything else here:
+			// waitIdle waits on the WaitGroup, which a leaked laneRun never
+			// touches.
+			h.rec.mu.Lock()
+			lanes := len(h.rec.active)
+			h.rec.mu.Unlock()
+			if lanes != tc.lanes {
+				t.Errorf("lanes occupied after a refusal = %d, want %d", lanes, tc.lanes)
 			}
 		})
 	}
@@ -1337,6 +1351,47 @@ func TestFillStartsNothingWhileOverCapacity(t *testing.T) {
 	waitIdle(t, h.rec)
 	if got := ran(); slices.Contains(got, "LERP-3") {
 		t.Errorf("executed runs = %v, want the third ticket never started", got)
+	}
+}
+
+// A lane number is one run's, and force-start is the first thing that
+// chooses one off the tick goroutine. fill takes its numbers from a
+// freeLanes snapshot and registers them one at a time, so a force-start
+// landing in that window can take a lane the snapshot still calls free. Two
+// live runs on one number would share the LERP_LANE a project's provision
+// isolates on, and the TUI would lose the first run's row to the second.
+func TestRegisterRefusesALaneAForceStartTook(t *testing.T) {
+	h := newHarness(t, 2, nil)
+
+	if _, ok := h.rec.register(1, "one"); !ok {
+		t.Fatal("register lane 1: the lane was not free")
+	}
+	lanes := h.rec.freeLanes() // what a pass would be holding
+	if len(lanes) != 1 || lanes[0] != 2 {
+		t.Fatalf("free lanes = %v, want [2]", lanes)
+	}
+
+	lr, ok := h.rec.registerForce("forced")
+	if !ok {
+		t.Fatal("registerForce: no lane")
+	}
+	if lr.lane != 2 {
+		t.Fatalf("forced lane = %d, want the free one", lr.lane)
+	}
+
+	// The pass proceeds from its now-stale snapshot.
+	if _, ok := h.rec.register(lanes[0], "candidate"); ok {
+		t.Fatal("register handed out a lane a forced run already holds")
+	}
+
+	h.rec.mu.Lock()
+	defer h.rec.mu.Unlock()
+	held := map[int]string{}
+	for _, a := range h.rec.active {
+		if prev, dup := held[a.lane]; dup {
+			t.Fatalf("lane %d held by both %s and %s", a.lane, prev, a.ticketID)
+		}
+		held[a.lane] = a.ticketID
 	}
 }
 

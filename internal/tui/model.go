@@ -531,7 +531,8 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// No gate here beyond having a row: every refusal is the
 		// reconciler's, decided against the board rather than against a
 		// snapshot up to an interval old. Pressing S on a running row gets
-		// that method's "already running" back like any other refusal.
+		// its refusal back like any other — "already claimed", since a run
+		// this lerp started holds the ticket.
 		if m.focus == panelWork {
 			if r := m.selectedWork(); r != nil && r.ticketID != "" {
 				return m, m.doForceStart(r.ticketID, r.ticket)
@@ -1706,39 +1707,34 @@ func (m model) attentionPanel(w, h int) string {
 	return panelBox(panelTitle(1, "inbox", focused, extra), focused, w, h, rows, padList)
 }
 
-// busyLanes counts the configured lanes hosting live runs. Adopted runs
-// above N are visible as extra rows but sit outside the configured
-// capacity, so they stay out of the fraction.
-func (m model) busyLanes() int {
-	busy := 0
-	for n, ln := range m.lanes {
-		if n <= m.o.Lanes && ln.state != laneIdle {
-			busy++
+// liveLanes counts every lane hosting a live run, including the ones above
+// N: a forced run, or one adopted from a previous process with a bigger lane
+// count. The loop charges those against the budget too — freeLanes computes
+// capacity as Lanes minus every active run, wherever it sits — so counting
+// them is what makes the fraction below agree with what can actually start.
+func (m model) liveLanes() int {
+	live := 0
+	for _, ln := range m.lanes {
+		if ln.state != laneIdle {
+			live++
 		}
 	}
-	return busy
-}
-
-// overLanes counts the live runs sitting above N — a forced run, or one
-// adopted from a previous process with a bigger lane count. They are the
-// same thing to everything downstream, and they count the same way here.
-func (m model) overLanes() int {
-	over := 0
-	for n, ln := range m.lanes {
-		if n > m.o.Lanes && ln.state != laneIdle {
-			over++
-		}
-	}
-	return over
+	return live
 }
 
 // capacityLabel is the one number the status bar and the work panel title
-// both render. The fraction says whether anything can start; the suffix
-// says the board is over capacity, which is a state the operator asked for
-// and should be able to see.
+// both render. The fraction says whether anything can start, so it is the
+// loop's own arithmetic: full at N live runs, whatever lane numbers they
+// hold. The suffix says the board is over capacity, which is a state the
+// operator asked for and should be able to see.
+//
+// Counting only lanes 1..N here would read "1/2 running" while two runs are
+// live and freeLanes returns nothing — a free lane the operator would wait
+// on and never get.
 func (m model) capacityLabel() string {
-	label := fmt.Sprintf("%d/%d running", m.busyLanes(), m.o.Lanes)
-	if over := m.overLanes(); over > 0 {
+	live := m.liveLanes()
+	label := fmt.Sprintf("%d/%d running", min(live, m.o.Lanes), m.o.Lanes)
+	if over := live - m.o.Lanes; over > 0 {
 		label += fmt.Sprintf(" · +%d over", over)
 	}
 	return label

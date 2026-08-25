@@ -779,7 +779,8 @@ func (r *Reconciler) fill(ctx context.Context) {
 		lr, ok := r.register(lanes[0], c.issue.ID)
 		if !ok {
 			// This ticket is already occupying a lane — typically a run whose
-			// claim Linear had not reflected when the board was listed.
+			// claim Linear had not reflected when the board was listed — or a
+			// force-start took this lane number after the snapshot was taken.
 			continue
 		}
 		lanes = lanes[1:]
@@ -986,12 +987,18 @@ func (r *Reconciler) freeLanes() []int {
 }
 
 // register occupies a lane for a ticket, refusing tickets already in a lane:
-// a just-claimed run's assignment may not be visible on the board yet.
+// a just-claimed run's assignment may not be visible on the board yet. It
+// refuses an occupied lane number too. fill picks its lanes from a freeLanes
+// snapshot and registers them one at a time, so a force-start landing in that
+// window can take a lane the snapshot still calls free; two live runs sharing
+// a lane number would share the LERP_LANE a project's provision isolates on.
+// The racing candidate is simply skipped — the next pass sees the lane gone
+// and picks another.
 func (r *Reconciler) register(lane int, ticketID string) (*laneRun, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, lr := range r.active {
-		if lr.ticketID == ticketID {
+		if lr.ticketID == ticketID || lr.lane == lane {
 			return nil, false
 		}
 	}

@@ -481,7 +481,10 @@ func TestAdoptedRunAboveCapacityIsOnThePanel(t *testing.T) {
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAdopted, RunID: "r9", Lane: 4,
 		TicketID: "abcdef1234567890", Queue: "review", LogPath: "/dev/null"}})
 	view := m.View()
-	for _, want := range []string{"adopted", "review · off the board", "0/1 running"} {
+	// One live run against a budget of one is full, whatever lane number it
+	// landed on: freeLanes charges every active run against N, so "0/1"
+	// here would advertise a lane no pass can fill.
+	for _, want := range []string{"adopted", "review · off the board", "1/1 running"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("adopted run above capacity is missing %q:\n%s", want, view)
 		}
@@ -2472,5 +2475,37 @@ func TestCapacityLabelReportsRunsAboveTheLimit(t *testing.T) {
 		TicketID: "t2", Ticket: "LERP-2", Queue: "implement", ExitCode: 0}})
 	if got := m.capacityLabel(); got != "1/1 running" {
 		t.Fatalf("capacity label after the forced run ended = %q, want the overage gone", got)
+	}
+}
+
+// The fraction is the loop's own arithmetic, not a count of lane numbers in
+// range. When a lane inside the limit frees while a forced run is still up
+// above it, freeLanes still returns nothing — so the label must still read
+// full. Counting only lanes 1..N here said "1/2 running", which is a lane
+// the operator would wait on and never get.
+func TestCapacityLabelStaysFullWhileAForcedRunHoldsTheBudget(t *testing.T) {
+	m, _, _ := newTestModel(t, 2)
+	for _, ev := range []loop.Event{
+		{Type: loop.EventStarted, RunID: "r1", Lane: 1, TicketID: "t1", Ticket: "LERP-1", Queue: "implement", LogPath: "/dev/null"},
+		{Type: loop.EventStarted, RunID: "r2", Lane: 2, TicketID: "t2", Ticket: "LERP-2", Queue: "implement", LogPath: "/dev/null"},
+		{Type: loop.EventStarted, RunID: "r3", Lane: 3, TicketID: "t3", Ticket: "LERP-3", Queue: "implement", LogPath: "/dev/null"},
+	} {
+		m = update(t, m, eventMsg{ev: ev})
+	}
+	if got := m.capacityLabel(); got != "2/2 running · +1 over" {
+		t.Fatalf("capacity label with a forced run past N = %q", got)
+	}
+
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventExited, RunID: "r1", Lane: 1,
+		TicketID: "t1", Ticket: "LERP-1", Queue: "implement", ExitCode: 0}})
+	if got := m.capacityLabel(); got != "2/2 running" {
+		t.Fatalf("capacity label after a lane inside the limit freed = %q, want it still full: "+
+			"two runs are live against a budget of two, so nothing can start", got)
+	}
+
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventExited, RunID: "r3", Lane: 3,
+		TicketID: "t3", Ticket: "LERP-3", Queue: "implement", ExitCode: 0}})
+	if got := m.capacityLabel(); got != "1/2 running" {
+		t.Fatalf("capacity label once the forced run ended = %q, want a lane free again", got)
 	}
 }
