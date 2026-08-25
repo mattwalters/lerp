@@ -731,6 +731,10 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.showingLog() {
 			m.follow = true
 		}
+	// The raw toggle is the pane's key too: with the pane closed it would
+	// flip the decoding of a log nobody is reading, and the operator would
+	// meet the change as a surprise the next time they opened it.
+	case !m.mainOpen() && key.Matches(msg, m.keys.Raw):
 	case key.Matches(msg, m.keys.Raw):
 		m.rawLog = !m.rawLog
 		m.refreshLog()
@@ -1800,8 +1804,8 @@ func (m *model) geometry() geometry {
 		// Stacked, the body is split rather than fitted: half the screen is
 		// the board, half is whatever the selected row opens. Fitting the
 		// main pane to its content here would put focus straight back into
-		// the arithmetic — the log lens asks for the whole body and opens on
-		// focusing work — and both panels would jump on the keystroke. What
+		// the arithmetic — the log lens asks for the whole body — and both
+		// panels would jump on the keystroke. What
 		// the lens holds scrolls; a panel that shrank under the operator
 		// does not.
 		g.mainH = fitH(g.bodyH/2, mainFloor, g.bodyH-2*panelFloor)
@@ -2019,7 +2023,11 @@ func (m *model) panelKeys(p panel) []key.Binding {
 		}
 	}
 	return m.keys.panelHelp(p, rowKeys{
-		hasLog:     m.selectedLogPath() != "",
+		// The raw toggle acts on the log in the pane, so the line offers it
+		// where there is a pane to act on — the panel line advertises what
+		// this frame answers to, the way it drops p where the picker has no
+		// room to open.
+		hasLog:     m.selectedLogPath() != "" && m.mainOpen(),
 		hasURL:     m.selectedURL() != "",
 		filtered:   m.search != "",
 		projects:   m.hasProjects(),
@@ -2584,10 +2592,14 @@ func runLine(r workRow, width int) string {
 	// for both drops the line rather than truncate the digits.
 	//
 	// The line takes the width it is given: one cell per free column, up to
-	// the whole history the ring holds. A row on a full-width list draws
-	// back a quarter of an hour, the same row beside an open detail pane
-	// draws the recent end of it, and neither changes what a cell means —
-	// the bucket is fifteen seconds wherever the line is drawn.
+	// the whole history the ring holds. On a wide terminal's full-width
+	// list a row draws back a quarter of an hour; the same row beside an
+	// open detail pane draws the recent end of that history. What a cell
+	// covers is the same either way — fifteen seconds, wherever the line is
+	// drawn — so a narrow row is a shorter reach, never a coarser one. The
+	// bar heights are the drawn window's own scale, as they always were:
+	// narrowing the row rescales them to what is left in view, which is the
+	// same trade the row already makes against the run beside it.
 	right := ""
 	if room := width - lipgloss.Width(left) - 1; room >= min(sparkMinCells, len(r.rate)) {
 		if cells := min(room, len(r.rate)); cells > 0 {

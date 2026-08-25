@@ -151,6 +151,7 @@ func run(ctx context.Context) error {
 	return tui.Run(ctx, tui.Options{
 		Ticker:   rec,
 		Promoter: rec,
+		Starter:  rec,
 		Reader:   rec,
 		Statuses: repo.PromoteTargets(),
 		Interval: interval,

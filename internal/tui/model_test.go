@@ -1915,12 +1915,16 @@ func TestRefocusingRewrapsThePane(t *testing.T) {
 // Linear, is never live behind that message.
 func TestAWindowTooShortForThePaneKeepsItsScreen(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = openMain(t, m) // the pane 12 lines cannot hold
 	resized, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 12})
 	m = resized.(model)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
 		{Ticket: "LERP-4", TicketID: "loose", Title: "Nobody's routed this"},
 	}}})
-	m = update(t, m, keyMsg("esc")) // work starts open, and 12 lines cannot hold it
+	if !strings.Contains(m.View(), "too small") {
+		t.Fatalf("12 lines held the open pane, so this test is not exercising the case:\n%s", m.View())
+	}
+	m = update(t, m, keyMsg("esc")) // the way out the message names
 	m = update(t, m, keyMsg("1"))
 	if strings.Contains(m.View(), "too small") {
 		t.Fatalf("a closed pane did not buy this window a screen:\n%s", m.View())
@@ -2020,8 +2024,7 @@ func TestThePanesFloorIsTheGuardsFloor(t *testing.T) {
 		m, _, _ := newTestModel(t, 1)
 		resized, _ := m.Update(tea.WindowSizeMsg{Width: w, Height: tc.h})
 		m = fillBoard(t, resized.(model), 20)
-		m = update(t, m, keyMsg("esc")) // work starts open; start from a screen
-		m = update(t, m, keyMsg("1"))
+		m = update(t, m, keyMsg("1")) // both panels start closed: this is a screen
 		if strings.Contains(m.View(), "too small") {
 			t.Fatalf("height %d: a closed pane did not buy this window a screen", tc.h)
 		}
@@ -2369,8 +2372,9 @@ func TestFocusedPanelCarriesItsKeys(t *testing.T) {
 	}
 
 	// The line belongs to the focused panel, so it moves with focus rather
-	// than sitting on both.
-	m = update(t, m, keyMsg("2"))
+	// than sitting on both. Work's own key acts on the pane, so the pane is
+	// open for this.
+	m = openMain(t, update(t, m, keyMsg("2")))
 	view = m.View()
 	if strings.Contains(view, "p promote") {
 		t.Fatalf("the needs-you keys are still on screen with work focused:\n%s", view)
@@ -2441,12 +2445,14 @@ func TestAPanelWithNothingSelectedOffersNoKeys(t *testing.T) {
 	}
 }
 
-// r is inert on a ticket that has never run, and pressing it there would
-// flip the raw toggle invisibly — so the work panel only offers it once the
-// selected row has a log to render either way.
+// r is inert on a ticket that has never run, and inert while the pane it
+// acts on is closed — which is the screen work now starts on. Pressing it in
+// either place would flip the decoding of a log nobody is reading, and the
+// operator would meet the change the next time they opened the pane. So the
+// panel offers it exactly where it does something.
 func TestRawIsOfferedOnlyWhereThereIsALog(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
-	m = update(t, m, keyMsg("2"))
+	m = openMain(t, update(t, m, keyMsg("2")))
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
 		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
 			{ID: "id-9", Identifier: "LERP-9", Title: "queued", Eligible: true,
@@ -2465,6 +2471,16 @@ func TestRawIsOfferedOnlyWhereThereIsALog(t *testing.T) {
 		TicketID: "id-9", Ticket: "LERP-9", Queue: "implement", LogPath: "/dev/null"}})
 	if view := m.View(); !strings.Contains(view, "r raw") {
 		t.Fatalf("a running ticket with a log does not offer the raw toggle:\n%s", view)
+	}
+
+	// Close the pane — the startup screen — and the same row stops offering
+	// it, because there is nothing on screen for it to change.
+	m = update(t, m, keyMsg("esc"))
+	if view := m.View(); strings.Contains(view, "r raw") {
+		t.Fatalf("a closed pane still offers the key that acts on it:\n%s", view)
+	}
+	if m = update(t, m, keyMsg("r")); m.rawLog {
+		t.Fatal("r flipped the decoding of a log the closed pane was not showing")
 	}
 }
 

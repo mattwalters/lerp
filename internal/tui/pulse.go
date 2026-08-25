@@ -11,13 +11,16 @@ const (
 	// sparkBucket is how long one bucket covers and sparkCells how many the
 	// ring holds: fifteen seconds each, in cells narrow enough that a run
 	// falling quiet shows within a bucket or two, and fifteen minutes of
-	// them — as far back as the widest row has the columns to draw.
+	// them — about what a wide terminal's full-width row has the columns
+	// for, and further back than the question ("has it been sitting there
+	// for four minutes") is ever asked over.
 	//
-	// A row draws the tail of that ring that fits the width it is given
-	// (see runLine), so the ring is sized for the widest row rather than
-	// for one layout, and a narrow panel costs history rather than
-	// resolution. sparkMinCells is the narrowest line still worth drawing:
-	// under that the row keeps its numbers and drops the line.
+	// A row draws the tail of the ring that fits the width it is given (see
+	// runLine), so the ring is one number for every layout rather than one
+	// per panel, and a row narrower than the ring reaches less far back
+	// rather than covering the same span more coarsely. sparkMinCells is
+	// the narrowest line still worth drawing: under that the row keeps its
+	// numbers and drops the line.
 	sparkBucket   = 15 * time.Second
 	sparkCells    = 60
 	sparkMinCells = 8
@@ -120,7 +123,7 @@ func (p *pulse) roll(now time.Time) {
 // row too narrow for all of it draws the tail, which is the recent end. It is
 // short while a run is young: a line that has not had time to fall is not a
 // line that has fallen, and a run picked up ten seconds ago must not read
-// like one that stopped two minutes ago.
+// like one that has been quiet since the ring began.
 func (p *pulse) window() []int {
 	if p.heard.IsZero() {
 		// No log behind the ring: it may not exist yet, or it may have been

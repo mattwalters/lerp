@@ -59,8 +59,12 @@ Sleep 4s
 Sleep 5s
 
 # `1` focuses the inbox, where the finished tickets have just landed under
-# "In Review — a run finished here". The main pane reads the selected ticket.
+# "In Review — a run finished here". Its list owns the screen the same way,
+# so `enter` is what reads the selected ticket into the main pane — its body
+# and the verdict a run left in its comments.
 Type "1"
+Sleep 2s
+Enter
 Sleep 4s
 Down
 Sleep 3s

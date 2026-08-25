@@ -316,11 +316,12 @@ age rather than the moment it was adopted. Under it, once the run
 has a log, a second line reads how that run is going: how long since
 the log last said anything, and a sparkline of the agent's recent
 activity, so a run that has fallen quiet reads as a flat line. The
-line takes the width the row is given: on the full-width list it
-draws back about a quarter of an hour, and beside an open main pane
-it shows the recent end of that same history — a narrow row costs
-history, never resolution, since a cell is fifteen seconds wherever
-it is drawn. Those are numbers to read, not a timeout — lerp sets no
+line takes the width the row is given: on a wide terminal's
+full-width list it draws back about a quarter of an hour, and beside
+an open main pane it shows the recent end of that same history. A
+cell is fifteen seconds wherever it is drawn, so a narrow row reaches
+less far back rather than reading more coarsely. Those are numbers to
+read, not a timeout — lerp sets no
 threshold on them and never acts on one; ejecting a run that has
 stopped making progress stays the operator's call. A waiting row is
 shown faint with the reason it waits, blocked or claimed. The panel title
