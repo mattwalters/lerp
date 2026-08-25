@@ -2976,10 +2976,6 @@ func (m model) workDetail() string {
 	}, "\n")
 }
 
-// statusBar is the heartbeat line: focused panel, pass clock, capacity,
-// inbox count, keys. A pass error — or a transient note like a
-// promote's outcome — takes over the whole line; a truncated error is not
-// actionable, so nothing else competes with it for the width.
 // note is one transient report on the status bar. warn marks something that
 // went unhandled rather than something that worked, so a promote's success
 // and a run's non-zero exit never read the same.
@@ -3032,30 +3028,53 @@ func (m model) noteLine() string {
 	return strings.Join(segs, "  ")
 }
 
+// overdueAfter is how long the bar sits on a finished pass before calling
+// the board stale. A pass is due one interval after the last one landed and
+// the tick re-arms the moment it does, so overshooting a whole extra
+// interval means the loop is wedged or the machine slept — not that a pass
+// ran long, which the spinner covers. The floor is what keeps a board
+// polled every second or two from crying stale over ordinary scheduling
+// slack: a board a few seconds behind is not news to anyone reading it.
+func (m model) overdueAfter() time.Duration {
+	return max(2*m.o.Interval, time.Minute)
+}
+
+// statusBar is the heartbeat line: the lerp mark, what the pass is doing
+// when that is worth saying, capacity, inbox count, keys. A pass error — or
+// a transient note like a promote's outcome — takes over the whole line; a
+// truncated error is not actionable, so nothing else competes with it for
+// the width.
 func (m model) statusBar() string {
 	if line := m.noteLine(); line != "" {
 		return ansi.Truncate(line, m.width, "…")
 	}
-	badgeColor := colorFocus
-	if m.focus == panelAttention {
-		badgeColor = colorAttention
-	}
-	badge := lipgloss.NewStyle().Bold(true).Foreground(colorBadgeText).
-		Background(badgeColor).Render(" " + strings.ToUpper(m.focus.String()) + " ")
+	// The corner is the bar's one fixed point: same text, same colour, same
+	// width, every frame. Which panel holds the keys is already drawn by the
+	// panel borders, so the focus badge that used to sit here said it twice.
+	brand := lipgloss.NewStyle().Bold(true).Foreground(colorBadgeText).
+		Background(colorFocus).Render(" lerp ")
 
+	// The heartbeat speaks only when there is something to say. "Is the
+	// board fresh?" is the bar's real question, and yes is silence: a pass
+	// landing on schedule needs no words, where the countdown to the next
+	// one re-rendered at second precision and changed width as it went,
+	// shoving everything right of it sideways once a second.
 	var heart string
 	switch {
 	case m.inFlight:
 		heart = styleRunning.Render(heartbeatFrames[m.frame%len(heartbeatFrames)]) + " pass running…"
 	case m.lastPass.IsZero():
 		heart = styleFaint.Render("starting…")
-	default:
-		ago := time.Since(m.lastPass).Truncate(time.Second)
-		next := max(0, m.o.Interval-time.Since(m.lastPass)).Truncate(time.Second)
-		heart = styleFaint.Render(fmt.Sprintf("pass %s ago · next in %s", ago, next))
+	case time.Since(m.lastPass) > m.overdueAfter():
+		// A state, not a clock: that the board is stale is the whole fact,
+		// and how stale changes nothing the operator would do about it.
+		heart = styleAttention.Render("pass overdue")
 	}
 
-	left := badge + " " + heart
+	left := brand
+	if heart != "" {
+		left += " " + heart
+	}
 	left += "  " + styleFaint.Render(m.capacityLabel())
 	if len(m.attention) > 0 {
 		left += "  " + styleAttention.Render(fmt.Sprintf("● %d in the inbox", len(m.attention)))
