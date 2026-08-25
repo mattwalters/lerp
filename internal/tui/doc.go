@@ -1,5 +1,5 @@
 // Package tui is the Bubble Tea interface: one screen with the
-// needs-you and work panels beside a main pane that follows the
+// inbox and work panels beside a main pane that follows the
 // selected row, plus promote and eject. The TUI drives the loop;
 // there is no daemon.
 //

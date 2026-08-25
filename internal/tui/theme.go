@@ -46,7 +46,7 @@ var (
 var heartbeatFrames = spinner.MiniDot.Frames
 
 // padding is the breathing room between a panel's border and its rows.
-// Horizontal padding costs two columns per panel and the needs-you table is
+// Horizontal padding costs two columns per panel and the inbox table is
 // already truncating titles, so it is asymmetric on purpose: the main pane
 // is padded both sides, because prose pressed against a box edge reads
 // badly, and the list panels take a left pad only — their right edge stays

@@ -35,7 +35,7 @@ type Promoter interface {
 	Promote(ctx context.Context, ticketID, status string) error
 }
 
-// Reader is the needs-you pane's one read beyond the pass: the body and
+// Reader is the inbox pane's one read beyond the pass: the body and
 // comments of the ticket the operator selected. It is Reconciler.IssueDetail
 // in production. Read-only, one ticket at a time — SCOPE's "not a Linear
 // client" bullet fences the rest, and `o` is the answer to everything it
@@ -83,12 +83,12 @@ const (
 
 func (p panel) String() string {
 	if p == panelAttention {
-		return "needs you"
+		return "inbox"
 	}
 	return "work"
 }
 
-// sortMode is the needs-you table's one control. Sorting is grouping: the
+// sortMode is the inbox table's one control. Sorting is grouping: the
 // mode picks the row order and, with it, whether the table draws headers —
 // two flat modes for working a list top-down, two grouped ones for reading
 // the board by the column they sort on. Deliberately not behind it: a sort
@@ -161,7 +161,7 @@ const (
 	// pollEvery is the redraw-and-tail cadence, independent of the loop's
 	// ticks; it is also the animation clock for the heartbeat frames.
 	pollEvery = 250 * time.Millisecond
-	// detailDebounce is how long a needs-you selection must hold still
+	// detailDebounce is how long an inbox selection must hold still
 	// before its ticket is read. Trailing, so walking the list fires one
 	// fetch — for the row the operator stopped on — instead of one per row.
 	detailDebounce = 250 * time.Millisecond
@@ -280,7 +280,7 @@ type model struct {
 
 	// attention is the loop's latest full list of what waits on the operator;
 	// attentionSeen separates "no pass has reported yet" from the goal state,
-	// so an empty panel never claims "nothing needs you" before it is known.
+	// so an empty panel never claims the inbox is empty before it is known.
 	// shown is that list under the current sort and filter — what the panel
 	// actually renders, and what attnSel indexes.
 	attention     []loop.AttentionItem
@@ -305,7 +305,7 @@ type model struct {
 	detailWant string
 
 	// promoting is the promote picker's open/closed state; promoteSel is its
-	// selected index into o.Statuses. Opened by "p" on a selected needs-you
+	// selected index into o.Statuses. Opened by "p" on a selected inbox
 	// item, closed by confirming, cancelling, or the list going empty.
 	promoting  bool
 	promoteSel int
@@ -535,7 +535,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// wantDetail points the pane at the current needs-you selection. It only
+// wantDetail points the pane at the current inbox selection. It only
 // schedules: the read waits for the selection to settle, so holding j down
 // a fifteen-row list schedules fifteen ticks and fires one fetch.
 func (m *model) wantDetail() tea.Cmd {
@@ -591,7 +591,7 @@ func (m *model) applyDetail(msg detailMsg) {
 }
 
 // handlePromoteKey drives the promote picker: choose a target status for the
-// needs-you panel's selected ticket, or back out without touching Linear.
+// inbox panel's selected ticket, or back out without touching Linear.
 func (m model) handlePromoteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	switch msg.String() {
@@ -639,7 +639,7 @@ func (m *model) setFocus(p panel) {
 
 // moveSelection moves within the focused panel. Neither selection is a
 // position: the work panel's follows its ticket (see retargetWork), the
-// needs-you table's follows its own (see resort).
+// inbox table's follows its own (see resort).
 func (m *model) moveSelection(delta int) {
 	switch m.focus {
 	case panelWork:
@@ -936,7 +936,7 @@ func (m *model) refreshMain() {
 
 // detail is the read-only lens the main pane shows for a selection with no
 // log — and the measure geometry fits the pane's box to. width is the pane's
-// inner width, which the needs-you lens wraps prose to.
+// inner width, which the inbox lens wraps prose to.
 func (m *model) detail(width int) string {
 	if m.focus == panelWork {
 		return m.workDetail()
@@ -1061,7 +1061,7 @@ func (m *model) selectedWork() *workRow {
 	return &r
 }
 
-// selectedAttention is the needs-you selection, nil when nothing is shown —
+// selectedAttention is the inbox selection, nil when nothing is shown —
 // the one place that owns the empty case, like nextTicket for the other
 // panel. It points into the sorted-and-filtered list, so the selection is
 // always the row under the cursor rather than a position in the pass's own
@@ -1462,7 +1462,7 @@ func marker(on bool) string {
 	return "  "
 }
 
-// attentionRows builds the needs-you table's rows — under a grouping mode,
+// attentionRows builds the inbox table's rows — under a grouping mode,
 // a header above each run of them; sel is the selected row's index (-1 with
 // nothing to select), for the focus window.
 func (m *model) attentionRows(width int) ([]string, int) {
@@ -1470,9 +1470,9 @@ func (m *model) attentionRows(width int) ([]string, int) {
 	case !m.attentionSeen:
 		return []string{styleFaint.Render("reading the board…")}, -1
 	case len(m.attention) == 0:
-		return []string{styleFaint.Render("nothing needs you")}, -1
+		return []string{styleFaint.Render("the inbox is empty")}, -1
 	case len(m.shown) == 0:
-		return []string{styleFaint.Render("nothing needs you in " + m.project)}, -1
+		return []string{styleFaint.Render("nothing in " + m.project)}, -1
 	}
 	focused := m.focus == panelAttention
 	// Every column is padded to the widest cell on the list, so the four of
@@ -1627,7 +1627,7 @@ func (m model) attentionPanel(w, h int) string {
 	}
 	rows, sel := m.attentionRows(padList.inner(w))
 	rows = m.panelBody(panelAttention, rows, sel, padList.inner(w), h-2)
-	return panelBox(panelTitle(1, "needs you", focused, extra), focused, w, h, rows, padList)
+	return panelBox(panelTitle(1, "inbox", focused, extra), focused, w, h, rows, padList)
 }
 
 // busyLanes counts the configured lanes hosting live runs. Adopted runs
@@ -1763,7 +1763,7 @@ func (m model) mainPanel(w, h int) string {
 		strings.Split(m.vp.View(), "\n"), padMain)
 }
 
-// promotePicker renders the target-status list for the selected needs-you
+// promotePicker renders the target-status list for the selected inbox
 // item: every configured queue status plus the pipeline's exits — exactly
 // what Promote (a plain MoveIssue) is allowed to move a ticket into.
 func (m model) promotePicker(it loop.AttentionItem, w, h int) string {
@@ -1785,7 +1785,7 @@ func (m model) mainTitle() string {
 		if it := m.selectedAttention(); it != nil {
 			return it.Ticket
 		}
-		return "needs you"
+		return "inbox"
 	}
 	r := m.selectedWork()
 	switch {
@@ -1818,7 +1818,7 @@ func (m model) rawSuffix() string {
 // hanging indent a wrapped value lines up under.
 const labelGutter = "        "
 
-// attentionDetail is the main pane's lens on the selected needs-you item:
+// attentionDetail is the main pane's lens on the selected inbox item:
 // everything the loop knows, Linear's URL, and then the ticket itself (see
 // ticketLines). Promote is the one action here; everything else about the
 // item happens in Linear.
@@ -1827,11 +1827,11 @@ func (m model) attentionDetail(width int) string {
 		return styleFaint.Render("reading the board…")
 	}
 	if len(m.attention) == 0 {
-		return styleFaint.Render("nothing needs you — the empty list is the goal state") + "\n" +
+		return styleFaint.Render("the inbox is empty — that is the goal state") + "\n" +
 			styleFaint.Render("(shows "+loop.AttentionDefinition+")")
 	}
 	if len(m.shown) == 0 {
-		return styleFaint.Render("nothing needs you in "+m.project) + "\n" +
+		return styleFaint.Render("nothing in "+m.project) + "\n" +
 			styleFaint.Render("(P cycles the project filter back to all)")
 	}
 	it := m.selectedAttention()
@@ -1967,7 +1967,7 @@ func (m model) workDetail() string {
 }
 
 // statusBar is the heartbeat line: focused panel, pass clock, capacity,
-// needs-you count, keys. A pass error — or a transient note like a
+// inbox count, keys. A pass error — or a transient note like a
 // promote's outcome — takes over the whole line; a truncated error is not
 // actionable, so nothing else competes with it for the width.
 // note is one transient report on the status bar. warn marks something that
@@ -2038,7 +2038,7 @@ func (m model) statusBar() string {
 	left := badge + " " + heart
 	left += "  " + styleFaint.Render(fmt.Sprintf("%d/%d running", m.busyLanes(), m.o.Lanes))
 	if len(m.attention) > 0 {
-		left += "  " + styleAttention.Render(fmt.Sprintf("● %d need you", len(m.attention)))
+		left += "  " + styleAttention.Render(fmt.Sprintf("● %d in the inbox", len(m.attention)))
 	}
 	right := styleFaint.Render("? help · q quit")
 	if m.promoting {

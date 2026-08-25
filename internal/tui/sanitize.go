@@ -41,7 +41,7 @@ func clean(s string) string {
 	return b.String()
 }
 
-// cleanText is clean's counterpart for the prose the needs-you pane reads
+// cleanText is clean's counterpart for the prose the inbox pane reads
 // out of Linear: a ticket body and the comments on it, which are many lines
 // by design, so newlines survive. Nothing else does — unlike cleanLog there
 // is no SGR exemption, because a ticket body has no legitimate reason to
