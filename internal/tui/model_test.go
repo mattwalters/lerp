@@ -4152,7 +4152,7 @@ func TestProvisioningRowClaimsNoReading(t *testing.T) {
 func TestPulseStartsWhenTheLogDoes(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "late.log")
 	start := time.Now()
-	p := newPulse(path)
+	p := newPulse(path, start, start)
 	for i := 0; i < 20; i++ {
 		p.read(start.Add(time.Duration(i) * sparkBucket))
 	}
@@ -4411,6 +4411,44 @@ func sparkOf(line string) string {
 		}
 	}
 	return b.String()
+}
+
+// Done-when, on the row itself: a run adopted from a previous lerp reads as
+// older than this process rather than as one that just started. Quitting
+// under live agents and opening again used to hand an hour-old run the short
+// line of a ten-second-old one — the numbers were right and the shape, which
+// is the part being read, was the one thing a restart lost.
+func TestAdoptedRunDoesNotDrawAFreshLine(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.log")
+	writeLog(t, path, []byte(strings.Repeat("an hour of work\n", 200)))
+	m, _, _ := newTestModel(t, 3)
+	resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = fillBoard(t, resized.(model), 3)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAdopted, RunID: "r1", Lane: 1,
+		TicketID: "t0", Ticket: "QUEUED-1", Queue: "implement", LogPath: path,
+		StartedAt: time.Now().Add(-time.Hour)}})
+	m = update(t, m, pollMsg{})
+	m = update(t, m, keyMsg("2"))
+
+	g := m.geometry()
+	lines := strings.Split(ansi.Strip(m.workPanel(g.sideW, g.workH)), "\n")
+	at := slices.IndexFunc(lines, func(l string) bool { return strings.Contains(l, "QUEUED-1") })
+	if at < 0 || at+1 >= len(lines) {
+		t.Fatalf("the adopted row has no reading under it:\n%s", strings.Join(lines, "\n"))
+	}
+	reading := lines[at+1]
+	// Most of the ring, not a token dot: the run predates the whole of it.
+	if got := strings.Count(reading, string(sparkUnread)); got < sparkCells/2 {
+		t.Fatalf("an hour-old run marks %d buckets unread of a %d-bucket ring: %q",
+			got, sparkCells, reading)
+	}
+	// And the line reaches as far back as the row has room for, where a run
+	// that really did just start draws the single bucket it has.
+	drawn := strings.Count(reading, string(sparkUnread)) + len([]rune(sparkOf(reading)))
+	if drawn != sparkCells {
+		t.Fatalf("the adopted row draws %d buckets on a full-width panel, want %d: %q",
+			drawn, sparkCells, reading)
+	}
 }
 
 // A squeezed panel cuts a row's second line first, so the line that survives

@@ -290,7 +290,8 @@ type workRow struct {
 	state laneState
 	since time.Time
 	// heard is when that run's log last grew, zero while it has none; rate
-	// is its recent activity per bucket, oldest first, for the sparkline.
+	// is its recent activity per bucket, oldest first, for the sparkline,
+	// led by whatever of the run predates the reading (see pulse.window).
 	heard time.Time
 	rate  []int
 	// The pickup gate, for a ticket that is not running: where it sits in
@@ -1361,7 +1362,7 @@ func (m *model) readPulses() {
 			continue
 		}
 		if ln.pulse == nil {
-			ln.pulse = newPulse(ln.logPath)
+			ln.pulse = newPulse(ln.logPath, ln.since, now)
 		}
 		ln.pulse.read(now)
 	}

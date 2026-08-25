@@ -37,7 +37,7 @@ func TestPulseCountsDecodedEvents(t *testing.T) {
 	appendLog(t, path, `{"type":"system","subtype":"init","model":"claude-opus-5","session_id":"abc"}`+"\n")
 
 	now := time.Now()
-	p := newPulse(path)
+	p := newPulse(path, now, now)
 	p.read(now)
 	// Three lines, one of them a tool result the pane draws under its call:
 	// three events, because three things happened.
@@ -64,7 +64,7 @@ func TestPulseWaitsForAWholeLine(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "run.log")
 	appendLog(t, path, "first line\n")
 	now := time.Now()
-	p := newPulse(path)
+	p := newPulse(path, now, now)
 	p.read(now)
 
 	appendLog(t, path, "half a ")
@@ -86,8 +86,9 @@ func TestPulseAttachesAtTheEndOfAnExistingLog(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "run.log")
 	appendLog(t, path, strings.Repeat("an hour of work\n", 200))
 
-	p := newPulse(path)
-	p.read(time.Now())
+	now := time.Now()
+	p := newPulse(path, now, now)
+	p.read(now)
 	for _, c := range p.window() {
 		if c != 0 {
 			t.Fatalf("history it never saw was counted as activity: %v", p.window())
@@ -101,7 +102,7 @@ func TestPulseQuietGoesFlat(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "run.log")
 	appendLog(t, path, "x\n")
 	start := time.Now()
-	p := newPulse(path)
+	p := newPulse(path, start, start)
 	p.read(start)
 	appendLog(t, path, "busy\nbusy\n")
 	p.read(start)
@@ -138,8 +139,9 @@ func TestPulseHeardIsTheFilesOwnTime(t *testing.T) {
 	if err := os.Chtimes(path, old, old); err != nil {
 		t.Fatal(err)
 	}
-	p := newPulse(path)
-	p.read(time.Now())
+	now := time.Now()
+	p := newPulse(path, now, now)
+	p.read(now)
 	if p.heard.IsZero() || p.heard.Sub(old).Abs() > time.Second {
 		t.Fatalf("heard = %v, want the file's mtime %v", p.heard, old)
 	}
@@ -148,9 +150,10 @@ func TestPulseHeardIsTheFilesOwnTime(t *testing.T) {
 // A log that is not there yet is not a run that has gone quiet: the row shows
 // no reading rather than a made-up one.
 func TestPulseWithoutAFileHasNothingToSay(t *testing.T) {
-	p := newPulse(filepath.Join(t.TempDir(), "not-yet"))
-	p.read(time.Now())
-	p.read(time.Now().Add(time.Minute))
+	now := time.Now()
+	p := newPulse(filepath.Join(t.TempDir(), "not-yet"), now, now)
+	p.read(now)
+	p.read(now.Add(time.Minute))
 	if !p.heard.IsZero() {
 		t.Fatalf("a missing log claimed it was last heard at %v", p.heard)
 	}
@@ -165,15 +168,16 @@ func TestPulseWithoutAFileHasNothingToSay(t *testing.T) {
 func TestPulseStopsReadingALogThatVanished(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "run.log")
 	appendLog(t, path, "working\n")
-	p := newPulse(path)
-	p.read(time.Now())
+	now := time.Now()
+	p := newPulse(path, now, now)
+	p.read(now)
 	if p.heard.IsZero() {
 		t.Fatal("a log that is there reports no time")
 	}
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
 	}
-	p.read(time.Now())
+	p.read(now)
 	if !p.heard.IsZero() {
 		t.Fatalf("a deleted log still reports %v as when it last spoke", p.heard)
 	}
@@ -188,7 +192,7 @@ func TestPulseWindowGrowsWithTheRun(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "run.log")
 	appendLog(t, path, "started\n")
 	start := time.Now()
-	p := newPulse(path)
+	p := newPulse(path, start, start)
 	p.read(start)
 	if got := len(p.window()); got != 1 {
 		t.Fatalf("a run one poll old draws %d buckets, want 1", got)
@@ -200,6 +204,71 @@ func TestPulseWindowGrowsWithTheRun(t *testing.T) {
 	p.read(start.Add(time.Hour))
 	if got := len(p.window()); got != sparkCells {
 		t.Fatalf("an old run draws %d buckets, want the whole window of %d", got, sparkCells)
+	}
+}
+
+// Done-when: a run adopted from a previous process must not read as one that
+// just started. The span between the run starting and this process attaching
+// is drawn as unread — history no reading exists for — rather than left off
+// the line, which is how an hour-old agent came to draw the short line of a
+// ten-second-old one.
+func TestPulseMarksTheSpanItNeverWatched(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.log")
+	appendLog(t, path, strings.Repeat("an hour of work\n", 200))
+	now := time.Now()
+	p := newPulse(path, now.Add(-time.Hour), now)
+	p.read(now)
+
+	got := p.window()
+	if len(got) != sparkCells {
+		t.Fatalf("an hour-old run draws %d buckets, want the whole ring of %d", len(got), sparkCells)
+	}
+	for i, c := range got[:len(got)-1] {
+		if c != unreadBucket {
+			t.Fatalf("bucket %d of a span nobody counted holds %d: %v", i, c, got)
+		}
+	}
+	bars := sparkline(got)
+	fresh := sparkline(func() []int {
+		q := newPulse(path, now, now)
+		q.read(now)
+		return q.window()
+	}())
+	if bars == fresh {
+		t.Fatalf("the adopted run draws %q, the same line as a run that just started", bars)
+	}
+	if !strings.HasPrefix(bars, string(sparkUnread)) || !strings.ContainsRune(bars, sparkBars[0]) {
+		t.Fatalf("the line does not read as unread history followed by a watched bucket: %q", bars)
+	}
+}
+
+// The unread span is not a permanent header: it gives way bucket by bucket to
+// what the pulse has actually watched, so a run adopted ten minutes ago
+// eventually draws a line of nothing but its own reading.
+func TestPulseUnreadGivesWayToWhatItWatches(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.log")
+	appendLog(t, path, "adopted mid-run\n")
+	start := time.Now()
+	p := newPulse(path, start.Add(-time.Hour), start)
+	p.read(start)
+
+	appendLog(t, path, "still working\n")
+	p.read(start.Add(10 * sparkBucket))
+	got := p.window()
+	if len(got) != sparkCells {
+		t.Fatalf("window = %d buckets, want the ring's %d", len(got), sparkCells)
+	}
+	// Eleven buckets have existed under this pulse; the rest is what it
+	// never saw, and the unread span shortens by exactly what it watched.
+	if watched := 11; got[len(got)-watched] == unreadBucket || got[len(got)-watched-1] != unreadBucket {
+		t.Fatalf("the unread span did not give way after %d buckets: %v", watched, got)
+	}
+
+	p.read(start.Add(time.Hour))
+	for i, c := range p.window() {
+		if c == unreadBucket {
+			t.Fatalf("bucket %d still reads unread after the ring filled: %v", i, p.window())
+		}
 	}
 }
 
@@ -218,6 +287,14 @@ func TestSparkline(t *testing.T) {
 		{"the rest scale under the peak", []int{1, 5, 9}, "▂▄█"},
 		{"one event never reads as none", []int{1, 0, 20}, "▂▁█"},
 		{"no window, no line", nil, ""},
+		// A bucket from before the pulse attached is neither a count nor a
+		// quiet stretch, so it draws as neither: off the ramp entirely.
+		{"unwatched history is not a quiet stretch",
+			[]int{unreadBucket, unreadBucket, 0, 3}, "··▁█"},
+		// It takes no part in the scale either — the sentinel is a negative
+		// number, and letting it near the arithmetic would rescale the row.
+		{"the unread span does not scale the bars",
+			[]int{unreadBucket, 1, 0, 4}, "·▂▁█"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -235,7 +312,7 @@ func TestPulseStartsOverWhenTheLogIsRewritten(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "run.log")
 	appendLog(t, path, "one\ntwo\nthree\n")
 	start := time.Now()
-	p := newPulse(path)
+	p := newPulse(path, start, start)
 	p.read(start)
 	appendLog(t, path, "four\nfive\n")
 	p.read(start.Add(sparkBucket))
