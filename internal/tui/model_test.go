@@ -522,12 +522,21 @@ func TestInboxListsWhatWaits(t *testing.T) {
 	for _, want := range []string{
 		"LERP-42",
 		"Fix the flaky test",
-		`claimed in "Needs Help" — no queue serves it`,
 		"https://linear.app/acme/issue/LERP-42/fix",
 	} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("inbox view is missing %q:\n%s", want, view)
 		}
+	}
+	// The reason is one column too long for this pane, so it wraps under its
+	// label rather than being truncated: both halves have to be on screen,
+	// and the tail — the part that says what is holding the ticket up — has
+	// to line up under the gutter rather than at the margin.
+	if !strings.Contains(view, `why     claimed in "Needs Help" — no queue serves`) {
+		t.Fatalf("the reason does not start under its label:\n%s", view)
+	}
+	if !strings.Contains(view, labelGutter+"it") {
+		t.Fatalf("the reason's tail was cut, or is not under the gutter:\n%s", view)
 	}
 
 	// A later pass with nothing waiting clears the list and says so.
@@ -1012,13 +1021,259 @@ func TestFocusedPanelTakesTheSlack(t *testing.T) {
 	// rows it renders, work takes what is left.
 	m = update(t, m, keyMsg("2"))
 	g2 := m.geometry()
-	rows, _ := m.attentionRows(g2.sideW - 2)
+	rows, _ := m.attentionRows(padList.inner(g2.sideW))
 	if g2.attnH != len(rows)+2 {
 		t.Fatalf("unfocused inbox is %d lines for %d rows", g2.attnH, len(rows))
 	}
 	if g2.workH <= g.workH || g2.workH != g.bodyH-g2.attnH {
 		t.Fatalf("work did not take the slack on focus: %d lines", g2.workH)
 	}
+}
+
+// Padding is asymmetric on purpose: the main pane takes a space inside both
+// borders, because prose pressed against a box edge reads badly, while the
+// list panels take a left pad only — horizontal padding costs two columns a
+// panel and the needs-you table is already truncating titles, so its right
+// edge stays the truncation point it was.
+func TestPanelPaddingIsAsymmetric(t *testing.T) {
+	row := func(pad padding) string {
+		return strings.Split(panelBox("t", false, 10, 3, []string{"abcdefg"}, pad), "\n")[1]
+	}
+	if got, want := row(padList), "│ abcdefg│"; got != want {
+		t.Fatalf("list row is %q, want %q — a left pad and the right edge", got, want)
+	}
+	if got, want := row(padMain), "│ abcde… │"; got != want {
+		t.Fatalf("main row is %q, want %q — a space inside both borders", got, want)
+	}
+}
+
+// Focus is weight as well as colour: the panel with focus draws the heavy
+// box, so which panel the keys are talking to still reads on a terminal
+// that gives the accent back as plain text. (The promote picker and the ?
+// overlay draw it too — they are lenses that have taken the keyboard.)
+func TestFocusDrawsTheHeavyBox(t *testing.T) {
+	if idle := panelBox("t", false, 10, 3, nil, padList); !strings.Contains(idle, "╭") ||
+		!strings.Contains(idle, "│") {
+		t.Fatalf("an unfocused panel is not the light box:\n%s", idle)
+	}
+	if on := panelBox("t", true, 10, 3, nil, padList); !strings.Contains(on, "┏") ||
+		!strings.Contains(on, "┃") {
+		t.Fatalf("a focused panel is not the heavy box:\n%s", on)
+	}
+}
+
+// And the weight follows focus, both ways, in the view the operator sees.
+func TestTheHeavyBoxFollowsFocus(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	for _, tc := range []struct{ key, focused, idle string }{
+		{"1", "[1] inbox", "[2] work"},
+		{"2", "[2] work", "[1] inbox"},
+	} {
+		m = update(t, m, keyMsg(tc.key))
+		view := m.View()
+		if got := lineWith(t, view, tc.focused); !strings.HasPrefix(got, "┏") {
+			t.Fatalf("%q has focus but not the heavy box: %q", tc.focused, got)
+		}
+		if got := lineWith(t, view, tc.idle); !strings.HasPrefix(got, "╭") {
+			t.Fatalf("%q has no focus but the heavy box: %q", tc.idle, got)
+		}
+	}
+}
+
+// Done-when: the keys a panel's own selection answers to are on that panel,
+// so sort and project are visible without picking a row first — which is
+// the whole reason they felt like they did not exist.
+func TestFocusedPanelCarriesItsKeys(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
+			{ID: "id-9", Identifier: "LERP-9", Title: "queued", Eligible: true,
+				URL: "https://linear.app/acme/issue/LERP-9"},
+		}}}}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		TicketID: "id-9", Ticket: "LERP-9", Queue: "implement", LogPath: "/dev/null"}})
+
+	view := m.View()
+	for _, want := range []string{"p promote", "s sort", "P project", "o open"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("the needs-you panel does not offer %q:\n%s", want, view)
+		}
+	}
+	// The line belongs to the focused panel, so it moves with focus rather
+	// than sitting on both.
+	m = update(t, m, keyMsg("2"))
+	view = m.View()
+	if strings.Contains(view, "P project") {
+		t.Fatalf("the needs-you keys are still on screen with work focused:\n%s", view)
+	}
+	if !strings.Contains(view, "r raw") {
+		t.Fatalf("the work panel does not offer its own keys:\n%s", view)
+	}
+}
+
+// A key on the panel is a key you can press. With nothing under the cursor
+// every one of them is dead — p is gated on there being a row, o has no URL
+// to open, s and P reorder and filter nothing — so the line is not drawn.
+// This is the first frame a new operator sees.
+func TestAPanelWithNothingSelectedOffersNoKeys(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	for _, key := range []string{"1", "2"} {
+		m = update(t, m, keyMsg(key))
+		for _, dead := range []string{"p promote", "s sort", "P project", "r raw", "o open"} {
+			if view := m.View(); strings.Contains(view, dead) {
+				t.Fatalf("panel %s offers %q with nothing under the cursor:\n%s", key, dead, view)
+			}
+		}
+	}
+}
+
+// r is inert on a ticket that has never run, and pressing it there would
+// flip the raw toggle invisibly — so the work panel only offers it once the
+// selected row has a log to render either way.
+func TestRawIsOfferedOnlyWhereThereIsALog(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("2"))
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
+			{ID: "id-9", Identifier: "LERP-9", Title: "queued", Eligible: true,
+				URL: "https://linear.app/acme/issue/LERP-9"},
+		}}}}})
+
+	view := m.View()
+	if strings.Contains(view, "r raw") {
+		t.Fatalf("a ticket that has never run offers the raw toggle:\n%s", view)
+	}
+	if !strings.Contains(view, "o open") {
+		t.Fatalf("the row has a URL but the panel does not offer o:\n%s", view)
+	}
+
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		TicketID: "id-9", Ticket: "LERP-9", Queue: "implement", LogPath: "/dev/null"}})
+	if view := m.View(); !strings.Contains(view, "r raw") {
+		t.Fatalf("a running ticket with a log does not offer the raw toggle:\n%s", view)
+	}
+}
+
+// A panel squeezed too short drops the hints and keeps its rows: windowRows
+// needs two lines to keep the selection visible, so a panel that spent one
+// of three on the key line would show "⋯ n more" and nothing else — losing
+// the cursor that j/k move and p promotes. One row further up it can afford
+// both, and does.
+func TestAShortPanelKeepsItsRowsOverItsKeys(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		h     int
+		hints bool
+	}{
+		{"three rows leaves windowRows its two", 9, true},
+		{"two rows are the rows", 8, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, _, _ := newTestModel(t, 1)
+			resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: tc.h})
+			m = update(t, resized.(model), keyMsg("1"))
+			var items []loop.AttentionItem
+			for i := 1; i <= 8; i++ {
+				items = append(items, loop.AttentionItem{
+					Ticket: fmt.Sprintf("LERP-%d", i), Title: "waiting", Reason: "unclaimed"})
+			}
+			m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: items}})
+
+			view := m.View()
+			if !strings.Contains(view, "LERP-1 ") {
+				t.Fatalf("the panel dropped the selected row to make room:\n%s", view)
+			}
+			if got := strings.Contains(view, "p promote"); got != tc.hints {
+				t.Fatalf("key line on screen = %v, want %v:\n%s", got, tc.hints, view)
+			}
+		})
+	}
+}
+
+// One ticket waiting while the queues are full is an ordinary state, and it
+// gives the focused panel exactly two rows. They are enough: the row fits
+// without windowing, so the key line — the whole point of putting it on the
+// panel — is still there.
+func TestOneRowStillGetsItsKeys(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention,
+		Attention: []loop.AttentionItem{{Ticket: "LERP-1", Title: "waiting", Reason: "unclaimed"}}}})
+	tickets := make([]loop.QueueTicket, 30)
+	for i := range tickets {
+		tickets[i] = loop.QueueTicket{ID: fmt.Sprintf("t%d", i),
+			Identifier: fmt.Sprintf("QUEUED-%d", i+1), Title: "work", Eligible: true}
+	}
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: tickets},
+	}}})
+
+	view := m.View()
+	if g := m.geometry(); g.attnH != 4 {
+		t.Fatalf("needs-you is %d lines, want the 4 this case is about:\n%s", g.attnH, view)
+	}
+	if !strings.Contains(view, "LERP-1 ") {
+		t.Fatalf("the one waiting ticket is not on screen:\n%s", view)
+	}
+	if !strings.Contains(view, "p promote") {
+		t.Fatalf("a panel with room for the row and the keys drew only the row:\n%s", view)
+	}
+}
+
+// Done-when for the line panelWant buys: when the wants exceed the body and
+// the unfocused panel can absorb the whole squeeze, the focused panel gets
+// its rows *and* its key line. Without the reservation the last rows are
+// silently swapped for "⋯ n more" — the panel would be one line short of
+// what it draws.
+func TestTheFocusedPanelBuysTheLineItsKeysCost(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 17})
+	m = update(t, resized.(model), keyMsg("1"))
+	m = fillBoard(t, m, 10)
+
+	view := m.View()
+	for i := 1; i <= 10; i++ {
+		if !strings.Contains(view, fmt.Sprintf("LERP-%d ", i)) {
+			t.Fatalf("the key line cost needs-you LERP-%d:\n%s", i, view)
+		}
+	}
+	if !strings.Contains(view, "p promote") {
+		t.Fatalf("needs-you has its rows but not its keys:\n%s", view)
+	}
+}
+
+// The promote picker owns the keyboard while it is open, so the panel stops
+// offering the keys it would swallow. The status bar carries the picker's.
+func TestThePickerTakesTheKeyLineWithIt(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+	if view := m.View(); !strings.Contains(view, "P project") {
+		t.Fatalf("the needs-you panel is not offering its keys:\n%s", view)
+	}
+
+	m = update(t, m, keyMsg("p"))
+	view := m.View()
+	if strings.Contains(view, "P project") {
+		t.Fatalf("the panel still offers keys the picker swallows:\n%s", view)
+	}
+	if !strings.Contains(view, "esc cancel") {
+		t.Fatalf("the status bar lost the picker's own keys:\n%s", view)
+	}
+}
+
+// lineWith is the one line of a rendered view containing want.
+func lineWith(t *testing.T, view, want string) string {
+	t.Helper()
+	for _, l := range strings.Split(view, "\n") {
+		if strings.Contains(l, want) {
+			return l
+		}
+	}
+	t.Fatalf("no line of the view contains %q:\n%s", want, view)
+	return ""
 }
 
 // A panel with nothing to show costs one line — its own title row — and
@@ -1531,12 +1786,11 @@ func TestTicketDetailShowsBodyAndComments(t *testing.T) {
 	if strings.Index(view, "the plan") > strings.Index(view, "the verdict") {
 		t.Fatalf("comments are not in chronological order:\n%s", view)
 	}
-	// The lines the pass produced still come first, and o is still offered.
+	// The lines the pass produced still come first. (The o affordance moved
+	// to the focused panel's key line — TestFocusedPanelCarriesItsKeys owns
+	// it now; asserting it here would only be reading that line.)
 	if strings.Index(view, "unclaimed") > strings.Index(view, "the ticket body") {
 		t.Fatalf("the pass's own lines no longer render first:\n%s", view)
-	}
-	if !strings.Contains(view, "o open in Linear") {
-		t.Fatalf("the o hint is gone:\n%s", view)
 	}
 }
 
