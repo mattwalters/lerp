@@ -293,11 +293,18 @@ func TestExecuteRecordsItsExitStatusWhateverTheCommandEndsIn(t *testing.T) {
 		name   string
 		suffix string
 		want   int
+		// wantAny takes any non-zero status instead of a fixed one, for the
+		// case where the number itself is the shell's business.
+		wantAny bool
 	}{
 		{name: "trailing comment", suffix: " # run the agent", want: 5},
 		// A syntax error in the configured command is the inner shell's, and
 		// it exits non-zero for it — as it did before there was any wrapper.
-		{name: "trailing and", suffix: " &&", want: 2},
+		// Which non-zero is unspecified by POSIX (2 in bash and dash, 3 in
+		// ksh93, 1 in zsh's sh mode), so the claim under test is that the
+		// command was a quoted word and whatever status it ended with was
+		// recorded faithfully — not the number.
+		{name: "trailing and", suffix: " &&", wantAny: true},
 		{name: "leading exec", suffix: "", want: 5},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -319,15 +326,21 @@ func TestExecuteRecordsItsExitStatusWhateverTheCommandEndsIn(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if result.ExitCode != tc.want {
+			want := tc.want
+			switch {
+			case tc.wantAny && result.ExitCode == 0:
+				t.Errorf("ExitCode = 0, want any non-zero: the command was a syntax error")
+			case tc.wantAny:
+				want = result.ExitCode
+			case result.ExitCode != tc.want:
 				t.Errorf("ExitCode = %d, want %d", result.ExitCode, tc.want)
 			}
 			recorded, err := os.ReadFile(exitPath)
 			if err != nil {
 				t.Fatalf("no exit status was recorded: %v", err)
 			}
-			if strings.TrimSpace(string(recorded)) != strconv.Itoa(tc.want) {
-				t.Errorf("exit file = %q, want %d", recorded, tc.want)
+			if strings.TrimSpace(string(recorded)) != strconv.Itoa(want) {
+				t.Errorf("exit file = %q, want %d — the status Execute reported", recorded, want)
 			}
 		})
 	}

@@ -189,12 +189,14 @@ func statusRelevance(repo *config.RepoConfig) func(string) StatusRelevance {
 // the claim on purpose, because that is what parks the ticket on the operator
 // in the inbox view.
 //
-// viewerID is the operating user, and the claim is released only when the
-// ticket is still assigned to them: a human who took the run over mid-flight
-// keeps what they took. This is the one place in the codebase that decides
-// whether a finished run releases its claim — the rule has been got wrong
-// twice by being written out a second time (LERP-50, LERP-59), so reap calls
-// this rather than carrying its own copy.
+// viewerID is the operating user. A ticket assigned to somebody else by the
+// time the run ends was taken over mid-flight, and conclude leaves the whole
+// rule alone for them — no move and no release, reported rather than silent.
+// A human who took the run over keeps what they took, and the hop is part of
+// it. This is the one place in the codebase that decides whether a finished
+// run releases its claim — the rule has been got wrong twice by being written
+// out a second time (LERP-50, LERP-59), so reap calls this rather than
+// carrying its own copy.
 func conclude(ctx context.Context, client linear.Client, issue linear.Issue, queue config.Queue, repo *config.RepoConfig, exitCode int, viewerID string, log io.Writer) (string, error) {
 	target, rule := queue.OnFailure, "on_failure"
 	if exitCode == 0 {
@@ -217,8 +219,23 @@ func conclude(ctx context.Context, client linear.Client, issue linear.Issue, que
 	if err != nil {
 		return "", fmt.Errorf("read completed issue %s: %w", issue.ID, err)
 	}
-	final := current.Status
 	var note string
+	if current.AssigneeID != "" && current.AssigneeID != viewerID {
+		// Somebody else holds the ticket now — most often a human who took
+		// the run over while it ran, sometimes an automation. The hop is
+		// theirs to make along with the claim: making it here and then
+		// declining to release, as the rule below would, pushes the ticket
+		// into a served status still assigned, where no queue can pick it up
+		// (an assigned ticket is never eligible) and no inbox lists it — a
+		// state strictly worse than either half of the rule alone. So the
+		// takeover skips the whole of it, and says so.
+		note = takenOverNote(issue, rule, target)
+		if log != nil {
+			fmt.Fprintln(log, note)
+		}
+		return note, nil
+	}
+	final := current.Status
 	switch {
 	case final == queue.Status:
 		if err := client.MoveIssue(ctx, issue.ID, target); err != nil {
@@ -240,8 +257,9 @@ func conclude(ctx context.Context, client linear.Client, issue linear.Issue, que
 		return note, nil
 	}
 	if current.AssigneeID != viewerID {
-		// Somebody else holds the ticket now — most often a human who took
-		// the run over while it ran. Unassigning would take their claim.
+		// Nobody holds it: whoever released the claim mid-run already did
+		// what this would do. (A ticket somebody else holds returned above,
+		// without its move.)
 		return note, nil
 	}
 	if err := client.UnassignIssue(ctx, issue.ID); err != nil {
@@ -275,6 +293,15 @@ func skippedHopNote(issue linear.Issue, queue config.Queue, rule, target, final 
 			" (e.g. Linear's GitHub integration) may be moving tickets.", final)
 	}
 	return note
+}
+
+// takenOverNote is what conclude reports when the ticket belongs to somebody
+// else by the time the run ends. Like a skipped hop, a stage silently not run
+// is a stage nobody notices was never run — and here the run really did the
+// work, so what it cost is worth naming.
+func takenOverNote(issue linear.Issue, rule, target string) string {
+	return fmt.Sprintf("%s was reassigned during its run — the %s hop to %q was skipped"+
+		" and the claim left with whoever took it.", issue.Identifier, rule, target)
 }
 
 func (o OnceOptions) validate() error {

@@ -530,12 +530,16 @@ func TestAdoptedRunSettlesFromItsRecordedExitStatus(t *testing.T) {
 		repo       *config.RepoConfig
 		// movedTo is somebody else moving the ticket while the run was in
 		// flight, when non-empty.
-		movedTo      string
-		wantEvent    EventType
-		wantExitCode int
-		wantStatus   string
-		wantAssignee string
-		wantNote     bool
+		movedTo string
+		// reassignedTo is somebody else taking the run over while it was in
+		// flight; unclaimedMidRun is the claim being dropped instead.
+		reassignedTo    string
+		unclaimedMidRun bool
+		wantEvent       EventType
+		wantExitCode    int
+		wantStatus      string
+		wantAssignee    string
+		wantNote        bool
 	}{{
 		// The whole ticket: a clean exit hops to on_success, and because a
 		// queue serves the destination the claim goes with it — an assigned
@@ -593,6 +597,22 @@ func TestAdoptedRunSettlesFromItsRecordedExitStatus(t *testing.T) {
 		exit: "0\n", repo: repointedQueueRepo(),
 		wantEvent: EventReaped, wantStatus: "Todo", wantAssignee: "",
 	}, {
+		// A human takes the run over mid-flight. The claim rule declines to
+		// take their claim, so the hop has to go with it: hopping anyway
+		// would push the ticket into a served status still assigned, where
+		// no queue can pick it up and no inbox lists it — a state neither
+		// half of the rule produces on its own.
+		name: "a ticket taken over mid-run keeps neither the hop nor the claim",
+		exit: "0\n", repo: chainedRepo(), reassignedTo: "colleague",
+		wantEvent: EventExited, wantStatus: "Todo", wantAssignee: "colleague", wantNote: true,
+	}, {
+		// The other side of the same guard: a claim dropped mid-run was
+		// nobody taking anything over, so the run that did the work still
+		// gets its hop, and the release is already done.
+		name: "a ticket unclaimed mid-run still takes its hop",
+		exit: "0\n", repo: chainedRepo(), unclaimedMidRun: true,
+		wantEvent: EventExited, wantStatus: "Done", wantAssignee: "",
+	}, {
 		// conclude's rule, inherited whole: a run that really failed in a
 		// queue with nowhere to fail to keeps its claim and stays put, rather
 		// than being released to fail again on every pass forever. This is
@@ -624,6 +644,16 @@ func TestAdoptedRunSettlesFromItsRecordedExitStatus(t *testing.T) {
 
 			if tc.movedTo != "" {
 				if err := h.fake.MoveIssue(ctx, "tkt", tc.movedTo); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.reassignedTo != "" {
+				if err := h.fake.AssignIssue(ctx, "tkt", tc.reassignedTo); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.unclaimedMidRun {
+				if err := h.fake.UnassignIssue(ctx, "tkt"); err != nil {
 					t.Fatal(err)
 				}
 			}
