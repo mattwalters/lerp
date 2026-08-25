@@ -289,7 +289,8 @@ that started the run would have: a run that recorded its own exit status
 takes its queue's hop, and one that never got that far has its claim
 released instead, when the board still looks exactly as the dead run
 left it — and starts eligible tickets as capacity frees. `-concurrency N` caps how many agents run at once
-(default 3). The TUI needs a terminal: in a pipe or a script, `lerp` prints
+(default 5; each lane is a whole workspace, so lower it in a repo whose
+`provision` command is heavy). The TUI needs a terminal: in a pipe or a script, `lerp` prints
 usage and exits 2 rather than quietly starting to claim tickets.
 
 The Work view is one list of what the machine is doing with the
