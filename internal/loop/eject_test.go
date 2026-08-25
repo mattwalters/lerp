@@ -376,10 +376,10 @@ func TestEjectedRunIsNeitherAdoptedNorReaped(t *testing.T) {
 }
 
 // A record left behind by an eject — its removal failed, or lerp died between
-// the kill and the removal — is disowned on disk first, so the next lerp,
+// the kill and the removal — was disowned on the way out, so the next lerp,
 // which knows nothing of the eject, reads a run with no workspace to dispose
 // and no ticket to settle.
-func TestEjectDisownsTheRecordBeforeKilling(t *testing.T) {
+func TestALeftoverEjectedRecordReapsHarmlessly(t *testing.T) {
 	h := newHarness(t, 1, nil)
 	h.rec.o.Alive = evidence.Alive
 	resumableRunner(h)
@@ -391,9 +391,17 @@ func TestEjectDisownsTheRecordBeforeKilling(t *testing.T) {
 	h.fake.AddIssue("LERP", linear.Issue{
 		ID: "tkt", Identifier: "LERP-1", Status: "Todo", AssigneeID: "fake-viewer",
 	})
-	if err := h.evidence.Disown(record.RunID); err != nil {
+	ctx := context.Background()
+	h.rec.Tick(ctx)
+	h.waitEvents(t, EventAdopted, 1)
+
+	// ejectLane is the half that disowns; Eject's own record removal runs
+	// after it, and the point here is what that removal would leave behind
+	// had it failed — or had lerp died before reaching it.
+	if _, _, _, err := h.rec.ejectLane("tkt"); err != nil {
 		t.Fatal(err)
 	}
+	agent.waitKilled()
 	disowned, err := h.evidence.Read(record.RunID)
 	if err != nil {
 		t.Fatal(err)
@@ -402,9 +410,10 @@ func TestEjectDisownsTheRecordBeforeKilling(t *testing.T) {
 		t.Fatalf("disowned record = %+v, want no workspace and no ticket", disowned)
 	}
 
-	// A fresh lerp reaping that leftover, its agent long dead.
-	agent.kill9()
-	ctx := context.Background()
+	// A fresh lerp reaping that leftover knows nothing of the eject, so the
+	// harness's own reconciler stands in for it: its ejected set is cleared
+	// the way a restart clears it.
+	h.rec.ejected = map[string]bool{}
 	h.rec.Tick(ctx)
 	h.waitEvents(t, EventReaped, 1)
 	if got := h.disposedIdentities(); len(got) != 0 {
@@ -424,13 +433,15 @@ func TestEjectDisownsTheRecordBeforeKilling(t *testing.T) {
 // would touch the record and no pass would free the lane.
 func TestEjectLeavesTheRunAloneWhenTheKillFails(t *testing.T) {
 	h := newHarness(t, 1, nil)
-	h.rec.o.Alive = func(evidence.Record) bool { return true } // a PID that is not there
+	h.rec.o.Alive = func(evidence.Record) bool { return true }
+	// The kill is stubbed rather than provoked: making a real one fail means
+	// picking a real process group to aim at and hoping it refuses.
+	h.rec.o.Kill = func(int, syscall.Signal) error { return syscall.EPERM }
 	resumableRunner(h)
-	// PID 2 is the kernel's, not ours: killing its process group fails with
-	// EPERM or ESRCH, which is exactly the case under test.
 	lr := &laneRun{lane: 1, ticketID: "tkt", adopted: true, record: evidence.Record{
 		RunID: "run", Lane: 1, TicketID: "tkt", Ticket: "LERP-1", Queue: "todo",
-		Workspace: "/tmp/ws", PID: 2, SessionID: "1e9a4a0e-0000-4000-8000-00000000abcd",
+		Workspace: "/tmp/ws", PID: 4711, ProcessStartedUnix: 1756000000,
+		SessionID: "1e9a4a0e-0000-4000-8000-00000000abcd",
 	}}
 	h.rec.active = append(h.rec.active, lr)
 
@@ -446,6 +457,32 @@ func TestEjectLeavesTheRunAloneWhenTheKillFails(t *testing.T) {
 	}
 	if !h.rec.beginSettling(lr) {
 		t.Error("a run whose eject failed can no longer settle itself")
+	}
+}
+
+// A PID with no recorded start time is a PID lerp cannot identify: Alive
+// falls back to a bare existence check, and a recycled PID would then read as
+// the run's own. Every other reader can afford that optimism; the one that
+// signals a process group cannot.
+func TestEjectRefusesAnUnidentifiablePID(t *testing.T) {
+	h := newHarness(t, 1, nil)
+	killed := 0
+	h.rec.o.Alive = func(evidence.Record) bool { return true }
+	h.rec.o.Kill = func(int, syscall.Signal) error { killed++; return nil }
+	resumableRunner(h)
+	h.rec.active = append(h.rec.active, &laneRun{lane: 1, ticketID: "tkt", adopted: true,
+		record: evidence.Record{
+			RunID: "run", Lane: 1, TicketID: "tkt", Ticket: "LERP-1", Queue: "todo",
+			Workspace: "/tmp/ws", PID: 4711, // no ProcessStartedUnix
+			SessionID: "1e9a4a0e-0000-4000-8000-00000000abcd",
+		}})
+
+	if _, err := h.rec.Eject(context.Background(), "tkt"); err == nil ||
+		!strings.Contains(err.Error(), "cannot confirm which process") {
+		t.Fatalf("Eject error = %v, want a refusal naming the unidentifiable process", err)
+	}
+	if killed != 0 {
+		t.Errorf("signalled %d process groups, want none", killed)
 	}
 }
 

@@ -222,6 +222,10 @@ type ReconcilerOptions struct {
 	Provision ProvisionFunc
 	Dispose   DisposeFunc
 	Alive     func(evidence.Record) bool
+	// Kill signals a run's process group, defaulting to syscall.Kill. It is
+	// injectable for the same reason the rest are: a test that needs a kill
+	// to fail cannot provoke one for real without picking a victim.
+	Kill func(pid int, sig syscall.Signal) error
 }
 
 // Reconciler is the loop — there is exactly one. Desired state is the board,
@@ -294,6 +298,9 @@ func NewReconciler(o ReconcilerOptions) (*Reconciler, error) {
 	}
 	if o.Alive == nil {
 		o.Alive = evidence.Alive
+	}
+	if o.Kill == nil {
+		o.Kill = syscall.Kill
 	}
 	if o.Log != nil {
 		o.Log = &syncWriter{w: o.Log}
@@ -563,23 +570,23 @@ func (r *Reconciler) Eject(_ context.Context, ticketID string) (Ejection, error)
 	return ej, nil
 }
 
-// ejectLane is eject's locked half: check every refusal, then disown the
-// workspace, kill the process group, and free an adopted run's lane.
+// ejectLane is eject's locked half, in the order that makes every failure
+// harmless: refuse, kill, mark, disown, and free an adopted run's lane.
 //
-// The order is what makes a failure harmless. Everything that can refuse
-// refuses while nothing has changed. The record is disowned before the kill,
-// so even a lerp that dies in the next instruction leaves a record that
-// disposes nothing and settles nothing. The ejected mark goes up before the
-// kill too, because a run this process started reports its agent's death
-// through a goroutine that reads the mark to decide whether it may conclude
-// the ticket.
+// Everything that can refuse refuses first, while nothing has changed — a
+// failed kill included, which is why the kill comes before any bookkeeping.
+// Past the kill nothing may refuse, because the agent is dead and the run is
+// the operator's whatever the disk says next: the mark goes up, and the
+// record is disowned so that even a lerp dying in the next instruction leaves
+// a record that disposes nothing and settles nothing.
 //
 // The recorded PID is the wrapper shell that leads the run's process group,
 // so the negated PID kills the agent and everything it spawned — the same
 // signal Execute's own cancel and the PID-attach failure path send. It is
-// checked against the recorded process start time first (Alive), because a
-// stale PID may since have been reused: signalling a process group lerp does
-// not own would kill whatever the operator is running in it.
+// checked against the recorded process start time first (Alive), and refused
+// outright when there is no start time to check against: a stale PID may
+// since have been reused, and signalling a process group lerp cannot identify
+// would kill whatever the operator is running in it.
 func (r *Reconciler) ejectLane(ticketID string) (Ejection, evidence.Record, bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -615,6 +622,12 @@ func (r *Reconciler) ejectLane(ticketID string) (Ejection, evidence.Record, bool
 		return fail("%s has already finished; its run is being settled", ticketID)
 	case lr.record.SessionID == "":
 		return fail("%s recorded no session to resume", ticketID)
+	case lr.record.ProcessStartedUnix == 0:
+		// Alive falls back to a bare existence check when no start time could
+		// be recorded, which is optimism the other readers can afford and
+		// this one cannot: eject is the only caller that signals, and a PID
+		// it cannot identify is a process group it must not kill.
+		return fail("lerp cannot confirm which process is running %s, so it will not signal it", ticketID)
 	case !r.o.Alive(lr.record):
 		return fail("the agent for %s is no longer running", ticketID)
 	}
@@ -629,7 +642,7 @@ func (r *Reconciler) ejectLane(ticketID string) (Ejection, evidence.Record, bool
 	// the moment between the liveness check and here, so there was never a
 	// session to hand over, and the run is left to end the way it was
 	// already ending.
-	if err := syscall.Kill(-record.PID, syscall.SIGKILL); err != nil {
+	if err := r.o.Kill(-record.PID, syscall.SIGKILL); err != nil {
 		return fail("killing %s: %w", ticketID, err)
 	}
 	// Past the kill nothing may refuse: the agent is dead, so this run is the
@@ -1156,7 +1169,7 @@ func (r *Reconciler) provisionAndRun(ctx context.Context, lr *laneRun, c candida
 			attached, err := r.o.Evidence.Attach(record.RunID, pid)
 			if err != nil {
 				r.fail(fmt.Errorf("attach pid of run %s: %w", record.RunID, err))
-				_ = syscall.Kill(-pid, syscall.SIGKILL)
+				_ = r.o.Kill(-pid, syscall.SIGKILL)
 				return
 			}
 			// The lane keeps the attached record — the first moment a PID
