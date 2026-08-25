@@ -164,7 +164,8 @@ default, not a rule about process.
    retriage. It reads as a table, one row per ticket, and the Linear
    status is a column: the vocabulary is the operator's own, never a
    category invented here. Sorting it (by leverage, priority, status or
-   project) and scoping it to one project are display over the one list
+   project), scoping it to one project, and searching it (`/`, a plain
+   substring over the rows on screen) are display over the one list
    the pass already fetched, session-only, with no saved views and no
    filter syntax; filtering that changed *which* tickets were fetched
    would not be. Select a ticket and press `p` to promote it: pick a
