@@ -1762,13 +1762,22 @@ func (m model) workRowLine(r workRow, selected bool, width int) string {
 	case laneProvisioning:
 		dot = styleProvisioning.Render(heartbeatFrames[m.frame%len(heartbeatFrames)])
 		state = styleProvisioning.Render("provisioning")
-	case laneAdopted:
-		// A run inherited from a previous process stays visibly distinct. It
-		// may sit on a lane above N; the row comes from the lane, so it
-		// appears here without a case of its own.
-		dot = styleAdopted.Render("●")
-		state = styleAdopted.Render("adopted")
 	default:
+		// laneAdopted falls here on purpose: an adopted run draws as
+		// `running` because that is what the operator is looking at. The
+		// badge it used to carry was earned when adoption meant remembering
+		// rather than resuming — an adopted run reached the end of its work
+		// and then did not take its queue's hop, so the badge warned of an
+		// ambush. Since LERP-74 an adopted run records its own exit status
+		// and reap applies the same move rule, so all the badge reported was
+		// which process spawned the agent: bookkeeping, in jargon, that the
+		// operator cannot act on. It is not quite a nonexistent difference —
+		// an adopted run concludes from its exit file, and a missing or torn
+		// one still falls back to releasing the claim without hopping — but
+		// that is rare, invisible while the run is live, and plain on the
+		// board when it happens. The distinction survives where it earns its
+		// keep: laneAdopted is still its own lane state, and EventAdopted
+		// still lands in .lerp/loop.log.
 		dot = styleRunning.Render("●")
 		state = styleFaint.Render("running")
 	}

@@ -234,8 +234,30 @@ func TestAdoptedRowShowsTrueRunAge(t *testing.T) {
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAdopted, RunID: "r1", Lane: 1,
 		TicketID: "id-1", Queue: "plan", StartedAt: time.Now().Add(-2 * time.Hour)}})
 	view := m.View()
-	if !strings.Contains(view, "adopted") || !strings.Contains(view, "2h0m") {
+	if !strings.Contains(view, "2h0m") {
 		t.Fatalf("adopted row does not show the run's true age:\n%s", view)
+	}
+}
+
+// An adopted run is a live agent on a ticket, which is all the operator acts
+// on, so the work panel draws it exactly as it draws a run this process
+// started. That a successor took the run over stays a diagnostic fact, in
+// .lerp/loop.log; it is not a badge on the screen.
+func TestAdoptedRunReadsAsRunning(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAdopted, RunID: "r1", Lane: 1,
+		TicketID: "id-1", Queue: "plan", LogPath: "/dev/null"}})
+	rows := m.workRows()
+	if len(rows) != 1 {
+		t.Fatalf("panel has %d rows, want the one adopted run", len(rows))
+	}
+	line := m.workRowLine(rows[0], false, 80)
+	if !strings.Contains(line, styleRunning.Render("●")) ||
+		!strings.Contains(line, styleFaint.Render("running")) {
+		t.Errorf("adopted row is not drawn as running: %q", line)
+	}
+	if view := m.View(); strings.Contains(view, "adopted") {
+		t.Errorf("the word adopted is on the operator's screen:\n%s", view)
 	}
 }
 
@@ -244,7 +266,7 @@ func TestAdoptedRunOccupiesAndFreesItsRow(t *testing.T) {
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAdopted, RunID: "r9", Lane: 5,
 		TicketID: "abcdef1234567890", Queue: "review", LogPath: "/dev/null"}})
 	view := m.View()
-	if !strings.Contains(view, "adopted") {
+	if !strings.Contains(view, "abcdef12…") {
 		t.Fatalf("adopted run not on the board:\n%s", view)
 	}
 	if len(m.workRows()) != 1 {
@@ -449,7 +471,7 @@ func TestAdoptedRunAboveCapacityIsOnThePanel(t *testing.T) {
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAdopted, RunID: "r9", Lane: 4,
 		TicketID: "abcdef1234567890", Queue: "review", LogPath: "/dev/null"}})
 	view := m.View()
-	for _, want := range []string{"adopted", "review · off the board", "0/1 running"} {
+	for _, want := range []string{"abcdef12…", "review · off the board", "0/1 running"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("adopted run above capacity is missing %q:\n%s", want, view)
 		}

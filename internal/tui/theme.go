@@ -9,16 +9,15 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// The palette: one accent, four semantic states, a faint ramp. Adaptive
+// The palette: one accent, three semantic states, a faint ramp. Adaptive
 // pairs keep light terminals legible without a theme system. Color marks
 // state, never decoration — and every state also has a shape or a label
-// (● ◍ ○, "adopted", "idle"), so the screen still reads on a 16-color
+// (● ◍ ○, "running", "idle"), so the screen still reads on a 16-color
 // terminal or to a color-blind operator.
 var (
 	colorFocus        = lipgloss.AdaptiveColor{Light: "#6E4BC7", Dark: "#A78BFA"}
 	colorRunning      = lipgloss.AdaptiveColor{Light: "#14855F", Dark: "#3DDC97"}
 	colorProvisioning = lipgloss.AdaptiveColor{Light: "#A16207", Dark: "#F2B84B"}
-	colorAdopted      = lipgloss.AdaptiveColor{Light: "#2B6CB0", Dark: "#6CA4F8"}
 	colorAttention    = lipgloss.AdaptiveColor{Light: "#C4275B", Dark: "#F2618E"}
 	colorFaint        = lipgloss.AdaptiveColor{Light: "#847E92", Dark: "#6B6684"}
 	colorBadgeText    = lipgloss.AdaptiveColor{Light: "#FFFFFF", Dark: "#1A1725"}
@@ -29,7 +28,6 @@ var (
 	styleFocus        = lipgloss.NewStyle().Foreground(colorFocus)
 	styleRunning      = lipgloss.NewStyle().Foreground(colorRunning)
 	styleProvisioning = lipgloss.NewStyle().Foreground(colorProvisioning)
-	styleAdopted      = lipgloss.NewStyle().Foreground(colorAdopted)
 	styleAttention    = lipgloss.NewStyle().Foreground(colorAttention)
 	styleFaint        = lipgloss.NewStyle().Foreground(colorFaint)
 	styleErr          = lipgloss.NewStyle().Foreground(colorAttention)
