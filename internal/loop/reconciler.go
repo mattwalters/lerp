@@ -345,7 +345,7 @@ const AttentionDefinition = "unclaimed tickets, and your claimed tickets, sittin
 //
 // A pass that could not list every team emits nothing: the failure is
 // reported and the subscriber keeps its last full list, because a partial
-// one could falsely read as "nothing to decide".
+// one could falsely read as an empty inbox.
 func (r *Reconciler) attention(ctx context.Context) {
 	viewerID, err := r.o.Client.Viewer(ctx)
 	if err != nil {

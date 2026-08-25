@@ -280,7 +280,7 @@ type model struct {
 
 	// attention is the loop's latest full list of what waits on the operator;
 	// attentionSeen separates "no pass has reported yet" from the goal state,
-	// so an empty panel never claims "nothing to decide" before it is known.
+	// so an empty panel never claims the inbox is empty before it is known.
 	// shown is that list under the current sort and filter — what the panel
 	// actually renders, and what attnSel indexes.
 	attention     []loop.AttentionItem
@@ -1420,9 +1420,9 @@ func (m *model) attentionRows(width int) ([]string, int) {
 	case !m.attentionSeen:
 		return []string{styleFaint.Render("reading the board…")}, -1
 	case len(m.attention) == 0:
-		return []string{styleFaint.Render("nothing to decide")}, -1
+		return []string{styleFaint.Render("the inbox is empty")}, -1
 	case len(m.shown) == 0:
-		return []string{styleFaint.Render("nothing to decide in " + m.project)}, -1
+		return []string{styleFaint.Render("nothing in " + m.project)}, -1
 	}
 	focused := m.focus == panelAttention
 	// Every column is padded to the widest cell on the list, so the four of
@@ -1577,7 +1577,7 @@ func (m model) attentionPanel(w, h int) string {
 	}
 	if h <= collapsedH {
 		if m.panelEmpty(panelAttention) {
-			extra += styleFaint.Render(" — nothing to decide")
+			extra += styleFaint.Render(" — empty")
 		}
 		return panelLine(panelTitle(1, "inbox", focused, extra), w)
 	}
@@ -1789,11 +1789,11 @@ func (m model) attentionDetail(width int) string {
 		return styleFaint.Render("reading the board…")
 	}
 	if len(m.attention) == 0 {
-		return styleFaint.Render("nothing to decide — the empty list is the goal state") + "\n" +
+		return styleFaint.Render("the inbox is empty — that is the goal state") + "\n" +
 			styleFaint.Render("(shows "+loop.AttentionDefinition+")")
 	}
 	if len(m.shown) == 0 {
-		return styleFaint.Render("nothing to decide in "+m.project) + "\n" +
+		return styleFaint.Render("nothing in "+m.project) + "\n" +
 			styleFaint.Render("(P cycles the project filter back to all)")
 	}
 	it := m.selectedAttention()
@@ -1994,7 +1994,7 @@ func (m model) statusBar() string {
 	left := badge + " " + heart
 	left += "  " + styleFaint.Render(fmt.Sprintf("%d/%d running", m.busyLanes(), m.o.Lanes))
 	if len(m.attention) > 0 {
-		left += "  " + styleAttention.Render(fmt.Sprintf("● %d to decide", len(m.attention)))
+		left += "  " + styleAttention.Render(fmt.Sprintf("● %d in the inbox", len(m.attention)))
 	}
 	right := styleFaint.Render("? help · q quit")
 	if m.promoting {

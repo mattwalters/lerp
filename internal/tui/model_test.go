@@ -509,7 +509,7 @@ func TestInboxListsWhatWaits(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, keyMsg("1"))
 
-	if view := m.View(); strings.Contains(view, "nothing to decide") {
+	if view := m.View(); strings.Contains(view, "the inbox is empty") {
 		t.Fatalf("view claims the goal state before any pass reported:\n%s", view)
 	}
 
@@ -533,7 +533,7 @@ func TestInboxListsWhatWaits(t *testing.T) {
 	// A later pass with nothing waiting clears the list and says so.
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention}})
 	view = m.View()
-	if !strings.Contains(view, "nothing to decide") {
+	if !strings.Contains(view, "the inbox is empty") {
 		t.Fatalf("empty inbox list does not read as the goal state:\n%s", view)
 	}
 	if !strings.Contains(view, "shows unclaimed tickets") {
@@ -937,7 +937,7 @@ func TestStatusBarAndHelp(t *testing.T) {
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
 		{Ticket: "LERP-1", Title: "one"}, {Ticket: "LERP-2", Title: "two"},
 	}}})
-	if !strings.Contains(m.View(), "2 to decide") {
+	if !strings.Contains(m.View(), "2 in the inbox") {
 		t.Fatalf("status bar does not count inbox:\n%s", m.View())
 	}
 
