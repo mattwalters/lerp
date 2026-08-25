@@ -528,13 +528,15 @@ func TestNeedsYouListsWhatWaits(t *testing.T) {
 			t.Fatalf("needs-you view is missing %q:\n%s", want, view)
 		}
 	}
-	// The reason wraps under its label rather than being truncated, so it
-	// is checked word by word: a cut pane would lose the tail, which is the
-	// part that says what is actually holding the ticket up.
-	for _, want := range strings.Fields(`claimed in "Needs Help" — no queue serves it`) {
-		if !strings.Contains(view, want) {
-			t.Fatalf("needs-you view cut the reason at %q:\n%s", want, view)
-		}
+	// The reason is one column too long for this pane, so it wraps under its
+	// label rather than being truncated: both halves have to be on screen,
+	// and the tail — the part that says what is holding the ticket up — has
+	// to line up under the gutter rather than at the margin.
+	if !strings.Contains(view, `why     claimed in "Needs Help" — no queue serves`) {
+		t.Fatalf("the reason does not start under its label:\n%s", view)
+	}
+	if !strings.Contains(view, labelGutter+"it") {
+		t.Fatalf("the reason's tail was cut, or is not under the gutter:\n%s", view)
 	}
 
 	// A later pass with nothing waiting clears the list and says so.
@@ -1019,7 +1021,7 @@ func TestFocusedPanelTakesTheSlack(t *testing.T) {
 	// rows it renders, work takes what is left.
 	m = update(t, m, keyMsg("2"))
 	g2 := m.geometry()
-	rows, _ := m.attentionRows(g2.sideW - 2)
+	rows, _ := m.attentionRows(padList.inner(g2.sideW))
 	if g2.attnH != len(rows)+2 {
 		t.Fatalf("unfocused needs-you is %d lines for %d rows", g2.attnH, len(rows))
 	}
@@ -1098,6 +1100,50 @@ func TestFocusedPanelCarriesItsKeys(t *testing.T) {
 	}
 	if !strings.Contains(view, "r raw") {
 		t.Fatalf("the work panel does not offer its own keys:\n%s", view)
+	}
+}
+
+// A panel squeezed too short drops the hints and keeps its rows: windowRows
+// needs two lines to keep the selection visible, so a panel that spent one
+// of three on the key line would show "⋯ n more" and nothing else — losing
+// the cursor that j/k move and p promotes.
+func TestAShortPanelKeepsItsRowsOverItsKeys(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 8})
+	m = update(t, resized.(model), keyMsg("1"))
+	var items []loop.AttentionItem
+	for i := 1; i <= 8; i++ {
+		items = append(items, loop.AttentionItem{
+			Ticket: fmt.Sprintf("LERP-%d", i), Title: "waiting", Reason: "unclaimed"})
+	}
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: items}})
+
+	view := m.View()
+	if !strings.Contains(view, "LERP-1 ") {
+		t.Fatalf("a short panel dropped the selected row to make room:\n%s", view)
+	}
+	if strings.Contains(view, "p promote") {
+		t.Fatalf("a short panel spent its last row on the key line:\n%s", view)
+	}
+}
+
+// The promote picker owns the keyboard while it is open, so the panel stops
+// offering the keys it would swallow. The status bar carries the picker's.
+func TestThePickerTakesTheKeyLineWithIt(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+	if view := m.View(); !strings.Contains(view, "P project") {
+		t.Fatalf("the needs-you panel is not offering its keys:\n%s", view)
+	}
+
+	m = update(t, m, keyMsg("p"))
+	view := m.View()
+	if strings.Contains(view, "P project") {
+		t.Fatalf("the panel still offers keys the picker swallows:\n%s", view)
+	}
+	if !strings.Contains(view, "esc cancel") {
+		t.Fatalf("the status bar lost the picker's own keys:\n%s", view)
 	}
 }
 

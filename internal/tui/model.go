@@ -354,16 +354,15 @@ func newModel(ctx context.Context, o Options) model {
 	}
 	h := help.New()
 	h.ShowAll = true
-	// bubbles renders the panels' key line and the ? overlay, so both take
-	// the theme's faint and the "·" the rest of the TUI separates facts
-	// with, rather than the component's own greys and bullet.
+	// bubbles renders the panels' key line, so it takes the theme's faint
+	// and the "·" the rest of the TUI separates facts with rather than the
+	// component's own grey and bullet. The ? overlay keeps bubbles' own two
+	// greys: its key and description columns are what tell it apart from a
+	// wall of text.
 	h.ShortSeparator = " · "
 	h.Styles.ShortKey = styleFaint
 	h.Styles.ShortDesc = styleFaint
 	h.Styles.ShortSeparator = styleFaint
-	h.Styles.FullKey = styleFaint
-	h.Styles.FullDesc = styleFaint
-	h.Styles.FullSeparator = styleFaint
 	h.Styles.Ellipsis = styleFaint
 	m := model{o: o, ctx: ctx, focus: panelWork, lanes: make(map[int]*lane),
 		details: make(map[string]*ticketDetail), lastLog: make(map[string]string),
@@ -1427,8 +1426,11 @@ func (m *model) panelBody(p panel, rows []string, sel, width, ih int) []string {
 	if m.focus != p {
 		return rows
 	}
+	// Three lines is the floor: the hint takes one, and windowRows needs the
+	// two it leaves to keep the selection visible. Below that the rows win —
+	// a panel showing only "⋯ n more" has lost the cursor the keys move.
 	hint := ""
-	if ih >= 2 {
+	if ih >= 3 {
 		hint = m.keyHint(p, width)
 	}
 	if hint != "" {
@@ -1454,7 +1456,10 @@ func (m *model) panelBody(p panel, rows []string, sel, width, ih int) []string {
 // truncates to the panel rather than overflowing it. The model's own help
 // component draws it, on a copy: the ? overlay owns m.help.Width.
 func (m model) keyHint(p panel, width int) string {
-	if width < 1 {
+	// The promote picker owns the keyboard while it is open — handleKey
+	// routes everything to it — so these four keys are dead and the panel
+	// would be advertising them. The status bar carries the picker's own.
+	if width < 1 || m.promoting {
 		return ""
 	}
 	h := m.help
