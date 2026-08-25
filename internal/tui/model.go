@@ -1487,10 +1487,11 @@ func (m *model) attentionRows(width int) ([]string, int) {
 	focused := m.focus == panelAttention
 	// Every column is padded to the widest cell on the list, so the four of
 	// them line up as columns worth scanning rather than as ragged text.
-	idW, statusW, projW := 0, 0, 0
+	idW, levW, statusW, projW := 0, 0, 0, 0
 	for _, it := range m.shown {
 		idW = max(idW, lipgloss.Width(it.Ticket))
-		statusW = max(statusW, lipgloss.Width(it.Status))
+		levW = max(levW, lipgloss.Width(leverageCell(it)))
+		statusW = max(statusW, lipgloss.Width(statusText(it)))
 		projW = max(projW, lipgloss.Width(projectName(it.Project)))
 	}
 	var rows []string
@@ -1517,7 +1518,7 @@ func (m *model) attentionRows(width int) ([]string, int) {
 		if i == m.attnSel {
 			sel = len(rows)
 		}
-		rows = append(rows, attentionRow(it, focused && i == m.attnSel, idW, statusW, projW, width))
+		rows = append(rows, attentionRow(it, focused && i == m.attnSel, idW, levW, statusW, projW, width))
 	}
 	return rows, sel
 }
@@ -1535,51 +1536,77 @@ func (m *model) oneGroup() bool {
 	return true
 }
 
-// titleFloor is how much of a title has to survive for the project column
-// to earn its width. Below it the project drops out of the row entirely and
-// the title takes the space back — a title cut shorter than this has stopped
-// being a title, and the project is the one column a routing decision can
-// most often do without.
-const titleFloor = 20
+// A column earns its width only while the title still reads as one. Below
+// titleFloor the project drops out of the row entirely and the title takes
+// the space back — a title cut shorter than this has stopped being a title,
+// and the project is the one column a routing decision can most often do
+// without. The priority is held to a lower bar, titleStub — what the column
+// itself costs — because it is the fact a routing decision least often does
+// without: it goes on paying for itself down to a title as narrow as the
+// column is.
+const (
+	titleFloor = 20
+	titleStub  = len("Urgent") + 2
+)
 
-// attentionRow is one waiting ticket as a table row: identifier, leverage
-// and title, then status, project and priority as right-hand columns. Every
+// attentionRow is one waiting ticket as a table row: the fixed-width columns
+// first, in a stable order — identifier, leverage, status, project, priority
+// — and the title last, elastic, taking whatever the panel has left. Every
 // fact a routing decision needs is on the line, so the choice can be made
 // without selecting the row — which is the whole point of the panel.
 //
-// Columns elide from the right: the title truncates first, and the project
-// drops out before the status column would ever be squeezed. The identifier,
-// the leverage and the real Linear status survive any width.
-func attentionRow(it loop.AttentionItem, selected bool, idW, statusW, projW, width int) string {
+// The cut lands at the right edge, on the title, where the part lost costs
+// the least: the fixed columns are packed instead. Below titleFloor the
+// project drops out and below titleStub the priority follows, each giving
+// its width back to the title rather than holding it while the title reads
+// as an ellipsis. Below that the fixed columns are all that is left and the
+// title is the ellipsis; narrower still and the cut reaches the columns
+// themselves, taking the status — the last of them, and the only one whose
+// width the operator's own status vocabulary sets — before the identifier
+// and the leverage, the two facts that make a row addressable at all, which
+// survive any width.
+func attentionRow(it loop.AttentionItem, selected bool, idW, levW, statusW, projW, width int) string {
 	id := styleTicket.Render(it.Ticket) + strings.Repeat(" ", max(0, idW-lipgloss.Width(it.Ticket)))
-	head := marker(selected) + id + " " + leverageCell(it) + " "
-	status := statusCell(it, statusW)
-	right := status + "  " + priorityCell(it.Priority)
-	full := status + "  " + projectCell(it.Project, projW) + "  " + priorityCell(it.Priority)
+	lev := leverageCell(it)
+	lev += strings.Repeat(" ", max(0, levW-lipgloss.Width(lev)))
+	// statusCell pads to the column and no further, so head carries the
+	// gutter itself: every branch below ends in one, and a status wide
+	// enough to leave no pad of its own still cannot touch the title.
+	head := marker(selected) + id + " " + lev + " " + statusCell(it, statusW) + "  "
+	full := head + projectCell(it.Project, projW) + "  " + priorityCell(it.Priority) + "  "
+	noProject := head + priorityCell(it.Priority) + "  "
+	// Both columns priced out and the identifier, the leverage and the status
+	// are the last three things standing. Every row measures the same
+	// columns, so the whole panel elides together and the titles stay in one
+	// column.
+	cols := head
 	switch {
-	case width-lipgloss.Width(full) >= lipgloss.Width(head)+titleFloor:
-		right = full
-	case width-lipgloss.Width(right) < lipgloss.Width(head):
-		// Narrower than even the title-less row: the priority goes too, so
-		// the identifier, the leverage and the status are the last three
-		// things standing. Every row measures the same head and the same
-		// columns, so the whole panel elides together.
-		right = status
+	case width-lipgloss.Width(full) >= titleFloor:
+		cols = full
+	case width-lipgloss.Width(noProject) >= titleStub:
+		cols = noProject
 	}
-	return splitRow(head+it.Title, right, width)
+	return ansi.Truncate(cols+it.Title, max(0, width), "…")
 }
 
-// statusCell is the row's status column: the real Linear status name — the
-// vocabulary the operator already chose, never a synonym invented here —
+// statusText is the row's status as it reads: the real Linear status name —
+// the vocabulary the operator already chose, never a synonym invented here —
 // and a mark for a status the configured pipeline never names. That mark is
 // the fingerprint of a ticket that left the pipeline, worth seeing without
-// selecting the row.
-func statusCell(it loop.AttentionItem, w int) string {
-	cell := it.Status
+// selecting the row. The column is measured through this, so the mark is
+// paid for in the column's own width rather than out of the gutter beside
+// it — which the title would otherwise be buying for it, on every row.
+func statusText(it loop.AttentionItem) string {
 	if it.Relevance == loop.StatusUnnamed {
-		cell += " " + styleAttention.Render("⚠")
+		return it.Status + " " + styleAttention.Render("⚠")
 	}
-	return cell + strings.Repeat(" ", max(0, w+2-lipgloss.Width(cell)))
+	return it.Status
+}
+
+// statusCell is statusText padded out to the status column.
+func statusCell(it loop.AttentionItem, w int) string {
+	cell := statusText(it)
+	return cell + strings.Repeat(" ", max(0, w-lipgloss.Width(cell)))
 }
 
 // projectCell is the row's project column, a dash for a ticket filed under
@@ -1603,10 +1630,12 @@ func projectName(project string) string {
 	return project
 }
 
-// leverageCell says what routing this ticket would free, in a fixed-width
-// cell so the titles line up: ⊘ for a ticket something still blocks, ↓n for
-// the count it transitively unblocks. Bold marks the ones with downstream —
-// shape and weight, not color alone.
+// leverageCell says what routing this ticket would free: ⊘ for a ticket
+// something still blocks, ↓n for the count it transitively unblocks. Bold
+// marks the ones with downstream — shape and weight, not color alone. The
+// pad here is the cell's own floor, not the column: a count in the hundreds
+// outgrows it, so the column is measured across the list like the others and
+// the row pads out to that.
 func leverageCell(it loop.AttentionItem) string {
 	if len(it.BlockedBy) > 0 {
 		return styleAttention.Render("⊘") + "  "
@@ -1865,10 +1894,7 @@ func (m model) attentionDetail(width int) string {
 			styleFaint.Render("(P cycles the project filter back to all)")
 	}
 	it := m.selectedAttention()
-	status := it.Status
-	if it.Relevance == loop.StatusUnnamed {
-		status += " " + styleAttention.Render("⚠")
-	}
+	status := statusText(*it)
 	// These lines come from the pass and always render first, whatever the
 	// read of the ticket itself is doing: a failed fetch must never cost the
 	// operator the pane that works today.
