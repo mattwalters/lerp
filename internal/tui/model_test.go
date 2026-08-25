@@ -888,16 +888,41 @@ func TestInboxTitleIsTheLastColumn(t *testing.T) {
 	// the title itself has been cut to less than they cost. Sweeping every
 	// width crosses both boundaries of the elision ladder, where the row
 	// prefix actually changes.
+	const full22, status22 = "GoReleaser: tagged releases", "Backlog \u26a0"
 	for w := 24; w <= 120; w++ {
 		row := ansi.Strip(rowOf(t, m.attentionPanel(w, 14), "LERP-22"))
 		body := strings.Trim(row, " \u2502\u2503")
-		title := lipgloss.Width(body) - lipgloss.Width(body[:strings.LastIndex(body, "  ")+2])
-		switch {
+		// A cut title is exactly as wide as the space the row left it, so it
+		// measures the ladder's decision; a whole one only measures the
+		// fixture. Below the ladder the cut reaches the fixed columns
+		// themselves — the status and its gutter stop being whole — and
+		// there is no title left to measure; the narrowest row is asserted
+		// on its own below. The title is the tail past the last gutter, and
+		// has to still read as the head of the real one to be measured at
+		// all — a fixture that grew a double space would otherwise be
+		// silently mismeasured here.
+		gutter := strings.LastIndex(body, "  ")
+		if gutter < 0 || !strings.HasSuffix(body, "\u2026") || !strings.Contains(body, status22+"  ") {
+			continue
+		}
+		tail := body[gutter+2:]
+		if !strings.HasPrefix(full22, strings.TrimSuffix(tail, "\u2026")) {
+			t.Fatalf("a %d-column panel did not end in a cut of %q:\n%s", w, full22, row)
+		}
+		switch title := lipgloss.Width(tail); {
 		case strings.Contains(body, "Open-source readiness") && title < titleFloor:
 			t.Fatalf("a %d-column panel kept the project for a %d-column title:\n%s", w, title, row)
 		case strings.Contains(body, "High") && title < titleStub:
 			t.Fatalf("a %d-column panel kept the priority for a %d-column title:\n%s", w, title, row)
 		}
+	}
+
+	// Narrower than the fixed columns themselves and the cut reaches them:
+	// it takes the status, and the identifier and the leverage — the two
+	// facts a row is useless without — still read.
+	tight := ansi.Strip(rowOf(t, m.attentionPanel(22, 6), "LERP-22"))
+	if !strings.Contains(tight, "LERP-22") || !strings.Contains(tight, "\u21932") {
+		t.Fatalf("the identifier and the leverage did not survive the narrowest row:\n%s", tight)
 	}
 
 	// The status column carries a gutter of its own, so the mark on a status
@@ -920,7 +945,11 @@ func TestInboxTitleIsTheLastColumn(t *testing.T) {
 		{"LERP-60", "Unfiled work"},
 	} {
 		row := ansi.Strip(rowOf(t, panel, tc.ticket))
-		i := lipgloss.Width(row[:strings.Index(row, tc.title)])
+		start := strings.Index(row, tc.title)
+		if start < 0 {
+			t.Fatalf("the %s title is not on its row whole, so the rows cannot be lined up:\n%s", tc.ticket, row)
+		}
+		i := lipgloss.Width(row[:start])
 		if at >= 0 && i != at {
 			t.Fatalf("the %s title starts at column %d, the rows above it at %d:\n%s",
 				tc.ticket, i, at, panel)

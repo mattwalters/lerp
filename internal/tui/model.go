@@ -1480,7 +1480,7 @@ func (m *model) attentionRows(width int) ([]string, int) {
 	idW, statusW, projW := 0, 0, 0
 	for _, it := range m.shown {
 		idW = max(idW, lipgloss.Width(it.Ticket))
-		statusW = max(statusW, lipgloss.Width(it.Status))
+		statusW = max(statusW, lipgloss.Width(statusText(it)))
 		projW = max(projW, lipgloss.Width(projectName(it.Project)))
 	}
 	var rows []string
@@ -1527,13 +1527,16 @@ const (
 // the least: the fixed columns are packed instead. Below titleFloor the
 // project drops out and below titleStub the priority follows, each giving
 // its width back to the title rather than holding it while the title reads
-// as an ellipsis. The identifier, the leverage and the real Linear status
+// as an ellipsis. Below that the fixed columns are all that is left and the
+// title is the ellipsis; narrower still and the cut reaches the columns
+// themselves, taking the status — the last of them, and the only one a
+// selected row repeats — before the identifier and the leverage, which
 // survive any width.
 func attentionRow(it loop.AttentionItem, selected bool, idW, statusW, projW, width int) string {
 	id := styleTicket.Render(it.Ticket) + strings.Repeat(" ", max(0, idW-lipgloss.Width(it.Ticket)))
-	// statusCell pads to statusW+2, but a status carrying the unnamed mark
-	// fills that pad, so head keeps a gutter of its own: every branch below
-	// ends in one, and nothing ever touches the title.
+	// statusCell pads to the column and no further, so head carries the
+	// gutter itself: every branch below ends in one, and a status wide
+	// enough to leave no pad of its own still cannot touch the title.
 	head := marker(selected) + id + " " + leverageCell(it) + " " + statusCell(it, statusW) + "  "
 	full := head + projectCell(it.Project, projW) + "  " + priorityCell(it.Priority) + "  "
 	noProject := head + priorityCell(it.Priority) + "  "
@@ -1551,17 +1554,24 @@ func attentionRow(it loop.AttentionItem, selected bool, idW, statusW, projW, wid
 	return ansi.Truncate(cols+it.Title, max(0, width), "…")
 }
 
-// statusCell is the row's status column: the real Linear status name — the
-// vocabulary the operator already chose, never a synonym invented here —
+// statusText is the row's status as it reads: the real Linear status name —
+// the vocabulary the operator already chose, never a synonym invented here —
 // and a mark for a status the configured pipeline never names. That mark is
 // the fingerprint of a ticket that left the pipeline, worth seeing without
-// selecting the row.
-func statusCell(it loop.AttentionItem, w int) string {
-	cell := it.Status
+// selecting the row. The column is measured through this, so the mark is
+// paid for in the column's own width rather than out of the gutter beside
+// it — which the title would otherwise be buying for it, on every row.
+func statusText(it loop.AttentionItem) string {
 	if it.Relevance == loop.StatusUnnamed {
-		cell += " " + styleAttention.Render("⚠")
+		return it.Status + " " + styleAttention.Render("⚠")
 	}
-	return cell + strings.Repeat(" ", max(0, w+2-lipgloss.Width(cell)))
+	return it.Status
+}
+
+// statusCell is statusText padded out to the status column.
+func statusCell(it loop.AttentionItem, w int) string {
+	cell := statusText(it)
+	return cell + strings.Repeat(" ", max(0, w-lipgloss.Width(cell)))
 }
 
 // projectCell is the row's project column, a dash for a ticket filed under
