@@ -251,10 +251,19 @@ func TestAdoptedRunReadsAsRunning(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("panel has %d rows, want the one adopted run", len(rows))
 	}
-	line := m.workRowLine(rows[0], false, 80)
-	if !strings.Contains(line, styleRunning.Render("●")) ||
-		!strings.Contains(line, styleFaint.Render("running")) {
-		t.Errorf("adopted row is not drawn as running: %q", line)
+	// Rendered against the same row in the state a run this process started
+	// would be in: identical output is the whole claim, and it holds the dot
+	// as well as the word — under the Ascii profile a test sees the shape but
+	// not the colour, so an assertion on either alone would miss the other.
+	row := rows[0]
+	adopted := m.workRowLine(row, false, 80)
+	row.state = laneRunning
+	started := m.workRowLine(row, false, 80)
+	if adopted != started {
+		t.Errorf("adopted row is drawn differently from a started one:\n%q\n%q", adopted, started)
+	}
+	if !strings.Contains(started, styleFaint.Render("running")) {
+		t.Errorf("neither row reads as running: %q", started)
 	}
 	if view := m.View(); strings.Contains(view, "adopted") {
 		t.Errorf("the word adopted is on the operator's screen:\n%s", view)
@@ -265,12 +274,15 @@ func TestAdoptedRunOccupiesAndFreesItsRow(t *testing.T) {
 	m, _, _ := newTestModel(t, 2)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAdopted, RunID: "r9", Lane: 5,
 		TicketID: "abcdef1234567890", Queue: "review", LogPath: "/dev/null"}})
-	view := m.View()
-	if !strings.Contains(view, "abcdef12…") {
-		t.Fatalf("adopted run not on the board:\n%s", view)
+	rows := m.workRows()
+	if len(rows) != 1 {
+		t.Fatalf("panel has %d rows, want the one adopted run", len(rows))
 	}
-	if len(m.workRows()) != 1 {
-		t.Fatalf("panel has %d rows, want the one adopted run", len(m.workRows()))
+	// The row itself, not the view: the main pane titles the selected row's
+	// log with the same shortened ID, so a view check would pass even with
+	// the ticket column gone.
+	if line := m.workRowLine(rows[0], false, 80); !strings.Contains(line, "abcdef12…") {
+		t.Fatalf("adopted run not on the board: %q", line)
 	}
 
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventReaped, RunID: "r9", Lane: 5,

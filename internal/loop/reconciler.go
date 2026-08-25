@@ -566,6 +566,15 @@ func (r *Reconciler) adopt(record evidence.Record) {
 		record:   record,
 	})
 	r.mu.Unlock()
+	// The work panel draws an adopted run exactly as it draws one this
+	// process started, so the log is the only place the takeover is recorded.
+	// It is worth recording: an adopted run concludes from its exit file, so
+	// a torn or missing one is the one case where a finished run releases its
+	// claim without hopping, and this line is what dates it afterwards.
+	if r.o.Log != nil {
+		fmt.Fprintf(r.o.Log, "adopted run %s on lane %d, started %s\n",
+			record.RunID, record.Lane, record.StartedAt.Format(time.RFC3339))
+	}
 	r.emit(Event{Type: EventAdopted, RunID: record.RunID, Lane: record.Lane,
 		TicketID: record.TicketID, Queue: record.Queue, LogPath: record.LogPath,
 		StartedAt: record.StartedAt})
