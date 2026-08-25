@@ -266,9 +266,10 @@ func TestInitDeclinedReviewDropsThePassNotAQueue(t *testing.T) {
 			t.Errorf("declined-review implement prompt lost its exit contract: no %q", ending)
 		}
 	}
-	// The title convention is not part of the review pass either, and it sits
-	// against the same marker as the exit contract.
-	if !strings.Contains(c.Queues["implement"].Prompt, "Title the pull request with {{ticket}}") {
+	// The title convention is not part of the review pass either, and it is
+	// the one paragraph abutting the `#{{review}}` marker: folding it into the
+	// section is a one-line slip that nothing else would catch.
+	if !strings.Contains(c.Queues["implement"].Prompt, "Title the pull request you open with {{ticket}}") {
 		t.Error("declined-review implement prompt lost the pull request title convention")
 	}
 	// The declined pass costs the board nothing: no status disappears with it.
