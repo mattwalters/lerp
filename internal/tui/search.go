@@ -38,6 +38,10 @@ func newSearchInput() textinput.Model {
 func (m *model) openSearch() {
 	m.searching = true
 	m.searchWas = m.search
+	m.searchSelWas = ""
+	if it := m.selectedAttention(); it != nil {
+		m.searchSelWas = it.Ticket
+	}
 	m.searchInput.SetValue("")
 	m.searchInput.Focus()
 	m.setSearch("")
@@ -51,9 +55,14 @@ func (m *model) closeSearch(accept bool) {
 	m.searching = false
 	m.searchInput.Blur()
 	if !accept {
+		// The list as it was is the rows and the cursor both: a prompt that
+		// narrowed down to nothing left setSearch no selection to carry
+		// back, and the operator would return to the top of a list they
+		// were reading the middle of.
 		m.setSearch(m.searchWas)
+		m.selectTicket(m.searchSelWas)
 	}
-	m.searchWas = ""
+	m.searchWas, m.searchSelWas = "", ""
 }
 
 // handleSearchKey drives the prompt. It swallows every key while it is open:
@@ -61,7 +70,6 @@ func (m *model) closeSearch(accept bool) {
 // promote a ticket or quit the program. ctrl+c is the one exception — it
 // quits from anywhere, the way it does everywhere else.
 func (m model) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	var cmd tea.Cmd
 	switch msg.Type {
 	case tea.KeyCtrlC:
 		return m, tea.Quit
@@ -70,16 +78,28 @@ func (m model) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyEnter:
 		m.closeSearch(true)
 	default:
-		m.searchInput, cmd = m.searchInput.Update(msg)
-		// Operator-typed rather than Linear-sourced, but it reaches the
-		// panel title and the no-match line the same way every other string
-		// does, so it crosses the same boundary: the widget's own sanitizer
-		// already drops control runes from a paste, and clean is what the
-		// rest of this package trusts.
-		m.setSearch(clean(m.searchInput.Value()))
+		return m.updateSearch(msg)
 	}
 	// The prompt closing hands the panel's last line back to the key hints,
-	// and either way the list under it just changed height.
+	// and the list under it just changed height either way.
+	m.refreshMain()
+	m.layout()
+	return m, m.wantDetail()
+}
+
+// updateSearch hands one message to the box and re-filters from what it
+// holds afterwards. Keys arrive here from handleSearchKey; everything else
+// the widget answers to — the clipboard read behind ctrl+v — from Update,
+// which is the only place those messages come back to.
+func (m model) updateSearch(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+	m.searchInput, cmd = m.searchInput.Update(msg)
+	// Operator-typed rather than Linear-sourced, but it reaches the panel
+	// title and the no-match line the same way every other string does, so
+	// it crosses the same boundary: the widget's own sanitizer already drops
+	// control runes from a paste, and clean is what the rest of this package
+	// trusts.
+	m.setSearch(clean(m.searchInput.Value()))
 	m.refreshMain()
 	m.layout()
 	return m, tea.Batch(cmd, m.wantDetail())
@@ -99,6 +119,20 @@ func (m *model) setSearch(query string) {
 	m.resort()
 	if it := m.selectedAttention(); it == nil || it.Ticket != was {
 		m.attnSel = 0
+	}
+}
+
+// selectTicket puts the cursor back on a ticket by identifier, if that
+// ticket is still one of the rows on screen. Nothing to find is nothing to
+// move.
+func (m *model) selectTicket(ticket string) {
+	if ticket == "" {
+		return
+	}
+	if i := slices.IndexFunc(m.shown, func(it loop.AttentionItem) bool {
+		return it.Ticket == ticket
+	}); i >= 0 {
+		m.attnSel = i
 	}
 }
 
@@ -128,6 +162,10 @@ func highlight(s, query string, base lipgloss.Style) string {
 		return base.Render(s)
 	}
 	rs, folded, q := []rune(s), fold(s), fold(query)
+	// The mark layers over the cell's own style rather than replacing it:
+	// the identifier column is bold, and it must not lose its weight on the
+	// very characters the search is pointing at.
+	mark := styleMatch.Inherit(base)
 	var b strings.Builder
 	for len(rs) > 0 {
 		i := foldIndex(folded, q)
@@ -138,7 +176,7 @@ func highlight(s, query string, base lipgloss.Style) string {
 		if i > 0 {
 			b.WriteString(base.Render(string(rs[:i])))
 		}
-		b.WriteString(styleMatch.Render(string(rs[i : i+len(q)])))
+		b.WriteString(mark.Render(string(rs[i : i+len(q)])))
 		rs, folded = rs[i+len(q):], folded[i+len(q):]
 	}
 	return b.String()

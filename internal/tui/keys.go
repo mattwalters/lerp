@@ -71,6 +71,18 @@ func (k keymap) FullHelp() [][]key.Binding {
 	}
 }
 
+// rowKeys says which of a panel's keys are live where the cursor is
+// standing: r renders something, o has a door to open, esc has a filter to
+// clear, P has a project to cycle to. An advertised key that does nothing
+// is worse than one left out, because pressing it is how the operator finds
+// out — and r would flip the raw toggle invisibly.
+type rowKeys struct {
+	hasLog   bool
+	hasURL   bool
+	filtered bool
+	projects bool
+}
+
 // panelHelp is the line a focused panel carries: the keys that act on the
 // row under its cursor. These used to live in the main pane under a
 // selected ticket, which made sort and project look like they did not exist
@@ -78,30 +90,27 @@ func (k keymap) FullHelp() [][]key.Binding {
 // keys are left out — the status bar already carries "? help · q quit", and
 // a hint that gets truncated away is a hint that was not there.
 //
-// hasLog and hasURL say which of these keys the row under the cursor
-// actually answers to: r is inert on a ticket that has never run, and o on
-// a run whose ticket the pass no longer lists. An advertised key that does
-// nothing is worse than one left out, because pressing it is how the
-// operator finds out — and r would flip the raw toggle invisibly.
-//
-// filtered says a search is applied. It swaps / for esc rather than adding
-// it: / reopens the prompt from either state, where esc is the only way
-// back to the whole list and the only one the operator has not just used.
-func (k keymap) panelHelp(p panel, hasLog, hasURL, filtered bool) []key.Binding {
+// Which is also why a filter swaps / for esc rather than adding it, and why
+// P drops out of a list with no project in it: the line is about forty
+// columns wide, so a key that does nothing here costs one that does.
+func (k keymap) panelHelp(p panel, live rowKeys) []key.Binding {
 	var b []key.Binding
 	switch p {
 	case panelAttention:
 		find := short(k.Search, "search")
-		if filtered {
+		if live.filtered {
 			find = short(k.ClearSearch, "clear")
 		}
-		b = []key.Binding{k.Promote, find, short(k.Sort, "sort"), short(k.Project, "project")}
+		b = []key.Binding{k.Promote, find, short(k.Sort, "sort")}
+		if live.projects {
+			b = append(b, short(k.Project, "project"))
+		}
 	case panelWork:
-		if hasLog {
+		if live.hasLog {
 			b = append(b, short(k.Raw, "raw"))
 		}
 	}
-	if hasURL {
+	if live.hasURL {
 		b = append(b, short(k.Open, "open"))
 	}
 	return b

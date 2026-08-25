@@ -307,13 +307,15 @@ type model struct {
 
 	// The third is search (see search.go): searching is the prompt's
 	// open/closed state, search the query the rows are filtered by ("" is
-	// every row), searchWas the query esc puts back. The filter outlives the
-	// prompt — enter closes the box and keeps the rows narrowed, so the keys
-	// can promote what the search found.
-	searching   bool
-	search      string
-	searchWas   string
-	searchInput textinput.Model
+	// every row), searchWas and searchSelWas the query and the selected row
+	// esc puts back. The filter outlives the prompt — enter closes the box
+	// and keeps the rows narrowed, so the keys can promote what the search
+	// found.
+	searching    bool
+	search       string
+	searchWas    string
+	searchSelWas string
+	searchInput  textinput.Model
 
 	// details is what the Reader has returned, keyed by ticket ID and kept
 	// for the process's lifetime: a stale body is a view of Linear, not
@@ -482,6 +484,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.note(fmt.Sprintf("promoted %s to %s", msg.ticket, msg.status), false)
 		}
 		return m, nil
+	default:
+		// The search prompt's own messages land here: the cases above are
+		// this model's, and a clipboard read on ctrl+v is the widget's.
+		// Without this the paste it asked for is dropped on the floor.
+		if m.searching {
+			return m.updateSearch(msg)
+		}
 	}
 	return m, nil
 }
@@ -826,6 +835,16 @@ func (m *model) apply(ev loop.Event) {
 		// see in the title — clearing it under them would be the surprise.
 		if m.project != "" && !slices.Contains(m.projects(), m.project) {
 			m.project = ""
+		}
+		// An inbox with nothing in it has nothing to narrow, and the title
+		// stops carrying the query along with the count — so the prompt and
+		// the filter go with the rows. Otherwise the pass that repopulates
+		// the board arrives narrowed by a query the operator can no longer
+		// see.
+		if len(m.attention) == 0 && (m.searching || m.search != "") {
+			m.searching, m.search, m.searchWas = false, "", ""
+			m.searchInput.Blur()
+			m.searchInput.SetValue("")
 		}
 		// A pass mid-picker may shrink or empty the list out from under it;
 		// resort clamps the selection, and the picker closes rather than
@@ -1239,6 +1258,16 @@ func (m *model) projects() []string {
 	return names
 }
 
+// hasProjects reports whether the pass's list has any project to scope to.
+// P cycles between every project and each one present, so with none present
+// it is a key that does nothing — projects() answers the same question but
+// builds and sorts the cycle to do it.
+func (m *model) hasProjects() bool {
+	return slices.ContainsFunc(m.attention, func(it loop.AttentionItem) bool {
+		return it.Project != ""
+	})
+}
+
 // cycleProject advances the filter one stop: every project, then each
 // project present, then back to every project.
 func (m *model) cycleProject() {
@@ -1439,11 +1468,11 @@ func (m *model) panelBody(p panel, rows []string, sel, width, ih int) []string {
 	// still be shown in what is left: either they fit outright, or two lines
 	// remain, which is the least windowRows needs to keep the selection
 	// visible. Below that the rows win — a panel showing only "⋯ n more" has
-	// lost the cursor the keys move. The search prompt is the exception:
-	// while it is open the panel is a text field with rows above it, and
-	// typing blind costs more than a row does.
+	// lost the cursor the keys move. That holds for the search prompt too:
+	// the title carries the query either way, so dropping the line costs the
+	// cursor rather than the operator's place in what they typed.
 	foot := ""
-	if m.searchOpen(p) || ih >= 3 || (ih == 2 && len(rows) <= 1) {
+	if ih >= 3 || (ih == 2 && len(rows) <= 1) {
 		foot = m.panelFooter(p, width)
 	}
 	if foot != "" {
@@ -1522,7 +1551,12 @@ func (m *model) panelKeys(p panel) []key.Binding {
 			return nil
 		}
 	}
-	return m.keys.panelHelp(p, m.selectedLogPath() != "", m.selectedURL() != "", m.search != "")
+	return m.keys.panelHelp(p, rowKeys{
+		hasLog:   m.selectedLogPath() != "",
+		hasURL:   m.selectedURL() != "",
+		filtered: m.search != "",
+		projects: m.hasProjects(),
+	})
 }
 
 // keyHints reports whether the focused panel is carrying a key line at all:

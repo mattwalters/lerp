@@ -1134,11 +1134,6 @@ func TestTheHeavyBoxFollowsFocus(t *testing.T) {
 // the whole reason they felt like they did not exist.
 func TestFocusedPanelCarriesItsKeys(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
-	// Wider than the default test window: five keys do not fit the
-	// 45-column panel a 100-column terminal leaves, and bubbles truncates
-	// the line rather than overflowing it. What is under test is which keys
-	// the panel offers, not where the truncation falls.
-	m = update(t, m, tea.WindowSizeMsg{Width: 140, Height: 30})
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: threeWaiting()})
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
@@ -1150,16 +1145,31 @@ func TestFocusedPanelCarriesItsKeys(t *testing.T) {
 		TicketID: "id-9", Ticket: "LERP-9", Queue: "implement", LogPath: "/dev/null"}})
 
 	view := m.View()
-	for _, want := range []string{"p promote", "s sort", "P project", "o open"} {
+	for _, want := range []string{"p promote", "/ search", "s sort", "o open"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("the needs-you panel does not offer %q:\n%s", want, view)
 		}
 	}
+	// Whole, in the 45-column panel a 100-column terminal leaves: the line
+	// is about forty columns wide, so a key that does nothing on this list
+	// would cost one that does. Nothing here is in a project, so P is that
+	// key — and the line it would truncate stays intact without it.
+	if strings.Contains(view, "P project") {
+		t.Fatalf("P is offered over a list with no project to cycle to:\n%s", view)
+	}
+	if line := lineWith(t, view, "p promote"); strings.Contains(line, "…") {
+		t.Fatalf("the key line does not fit the panel it is drawn in:\n%s", line)
+	}
+	// A list with a project in it gets the key back.
+	if panel := update(t, m, eventMsg{ev: board()}).attentionPanel(96, 16); !strings.Contains(panel, "P project") {
+		t.Fatalf("P is not offered over a list that has projects:\n%s", panel)
+	}
+
 	// The line belongs to the focused panel, so it moves with focus rather
 	// than sitting on both.
 	m = update(t, m, keyMsg("2"))
 	view = m.View()
-	if strings.Contains(view, "P project") {
+	if strings.Contains(view, "p promote") {
 		t.Fatalf("the needs-you keys are still on screen with work focused:\n%s", view)
 	}
 	if !strings.Contains(view, "r raw") {
@@ -1318,13 +1328,13 @@ func TestThePickerTakesTheKeyLineWithIt(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: threeWaiting()})
-	if view := m.View(); !strings.Contains(view, "P project") {
+	if view := m.View(); !strings.Contains(view, "p promote") {
 		t.Fatalf("the needs-you panel is not offering its keys:\n%s", view)
 	}
 
 	m = update(t, m, keyMsg("p"))
 	view := m.View()
-	if strings.Contains(view, "P project") {
+	if strings.Contains(view, "p promote") {
 		t.Fatalf("the panel still offers keys the picker swallows:\n%s", view)
 	}
 	if !strings.Contains(view, "esc cancel") {

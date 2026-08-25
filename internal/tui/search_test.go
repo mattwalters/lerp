@@ -237,21 +237,93 @@ func TestSearchKeepsTheSelectionOrTakesItToTheTop(t *testing.T) {
 		t.Fatalf("selection = %s, want the ticket the search kept", got)
 	}
 
-	// Typing on until it no longer matches: the cursor lands on the first
-	// row, not on whatever the old index now points at.
+	// A search matching nothing has nothing to select.
 	m = typeSearch(t, m, "@")
 	if m.selectedAttention() != nil {
 		t.Fatalf("a search matching nothing still has a selection: %v", *m.selectedAttention())
 	}
-	m = update(t, m, tea.KeyMsg{Type: tea.KeyBackspace})
-	m = typeSearch(t, m, "x") // "readx" matches nothing either
-	m.searchInput.SetValue("backlog")
-	m.setSearch("backlog")
+
+	// The row the cursor was on stops matching while other rows still do:
+	// the cursor goes to the first of them. Clamping the old index instead
+	// would leave it on LERP-22, which is only where it lands because that
+	// is what slid under it.
+	m = update(t, m, keyMsg("esc"))
+	if got := m.selectedAttention().Ticket; got != "LERP-48" {
+		t.Fatalf("selection after cancelling = %s, want the row it started on", got)
+	}
+	m = typeSearch(t, update(t, m, keyMsg("/")), "b")
+	if got := shownTickets(m); len(got) < 3 || got[0] != "LERP-1" {
+		t.Fatalf("shown = %v, want several rows headed by LERP-1", got)
+	}
 	if got := m.attnSel; got != 0 {
 		t.Fatalf("selection index = %d, want the first row", got)
 	}
-	if got := m.selectedAttention().Ticket; got != "LERP-22" {
+	if got := m.selectedAttention().Ticket; got != "LERP-1" {
 		t.Fatalf("selection = %s, want the first row of the filtered list", got)
+	}
+}
+
+// Done-when: a pass landing under a live filter changes the rows and leaves
+// the filter alone — a pass arrives every few seconds, and a search silently
+// cleared by one is a list that widens under the operator's hands. An inbox
+// that empties is the exception: there is nothing left to narrow, and the
+// title stops carrying the query along with the count.
+func TestSearchSurvivesAPass(t *testing.T) {
+	m := update(t, searching(t, "work"), keyMsg("enter"))
+
+	m = update(t, m, eventMsg{ev: board()})
+	if m.search != "work" {
+		t.Fatalf("a pass cleared the accepted search: %q", m.search)
+	}
+	if got := shownTickets(m); !slices.Equal(got, []string{"LERP-60", "LERP-70"}) {
+		t.Fatalf("shown after a pass = %v, want the filtered rows", got)
+	}
+
+	// The same holds with the prompt still open.
+	m = typeSearch(t, update(t, m, keyMsg("/")), "curl")
+	m = update(t, m, eventMsg{ev: board()})
+	if !m.searching || m.search != "curl" {
+		t.Fatalf("a pass closed the prompt: open %v, query %q", m.searching, m.search)
+	}
+	if got := shownTickets(m); !slices.Equal(got, []string{"LERP-23"}) {
+		t.Fatalf("shown = %v, want the row the open prompt matched", got)
+	}
+
+	// An empty inbox takes the prompt and the query with it, so the pass
+	// that repopulates the board is not narrowed by a query nothing shows.
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention}})
+	if m.searching || m.search != "" {
+		t.Fatalf("an empty inbox kept the prompt: open %v, query %q", m.searching, m.search)
+	}
+	m = update(t, m, eventMsg{ev: board()})
+	if got := len(m.shown); got != 6 {
+		t.Fatalf("the board came back filtered: %d rows, want all 6", got)
+	}
+}
+
+// Done-when: the box's own messages reach it. A clipboard read on ctrl+v
+// comes back as a message this model has no case for, and dropping it would
+// leave the paste unseen and the rows unnarrowed.
+func TestSearchTakesTheBoxsOwnMessages(t *testing.T) {
+	type widgetMsg struct{}
+	m := searching(t, "")
+	m.searchInput.SetValue("curl") // where a clipboard read leaves it
+
+	m = update(t, m, widgetMsg{})
+	if m.search != "curl" {
+		t.Fatalf("query = %q, want what the box holds after its own message", m.search)
+	}
+	if got := shownTickets(m); !slices.Equal(got, []string{"LERP-23"}) {
+		t.Fatalf("shown = %v, want the rows the pasted query matches", got)
+	}
+
+	// With the prompt closed the same message is not the box's, and the
+	// value left in it means nothing.
+	m = update(t, m, keyMsg("esc"))
+	m.searchInput.SetValue("gore")
+	m = update(t, m, widgetMsg{})
+	if m.search != "" || len(m.shown) != 6 {
+		t.Fatalf("a closed box still filtered the list: query %q, %d rows", m.search, len(m.shown))
 	}
 }
 
@@ -300,10 +372,38 @@ func TestSearchIsOnTheKeyLineAndTakesIt(t *testing.T) {
 		t.Fatalf("the status bar does not say how to leave the prompt:\n%s", m.View())
 	}
 
-	// A panel squeezed to two inner lines drops the key hints for its rows;
-	// the prompt outranks that rule, because typing blind costs more.
-	if got := m.attentionPanel(60, 4); !strings.Contains(got, "filter the inbox") {
-		t.Fatalf("a squeezed panel dropped the open prompt:\n%s", got)
+	// A panel squeezed to two inner lines spends them on rows: the prompt
+	// follows the same rule the key hints do, because the title carries the
+	// query either way and a panel showing only "⋯ n more" has lost the
+	// cursor.
+	m = typeSearch(t, m, "back")
+	squeezed := m.attentionPanel(60, 4)
+	// Once in the title, and not a second time as a prompt on the last row.
+	if got := strings.Count(squeezed, "/back"); got != 1 {
+		t.Fatalf("the query is on %d lines of a squeezed panel, want the title only:\n%s",
+			got, squeezed)
+	}
+	if !strings.Contains(squeezed, "LERP-22") {
+		t.Fatalf("a squeezed panel lost the row under the cursor:\n%s", squeezed)
+	}
+}
+
+// Done-when: the geometry buys the line the prompt is drawn on. It replaces
+// the key hints, which the focused panel had already bought — so opening the
+// prompt must not cost a row on top of it.
+func TestTheOpenPromptBuysItsOwnLine(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("1"))
+	m = fillBoard(t, m, 15)
+
+	view := update(t, m, keyMsg("/")).View()
+	if !strings.Contains(view, "filter the inbox") {
+		t.Fatalf("the prompt is not on the panel:\n%s", view)
+	}
+	// LERP-9 is the last row in this list's order: one line short and the
+	// panel would window it away behind a "⋯ n more".
+	if !strings.Contains(view, "LERP-9 ") {
+		t.Fatalf("opening the prompt cost a row the geometry did not buy:\n%s", view)
 	}
 }
 
