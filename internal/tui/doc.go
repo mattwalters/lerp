@@ -7,6 +7,10 @@
 // render time by internal/logfmt, never on disk — with a raw toggle
 // for when the decoding is wrong, and plain text as the floor.
 //
+// A ticket the operator selects is read out of Linear into that same
+// pane, description and comments alike, rendered as the markdown
+// Linear stores rather than as its source (see markdown.go).
+//
 // Text from Linear is untrusted — a ticket title is written by whoever
 // can file one, and the View string reaches the terminal as-is. The
 // model's apply is the boundary: it cleans every Linear-sourced string
