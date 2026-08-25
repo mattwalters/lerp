@@ -5,7 +5,9 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/charmbracelet/bubbles/cursor"
+	// Aliased: cursor is this package's own type, the focus window's
+	// reading of where the selection sits (see theme.go).
+	textcursor "github.com/charmbracelet/bubbles/cursor"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -28,7 +30,7 @@ func newSearchInput() textinput.Model {
 	ti.Placeholder = "filter the inbox"
 	ti.PromptStyle = styleFocus
 	ti.PlaceholderStyle = styleFaint
-	ti.Cursor.SetMode(cursor.CursorStatic)
+	ti.Cursor.SetMode(textcursor.CursorStatic)
 	return ti
 }
 

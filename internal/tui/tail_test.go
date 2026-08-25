@@ -105,3 +105,35 @@ func TestTailTrimsAtLineBoundaries(t *testing.T) {
 		t.Fatalf("first kept line has %d bytes, want a whole 99-byte line", len(first))
 	}
 }
+
+// Attaching partway into a file lands mid-line only when it actually lands
+// mid-line. Dropping to the next newline regardless would cost a reader that
+// attached at the end of a finished line the whole next line — for the pulse,
+// a real event; for the pane, a row that was never garbled to begin with.
+func TestFollowerSkipsAFragmentAndOnlyAFragment(t *testing.T) {
+	dir := t.TempDir()
+	for _, tc := range []struct {
+		name    string
+		already string
+		wantMid bool
+	}{
+		{"attached on a line boundary", "a whole line\n", false},
+		{"attached mid-line", "half a line", true},
+		{"attached at the very start", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(dir, tc.name+".log")
+			writeLog(t, path, []byte(tc.already))
+			f := newFollower(path, 0)
+			_, mid, _ := f.next()
+			if mid != tc.wantMid {
+				t.Fatalf("attaching after %q reported mid=%v, want %v", tc.already, mid, tc.wantMid)
+			}
+			appendLog(t, path, "the next line\n")
+			b, _, _ := f.next()
+			if string(b) != "the next line\n" {
+				t.Fatalf("read %q, want the appended line", b)
+			}
+		})
+	}
+}

@@ -150,8 +150,13 @@ the engine — no daemon. Work happens while lerp is open; a headless
 `lerp run` is the same loop without the chrome, if and when it earns
 its existence.
 
-Two panels on one screen, one per question an operator actually has,
-beside a main pane that details whichever row is selected:
+Two panels on one screen, one per question an operator actually has. The
+list owns the screen: a main pane detailing the selected row opens beside
+it with `enter` and closes with `esc`, and each panel remembers whether it
+is open. Needs-you starts closed — its detail is something you open once
+you have decided to read a ticket — and work starts open, because a
+running ticket's live log is the point of watching it. That is a display
+default, not a rule about process.
 
 1. **Inbox** — what waits on a human: unclaimed tickets, and the
    operator's own claimed tickets, sitting in a status no queue serves
@@ -175,8 +180,9 @@ beside a main pane that details whichever row is selected:
    grouped by queue, holding the tickets running in each queue and the
    tickets waiting behind them. What is running and what runs next are
    the same question about the same tickets; the separate question is
-   what needs a human. The main pane follows the selected row — a live
-   log for a running ticket, what gates it for a waiting one. Selecting a
+   what needs a human. The main pane, open by default here, follows the
+   selected row — a live log for a running ticket, what gates it for a
+   waiting one. Selecting a
    queued ticket and pressing `S` starts it now, past the lane limit.
    Force-start overrides exactly one thing, the lane count: the claim
    protocol still runs, a blocked ticket is still refused, and ordering is

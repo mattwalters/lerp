@@ -305,8 +305,14 @@ in the loop's own pickup order, with the ones running now at the top
 of their own group. A running row carries its state — provisioning
 or running — and the run's elapsed time. A run inherited from a
 previous `lerp` reads as `running` like any other, and shows its true
-age rather than the moment it was adopted; a waiting row is shown
-faint with the reason it waits, blocked or claimed. The panel title
+age rather than the moment it was adopted. Under it, once the run
+has a log, a second line reads how that run is going: how long since
+the log last said anything, and a sparkline of the agent's recent
+activity, so a run that has fallen quiet reads as a flat line. Those
+are numbers to read, not a timeout — lerp sets no threshold on them and
+never acts on one; ejecting a run that has stopped making progress
+stays the operator's call. A waiting row is shown faint with the reason
+it waits, blocked or claimed. The panel title
 and the status bar carry the capacity, `2/3 running`, which is what
 says whether anything can start — every live run counts against it,
 whichever lane it landed on, with `· +1 over` beside it while more runs
@@ -352,24 +358,27 @@ list, so you can promote what you found; `esc` cancels the prompt, and
 title carries the state — `● 4/17 · /goreleaser` — so a narrowed list
 is never mistaken for an empty board. All three are session-only: no
 saved views, no filter syntax, and none of them changes which tickets
-are fetched. Selecting a row reads the ticket itself into the main
-pane: its body — where the plan lives — and the comments on it, the
-verdict a run left behind, so a parked ticket can be decided from that
-one screen. That is a read and stays one: nothing composes, replies,
-or navigates on to another ticket, and `o` opens the ticket in Linear
-for everything else. Select one and press `p` to promote it: pick a
-target from the configured queue statuses or a pipeline exit, and lerp
-moves it there. That MoveIssue and force-start's claim are the only
-writes any view makes; everything else about a ticket still happens in
-Linear. Keys: `1`/`2`
-choose a panel and `tab` cycles. `↑`/`↓` pick a row, `s` sorts the
-Inbox, `P` scopes it to a project and `/` searches it, `o` opens the
-selected ticket in Linear, `S` force-starts the selected queued
-ticket, `pgup`/`pgdn` scroll the log or the ticket,
-`end` resumes following, `r` shows the raw log, `q` quits (or backs
-out of the promote picker). While the search prompt is open it has the
-keyboard — a `p` or a `q` typed into it is text — and `ctrl+c` still
-quits.
+are fetched. The list owns the screen until you ask for a
+ticket: selecting a row and pressing `enter` reads it into a main pane
+that opens beside the table and closes again with `esc` — its body,
+where the plan lives, and the comments on it, the verdict a run left
+behind, so a parked ticket can be decided from that one screen. That is a read
+and stays one: nothing composes, replies, or navigates on to another
+ticket, and `o` opens the ticket in Linear for everything else. Select
+one and press `p` to promote it: pick a target from the configured
+queue statuses or a pipeline exit, and lerp moves it there. That
+MoveIssue and force-start's claim are the only writes any view makes;
+everything else about a ticket still happens in Linear. Keys: `1`/`2`
+choose a panel and `tab` cycles. `↑`/`↓` pick a row, `enter` opens the
+main pane on it and `esc` closes it again — each panel remembers its
+own answer, and the Inbox starts closed while Work starts open — `s`
+sorts the Inbox, `P` scopes it to a project and `/` searches it, `o`
+opens the selected ticket in Linear, `S` force-starts the selected
+queued ticket, `pgup`/`pgdn` scroll the log or the ticket, `end`
+resumes following, `r` shows the raw log, `q` quits (or backs out of
+the promote picker). With a filter on, `esc` clears it before it
+closes the pane. While the search prompt is open it has the keyboard —
+a `p` or a `q` typed into it is text — and `ctrl+c` still quits.
 
 Quitting (`q` or `ctrl+c`) closes the screen, stops future passes, and
 waits briefly for a pass already in flight to settle. The agents are

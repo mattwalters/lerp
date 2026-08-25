@@ -137,24 +137,63 @@ func splitRow(left, right string, width int) string {
 	return left + pad + " " + right
 }
 
-// windowRows slides rows so the row at sel stays visible within ih lines,
+// cursor is what the focus window needs to cut a list between its rows
+// rather than through one: where the selection sits among the rendered lines
+// and how many lines that row draws, plus which lines continue the row above
+// them. A work row a lane holds is two lines, and a window that keeps only
+// one of them either cuts the run's own reading off or leaves it under
+// another ticket's name, reading as that ticket's.
+//
+// at is -1 when the panel has nothing to select, and cont may be nil for a
+// list whose rows are all one line, which is every list but work's.
+type cursor struct {
+	at   int
+	span int
+	cont []bool
+}
+
+// continues reports whether the line at i finishes a row that starts above
+// it — so a window opening there would strand it.
+func (c cursor) continues(i int) bool {
+	return i < len(c.cont) && c.cont[i]
+}
+
+// skipContinuation moves a window's top edge down off a line that finishes
+// the row above it. The line costs less than the misreading: a run's clock
+// under the name of the ticket that happens to be above it is a wrong fact,
+// where dropping it is only a shorter list.
+func skipContinuation(cur cursor, lo int) int {
+	for cur.continues(lo) {
+		lo++
+	}
+	return lo
+}
+
+// windowRows slides rows so the selected row stays visible within ih lines,
 // standing in for the spans cut at either edge with a faint "⋯ n more".
 // panelBox's own cut covers unfocused panels; this is the focused variant,
 // so a selection can never walk off the rendered rows.
-func windowRows(rows []string, sel, ih int) []string {
+func windowRows(rows []string, cur cursor, ih int) []string {
 	if ih < 2 || len(rows) <= ih {
 		return rows
 	}
-	sel = clampIndex(sel, len(rows))
+	at := clampIndex(cur.at, len(rows))
+	end := min(at+max(1, cur.span), len(rows)) // one past the row's last line
 	more := func(n int) string { return styleFaint.Render(fmt.Sprintf("⋯ %d more", n)) }
-	if sel < ih-1 {
+	if end <= ih-1 {
 		return append(append([]string{}, rows[:ih-1]...), more(len(rows)-(ih-1)))
 	}
-	if lo := len(rows) - (ih - 1); sel >= lo {
+	if lo := len(rows) - (ih - 1); at >= lo {
+		lo = skipContinuation(cur, lo)
 		return append([]string{more(lo)}, rows[lo:]...)
 	}
-	hi := sel + 1
-	lo := hi - max(1, ih-2)
+	// The window ends just past the selected row, so a row drawing several
+	// lines keeps all of them. Where it cannot — a body of three lines has
+	// one to spend — it starts at the row instead: the line the cursor is on
+	// is the one that has to be there.
+	n := max(1, ih-2)
+	lo := skipContinuation(cur, max(0, min(at, end-n)))
+	hi := min(len(rows), lo+n)
 	out := append([]string{more(lo)}, rows[lo:hi]...)
 	if len(out) < ih {
 		out = append(out, more(len(rows)-hi))

@@ -361,6 +361,7 @@ func TestSearchTakesTheBoxsOwnMessages(t *testing.T) {
 // against — and the way back out is on the panel and in the pane.
 func TestSearchWithNoMatchesSaysSo(t *testing.T) {
 	m := update(t, searching(t, "zzz"), keyMsg("enter"))
+	m = update(t, m, keyMsg("enter")) // and again to open the pane on it
 
 	panel := m.attentionPanel(96, 14)
 	if !strings.Contains(panel, "no match for /zzz") {
@@ -398,7 +399,13 @@ func TestSearchDoesNotOpenOverAnEmptyInbox(t *testing.T) {
 // than rendering from its first character, so what the operator is typing
 // now is what they can see.
 func TestALongQueryScrollsInTheBox(t *testing.T) {
-	m := searching(t, "the quick brown fox jumps over the lazy dog and keeps going")
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: board()})
+	// The prompt is a row of the inbox panel, so the panel's width is what
+	// it scrolls inside — narrowest with the detail pane open beside it.
+	m = update(t, m, keyMsg("enter"))
+	m = typeSearch(t, update(t, m, keyMsg("/")), "the quick brown fox jumps over the lazy dog and keeps going")
 
 	line := lineWith(t, m.View(), "keeps going")
 	if strings.Contains(line, "the quick brown") {
