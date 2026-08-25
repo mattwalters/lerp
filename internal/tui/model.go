@@ -313,6 +313,15 @@ type model struct {
 	details    map[string]*ticketDetail
 	detailWant string
 
+	// detailOpen is whether the main pane is open, per panel — a panel
+	// doubles as its index, the way geometry's wants and floors are indexed.
+	// The list owns the screen until the operator asks for the detail, and
+	// each panel remembers the answer: the inbox's detail is something you
+	// open once you have decided to read a ticket, a running ticket's live
+	// log is the point of watching it. A display default, not a rule about
+	// process, and session-only like sort and the project filter.
+	detailOpen [2]bool
+
 	// promoting is the promote picker's open/closed state; promoteSel is its
 	// selected index into o.Statuses. Opened by "p" on a selected inbox
 	// item, closed by confirming, cancelling, or the list going empty.
@@ -376,9 +385,10 @@ func newModel(ctx context.Context, o Options) model {
 	m := model{o: o, ctx: ctx, focus: panelWork, lanes: make(map[int]*lane),
 		details: make(map[string]*ticketDetail), lastLog: make(map[string]string),
 		vp: viewport.New(0, 0), follow: true, keys: newKeymap(), help: h,
-		sortMode: defaultSort,
-		inFlight: true, // Init starts the first pass immediately
-		passes:   &sync.WaitGroup{}}
+		sortMode:   defaultSort,
+		detailOpen: [2]bool{panelAttention: false, panelWork: true},
+		inFlight:   true, // Init starts the first pass immediately
+		passes:     &sync.WaitGroup{}}
 	for n := 1; n <= o.Lanes; n++ {
 		m.lanes[n] = &lane{}
 	}
@@ -496,6 +506,17 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.moveSelection(-1)
 	case key.Matches(msg, m.keys.Down):
 		m.moveSelection(1)
+	// enter opens the focused panel's detail and esc closes it — neither
+	// flips. esc inside the promote picker still cancels the picker, because
+	// handlePromoteKey ran before this switch and returned.
+	case key.Matches(msg, m.keys.Detail):
+		m.detailOpen[m.focus] = true
+		// Size before filling: the viewport was zero-width while the pane
+		// was closed, and refreshMain wraps to that width.
+		m.layout()
+		m.refreshMain()
+	case key.Matches(msg, m.keys.Close):
+		m.detailOpen[m.focus] = false
 	case key.Matches(msg, m.keys.Promote):
 		if m.focus == panelAttention && len(m.shown) > 0 && len(m.o.Statuses) > 0 {
 			m.promoting = true
@@ -549,7 +570,9 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // schedules: the read waits for the selection to settle, so holding j down
 // a fifteen-row list schedules fifteen ticks and fires one fetch.
 func (m *model) wantDetail() tea.Cmd {
-	if m.focus != panelAttention {
+	// A shut pane is nobody reading: walking the inbox with it closed costs
+	// no Linear calls at all, and enter is what asks for one.
+	if m.focus != panelAttention || !m.mainOpen() {
 		return nil
 	}
 	it := m.selectedAttention()
@@ -930,10 +953,22 @@ func (m *model) showingLog() bool {
 	return m.focus == panelWork && m.selectedLogPath() != ""
 }
 
+// mainOpen is the single question everything else asks: is the main pane on
+// screen? The focused panel's own state, forced open by the promote picker
+// and the ? overlay — both live in that pane, so they take the width while
+// they are up and hand it back when they close. That keeps p working from a
+// closed inbox, the default, without a second rendering path.
+func (m *model) mainOpen() bool {
+	return m.promoting || m.helpOn || m.detailOpen[m.focus]
+}
+
 // refreshMain points the main pane's viewport at whatever the selection asks
 // for. Scroll position is the caller's concern — focus and selection changes
 // jump to the top; a data refresh keeps the operator's place.
 func (m *model) refreshMain() {
+	if !m.mainOpen() {
+		return
+	}
 	if m.showingLog() {
 		m.refreshLog()
 		return
@@ -959,7 +994,7 @@ func (m *model) detail(width int) string {
 // wrote. Nothing but the rendering differs between the two; the file on disk
 // and the scrollback are the same either way.
 func (m *model) refreshLog() {
-	if !m.showingLog() {
+	if !m.mainOpen() || !m.showingLog() {
 		return
 	}
 	if m.rawLog {
@@ -1250,13 +1285,20 @@ func (m *model) geometry() geometry {
 	g.wide = m.width >= narrowWidth
 	// Widths first: the row builders lay their rows out to the panel width,
 	// and work's want is counted from those very rows.
-	g.sideW, g.mainW = m.width, m.width
-	if g.wide {
-		// Four columns need the room: a third of the terminal truncated the
-		// status column out of a real backlog. No resize key — the split is
-		// a proportion of the window, and the window is the knob.
-		g.sideW = max(28, m.width*45/100)
-		g.mainW = m.width - g.sideW
+	// A closed pane is not a claimant: the panels take the whole width, which
+	// is the point of the key — a 45% column spent on something nobody is
+	// reading is why titles truncate.
+	open := m.mainOpen()
+	g.sideW, g.mainW = m.width, 0
+	if open {
+		g.mainW = m.width
+		if g.wide {
+			// Four columns need the room: a third of the terminal truncated
+			// the status column out of a real backlog. No resize key — the
+			// split is a proportion of the window, and the window is the knob.
+			g.sideW = max(28, m.width*45/100)
+			g.mainW = m.width - g.sideW
+		}
 	}
 	// Wants come from the same row builders the panels draw with, so the
 	// counts can never drift from what lands on screen.
@@ -1264,11 +1306,15 @@ func (m *model) geometry() geometry {
 	attnRows, _ := m.attentionRows(padList.inner(g.sideW))
 
 	stackH := g.bodyH
-	if g.wide {
+	switch {
+	case !open:
+		// mainH stays 0 and the whole body is the stack's: fitPanels hands
+		// it to the two panels exactly as it does the rest of the time.
+	case g.wide:
 		// The main pane has the other column to itself, so it fits its own
 		// content and never competes with the stack.
 		g.mainH = min(g.bodyH, m.mainWant(g.bodyH, padMain.inner(g.mainW)))
-	} else {
+	default:
 		// Stacked, the body is split rather than fitted: half the screen is
 		// the board, half is whatever the selected row opens. Fitting the
 		// main pane to its content here would put focus straight back into
@@ -1355,7 +1401,7 @@ func (m model) View() string {
 	// floor when the layout stacks — geometry can only produce a screen
 	// taller than the terminal. Say so instead of rendering one.
 	minH := 2*panelFloor + 1
-	if m.width < narrowWidth {
+	if m.width < narrowWidth && m.mainOpen() {
 		minH += mainFloor
 	}
 	if m.width < 24 || m.height < minH {
@@ -1365,12 +1411,16 @@ func (m model) View() string {
 	side := lipgloss.JoinVertical(lipgloss.Left,
 		m.attentionPanel(g.sideW, g.attnH),
 		m.workPanel(g.sideW, g.workH))
-	main := m.mainPanel(g.mainW, g.mainH)
-	var body string
-	if g.wide {
-		body = lipgloss.JoinHorizontal(lipgloss.Top, side, main)
-	} else {
-		body = lipgloss.JoinVertical(lipgloss.Left, side, main)
+	// With the pane closed, side is the whole body — joined with an empty
+	// string it would still cost a column or a row.
+	body := side
+	if m.mainOpen() {
+		main := m.mainPanel(g.mainW, g.mainH)
+		if g.wide {
+			body = lipgloss.JoinHorizontal(lipgloss.Top, side, main)
+		} else {
+			body = lipgloss.JoinVertical(lipgloss.Left, side, main)
+		}
 	}
 	return body + "\n" + m.statusBar()
 }
@@ -2107,10 +2157,17 @@ func (m model) statusBar() string {
 	if len(m.attention) > 0 {
 		left += "  " + styleAttention.Render(fmt.Sprintf("● %d in the inbox", len(m.attention)))
 	}
-	right := styleFaint.Render("? help · q quit")
-	if m.promoting {
-		right = styleFaint.Render("↑/↓ choose · enter promote · esc cancel")
+	// The pane's key is contextual, and a key nobody can see is a key nobody
+	// presses. detailOpen, not mainOpen: it is what enter and esc actually
+	// set, so the hint never promises to close an overlay it cannot.
+	hint := "enter detail · ? help · q quit"
+	if m.detailOpen[m.focus] {
+		hint = "esc close · ? help · q quit"
 	}
+	if m.promoting {
+		hint = "↑/↓ choose · enter promote · esc cancel"
+	}
+	right := styleFaint.Render(hint)
 
 	pad := m.width - lipgloss.Width(left) - lipgloss.Width(right)
 	if pad < 1 {

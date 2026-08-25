@@ -549,6 +549,7 @@ func TestWorkPanelCapsToItsPanel(t *testing.T) {
 func TestInboxListsWhatWaits(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, keyMsg("1"))
+	m = update(t, m, keyMsg("enter"))
 
 	if view := m.View(); strings.Contains(view, "the inbox is empty") {
 		t.Fatalf("view claims the goal state before any pass reported:\n%s", view)
@@ -1278,6 +1279,183 @@ func TestInboxTakesTheRoomAndFocusDoesNotMoveIt(t *testing.T) {
 // list panels take a left pad only — horizontal padding costs two columns a
 // panel and the needs-you table is already truncating titles, so its right
 // edge stays the truncation point it was.
+// Done-when: the list owns the screen until the operator asks for the
+// detail. At 120 columns a closed inbox is the whole width, and the title
+// the 45% split truncates survives whole — which is the complaint this
+// ticket is about, asserted directly.
+func TestTheInboxStartsWithTheScreen(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	m = resized.(model)
+	m = update(t, m, keyMsg("1"))
+	const title = "Enter opens the detail pane; the list has the screen until then"
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-66", TicketID: "id-66", Title: title,
+			Status: "Backlog", Reason: "unclaimed"},
+	}}})
+
+	g := m.geometry()
+	if g.sideW != m.width || g.mainW != 0 || g.mainH != 0 {
+		t.Fatalf("a closed inbox still left room for the main pane: %+v", g)
+	}
+	if !strings.Contains(ansi.Strip(m.View()), title) {
+		t.Fatalf("the full-width inbox truncates its title anyway:\n%s", m.View())
+	}
+
+	// The same title against the open pane's 45% column does not fit; without
+	// this the assertion above would pass on a title that never truncated.
+	m = update(t, m, keyMsg("enter"))
+	if strings.Contains(ansi.Strip(m.View()), title) {
+		t.Fatalf("this title fits beside an open pane, so the test proves nothing:\n%s", m.View())
+	}
+}
+
+// Done-when: enter opens the pane on the ticket the cursor is on, esc closes
+// it, and neither key is a flip-flop.
+func TestEnterOpensTheDetailAndEscCloses(t *testing.T) {
+	m, _, reader := newReadingTestModel(t)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+	if g := m.geometry(); g.mainH != 0 {
+		t.Fatalf("the inbox pane was open before enter: %+v", g)
+	}
+
+	m = update(t, m, keyMsg("enter"))
+	m = selectAndRead(t, m, 0, linear.IssueDetail{Body: "the body of the first"}, nil, reader)
+	g := m.geometry()
+	if g.sideW != m.width*45/100 || g.mainH == 0 {
+		t.Fatalf("enter did not open the pane: %+v", g)
+	}
+	if !strings.Contains(m.View(), "the body of the first") {
+		t.Fatalf("the opened pane holds nothing:\n%s", m.View())
+	}
+
+	m = update(t, m, keyMsg("esc"))
+	if g := m.geometry(); g.sideW != m.width || g.mainH != 0 {
+		t.Fatalf("esc did not give the width back: %+v", g)
+	}
+	if strings.Contains(m.View(), "the body of the first") {
+		t.Fatalf("the closed pane is still on screen:\n%s", m.View())
+	}
+
+	// Neither key flips: an operator who has lost track of the state presses
+	// one and knows what they get.
+	m = update(t, m, keyMsg("esc"))
+	if m.detailOpen[panelAttention] {
+		t.Fatal("a second esc reopened the pane")
+	}
+	m = update(t, m, keyMsg("enter"))
+	m = update(t, m, keyMsg("enter"))
+	if !m.detailOpen[panelAttention] {
+		t.Fatal("a second enter closed the pane")
+	}
+}
+
+// Done-when: one toggle, two memories. The panels want opposite defaults, so
+// the state is the panel's and not the screen's.
+func TestThePaneIsRememberedPerPanel(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, keyMsg("enter"))
+	m = update(t, m, keyMsg("2"))
+	m = update(t, m, keyMsg("esc"))
+
+	m = update(t, m, keyMsg("1"))
+	if !m.mainOpen() {
+		t.Fatal("the inbox forgot that enter opened its pane")
+	}
+	m = update(t, m, keyMsg("2"))
+	if m.mainOpen() {
+		t.Fatal("work forgot that esc closed its pane")
+	}
+}
+
+// Done-when: work starts open, so the startup screen is unchanged — a
+// running ticket's live log is the point of watching it, and no key is
+// needed to see it.
+func TestWorkStartsWithItsLogOnScreen(t *testing.T) {
+	log := filepath.Join(t.TempDir(), "one.log")
+	writeLog(t, log, []byte("agent one says hello\n"))
+
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		TicketID: "id-1", Ticket: "LERP-1", Queue: "plan", LogPath: log}})
+
+	if m.focus != panelWork {
+		t.Fatalf("focus starts on %v, not work", m.focus)
+	}
+	if g := m.geometry(); g.mainH == 0 {
+		t.Fatalf("work started with its pane closed: %+v", g)
+	}
+	if !strings.Contains(m.View(), "agent one says hello") {
+		t.Fatalf("the log is not on screen without a key:\n%s", m.View())
+	}
+}
+
+// Done-when: the promote picker and the ? overlay live in the main pane, so
+// they force it visible while they are up and hand the width back when they
+// close. Both keys keep working from a closed inbox, which is the default.
+func TestThePickerAndTheOverlayForceThePane(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-4", TicketID: "loose", Title: "Nobody's routed this"},
+	}}})
+	if m.mainOpen() {
+		t.Fatal("the inbox pane was open before anything asked for it")
+	}
+
+	m = update(t, m, keyMsg("p"))
+	if !strings.Contains(m.View(), "promote LERP-4") {
+		t.Fatalf("p from a closed inbox drew no picker:\n%s", m.View())
+	}
+	m = update(t, m, keyMsg("esc"))
+	if g := m.geometry(); m.mainOpen() || g.sideW != m.width {
+		t.Fatalf("cancelling the picker kept the width: %+v", g)
+	}
+
+	m = update(t, m, keyMsg("?"))
+	if !strings.Contains(m.View(), "next panel") {
+		t.Fatalf("? from a closed inbox drew no overlay:\n%s", m.View())
+	}
+	m = update(t, m, keyMsg("?"))
+	if g := m.geometry(); m.mainOpen() || g.sideW != m.width {
+		t.Fatalf("closing the overlay kept the width: %+v", g)
+	}
+}
+
+// Done-when: with the pane shut nobody is reading the detail, so walking the
+// inbox costs no Linear calls at all. enter is what asks for one.
+func TestAClosedPaneReadsNothing(t *testing.T) {
+	m, _, reader := newReadingTestModel(t)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+	for _, k := range []string{"j", "j", "k"} {
+		var cmd tea.Cmd
+		m, cmd = updateCmd(t, m, keyMsg(k))
+		if cmd != nil {
+			t.Fatalf("%q scheduled a read with the pane closed", k)
+		}
+	}
+	if got := reader.fetched(); len(got) != 0 {
+		t.Fatalf("a closed pane read %v", got)
+	}
+
+	m, cmd := updateCmd(t, m, keyMsg("enter"))
+	if cmd == nil {
+		t.Fatal("enter scheduled no read for the row it opened on")
+	}
+	id := m.shown[m.attnSel].TicketID
+	m, cmd = updateCmd(t, m, detailDueMsg{ticketID: id})
+	if cmd == nil {
+		t.Fatalf("the settled selection %s fired no fetch", id)
+	}
+	m = update(t, m, cmd())
+	if got := reader.fetched(); len(got) != 1 || got[0] != id {
+		t.Fatalf("fetched %v, want one read of %s", got, id)
+	}
+}
+
 func TestPanelPaddingIsAsymmetric(t *testing.T) {
 	row := func(pad padding) string {
 		return strings.Split(panelBox("t", false, 10, 3, []string{"abcdefg"}, pad), "\n")[1]
@@ -1545,7 +1723,10 @@ func TestQuietWorkPanelKeepsItsBox(t *testing.T) {
 		{Team: "LERP", Name: "plan", Status: "Planning"},
 	}}})
 
+	// Both panes open, so focus is the only thing that moves between the two
+	// geometries below — the pane's own default would swamp what is under test.
 	m = update(t, m, keyMsg("1"))
+	m = update(t, m, keyMsg("enter"))
 	g := m.geometry()
 	if rows, _ := m.workListRows(padList.inner(g.sideW)); len(rows)+2 >= panelFloor {
 		t.Fatalf("this board asks for %d lines: the floor is not what is under test",
@@ -1697,7 +1878,10 @@ func TestStackedLayoutKeepsBothPanelsReadable(t *testing.T) {
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 		TicketID: "t0", Ticket: "QUEUED-1", Queue: "implement", LogPath: "/dev/null"}})
 
+	// Both panes open: this is about focus alone, not about the pane's
+	// per-panel default.
 	m = update(t, m, keyMsg("1"))
+	m = update(t, m, keyMsg("enter"))
 	g := m.geometry()
 	if g.wide {
 		t.Fatal("80 columns is not the stacked layout")
@@ -1737,24 +1921,36 @@ func TestStackedLayoutKeepsBothPanelsReadable(t *testing.T) {
 // each layout admits, the stack still fits the terminal, and one line less
 // is refused rather than drawn over the status bar.
 func TestSmallestWindowTheGuardAdmits(t *testing.T) {
-	for _, tc := range []struct{ w, h int }{
-		{120, 2*panelFloor + 1},
-		{70, 2*panelFloor + mainFloor + 1},
+	for _, tc := range []struct {
+		w, h   int
+		closed bool
+	}{
+		{w: 120, h: 2*panelFloor + 1},
+		{w: 70, h: 2*panelFloor + mainFloor + 1},
+		// A closed pane needs no floor, so the stacked layout admits a
+		// window mainFloor lines shorter than it otherwise would: a short
+		// terminal that is refused today gets a usable screen.
+		{w: 70, h: 2*panelFloor + 1, closed: true},
 	} {
 		m, _, _ := newTestModel(t, 3)
 		resized, _ := m.Update(tea.WindowSizeMsg{Width: tc.w, Height: tc.h})
 		m = fillBoard(t, resized.(model), 20)
+		if tc.closed {
+			m = update(t, m, keyMsg("esc"))
+		}
 		view := m.View()
 		if strings.Contains(view, "too small") {
-			t.Fatalf("width %d: the guard refuses the height it admits", tc.w)
+			t.Fatalf("width %d closed=%v: the guard refuses the height it admits",
+				tc.w, tc.closed)
 		}
 		if lines := strings.Count(view, "\n") + 1; lines > tc.h {
-			t.Fatalf("width %d: view is %d lines tall in a %d-line window:\n%s",
-				tc.w, lines, tc.h, view)
+			t.Fatalf("width %d closed=%v: view is %d lines tall in a %d-line window:\n%s",
+				tc.w, tc.closed, lines, tc.h, view)
 		}
-		resized, _ = m.Update(tea.WindowSizeMsg{Width: tc.w, Height: tc.h - 1})
-		if view := resized.(model).View(); !strings.Contains(view, "too small") {
-			t.Fatalf("width %d: a window below the floors rendered anyway:\n%s", tc.w, view)
+		next, _ := m.Update(tea.WindowSizeMsg{Width: tc.w, Height: tc.h - 1})
+		if view := next.(model).View(); !strings.Contains(view, "too small") {
+			t.Fatalf("width %d closed=%v: a window below the floors rendered anyway:\n%s",
+				tc.w, tc.closed, view)
 		}
 	}
 }
@@ -1764,20 +1960,23 @@ func TestSmallestWindowTheGuardAdmits(t *testing.T) {
 func TestViewFitsTheWindow(t *testing.T) {
 	for _, width := range []int{120, 100, 80, 60} {
 		for _, focus := range []string{"1", "2"} {
-			m, _, _ := newTestModel(t, 3)
-			resized, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: 30})
-			m = resized.(model)
-			m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
-				TicketID: "id-42", Ticket: "LERP-42", Queue: "implement", LogPath: "/dev/null"}})
-			m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention}})
-			m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
-				{Team: "LERP", Name: "review", Status: "A Status With A Very Long Name"},
-			}}})
-			m = update(t, m, keyMsg(focus))
-			for i, line := range strings.Split(m.View(), "\n") {
-				if got := lipgloss.Width(line); got > width {
-					t.Fatalf("width %d, panel %s: line %d is %d cells wide:\n%s",
-						width, focus, i, got, line)
+			for _, pane := range []string{"esc", "enter"} {
+				m, _, _ := newTestModel(t, 3)
+				resized, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: 30})
+				m = resized.(model)
+				m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+					TicketID: "id-42", Ticket: "LERP-42", Queue: "implement", LogPath: "/dev/null"}})
+				m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention}})
+				m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+					{Team: "LERP", Name: "review", Status: "A Status With A Very Long Name"},
+				}}})
+				m = update(t, m, keyMsg(focus))
+				m = update(t, m, keyMsg(pane))
+				for i, line := range strings.Split(m.View(), "\n") {
+					if got := lipgloss.Width(line); got > width {
+						t.Fatalf("width %d, panel %s, pane %s: line %d is %d cells wide:\n%s",
+							width, focus, pane, i, got, line)
+					}
 				}
 			}
 		}
@@ -2117,6 +2316,7 @@ func selectAndRead(t *testing.T, m model, sel int, detail linear.IssueDetail, er
 func TestTicketDetailFetchesOnceTheSelectionSettles(t *testing.T) {
 	m, _, reader := newReadingTestModel(t)
 	m = update(t, m, keyMsg("1"))
+	m = update(t, m, keyMsg("enter"))
 	m = update(t, m, eventMsg{ev: threeWaiting()})
 	m = update(t, m, keyMsg("j"))
 	m = update(t, m, keyMsg("j"))
@@ -2156,6 +2356,7 @@ func TestTicketDetailFetchesOnceTheSelectionSettles(t *testing.T) {
 func TestTicketDetailShowsBodyAndComments(t *testing.T) {
 	m, _, reader := newReadingTestModel(t)
 	m = update(t, m, keyMsg("1"))
+	m = update(t, m, keyMsg("enter"))
 	m = update(t, m, eventMsg{ev: threeWaiting()})
 
 	now := time.Now()
@@ -2191,6 +2392,7 @@ func TestTicketDetailShowsBodyAndComments(t *testing.T) {
 func TestTicketDetailFailureKeepsThePaneThatWorks(t *testing.T) {
 	m, _, reader := newReadingTestModel(t)
 	m = update(t, m, keyMsg("1"))
+	m = update(t, m, keyMsg("enter"))
 	m = update(t, m, eventMsg{ev: threeWaiting()})
 
 	// In flight, the pane says so — and still shows everything the pass knows.
@@ -2225,6 +2427,7 @@ func TestTicketDetailFailureKeepsThePaneThatWorks(t *testing.T) {
 func TestTicketDetailEmptyTicket(t *testing.T) {
 	m, _, reader := newReadingTestModel(t)
 	m = update(t, m, keyMsg("1"))
+	m = update(t, m, keyMsg("enter"))
 	m = update(t, m, eventMsg{ev: threeWaiting()})
 	m = selectAndRead(t, m, 0, linear.IssueDetail{}, nil, reader)
 
@@ -2239,6 +2442,7 @@ func TestTicketDetailEmptyTicket(t *testing.T) {
 func TestTicketDetailRendersMarkdown(t *testing.T) {
 	m, _, reader := newReadingTestModel(t)
 	m = update(t, m, keyMsg("1"))
+	m = update(t, m, keyMsg("enter"))
 	m = update(t, m, eventMsg{ev: threeWaiting()})
 
 	m = selectAndRead(t, m, 0, linear.IssueDetail{
@@ -2266,6 +2470,7 @@ func TestTicketDetailRendersMarkdown(t *testing.T) {
 func TestTicketDetailRendersHostileBodyInert(t *testing.T) {
 	m, _, reader := newReadingTestModel(t)
 	m = update(t, m, keyMsg("1"))
+	m = update(t, m, keyMsg("enter"))
 	m = update(t, m, eventMsg{ev: threeWaiting()})
 	m = selectAndRead(t, m, 0, linear.IssueDetail{
 		Body: hostile + ` blocked by <issue id="u-1" href="https://linear.app/acme/issue/LERP-36">LERP-36</issue>`,
@@ -2291,6 +2496,7 @@ func TestTicketDetailRendersHostileBodyInert(t *testing.T) {
 func TestTicketDetailWrapsProse(t *testing.T) {
 	m, _, reader := newReadingTestModel(t)
 	m = update(t, m, keyMsg("1"))
+	m = update(t, m, keyMsg("enter"))
 	m = update(t, m, eventMsg{ev: threeWaiting()})
 	body := strings.TrimSpace(strings.Repeat("wrap me please ", 12))
 	m = selectAndRead(t, m, 0, linear.IssueDetail{Body: body}, nil, reader)

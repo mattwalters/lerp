@@ -1,7 +1,7 @@
-// Package tui is the Bubble Tea interface: one screen with the
-// inbox and work panels beside a main pane that follows the
-// selected row, plus promote and eject. The TUI drives the loop;
-// there is no daemon.
+// Package tui is the Bubble Tea interface: one screen the inbox and
+// work panels own, with a main pane that follows the selected row
+// opening beside them on enter and closing on esc, plus promote and
+// eject. The TUI drives the loop; there is no daemon.
 //
 // A running ticket's row reads its log as agent activity — decoded at
 // render time by internal/logfmt, never on disk — with a raw toggle

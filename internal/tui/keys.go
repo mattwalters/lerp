@@ -15,6 +15,8 @@ type keymap struct {
 	PageDown  key.Binding
 	Top       key.Binding
 	Bottom    key.Binding
+	Detail    key.Binding
+	Close     key.Binding
 	Promote   key.Binding
 	Sort      key.Binding
 	Project   key.Binding
@@ -36,13 +38,19 @@ func newKeymap() keymap {
 		PageDown:  key.NewBinding(key.WithKeys("pgdown", "f"), key.WithHelp("pgdn/f", "scroll down")),
 		Top:       key.NewBinding(key.WithKeys("home", "g"), key.WithHelp("home/g", "top")),
 		Bottom:    key.NewBinding(key.WithKeys("end", "G"), key.WithHelp("end/G", "follow")),
-		Promote:   key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "promote")),
-		Sort:      key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort inbox")),
-		Project:   key.NewBinding(key.WithKeys("P"), key.WithHelp("P", "filter by project")),
-		Open:      key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "open in Linear")),
-		Raw:       key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "raw log")),
-		Help:      key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
-		Quit:      key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
+		// Open is already o, open in Linear, so the pane's own keys take
+		// names of their own. enter opens and esc closes; neither is a
+		// flip-flop, so an operator who has lost track of the state can
+		// press either and know what they will get.
+		Detail:  key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open detail")),
+		Close:   key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "close detail")),
+		Promote: key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "promote")),
+		Sort:    key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort inbox")),
+		Project: key.NewBinding(key.WithKeys("P"), key.WithHelp("P", "filter by project")),
+		Open:    key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "open in Linear")),
+		Raw:     key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "raw log")),
+		Help:    key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
+		Quit:    key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
 	}
 }
 
@@ -60,7 +68,7 @@ func (k keymap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Attention, k.Work, k.NextPanel, k.PrevPanel,
 			k.Up, k.Down, k.PageUp, k.PageDown, k.Top, k.Bottom},
-		{k.Promote, k.Sort, k.Project, k.Open, k.Raw, k.Help, k.Quit},
+		{k.Detail, k.Close, k.Promote, k.Sort, k.Project, k.Open, k.Raw, k.Help, k.Quit},
 	}
 }
 
