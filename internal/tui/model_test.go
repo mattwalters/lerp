@@ -1855,11 +1855,10 @@ func TestRefocusingRewrapsThePane(t *testing.T) {
 	}
 }
 
-// Done-when: a window too short to hold the pane keeps its screen. No key
-// trades the two panels for "window too small" — the ones that would open a
-// pane do nothing, and the ones that only move focus drop the destination's
-// pane rather than the screen. The promote picker, which is modal and writes
-// to Linear, is never live behind that message either.
+// Done-when: a window too short to hold the pane keeps its screen. The keys
+// that would open one do nothing rather than trade the two panels for
+// "window too small" — and the promote picker, which is modal and writes to
+// Linear, is never live behind that message.
 //
 // The opening state is the one under test, so nothing sets it up: lerp lands
 // on the inbox with its pane closed, which is what makes twelve lines a
@@ -1882,9 +1881,11 @@ func TestAWindowTooShortForThePaneKeepsItsScreen(t *testing.T) {
 		t.Fatalf("the status bar dropped the key that still works:\n%s", view)
 	}
 
-	// "2" and "tab" are here because work's pane is open by default: moving
-	// focus to it is the one navigation key that can put a pane on screen.
-	for _, k := range []string{"enter", "p", "?", "2", "tab"} {
+	// Not "2" or "tab": moving focus to work, whose pane is open by default,
+	// does land on the too-small screen. See
+	// TestAFocusMoveNeverEditsAPanelsPane for why that is the right end of
+	// the trade.
+	for _, k := range []string{"enter", "p", "?"} {
 		next := update(t, m, keyMsg(k))
 		if strings.Contains(next.View(), "too small") {
 			t.Fatalf("%q took the screen away:\n%s", k, next.View())
@@ -1955,6 +1956,57 @@ func TestTheReopenedPaneIsCurrent(t *testing.T) {
 	}
 	if strings.Contains(view, "agent one says hello") {
 		t.Fatalf("the reopened pane still holds the old row's log:\n%s", view)
+	}
+}
+
+// Done-when: a focus move never edits either panel's pane, whatever the
+// window can hold. Work's pane is open by default and lerp no longer opens
+// on work, so `2` is the key an operator has to press to reach a log — and
+// in a window too short for the pane it lands on the too-small screen. That
+// is the same screen a shrink under an open pane lands on, naming the same
+// key, and `esc` gets the board back.
+//
+// The alternative — closing the pane on the operator's behalf — is worse
+// than the screen it avoids: nothing ever sets detailOpen back, so the pane
+// would stay shut at every later size. A `2` typed ahead of the first
+// WindowSizeMsg, when width and height are still zero and no window has
+// room, would shut it for the whole session.
+func TestAFocusMoveNeverEditsAPanelsPane(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	resized, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 12})
+	m = fillBoard(t, resized.(model), 5)
+
+	m = update(t, m, keyMsg("2"))
+	if !m.detailOpen[panelWork] {
+		t.Fatal("moving focus to work closed the pane it remembers")
+	}
+	view := m.View()
+	if !strings.Contains(view, "too small") || !strings.Contains(view, "esc") {
+		t.Fatalf("the pane that does not fit is on nobody's screen and named by nothing:\n%s", view)
+	}
+
+	// esc is the key that frame names, and closing the pane is the
+	// operator's own answer — so it is theirs to keep at any later size.
+	m = update(t, m, keyMsg("esc"))
+	if m.detailOpen[panelWork] {
+		t.Fatal("esc did not close the pane the too-small screen named")
+	}
+	if strings.Contains(m.View(), "too small") {
+		t.Fatalf("esc did not give the window its screen back:\n%s", m.View())
+	}
+	grown, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	if m = grown.(model); m.detailOpen[panelWork] {
+		t.Fatal("a window with room reopened a pane the operator closed")
+	}
+
+	// And a panel key before the first WindowSizeMsg — no window has room
+	// for anything yet — leaves both defaults exactly where they started.
+	early := newModel(t.Context(), Options{Ticker: &countingTicker{}, Promoter: &recordingPromoter{},
+		Starter: &recordingStarter{}, Reader: &recordingReader{}, Statuses: defaultTestStatuses,
+		Lanes: 1, Events: make(chan loop.Event, 1)})
+	early = update(t, early, keyMsg("2"))
+	if early.detailOpen != ([2]bool{panelAttention: false, panelWork: true}) {
+		t.Fatalf("a keystroke before the first size edited the pane defaults: %v", early.detailOpen)
 	}
 }
 

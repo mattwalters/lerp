@@ -855,15 +855,16 @@ func (m *model) setHelp(on bool) {
 
 func (m *model) setFocus(p panel) {
 	m.focus = p
-	// Each panel remembers its own pane, so moving focus can put one on
-	// screen — and in a window too short to hold it, that would trade two
-	// working panels for "window too small" on a navigation key. The keys
-	// that open the pane ask roomForMain first; so does this one. It drops
-	// the pane it cannot show rather than refusing the move: navigation is
-	// never refused, and the panel the operator left keeps its own answer.
-	if m.detailOpen[p] && !m.roomForMain() {
-		m.detailOpen[p] = false
-	}
+	// Deliberately no roomForMain check here, unlike the keys that open the
+	// pane. Moving focus to a panel that remembers its pane open can land on
+	// the too-small screen in a short window — but that is the same screen a
+	// shrink under an open pane lands on, and it names the same key. Closing
+	// the pane on the operator's behalf instead would be a preference
+	// destroyed by a navigation key: nothing ever sets detailOpen back, so
+	// the pane would stay shut at every later size, including one with room
+	// for it. A key that arrives before the first WindowSizeMsg — width and
+	// height still zero, so no window has room — would do it for the whole
+	// session.
 	m.retarget()
 	// Size before filling. The two panels remember the pane separately, so
 	// focus moves the width the viewport wraps to — and content wrapped to
