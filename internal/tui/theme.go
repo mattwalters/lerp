@@ -45,42 +45,71 @@ var (
 // of the spinner component's own tick stream — one clock for everything.
 var heartbeatFrames = spinner.MiniDot.Frames
 
-// panelBox draws one bordered panel with its title set into the top border —
-// the cockpit's whole chrome. rows are already-styled lines; each is
-// truncated (ANSI-aware) to the inner width, and a row overflow is cut with
-// a faint "⋯ n more" so a deep list can never push the panel out of shape.
-func panelBox(title string, focused bool, w, h int, rows []string) string {
-	if w < 4 || h < 2 {
-		return ""
-	}
-	iw, ih := w-2, h-2
-	border := styleBorder
-	if focused {
-		border = styleBorderFocus
-	}
+// padding is the breathing room between a panel's border and its rows.
+// Horizontal padding costs two columns per panel and the needs-you table is
+// already truncating titles, so it is asymmetric on purpose: the main pane
+// is padded both sides, because prose pressed against a box edge reads
+// badly, and the list panels take a left pad only — their right edge stays
+// the truncation point it already was.
+type padding struct{ left, right int }
+
+var (
+	padList = padding{left: 1}
+	padMain = padding{left: 1, right: 1}
+)
+
+// inner is the width a panel w columns wide has left for its rows.
+func (p padding) inner(w int) int { return w - 2 - p.left - p.right }
+
+// fitRows cuts a row list down to a body of ih lines, standing in for what
+// it dropped with a faint "⋯ n more" — so a deep list can never push a panel
+// out of shape.
+func fitRows(rows []string, ih int) []string {
 	if over := len(rows) - ih; over > 0 && ih >= 1 {
-		rows = append(append([]string{}, rows[:ih-1]...),
+		return append(append([]string{}, rows[:ih-1]...),
 			styleFaint.Render(fmt.Sprintf("⋯ %d more", over+1)))
 	}
+	return rows
+}
+
+// panelBox draws one bordered panel with its title set into the top border —
+// the cockpit's whole chrome. rows are already-styled lines, each truncated
+// (ANSI-aware) to the content width left by pad.
+//
+// Focus is drawn as weight as well as colour: the focused panel takes the
+// heavy box, so which panel the keys are talking to still reads on a
+// 16-color terminal, the same rule the state dots follow.
+func panelBox(title string, focused bool, w, h int, rows []string, pad padding) string {
+	bw, ih := w-2, h-2
+	cw := bw - pad.left - pad.right
+	if cw < 1 || ih < 1 {
+		return ""
+	}
+	border, bd := styleBorder, lipgloss.RoundedBorder()
+	if focused {
+		border, bd = styleBorderFocus, lipgloss.ThickBorder()
+	}
+	rows = fitRows(rows, ih)
 
 	var b strings.Builder
 	t := " " + title + " "
-	if lipgloss.Width(t) > iw-2 {
-		t = ansi.Truncate(t, max(0, iw-2), "… ")
+	if lipgloss.Width(t) > bw-2 {
+		t = ansi.Truncate(t, max(0, bw-2), "… ")
 	}
-	b.WriteString(border.Render("╭─") + t)
-	b.WriteString(border.Render(strings.Repeat("─", max(0, iw-1-lipgloss.Width(t))) + "╮"))
+	b.WriteString(border.Render(bd.TopLeft+bd.Top) + t)
+	b.WriteString(border.Render(strings.Repeat(bd.Top, max(0, bw-1-lipgloss.Width(t))) + bd.TopRight))
 	b.WriteString("\n")
+	lp, rp := strings.Repeat(" ", pad.left), strings.Repeat(" ", pad.right)
 	for i := 0; i < ih; i++ {
 		row := ""
 		if i < len(rows) {
-			row = ansi.Truncate(rows[i], iw, "…")
+			row = ansi.Truncate(rows[i], cw, "…")
 		}
-		pad := strings.Repeat(" ", max(0, iw-lipgloss.Width(row)))
-		b.WriteString(border.Render("│") + row + pad + border.Render("│"))
+		fill := strings.Repeat(" ", max(0, cw-lipgloss.Width(row)))
+		b.WriteString(border.Render(bd.Left) + lp + row + fill + rp + border.Render(bd.Right))
 		b.WriteString("\n")
 	}
-	b.WriteString(border.Render("╰" + strings.Repeat("─", iw) + "╯"))
+	b.WriteString(border.Render(bd.BottomLeft + strings.Repeat(bd.Bottom, bw) + bd.BottomRight))
 	return b.String()
 }
 
