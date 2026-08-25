@@ -2345,7 +2345,7 @@ func TestTheHeavyBoxFollowsFocus(t *testing.T) {
 // the whole reason they felt like they did not exist.
 func TestFocusedPanelCarriesItsKeys(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
-	m = update(t, m, keyMsg("1"))
+	m = openMain(t, update(t, m, keyMsg("1"))) // the 45-column panel below
 	m = update(t, m, eventMsg{ev: threeWaiting()})
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
 		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
@@ -2472,6 +2472,18 @@ func TestRawIsOfferedOnlyWhereThereIsALog(t *testing.T) {
 	if view := m.View(); !strings.Contains(view, "r raw") {
 		t.Fatalf("a running ticket with a log does not offer the raw toggle:\n%s", view)
 	}
+
+	// The ? overlay is in that pane and covers the log, so the same row
+	// stops offering the key while it is up — the pane being open is not
+	// the question, a log being on screen is.
+	m = update(t, m, keyMsg("?"))
+	if view := m.View(); strings.Contains(view, "r raw") {
+		t.Fatalf("the overlay covers the log and the panel still offers the toggle:\n%s", view)
+	}
+	if next := update(t, m, keyMsg("r")); next.rawLog {
+		t.Fatal("r flipped the decoding of a log the overlay was covering")
+	}
+	m = update(t, m, keyMsg("?"))
 
 	// Close the pane — the startup screen — and the same row stops offering
 	// it, because there is nothing on screen for it to change.
@@ -2899,11 +2911,9 @@ func TestSmallestWindowTheGuardAdmits(t *testing.T) {
 		m, _, _ := newTestModel(t, 3)
 		resized, _ := m.Update(tea.WindowSizeMsg{Width: tc.w, Height: tc.h})
 		m = fillBoard(t, resized.(model), 20)
-		// The pane is the operator's own state and starts closed, so the
-		// cases that are about a window holding one press for it.
-		if tc.closed {
-			m = update(t, m, keyMsg("esc"))
-		} else {
+		// Both panels start with the pane closed, which is the closed case
+		// as it stands; the open ones press for it.
+		if !tc.closed {
 			m = openMain(t, m)
 		}
 		view := m.View()
@@ -4100,10 +4110,13 @@ func TestRunLineKeepsItsNumbersWhenNarrow(t *testing.T) {
 		heard: time.Now().Add(-12*time.Minute - 30*time.Second),
 		rate:  []int{1, 0, 3, 0, 9, 0, 0, 0}}
 	// What a 100-column terminal — the wide layout's own threshold — leaves
-	// a list panel for its rows, asked of the geometry rather than restated.
+	// a list panel for its rows beside an open pane, asked of the geometry
+	// rather than restated. The pane is what makes the panel narrow, so it
+	// is open here: with it shut the list has the whole terminal and this
+	// row has columns to spare.
 	m, _, _ := newTestModel(t, 1)
 	resized, _ := m.Update(tea.WindowSizeMsg{Width: narrowWidth, Height: 40})
-	m = resized.(model)
+	m = openMain(t, resized.(model))
 	width := padList.inner(m.geometry().sideW)
 
 	line := ansi.Strip(runLine(r, width))

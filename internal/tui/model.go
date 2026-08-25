@@ -731,10 +731,12 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.showingLog() {
 			m.follow = true
 		}
-	// The raw toggle is the pane's key too: with the pane closed it would
-	// flip the decoding of a log nobody is reading, and the operator would
-	// meet the change as a surprise the next time they opened it.
-	case !m.mainOpen() && key.Matches(msg, m.keys.Raw):
+	// The raw toggle acts on the log in the pane, so it is inert wherever
+	// that log is not on screen: the pane shut, the ? overlay covering it,
+	// or the inbox's own detail in it. Anywhere else the flip would change
+	// the decoding of a log nobody is reading, and the operator would meet
+	// it as a surprise the next time they opened the pane.
+	case !m.logOnScreen() && key.Matches(msg, m.keys.Raw):
 	case key.Matches(msg, m.keys.Raw):
 		m.rawLog = !m.rawLog
 		m.refreshLog()
@@ -1376,6 +1378,15 @@ func (m *model) showingLog() bool {
 	return !m.helpOn && m.focus == panelWork && m.selectedLogPath() != ""
 }
 
+// logOnScreen is showingLog with the pane's own state folded in: is a log
+// actually in front of the operator? showingLog answers what the selected
+// row would show, which is a different question — the pane may be shut, or
+// the overlay may have taken it — and everything that acts on the log the
+// operator can see asks this instead.
+func (m *model) logOnScreen() bool {
+	return m.mainOpen() && m.showingLog()
+}
+
 // mainOpen is the single question everything else asks: is the main pane on
 // screen? The focused panel's own state, forced open by the promote picker
 // and the ? overlay — both live in that pane, so they take the width while
@@ -1434,7 +1445,7 @@ func (m *model) detail(width int) string {
 // wrote. Nothing but the rendering differs between the two; the file on disk
 // and the scrollback are the same either way.
 func (m *model) refreshLog() {
-	if !m.mainOpen() || !m.showingLog() {
+	if !m.logOnScreen() {
 		return
 	}
 	if m.rawLog {
@@ -1884,8 +1895,8 @@ func (m model) View() string {
 	if m.width < minWidth || m.height < m.minHeight(m.mainOpen()) {
 		// When the pane is the whole of what does not fit, name the key that
 		// gives the window back: this frame has no status bar to carry the
-		// hint, and a terminal that starts this short starts with work's
-		// pane open.
+		// hint, and the pane is the operator's own state — a window that
+		// shrank under an open one keeps it open, so esc is the way out.
 		if m.width >= minWidth && m.height >= m.minHeight(false) {
 			return "lerp — window too small\nesc closes the pane\n"
 		}
@@ -2024,10 +2035,11 @@ func (m *model) panelKeys(p panel) []key.Binding {
 	}
 	return m.keys.panelHelp(p, rowKeys{
 		// The raw toggle acts on the log in the pane, so the line offers it
-		// where there is a pane to act on — the panel line advertises what
-		// this frame answers to, the way it drops p where the picker has no
-		// room to open.
-		hasLog:     m.selectedLogPath() != "" && m.mainOpen(),
+		// where that log is on screen — the panel line advertises what this
+		// frame answers to, the way it drops p where the picker has no room
+		// to open. Under the ? overlay it is the one moment the pane is
+		// certainly not showing a log, and the key is inert to match.
+		hasLog:     m.logOnScreen(),
 		hasURL:     m.selectedURL() != "",
 		filtered:   m.search != "",
 		projects:   m.hasProjects(),

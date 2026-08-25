@@ -19,8 +19,10 @@ const (
 	// runLine), so the ring is one number for every layout rather than one
 	// per panel, and a row narrower than the ring reaches less far back
 	// rather than covering the same span more coarsely. sparkMinCells is
-	// the narrowest line still worth drawing: under that the row keeps its
-	// numbers and drops the line.
+	// where a line stops being worth its columns — a row with less room
+	// than that for history it has keeps its numbers and drops the line. A
+	// run too young to fill it still draws what it has, the way window's
+	// own short line does.
 	sparkBucket   = 15 * time.Second
 	sparkCells    = 60
 	sparkMinCells = 8
