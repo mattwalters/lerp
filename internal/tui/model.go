@@ -622,9 +622,8 @@ func (m model) handlePromoteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			cmd = m.doPromote(it.TicketID, it.Ticket, m.o.Statuses[m.promoteSel])
 		}
 	}
-	// Closing the picker hands the main pane back to a lens of a different
-	// height; re-fit before the next frame draws into the old one.
-	m.layout()
+	// No re-fit on the way out: the picker and the lens under it are the
+	// same box. The main pane's height is the body's, whatever it holds.
 	return m, cmd
 }
 
@@ -938,9 +937,9 @@ func (m *model) refreshMain() {
 		m.refreshLog()
 		return
 	}
-	// The viewport's width is the pane's inner width, and it follows the
-	// terminal's alone — so wrapping against it here can never disagree with
-	// the width geometry measured the same content at.
+	// The viewport's width is the pane's inner width, so prose wrapped here
+	// is wrapped to the columns it will be drawn in — panelBox truncates its
+	// rows rather than wrapping them, and a line too long is a line cut.
 	m.vp.SetContent(m.detail(m.vp.Width))
 }
 
