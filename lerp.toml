@@ -141,6 +141,12 @@ push. If there is no pull request yet, open one as a draft
 human — which also keeps a pull-request automation on your Linear team from
 moving {{ticket}} out from under this run while you are still working.
 
+Title the pull request you open with {{ticket}}, a colon, and a short
+description of the change. A pull request's number and its ticket's
+identifier are unrelated numbers, and GitHub's pull request list, its
+notifications and its review requests name a pull request by its number and
+its title — so the title is where the identifier has to be.
+
 Now review what you built, before a human has to. Read the diff with fresh
 eyes: hand it to a subagent that gets the brief and the diff and none of
 your reasoning, if your runner has subagents — otherwise read it back

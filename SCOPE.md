@@ -67,9 +67,12 @@ sentence.
    directory, runs to exit, exit code means done or failed. The
    contract is the lowest common denominator — a capability every
    runner can't offer is a capability lerp doesn't have.
-4. **Lane** — a concurrency unit. Lerp runs at most N agents at once
-   (N is small, ~5). A lane's occupant is a run: a pid, a log file, a
-   ticket, and a workspace (see invariant 9).
+4. **Lane** — a concurrency unit. Lerp runs at most N agents at once.
+   N is small — small enough that one person can watch what is
+   happening — and the number itself is a default the operator
+   overrides per run, not a constant this document pins. A lane's
+   occupant is a run: a pid, a log file, a ticket, and a workspace
+   (see invariant 9).
 5. **The loop** — the reconciler described above. There is exactly one.
 
 Amendment rule: adding a sixth concept requires removing one of these
@@ -165,14 +168,19 @@ beside a main pane that details whichever row is selected:
    releases the claim the parked ticket was holding — an assigned ticket
    is never eligible, so keeping it would strand the ticket in a queue
    that could never pick it up. That release is invariant 4's protocol,
-   not a second capability. This is the only write the TUI makes anywhere.
+   not a second capability. Promote and force-start are the only writes the
+   TUI makes anywhere.
 2. **Work** — what the machine is doing with the board: one list,
    grouped by queue, holding the tickets running in each queue and the
    tickets waiting behind them. What is running and what runs next are
    the same question about the same tickets; the separate question is
    what needs a human. The main pane follows the selected row — a live
-   log for a running ticket, what gates it for a waiting one. It is
-   read-only: to change what runs next, move a ticket in Linear.
+   log for a running ticket, what gates it for a waiting one. Selecting a
+   queued ticket and pressing `S` starts it now, past the lane limit.
+   Force-start overrides exactly one thing, the lane count: the claim
+   protocol still runs, a blocked ticket is still refused, and ordering is
+   still not a keystroke — to change what runs *next*, move a ticket in
+   Linear.
 
 One escape hatch: **eject**. Select a running ticket; lerp stops the
 agent, frees its lane, and hands you the vendor's own resume command
@@ -206,7 +214,8 @@ that wants a scheduler wants a different product.
 - Not a Linear client, with one narrow exception: the inbox lists
   unassigned tickets in statuses no queue serves, promote moves a ticket
   the operator selected and settles its claim by the same rule a finished
-  run uses, and the main pane reads that selected ticket's body and
+  run uses, force-start claims a selected ticket through that same
+  protocol, and the main pane reads that selected ticket's body and
   comments — lerp's own stage-boundary artifacts — read-only, never
   composing or replying, never navigating on to another ticket.
   Everything else — create, edit, comment, assign outside the claim
