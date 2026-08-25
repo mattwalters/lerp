@@ -65,11 +65,11 @@ func (p *pulse) read(now time.Time) {
 	// that has fallen quiet, and reporting the last time it was there would
 	// read as an agent still being watched.
 	p.heard = p.mod
-	if p.offset < 0 {
-		// Nothing to attach to yet. A lane still provisioning is given its
-		// log path before the runner creates the file, and buckets rolling
-		// against a file that does not exist would draw the flat line of a
-		// run that has stopped saying anything.
+	if p.heard.IsZero() {
+		// There is no file to read: a lane still provisioning is given its
+		// log path before the runner creates it, and a log may be deleted
+		// under a live agent. Rolling the ring against a file that is not
+		// there would draw the flat line of a run that had stopped.
 		return
 	}
 	if reset {
@@ -112,6 +112,12 @@ func (p *pulse) roll(now time.Time) {
 // picked up ten seconds ago must not read like one that stopped two minutes
 // ago.
 func (p *pulse) window() []int {
+	if p.heard.IsZero() {
+		// No log behind the ring: it may not exist yet, or it may have been
+		// deleted under a live agent, which invariant 1 allows. Neither is a
+		// run that has gone quiet, and a flat line would say it was.
+		return nil
+	}
 	out := make([]int, 0, p.seen)
 	for i := sparkCells - p.seen; i < sparkCells; i++ {
 		out = append(out, p.cells[(p.head+1+i)%sparkCells])

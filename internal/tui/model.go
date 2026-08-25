@@ -1748,19 +1748,23 @@ func (m *model) workListRows(width int) ([]string, cursor) {
 	}
 	focused := m.focus == panelWork
 	var rows []string
-	cur, idx := cursor{at: -1}, 0
+	var cont []bool
+	at, span, idx := -1, 1, 0
 	for _, g := range groups {
-		rows = append(rows, groupHeader(g))
+		rows, cont = append(rows, groupHeader(g)), append(cont, false)
 		for _, r := range g.rows {
 			lines := m.workRowLines(r, focused && idx == selRow, width)
 			if idx == selRow {
-				cur = cursor{at: len(rows), span: len(lines)}
+				at, span = len(rows), len(lines)
+			}
+			for i := range lines {
+				cont = append(cont, i > 0)
 			}
 			rows = append(rows, lines...)
 			idx++
 		}
 	}
-	return rows, cur
+	return rows, cursor{at: at, span: span, cont: cont}
 }
 
 // groupHeader is one queue's line: its name, the Linear status a ticket
@@ -1818,34 +1822,45 @@ func (m model) workRowLines(r workRow, selected bool, width int) []string {
 		dot = styleRunning.Render("●")
 		state = styleFaint.Render("running")
 	}
-	return []string{
-		splitRow(marker(selected)+dot+" "+name, state, width),
-		runLine(r, width),
+	// The elapsed clock stays on this line, where it already was: a squeezed
+	// panel keeps the first line of a row and cuts the second, and the row
+	// that survives that cut must not say less than it did before the
+	// second line existed.
+	right := state + " " + styleFaint.Render(elapsed(r.since))
+	lines := []string{splitRow(marker(selected)+dot+" "+name, right, width)}
+	if reading := runLine(r, width); reading != "" {
+		lines = append(lines, reading)
 	}
+	return lines
 }
 
-// runLine is the second line of a row a lane holds: how long the run has been
-// going, how long since its log last said anything, and a sparkline of the
-// activity behind that. Together they answer what the first line cannot —
+// runLine is the second line of a row a lane holds: how long since its log
+// last said anything, and a sparkline of the activity behind that. Beside the
+// elapsed clock on the line above, they answer what elapsed alone cannot —
 // whether a run that started four minutes ago is still doing something.
 //
-// They are a reading, not a verdict. Nothing here compares the number to a
+// It is empty for a run with no log to read, which is a lane still
+// provisioning: a blank line under the row would claim a reading that does
+// not exist, and cost the panel a row to say nothing.
+//
+// This is a reading, not a verdict. Nothing here compares the number to a
 // threshold or calls a run stuck; SCOPE defers hang detection, and this shows
 // the operator what the log already knows and leaves the decision to eject
 // theirs.
 func runLine(r workRow, width int) string {
+	if r.heard.IsZero() {
+		return ""
+	}
 	// Four spaces: the cursor column and the state dot, so the line starts
 	// under the ticket identifier rather than under the cursor.
-	left := "    " + elapsed(r.since)
-	if !r.heard.IsZero() {
-		left += " · heard " + elapsed(r.heard) + " ago"
-	}
-	// The numbers are the reading; the sparkline is the shape behind them.
+	left := "    heard " + elapsed(r.heard) + " ago"
+	// The number is the reading; the sparkline is the shape behind it.
 	// splitRow protects its right column against a narrow panel, and here
 	// the right column is the one that can be spared — a panel too narrow
 	// for both drops the line rather than truncate the digits.
 	right := ""
-	if spark := sparkline(r.rate); spark != "" && len(left)+1+len([]rune(spark)) <= width {
+	spark := sparkline(r.rate)
+	if spark != "" && lipgloss.Width(left)+1+lipgloss.Width(spark) <= width {
 		right = styleFaint.Render(spark)
 	}
 	return splitRow(styleFaint.Render(left), right, width)

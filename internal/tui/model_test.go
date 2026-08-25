@@ -2403,69 +2403,77 @@ func TestProvisioningRowClaimsNoReading(t *testing.T) {
 	}
 }
 
-// The focus window slides by line, and a run's two lines are one row: a
+// The focus window slides by line, and a run's two lines are one row. A
 // window that keeps only the first cuts the reading off the very row the
-// operator is looking at, and leaves the row above's reading sitting under
-// this row's name, where it reads as this ticket's.
-func TestScrolledRunKeepsBothOfItsLines(t *testing.T) {
+// operator is looking at; one that opens on a second line strands it under
+// whatever name happens to be above, where it reads as that ticket's.
+func TestScrolledRunKeepsRowsWhole(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "run.log")
 	writeLog(t, path, []byte("agent at work\n"))
 
-	m, _, _ := newTestModel(t, 3)
-	resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 22})
-	m = fillBoard(t, resized.(model), 40)
-	for lane := 1; lane <= 3; lane++ {
-		m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted,
-			RunID: fmt.Sprintf("r%d", lane), Lane: lane,
-			TicketID: fmt.Sprintf("t%d", lane-1), Ticket: fmt.Sprintf("QUEUED-%d", lane),
-			Queue: "implement", LogPath: path}})
-	}
-	m = update(t, m, pollMsg{})
-	m = update(t, m, keyMsg("2"))
+	for _, size := range []struct{ w, h int }{{120, 22}, {120, 25}, {120, 30}, {100, 44}} {
+		m, _, _ := newTestModel(t, 5)
+		resized, _ := m.Update(tea.WindowSizeMsg{Width: size.w, Height: size.h})
+		m = fillBoard(t, resized.(model), 40)
+		for lane := 1; lane <= 5; lane++ {
+			m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted,
+				RunID: fmt.Sprintf("r%d", lane), Lane: lane,
+				TicketID: fmt.Sprintf("t%d", lane-1), Ticket: fmt.Sprintf("QUEUED-%d", lane),
+				Queue: "implement", LogPath: path}})
+		}
+		m = update(t, m, pollMsg{})
+		m = update(t, m, keyMsg("2"))
 
-	// Walk down to each running row in turn: the panel is capped near a
-	// third of the stack, so the window is scrolling by the second one.
-	for _, want := range []string{"QUEUED-1", "QUEUED-2", "QUEUED-3"} {
-		for m.selectedWork() == nil || m.selectedWork().ticket != want {
-			m = update(t, m, keyMsg("down"))
-		}
-		lines := strings.Split(ansi.Strip(m.View()), "\n")
-		at := slices.IndexFunc(lines, func(l string) bool {
-			return strings.Contains(l, "▸") && strings.Contains(l, want)
-		})
-		if at < 0 {
-			t.Fatalf("the selected row %s is not on screen:\n%s", want, m.View())
-		}
-		if at+1 >= len(lines) || !strings.Contains(lines[at+1], "heard") {
-			t.Fatalf("%s lost its reading to the window:\n%s", want, m.View())
-		}
-		// And no other row's reading is left stranded above a name it does
-		// not belong to.
-		for i, l := range lines {
-			if !strings.Contains(l, "heard") {
-				continue
+		// Walk the cursor onto each running row in turn. The panel is capped
+		// near a third of the stack, so it is scrolling well before the last.
+		for _, want := range []string{"QUEUED-1", "QUEUED-2", "QUEUED-3", "QUEUED-4", "QUEUED-5"} {
+			for m.selectedWork() == nil || m.selectedWork().ticket != want {
+				m = update(t, m, keyMsg("down"))
 			}
-			if i == 0 || !strings.Contains(lines[i-1], "QUEUED-") {
-				t.Fatalf("a reading line sits under %q, not under a run:\n%s",
-					strings.TrimSpace(lines[max(i-1, 0)]), m.View())
+			g := m.geometry()
+			panel := ansi.Strip(m.workPanel(g.sideW, g.workH))
+			lines := strings.Split(panel, "\n")
+			at := slices.IndexFunc(lines, func(l string) bool {
+				return strings.Contains(l, "▸") && strings.Contains(l, want)
+			})
+			if at < 0 {
+				t.Fatalf("%dx%d: the selected row %s is not on the panel:\n%s", size.w, size.h, want, panel)
+			}
+			if at+1 >= len(lines) || !strings.Contains(lines[at+1], "heard") {
+				t.Fatalf("%dx%d: %s lost its reading to the window:\n%s", size.w, size.h, want, panel)
+			}
+			// And no reading line is left under a name it does not belong
+			// to: every one of them follows the row that produced it.
+			for i, l := range lines {
+				if !strings.Contains(l, "heard") {
+					continue
+				}
+				if i == 0 || !strings.Contains(lines[i-1], "●") {
+					t.Fatalf("%dx%d: a reading sits under %q, not under a run:\n%s",
+						size.w, size.h, strings.TrimSpace(lines[max(i-1, 0)]), panel)
+				}
 			}
 		}
 	}
 }
 
 // The panel the wide layout starts at is the narrowest one it draws, and the
-// numbers are the reading: the sparkline is the thing that yields to a
-// narrow panel, never the digits.
+// number is the reading: the sparkline is what yields to a narrow panel,
+// never the digits.
 func TestRunLineKeepsItsNumbersWhenNarrow(t *testing.T) {
 	r := workRow{lane: 1, since: time.Now().Add(-65 * time.Minute),
 		heard: time.Now().Add(-12*time.Minute - 30*time.Second),
 		rate:  []int{1, 0, 3, 0, 9, 0, 0, 0}}
 	// What a 100-column terminal — the wide layout's own threshold — leaves
-	// a list panel for its rows.
-	width := padList.inner(max(28, 100*45/100))
+	// a list panel for its rows, asked of the geometry rather than restated.
+	m, _, _ := newTestModel(t, 1)
+	resized, _ := m.Update(tea.WindowSizeMsg{Width: narrowWidth, Height: 40})
+	m = resized.(model)
+	width := padList.inner(m.geometry().sideW)
+
 	line := ansi.Strip(runLine(r, width))
-	if !strings.Contains(line, "1h5m0s") || !strings.Contains(line, "heard 12m30s ago") {
-		t.Fatalf("the numbers did not survive a %d-column panel: %q", width, line)
+	if !strings.Contains(line, "heard 12m30s ago") {
+		t.Fatalf("the number did not survive a %d-column panel: %q", width, line)
 	}
 	if !strings.ContainsAny(line, "▁█") {
 		t.Fatalf("the sparkline was dropped where it fits: %q", line)
@@ -2473,12 +2481,51 @@ func TestRunLineKeepsItsNumbersWhenNarrow(t *testing.T) {
 	if lipgloss.Width(line) > width {
 		t.Fatalf("the line is %d columns wide, panel is %d: %q", lipgloss.Width(line), width, line)
 	}
-	// Narrower than both will fit, the line goes rather than the digits.
-	tight := ansi.Strip(runLine(r, 34))
+	// The boundary itself is in columns, not bytes: the sparkline appears at
+	// exactly the width the drawn line occupies, and one column under that
+	// it goes rather than the digits.
+	fits := 0
+	for w := 1; w <= 60 && fits == 0; w++ {
+		if strings.ContainsAny(ansi.Strip(runLine(r, w)), "▁█") {
+			fits = w
+		}
+	}
+	if want := lipgloss.Width("    heard 12m30s ago") + 1 + len(r.rate); fits != want {
+		t.Fatalf("the sparkline appears at %d columns, but the line draws in %d", fits, want)
+	}
+	tight := ansi.Strip(runLine(r, fits-1))
 	if strings.ContainsAny(tight, "▁█") {
-		t.Fatalf("a sparkline crowded out the numbers: %q", tight)
+		t.Fatalf("a sparkline crowded out the number: %q", tight)
 	}
 	if !strings.Contains(tight, "heard 12m30s ago") {
 		t.Fatalf("the reading was truncated to make room for decoration: %q", tight)
+	}
+}
+
+// A squeezed panel cuts a row's second line first, so the line that survives
+// has to carry what the row carried before this one existed: the clock.
+func TestSqueezedRunRowKeepsItsClock(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.log")
+	writeLog(t, path, []byte("agent at work\n"))
+	for _, size := range []struct{ w, h int }{{80, 24}, {120, 18}, {120, 21}} {
+		m, _, _ := newTestModel(t, 3)
+		resized, _ := m.Update(tea.WindowSizeMsg{Width: size.w, Height: size.h})
+		m = fillBoard(t, resized.(model), 40)
+		m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+			TicketID: "t0", Ticket: "QUEUED-1", Queue: "implement", LogPath: path,
+			StartedAt: time.Now().Add(-90 * time.Second)}})
+		m = update(t, m, pollMsg{})
+		m = update(t, m, keyMsg("2"))
+		g := m.geometry()
+		panel := ansi.Strip(m.workPanel(g.sideW, g.workH))
+		at := slices.IndexFunc(strings.Split(panel, "\n"), func(l string) bool {
+			return strings.Contains(l, "QUEUED-1")
+		})
+		if at < 0 {
+			t.Fatalf("%dx%d: the running row is not on the panel:\n%s", size.w, size.h, panel)
+		}
+		if line := strings.Split(panel, "\n")[at]; !strings.Contains(line, "1m30s") {
+			t.Fatalf("%dx%d: the running row lost its clock: %q\n%s", size.w, size.h, line, panel)
+		}
 	}
 }

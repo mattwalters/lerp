@@ -7,9 +7,9 @@
 // render time by internal/logfmt, never on disk — with a raw toggle
 // for when the decoding is wrong, and plain text as the floor.
 //
-// The row reads the same log for its own second line: how long the run
-// has been going, how long since the log grew, and a sparkline of
-// recent activity (see pulse.go). That is a reading for the operator,
+// The row reads the same log for its own second line: how long since
+// the log grew, and a sparkline of recent activity (see pulse.go).
+// That is a reading for the operator,
 // never a timeout — SCOPE defers hang detection, and nothing here
 // holds a threshold or acts on a number.
 //

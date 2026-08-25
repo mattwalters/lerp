@@ -128,6 +128,8 @@ func newTail(path string) tail {
 func (t *tail) read() bool {
 	b, mid, reset := t.follower.next()
 	if reset {
+		// The scrollback just lost its file. That is a change to what the
+		// pane holds whether or not the new file has bytes to read yet.
 		t.buf, t.view = t.buf[:0], logView{}
 	}
 	if mid {
@@ -135,7 +137,7 @@ func (t *tail) read() bool {
 		t.view.skipLine()
 	}
 	if len(b) == 0 {
-		return false
+		return reset
 	}
 	t.buf = append(t.buf, b...)
 	t.trim()

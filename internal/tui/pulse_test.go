@@ -177,6 +177,9 @@ func TestPulseStopsReadingALogThatVanished(t *testing.T) {
 	if !p.heard.IsZero() {
 		t.Fatalf("a deleted log still reports %v as when it last spoke", p.heard)
 	}
+	if bars := sparkline(p.window()); bars != "" {
+		t.Fatalf("a deleted log still draws a line: %q", bars)
+	}
 }
 
 // A run picked up seconds ago has no history to draw, and a long flat line is
