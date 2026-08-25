@@ -41,13 +41,15 @@ type Board interface {
 // loudly which statuses it creates and which existing ones it uses; existing
 // statuses are never modified.
 //
-// The file is written only after the board calls succeed, so a failed init
-// leaves nothing behind; created reports whether this invocation wrote it.
-// The file lands uncommitted in the working tree, where any grant it carries
-// is reviewed and checked in like any other code.
+// The file is written only after the board calls succeed, so a failed board
+// call leaves nothing behind; created reports whether this invocation wrote
+// it. The file lands uncommitted in the working tree, where any grant it
+// carries is reviewed and checked in like any other code.
 //
 // Init also makes sure the repository ignores lerp's state directory, since
-// a first run fills it with things nobody wants staged.
+// a first run fills it with things nobody wants staged. That comes before
+// the config is written, so an init that fails on the config can leave the
+// ignore behind — a line that costs nothing and is right either way.
 //
 // out receives the whole conversation and report; nil discards it.
 func Init(ctx context.Context, board Board, out io.Writer, answers io.Reader, repoRoot, teamKey, teamName string) (created bool, err error) {

@@ -635,29 +635,56 @@ func TestInitIgnoresStateDirOnRepeat(t *testing.T) {
 	}
 }
 
-// A .gitignore lerp cannot write is reported and survived: init still writes
-// the config it exists to write, rather than leaving a repo whose board is
-// set up and whose lerp.toml never arrived.
-func TestInitSurvivesUnwritableGitignore(t *testing.T) {
-	dir := t.TempDir()
-	// A directory where the file goes: unwritable on every platform.
-	if err := os.Mkdir(filepath.Join(dir, ".gitignore"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	var out bytes.Buffer
-	created, err := Init(context.Background(), &fakeBoard{existing: linearDefaults}, &out, nil, dir, "LERP", "")
-	if err != nil {
-		t.Fatalf("Init error = %v", err)
-	}
-	if !created {
-		t.Error("created = false: the config was not written")
-	}
-	if _, statErr := os.Stat(filepath.Join(dir, config.RepoConfigFile)); statErr != nil {
-		t.Fatalf("config missing: %v", statErr)
-	}
-	for _, wanted := range []string{"could not ignore .lerp/", "Add .lerp/ to .gitignore yourself"} {
-		if !strings.Contains(out.String(), wanted) {
-			t.Errorf("out %q\nmissing %q", out.String(), wanted)
-		}
+// A .gitignore lerp cannot get at is reported and survived, whether it is
+// the read that fails or the write: init still writes the config it exists
+// to write, rather than leaving a repo whose board is set up and whose
+// lerp.toml never arrived.
+func TestInitSurvivesUnusableGitignore(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T, path string)
+	}{
+		{
+			// A directory where the file goes: the read fails first.
+			name: "unreadable",
+			setup: func(t *testing.T, path string) {
+				if err := os.Mkdir(path, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			// Readable, so the failure lands on the append instead.
+			name: "unwritable",
+			setup: func(t *testing.T, path string) {
+				if os.Geteuid() == 0 {
+					t.Skip("root writes a read-only file whatever its mode says")
+				}
+				if err := os.WriteFile(path, []byte("*.out\n"), 0o444); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			tc.setup(t, filepath.Join(dir, ".gitignore"))
+			var out bytes.Buffer
+			created, err := Init(context.Background(), &fakeBoard{existing: linearDefaults}, &out, nil, dir, "LERP", "")
+			if err != nil {
+				t.Fatalf("Init error = %v", err)
+			}
+			if !created {
+				t.Error("created = false: the config was not written")
+			}
+			if _, statErr := os.Stat(filepath.Join(dir, config.RepoConfigFile)); statErr != nil {
+				t.Fatalf("config missing: %v", statErr)
+			}
+			for _, wanted := range []string{"could not ignore .lerp/", "Add .lerp/ to .gitignore yourself"} {
+				if !strings.Contains(out.String(), wanted) {
+					t.Errorf("out %q\nmissing %q", out.String(), wanted)
+				}
+			}
+		})
 	}
 }
