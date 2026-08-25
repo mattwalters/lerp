@@ -201,10 +201,14 @@ dispose = "scripts/lerp-dispose"
 # lowest common denominator: takes a prompt and a working directory,
 # runs to exit, exit code means done or failed.
 [runners.claude]
-command = "claude -p"
+command = "claude -p {{prompt}} --session-id {{session}}"
 # Optional. Handed to you on eject so a headless run becomes your
-# interactive session.
-resume = "claude --resume"
+# interactive session. {{session}} is the id lerp generated for the
+# run — so a command without {{session}} cannot be ejected either,
+# however this line reads — and {{workdir}} is the workspace lerp
+# leaves standing, which Claude Code needs to be in to find the
+# session.
+resume = "cd {{workdir}} && claude --resume {{session}}"
 
 # A queue is a Linear status with instructions attached. Tickets
 # sitting in `status` are picked up, run through `runner` with
@@ -243,8 +247,11 @@ Notes:
   the workspace directory; lerp shell-quotes every value, so nothing in
   a ticket can alter the command you configured. If the runner accepts
   a caller-chosen session ID (for example, Claude Code's
-  `--session-id`), include `{{session}}` in its command. Lerp records
-  that generated ID with the run for a later eject/resume action.
+  `--session-id`), include `{{session}}` in its command. Lerp generates
+  that ID before the run starts and records it with the run, which is
+  what makes the run ejectable later — including by a `lerp` that did
+  not start it. `resume` may use `{{session}}`, `{{ticket}}` and
+  `{{workdir}}`, quoted the same way.
 - **Name the ticket in your prompt.** `{{ticket}}` is expanded inside
   the prompt as well as the command, and the identifier reaches the
   runner as `LERP_TICKET`. A prompt is shared by every ticket in its
@@ -329,7 +336,16 @@ ticket and pressing `S` starts it now, past the lane limit: force-start
 overrides the lane count and nothing else, so the claim protocol still
 runs and a blocked or already-claimed ticket is refused with the reason.
 Ordering is not a keystroke; to change what runs *next*, move tickets in
-Linear. The
+Linear. `e`, eject, is the other key the list answers to: on a running
+row it stops that agent, frees the lane and hands back the runner's own
+`resume` command, so the headless run becomes your interactive session
+in the workspace lerp leaves standing. Nothing is written to Linear —
+the ticket keeps its claim and its status, because ejecting is taking
+the work over rather than abandoning it — and nothing is disposed, so
+the workspace, its git worktree included, is now yours to finish in and
+yours to remove. The command is shown until you dismiss it and also
+lands in `.lerp/loop.log`. A runner with no `resume` in its config
+cannot be ejected, so the key is not offered on its runs. The
 Inbox view lists what waits on a
 human: unclaimed tickets, and the operator's own claimed tickets,
 sitting in a status no queue serves. It is a table, one row per
@@ -381,11 +397,12 @@ main pane on it and `esc` closes it again — each panel remembers its
 own answer, and the Inbox starts closed while Work starts open — `s`
 sorts the Inbox, `P` scopes it to a project and `/` searches it, `o`
 opens the selected ticket in Linear, `S` force-starts the selected
-queued ticket, `pgup`/`pgdn` scroll the log or the ticket, `end`
-resumes following, `r` shows the raw log, `q` quits (or backs out of
-the promote picker). With a filter on, `esc` clears it before it
-closes the pane. While the search prompt is open it has the keyboard —
-a `p` or a `q` typed into it is text — and `ctrl+c` still quits.
+queued ticket, `e` ejects the selected run, `pgup`/`pgdn` scroll the
+log or the ticket, `end` resumes following, `r` shows the raw log, `q`
+quits (or backs out of the promote picker or an eject). With a filter
+on, `esc` clears it before it closes the pane. While the search prompt
+is open it has the keyboard — a `p` or a `q` typed into it is text —
+and `ctrl+c` still quits.
 
 Quitting (`q` or `ctrl+c`) closes the screen, stops future passes, and
 waits briefly for a pass already in flight to settle. The agents are

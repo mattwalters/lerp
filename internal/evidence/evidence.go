@@ -47,8 +47,16 @@ type Record struct {
 	// its code; the file is how a finished run still reports one. Empty on
 	// records written before it existed, which ExitStatus reads as "no
 	// status", the same as a run that never got that far.
-	ExitPath  string `json:"exit_path,omitempty"`
+	ExitPath string `json:"exit_path,omitempty"`
+	// SessionID is the session the agent was told to open, when its runner's
+	// command asked for one. It is written before the agent starts, so a run
+	// left behind by a previous lerp can still be resumed; a run whose runner
+	// mints its own session ids has none here and cannot be ejected.
 	SessionID string `json:"session_id,omitempty"`
+	// Ticket is the human identifier the run was started for — LERP-42, not
+	// TicketID's opaque Linear id. It is what {{ticket}} expands to, so the
+	// resume command eject hands over reads like the command lerp ran.
+	Ticket string `json:"ticket,omitempty"`
 }
 
 // ErrLocked reports that another lerp process is running in this clone.
@@ -155,6 +163,28 @@ func (e *Evidence) Attach(runID string, pid int) (Record, error) {
 		return record, err
 	}
 	return record, nil
+}
+
+// Disown drops the two things that make a record actionable — the workspace
+// to dispose and the ticket to settle — leaving a record that says only that
+// a run was here.
+//
+// It is how a workspace is handed to the operator (eject): the record is
+// removed straight afterwards, but a removal can fail and a process can die
+// between the two, and a leftover record is read by the next lerp as a dead
+// run to reap. Reaping this one disposes nothing and touches no ticket, which
+// is the whole promise — an ejected workspace is the operator's, and their
+// ticket keeps the claim they took over with.
+func (e *Evidence) Disown(runID string) error {
+	record, err := e.Read(runID)
+	if err != nil {
+		return fmt.Errorf("disowning run %s: %w", runID, err)
+	}
+	record.Workspace, record.TicketID = "", ""
+	if err := writeJSON(filepath.Join(e.runPath(runID), "metadata.json"), record); err != nil {
+		return fmt.Errorf("disowning run %s: %w", runID, err)
+	}
+	return nil
 }
 
 // Read returns one run's recorded evidence. It returns fs.ErrNotExist when

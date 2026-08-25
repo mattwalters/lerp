@@ -18,6 +18,7 @@ type keymap struct {
 	Detail     key.Binding
 	Close      key.Binding
 	Promote    key.Binding
+	Eject      key.Binding
 	ForceStart key.Binding
 	Sort       key.Binding
 	Project    key.Binding
@@ -50,6 +51,7 @@ func newKeymap() keymap {
 		Detail:  key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open detail")),
 		Close:   key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "close detail")),
 		Promote: key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "promote")),
+		Eject:   key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "eject")),
 		// S, not s: a letter that means two different things depending on
 		// which panel has focus is worse than a letter nothing else uses.
 		// The description is "past the limit", not LERP-53's "past the lane
@@ -86,7 +88,7 @@ func (k keymap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Attention, k.Work, k.NextPanel, k.PrevPanel,
 			k.Up, k.Down, k.PageUp, k.PageDown, k.Top, k.Bottom},
-		{k.Detail, k.Close, k.Promote, k.ForceStart, k.Sort, k.Project, k.Search,
+		{k.Detail, k.Close, k.Promote, k.Eject, k.ForceStart, k.Sort, k.Project, k.Search,
 			k.Open, k.Raw, k.Help, k.Quit},
 	}
 }
@@ -94,15 +96,17 @@ func (k keymap) FullHelp() [][]key.Binding {
 // rowKeys says which of a panel's keys are live where the cursor is
 // standing: r renders something, o has a door to open, esc has a filter to
 // clear, P has a project to cycle to, p has somewhere to promote into and
-// the room to draw the picker. An advertised key that does nothing is worse
-// than one left out, because pressing it is how the operator finds out —
-// and r would flip the raw toggle invisibly.
+// the room to draw the picker, e has a live run whose runner can resume. An
+// advertised key that does nothing is worse than one left out, because
+// pressing it is how the operator finds out — and r would flip the raw
+// toggle invisibly.
 type rowKeys struct {
 	hasLog     bool
 	hasURL     bool
 	filtered   bool
 	projects   bool
 	canPromote bool
+	canEject   bool
 }
 
 // panelHelp is the line a focused panel carries: the keys that act on the
@@ -113,10 +117,10 @@ type rowKeys struct {
 // a hint that gets truncated away is a hint that was not there.
 //
 // Which is also why a filter swaps / for esc rather than adding it, why P
-// drops out of a list with no project in it, and why p drops out where there
-// is no status to promote into or no room for the picker it opens: the line
-// is about forty columns wide, so a key that does nothing here costs one
-// that does.
+// drops out of a list with no project in it, why p drops out where there is
+// no status to promote into or no room for the picker it opens, and why e
+// shows only on a live run under a runner that can resume: the line is about
+// forty columns wide, so a key that does nothing here costs one that does.
 //
 // The order is what survives a narrow panel, since bubbles drops hints off
 // the end to fit: what acts on the row under the cursor first, then the two
@@ -143,6 +147,9 @@ func (k keymap) panelHelp(p panel, live rowKeys) []key.Binding {
 			b = append(b, short(k.Project, "project"))
 		}
 	case panelWork:
+		if live.canEject {
+			b = append(b, k.Eject)
+		}
 		if live.hasLog {
 			b = append(b, short(k.Raw, "raw"))
 		}

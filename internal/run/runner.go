@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/mattwalters/lerp/internal/config"
+	"github.com/mattwalters/lerp/internal/evidence"
 )
 
 // Result is the outcome of one runner invocation. A non-zero ExitCode is a
@@ -43,6 +44,12 @@ type Invocation struct {
 	// lerp that was not the agent's parent and so can never wait() for it.
 	// Empty means no wrapper at all and byte-for-byte the configured command.
 	ExitPath string
+	// SessionID, when set, is the session the runner is told to open, rather
+	// than one minted here. A caller that has to be able to resume the run
+	// later — eject hands over the runner's own resume command — must know
+	// the id before the agent starts, so it can be recorded with the run;
+	// an id first returned in Result would be lost with the process.
+	SessionID string
 
 	// Started, when set, is called once with the runner's PID as soon as the
 	// process exists, before it is waited on. It is how run evidence learns
@@ -63,7 +70,8 @@ type Invocation struct {
 // identifier is also exported as TicketEnv.
 //
 // A session ID is generated and returned only when the command uses
-// {{session}}.
+// {{session}}, and only when inv.SessionID is empty: a caller that minted one
+// itself gets that one substituted, unchanged.
 //
 // When inv.ExitPath is set, the command is wrapped in a shell that writes the
 // command's own exit status to that file and then exits with it, so a
@@ -77,15 +85,15 @@ func Execute(ctx context.Context, inv Invocation) (Result, error) {
 		return result, errors.New("runner invocation requires a ticket")
 	}
 
-	sessionID := ""
-	if strings.Contains(inv.Runner.Command, "{{session}}") {
+	sessionID := inv.SessionID
+	if sessionID == "" {
 		var err error
-		sessionID, err = newSessionID()
+		sessionID, err = NewSessionID(inv.Runner)
 		if err != nil {
 			return result, fmt.Errorf("generating runner session ID: %w", err)
 		}
-		result.SessionID = sessionID
 	}
+	result.SessionID = sessionID
 
 	// Placeholder values go into the prompt unquoted: expand shell-escapes the
 	// whole prompt when it substitutes it into the command.
@@ -165,7 +173,9 @@ func withExitStatus(command, exitPath string) (string, error) {
 }
 
 // expand replaces the supported command-template placeholders. Values are
-// quoted for /bin/sh so ticket text cannot alter the configured command.
+// quoted for /bin/sh so ticket text cannot alter the configured command. A
+// resume template is expanded through here too, with no prompt: resuming
+// hands the operator the session, and the session already holds the prompt.
 func expand(command, prompt, ticket, workdir, sessionID string) string {
 	command = strings.ReplaceAll(command, "{{prompt}}", shellQuote(prompt))
 	command = strings.ReplaceAll(command, "{{ticket}}", shellQuote(ticket))
@@ -177,13 +187,49 @@ func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
-// newSessionID returns a random RFC 4122 version 4 UUID.
+// ResumeCommand is the runner's own resume command for a recorded run: what
+// eject hands the operator so the headless run becomes their interactive
+// session. It returns "" for a runner with no resume template, which is what
+// makes that runner un-ejectable.
+//
+// The same substitution Execute makes, quoted the same way, so what the
+// operator pastes is what lerp would have run. {{ticket}} is the human
+// identifier the run was started for, {{workdir}} its workspace — the one
+// lerp deliberately leaves behind on eject.
+func ResumeCommand(runner config.Runner, record evidence.Record) string {
+	if runner.Resume == "" {
+		return ""
+	}
+	return expand(runner.Resume, "", record.Ticket, record.Workspace, record.SessionID)
+}
+
+// OpensSession reports whether runs under this runner get a session id lerp
+// chose — the one thing that can later be resumed. It is the rule NewSessionID
+// applies, asked ahead of a run: a caller deciding whether a run could ever be
+// ejected must get the same answer as the run itself.
+func OpensSession(runner config.Runner) bool {
+	return strings.Contains(runner.Command, "{{session}}")
+}
+
+// NewSessionID returns the session id a run under this runner should open
+// with, or "" for a runner whose command never asks for one. The rule lives
+// here alone: a session id exists exactly when the command template has a
+// {{session}} to put it in, whether Execute mints it or a caller that has to
+// record it first does.
 //
 // The UUID shape is not decoration: agent CLIs that accept a caller-chosen
 // session id tend to require one. Claude Code's --session-id rejects anything
 // that is not a valid UUID, so a bare hex string would make {{session}} — and
 // with it the resume command that eject hands over — unusable.
-func newSessionID() (string, error) {
+func NewSessionID(runner config.Runner) (string, error) {
+	if !OpensSession(runner) {
+		return "", nil
+	}
+	return newUUID()
+}
+
+// newUUID returns a random RFC 4122 version 4 UUID.
+func newUUID() (string, error) {
 	var b [16]byte
 	if _, err := io.ReadFull(rand.Reader, b[:]); err != nil {
 		return "", err
