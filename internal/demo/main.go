@@ -8,7 +8,9 @@
 // It lives under internal/ rather than cmd/ deliberately: `go build ./...`
 // and `go vet ./...` compile it, so `make check` already catches TUI and loop
 // API drift, while `go install ./cmd/lerp` never ships it. Nothing in lerp's
-// own binary may import it.
+// own binary imports it. (`go install ./...` does build it, as it builds every
+// main in the module; `make install` is the documented path and names
+// ./cmd/lerp.)
 package main
 
 import (
@@ -52,6 +54,12 @@ const (
 	// interval is far below loop.DefaultInterval's 12s so that several passes
 	// land inside the cast's runtime: the board updating is one of the beats.
 	interval = 2 * time.Second
+	// quitSettle is how long the harness gives the SIGKILLs it just sent
+	// before deleting the root out from under whatever they were killing.
+	// Nothing here is worth a synchronization primitive: the processes are a
+	// shell and a sleep, and the cost of the window closing late is a stray
+	// temp directory.
+	quitSettle = 250 * time.Millisecond
 )
 
 func main() {
@@ -70,8 +78,23 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("create demo root: %w", err)
 	}
 	// The root holds the config, the stub agent, and every lane's run
-	// evidence and workspace, so removing it is the whole of the cleanup.
-	defer os.RemoveAll(root)
+	// evidence and workspace, so removing it is the whole of the cleanup —
+	// but only once nothing is still running inside it.
+	//
+	// cmd/lerp deliberately leaves its agents alive on quit, because their run
+	// evidence survives and the next lerp adopts them. The demo takes its
+	// whole world with it: the evidence goes when the root does, so an agent
+	// left behind here is one nothing can ever adopt — a stray `sh` outliving
+	// the render, writing into a deleted log. Cancelling first kills each
+	// run's process group (run.Execute's cmd.Cancel), and the kill is
+	// asynchronous, so the removal waits a moment behind it rather than racing
+	// a provision command that would re-create the root after it is gone.
+	ctx, cancel := context.WithCancel(ctx)
+	defer func() {
+		cancel()
+		time.Sleep(quitSettle)
+		os.RemoveAll(root)
+	}()
 
 	if err := os.Setenv(dirEnv, root); err != nil {
 		return fmt.Errorf("export %s: %w", dirEnv, err)

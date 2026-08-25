@@ -65,6 +65,10 @@ demo: ## Re-record docs/demo.gif from docs/demo.tape (needs vhs)
 	  echo 'demo: vhs is not installed — see https://github.com/charmbracelet/vhs'; \
 	  exit 1; }
 	go build -o $(DEMO_BIN)/lerp ./internal/demo
+# Removed first so the cap below is an existence check too: the GIF is
+# committed, so measuring it would otherwise report a render that never
+# happened as a clean one.
+	rm -f $(DEMO_GIF)
 	vhs $(DEMO_TAPE)
 	@size=$$(wc -c < $(DEMO_GIF) | tr -d ' '); \
 	  test "$$size" -le $(DEMO_MAX_BYTES) || { \
