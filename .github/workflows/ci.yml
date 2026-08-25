@@ -16,3 +16,21 @@ jobs:
       # The gate lives in the Makefile so CI and a developer's local run can
       # never drift apart.
       - run: make check
+
+  # The cast rots silently: a tape whose keystrokes no longer drive the UI
+  # they were written against still renders, it just renders the wrong thing.
+  # This job re-records it and checks the exit code — nothing diffs the bytes,
+  # because GIF output is not reproducible enough to compare and what is worth
+  # knowing is only whether the script still drives lerp.
+  demo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      # With no `path`, the action installs vhs and its ttyd/ffmpeg
+      # dependencies and stops there, so the render itself stays `make demo` —
+      # the same command a local re-record runs.
+      - uses: charmbracelet/vhs-action@v2
+      - run: make demo
