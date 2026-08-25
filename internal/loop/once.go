@@ -118,7 +118,7 @@ func Once(ctx context.Context, o OnceOptions) (bool, error) {
 	if err != nil {
 		return true, fmt.Errorf("run issue %s: %w", issue.ID, err)
 	}
-	if _, err := conclude(ctx, o.Client, issue, queue, o.Repo, result.ExitCode, o.Log); err != nil {
+	if _, err := conclude(ctx, o.Client, issue, queue, o.Repo, result.ExitCode, viewerID, o.Log); err != nil {
 		return true, err
 	}
 	return true, nil
@@ -188,7 +188,14 @@ func statusRelevance(repo *config.RepoConfig) func(string) StatusRelevance {
 // nothing reports an error. Coming to rest in a status no queue serves keeps
 // the claim on purpose, because that is what parks the ticket on the operator
 // in the inbox view.
-func conclude(ctx context.Context, client linear.Client, issue linear.Issue, queue config.Queue, repo *config.RepoConfig, exitCode int, log io.Writer) (string, error) {
+//
+// viewerID is the operating user, and the claim is released only when the
+// ticket is still assigned to them: a human who took the run over mid-flight
+// keeps what they took. This is the one place in the codebase that decides
+// whether a finished run releases its claim — the rule has been got wrong
+// twice by being written out a second time (LERP-50, LERP-59), so reap calls
+// this rather than carrying its own copy.
+func conclude(ctx context.Context, client linear.Client, issue linear.Issue, queue config.Queue, repo *config.RepoConfig, exitCode int, viewerID string, log io.Writer) (string, error) {
 	target, rule := queue.OnFailure, "on_failure"
 	if exitCode == 0 {
 		target, rule = queue.OnSuccess, "on_success"
@@ -230,6 +237,11 @@ func conclude(ctx context.Context, client linear.Client, issue linear.Issue, que
 		}
 	}
 	if !servedStatuses(repo)[final] {
+		return note, nil
+	}
+	if current.AssigneeID != viewerID {
+		// Somebody else holds the ticket now — most often a human who took
+		// the run over while it ran. Unassigning would take their claim.
 		return note, nil
 	}
 	if err := client.UnassignIssue(ctx, issue.ID); err != nil {

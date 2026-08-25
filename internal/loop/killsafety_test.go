@@ -21,6 +21,7 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/mattwalters/lerp/internal/config"
 	"github.com/mattwalters/lerp/internal/evidence"
 	"github.com/mattwalters/lerp/internal/linear"
 )
@@ -170,9 +171,11 @@ func TestKillSafetyAgentKilledMidRun(t *testing.T) {
 // Scenario 2 — kill -9 lerp itself mid-run. The restarted lerp adopts the
 // still-live agents, and each finished run's move rule is applied correctly:
 // an agent that moved its own ticket has decided, and the reap leaves that
-// decision alone; an agent that exited without concluding cannot report an
-// exit code to a lerp that was not its parent, so its ticket is released back
-// to its queue and re-run from the beginning — the tolerated worst case.
+// decision alone; an agent that exited without concluding and without
+// recording an exit status told its successor nothing about how it ended, so
+// its ticket is released back to its queue and re-run from the beginning —
+// the tolerated worst case. A run that did record a status is settled instead;
+// that is TestAdoptedRunSettlesFromItsRecordedExitStatus.
 func TestKillSafetyLerpKilledMidRun(t *testing.T) {
 	execute, reruns := recordingExecute("")
 	h := newHarness(t, 2, execute)
@@ -500,4 +503,182 @@ func TestKillSafetyBothWinClaimRace(t *testing.T) {
 	if got := hb.issue(t, "contested"); got.Status != "Done" || got.AssigneeID != "lerp-b" {
 		t.Errorf("contested ticket = %+v, want Done and held by the winner", got)
 	}
+}
+
+// Scenario 6 — an adopted run that finishes. Adoption remembers a run, and
+// remembering used to be all it did: the successor was not the agent's parent,
+// so it could never wait() for an exit code, and a run that finished under it
+// silently cost the whole stage its on_success hop. The run now records its own
+// exit status beside its log, so a lerp that restarted across the finish
+// applies the queue's move rule exactly as the process that started the run
+// would have.
+//
+// The fallback is the point of the design: anything the successor cannot read
+// as a clean status — no file, a torn one, a queue the config no longer names —
+// settles the way it always did, claim released and status untouched, so the
+// worst case is the same worst case as before. Each case is one adopted run: a
+// record and a real agent this lerp never started. A blocker keeps the settled
+// ticket from being re-picked in the same pass, so the claim the reap left is
+// read straight off the board rather than inferred.
+func TestAdoptedRunSettlesFromItsRecordedExitStatus(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// exit is what the run left in its exit file; unrecorded means it
+		// left no file at all.
+		exit       string
+		unrecorded bool
+		repo       *config.RepoConfig
+		// movedTo is somebody else moving the ticket while the run was in
+		// flight, when non-empty.
+		movedTo      string
+		wantEvent    EventType
+		wantExitCode int
+		wantStatus   string
+		wantAssignee string
+		wantNote     bool
+	}{{
+		// The whole ticket: a clean exit hops to on_success, and because a
+		// queue serves the destination the claim goes with it — an assigned
+		// ticket is never eligible, so keeping it would strand the ticket in
+		// a queue that could never pick it up.
+		name: "a clean exit takes the on_success hop and releases the claim",
+		exit: "0\n", repo: chainedRepo(),
+		wantEvent: EventExited, wantStatus: "Done", wantAssignee: "",
+	}, {
+		name: "a non-zero exit takes the on_failure hop",
+		exit: "1\n",
+		// Nothing serves "Needs Help", so the ticket rests there on the
+		// operator, claim intact.
+		wantEvent: EventExited, wantExitCode: 1, wantStatus: "Needs Help", wantAssignee: "fake-viewer",
+	}, {
+		// A shell reports a signalled child as 128+n. It is non-zero, so it
+		// is a failure, with no special case anywhere for the number.
+		name:      "a signalled agent is a failure",
+		exit:      "137\n",
+		wantEvent: EventExited, wantExitCode: 137, wantStatus: "Needs Help", wantAssignee: "fake-viewer",
+	}, {
+		name: "an on_success destination no queue serves keeps its claim",
+		exit: "0\n",
+		// testRepo's "Done" is nobody's queue status: the ticket has finished
+		// the pipeline and waits on a human, which is what the claim marks.
+		wantEvent: EventExited, wantStatus: "Done", wantAssignee: "fake-viewer",
+	}, {
+		// LERP-54 unchanged: whoever moved the ticket keeps their move, and
+		// the stage that did not run is reported rather than forced.
+		name: "a ticket moved mid-run keeps the move and reports the skipped hop",
+		exit: "0\n", movedTo: "Escalated",
+		wantEvent: EventExited, wantStatus: "Escalated", wantAssignee: "fake-viewer", wantNote: true,
+	}, {
+		// SIGKILL, or a laptop that lost power: the run never reached its own
+		// last line. Precisely today's behaviour — status untouched, claim
+		// released, re-run from the beginning.
+		name: "a run that recorded nothing falls back to releasing the claim", unrecorded: true,
+		wantEvent: EventReaped, wantStatus: "Todo", wantAssignee: "",
+	}, {
+		name:      "a torn status is not guessed at",
+		exit:      "boom\n",
+		wantEvent: EventReaped, wantStatus: "Todo", wantAssignee: "",
+	}, {
+		// The queue was renamed in lerp.toml while the run was in flight, so
+		// there is no move rule left to apply to it.
+		name: "a queue the config no longer names falls back too",
+		exit: "0\n", repo: renamedQueueRepo(),
+		wantEvent: EventReaped, wantStatus: "Todo", wantAssignee: "",
+	}} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, 1, nil)
+			h.rec.o.Alive = evidence.Alive // the agent below really exits
+			if tc.repo != nil {
+				h.rec.o.Repo = tc.repo
+			}
+			agent := startFakeAgent(t)
+			record := orphanRecord(t, h, 1, "tkt", agent)
+			h.fake.AddIssue("LERP", linear.Issue{
+				ID: "tkt", Identifier: "LERP-1", Status: "Todo", AssigneeID: "fake-viewer",
+			})
+			h.fake.AddIssue("LERP", linear.Issue{ID: "blocker", Identifier: "LERP-2", Status: "In Progress"})
+			h.fake.Block("tkt", "blocker")
+			ctx := context.Background()
+
+			// The restart: the live run is adopted, not restarted.
+			h.rec.Tick(ctx)
+			h.waitEvents(t, EventAdopted, 1)
+			h.drainEvents()
+
+			if tc.movedTo != "" {
+				if err := h.fake.MoveIssue(ctx, "tkt", tc.movedTo); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if !tc.unrecorded {
+				// What the run's own epilogue writes just before the shell
+				// lerp recorded a PID for goes away.
+				if err := os.WriteFile(record.ExitPath, []byte(tc.exit), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			agent.finish()
+
+			// Reaping is synchronous on the tick, so everything this pass
+			// decided is in the channel by the time Tick returns.
+			h.rec.Tick(ctx)
+			var terminal []Event
+			for _, ev := range h.drainEvents() {
+				if ev.Type == EventExited || ev.Type == EventReaped {
+					terminal = append(terminal, ev)
+				}
+				if ev.Type == EventError {
+					t.Fatalf("unexpected error event: %v", ev.Err)
+				}
+			}
+			if len(terminal) != 1 || terminal[0].Type != tc.wantEvent {
+				t.Fatalf("terminal events = %+v, want exactly one %s", terminal, tc.wantEvent)
+			}
+			ev := terminal[0]
+			if ev.RunID != record.RunID || ev.Lane != 1 || ev.TicketID != "tkt" {
+				t.Errorf("terminal event = %+v, want the adopted run's own identity", ev)
+			}
+			if tc.wantEvent == EventExited {
+				if ev.ExitCode != tc.wantExitCode {
+					t.Errorf("ExitCode = %d, want %d", ev.ExitCode, tc.wantExitCode)
+				}
+				// The reap knows the ticket's human identifier because it
+				// read the ticket; the TUI's status line prints it.
+				if ev.Ticket != "LERP-1" {
+					t.Errorf("Ticket = %q, want LERP-1", ev.Ticket)
+				}
+			}
+			if (ev.Note != "") != tc.wantNote {
+				t.Errorf("Note = %q, want a skipped-hop note: %v", ev.Note, tc.wantNote)
+			}
+			assertReaped(t, h, record)
+			if got := h.issue(t, "tkt"); got.Status != tc.wantStatus || got.AssigneeID != tc.wantAssignee {
+				t.Errorf("settled ticket = %+v, want %q assigned to %q",
+					got, tc.wantStatus, tc.wantAssignee)
+			}
+		})
+	}
+}
+
+// chainedRepo is testRepo with a second queue serving the first's on_success
+// target: the stock pipeline's shape, where a finished stage hands the ticket
+// to the next one. It is the only arrangement in which the claim-release rule
+// bites — LERP-50 and LERP-59 were both this case, silently stranding tickets
+// in a queue that could never pick them up.
+func chainedRepo() *config.RepoConfig {
+	repo := testRepo()
+	repo.Queues["review"] = config.Queue{
+		Status: "Done", Prompt: "review the work", Runner: "agent", OnSuccess: "Shipped",
+	}
+	return repo
+}
+
+// renamedQueueRepo is testRepo with its queue under a different name, standing
+// in for a lerp.toml edited while a run was in flight: the record names a queue
+// this config no longer has.
+func renamedQueueRepo() *config.RepoConfig {
+	repo := testRepo()
+	repo.Queues["backlog"] = repo.Queues["todo"]
+	delete(repo.Queues, "todo")
+	return repo
 }

@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -38,6 +39,10 @@ type Invocation struct {
 	Ticket  string // human identifier, e.g. LERP-42
 	Workdir string
 	LogPath string
+	// ExitPath, when set, is where the run records its own exit status, for a
+	// lerp that was not the agent's parent and so can never wait() for it.
+	// Empty means no wrapper at all and byte-for-byte the configured command.
+	ExitPath string
 
 	// Started, when set, is called once with the runner's PID as soon as the
 	// process exists, before it is waited on. It is how run evidence learns
@@ -59,6 +64,10 @@ type Invocation struct {
 //
 // A session ID is generated and returned only when the command uses
 // {{session}}.
+//
+// When inv.ExitPath is set, the command is followed by an epilogue that writes
+// the command's own exit status to that file and then exits with it, so a
+// successor process can learn how a run it did not start ended.
 //
 // The command runs in its own process group. Cancelling ctx kills that entire
 // group, so child processes do not outlive the runner.
@@ -82,6 +91,13 @@ func Execute(ctx context.Context, inv Invocation) (Result, error) {
 	// whole prompt when it substitutes it into the command.
 	prompt := inv.Queue.ExpandPrompt(inv.Ticket)
 	command := expand(inv.Runner.Command, prompt, inv.Ticket, inv.Workdir, sessionID)
+	if inv.ExitPath != "" {
+		var err error
+		command, err = withExitStatus(command, inv.ExitPath)
+		if err != nil {
+			return result, err
+		}
+	}
 	log, err := os.OpenFile(inv.LogPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	if err != nil {
 		return result, fmt.Errorf("opening runner log: %w", err)
@@ -117,6 +133,30 @@ func Execute(ctx context.Context, inv Invocation) (Result, error) {
 	}
 	result.ExitCode = exitErr.ExitCode()
 	return result, nil
+}
+
+// withExitStatus appends the epilogue that records the command's own exit
+// status. The path is made absolute first — the command runs with cwd set to
+// the workspace, while the path points into the clone's .lerp/runs — and
+// quoted like every other substitution.
+//
+// The parts are separated by newlines rather than semicolons so a configured
+// command ending in a comment cannot swallow the epilogue. `exit $s` matters
+// as much as the file: without it Execute's own Wait() would report the echo's
+// status, changing the result of every live run.
+//
+// One consequence is worth naming. The command is now several statements, so
+// sh no longer exec-optimizes itself away and the PID lerp records is the
+// wrapping shell — the very process that writes the file. Alive therefore goes
+// false only after the status is on disk, which is what lets a reader trust an
+// absent file to mean "this run never finished". Both kill sites signal the
+// process group, so the extra shell changes nothing there.
+func withExitStatus(command, exitPath string) (string, error) {
+	abs, err := filepath.Abs(exitPath)
+	if err != nil {
+		return "", fmt.Errorf("resolving runner exit path: %w", err)
+	}
+	return command + "\ns=$?\necho \"$s\" > " + shellQuote(abs) + "\nexit $s\n", nil
 }
 
 // expand replaces the supported command-template placeholders. Values are

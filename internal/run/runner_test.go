@@ -244,6 +244,133 @@ wait
 	t.Errorf("child process %d still exists after runner cancellation", pid)
 }
 
+// The whole point of the epilogue: a run leaves its exit status on disk for a
+// lerp that was not its parent, without changing the code Execute itself
+// reports. The workspace is deliberately somewhere other than the exit file's
+// directory — the wrapper runs with cwd set to the workspace, and a relative
+// path would land the status in the wrong place.
+func TestExecuteRecordsItsOwnExitStatus(t *testing.T) {
+	for _, want := range []int{0, 3} {
+		t.Run(strconv.Itoa(want), func(t *testing.T) {
+			dir := t.TempDir()
+			workdir := t.TempDir()
+			script := writeScript(t, dir, "runner.sh", "exit "+strconv.Itoa(want)+"\n")
+			exitPath := filepath.Join(dir, "exit")
+
+			result, err := Execute(context.Background(), Invocation{
+				Runner:   config.Runner{Command: shellQuote(script)},
+				Ticket:   "LERP-1",
+				Workdir:  workdir,
+				LogPath:  filepath.Join(dir, "runner.log"),
+				ExitPath: exitPath,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.ExitCode != want {
+				t.Errorf("ExitCode = %d, want %d — the epilogue must not change what Execute reports", result.ExitCode, want)
+			}
+			recorded, err := os.ReadFile(exitPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.TrimSpace(string(recorded)) != strconv.Itoa(want) {
+				t.Errorf("exit file = %q, want %d", recorded, want)
+			}
+		})
+	}
+}
+
+// A command template ending in a comment is why the epilogue is joined with
+// newlines rather than semicolons: a `;` would be commented out along with
+// everything after it, and the status would never be written.
+func TestExecuteRecordsItsExitStatusAfterATrailingComment(t *testing.T) {
+	dir := t.TempDir()
+	script := writeScript(t, dir, "runner.sh", "exit 5\n")
+	exitPath := filepath.Join(dir, "exit")
+
+	result, err := Execute(context.Background(), Invocation{
+		Runner:   config.Runner{Command: shellQuote(script) + " # run the agent"},
+		Ticket:   "LERP-1",
+		Workdir:  dir,
+		LogPath:  filepath.Join(dir, "runner.log"),
+		ExitPath: exitPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ExitCode != 5 {
+		t.Errorf("ExitCode = %d, want 5", result.ExitCode)
+	}
+	recorded, err := os.ReadFile(exitPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(recorded)) != "5" {
+		t.Errorf("exit file = %q, want 5", recorded)
+	}
+}
+
+// Without an exit path there is no wrapper and nothing to record: the dev
+// harness that owns no run evidence must not start writing status files into
+// somebody else's directory.
+func TestExecuteWithoutAnExitPathRecordsNothing(t *testing.T) {
+	dir := t.TempDir()
+	script := writeScript(t, dir, "runner.sh", "exit 4\n")
+
+	result, err := Execute(context.Background(), Invocation{
+		Runner:  config.Runner{Command: shellQuote(script)},
+		Ticket:  "LERP-1",
+		Workdir: dir,
+		LogPath: filepath.Join(dir, "runner.log"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ExitCode != 4 {
+		t.Errorf("ExitCode = %d, want 4", result.ExitCode)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if entry.Name() == "exit" {
+			t.Errorf("an exit file was written for an invocation that asked for none")
+		}
+	}
+}
+
+// Reap trusts an absent exit file to mean "this run never finished", and that
+// is only sound because the process lerp recorded a PID for is the wrapping
+// shell — the very thing that writes the file — rather than the agent itself.
+// So the recorded PID must not be the agent's: if sh exec-optimized itself
+// away, Alive would go false while the status was still unwritten.
+func TestExecuteRecordsThePIDOfTheShellThatWritesTheStatus(t *testing.T) {
+	dir := t.TempDir()
+	script := writeScript(t, dir, "runner.sh", "printf '%s' \"$$\"\n")
+	logPath := filepath.Join(dir, "runner.log")
+	var recordedPID int
+
+	if _, err := Execute(context.Background(), Invocation{
+		Runner:   config.Runner{Command: shellQuote(script)},
+		Ticket:   "LERP-1",
+		Workdir:  dir,
+		LogPath:  logPath,
+		ExitPath: filepath.Join(dir, "exit"),
+		Started:  func(pid int) { recordedPID = pid },
+	}); err != nil {
+		t.Fatal(err)
+	}
+	agentPID, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(agentPID) == strconv.Itoa(recordedPID) {
+		t.Errorf("recorded PID %d is the agent's own, want the wrapping shell's", recordedPID)
+	}
+}
+
 func writeScript(t *testing.T, dir, name, body string) string {
 	t.Helper()
 	path := filepath.Join(dir, name)

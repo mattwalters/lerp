@@ -974,10 +974,11 @@ func TestPromoteReleasesTheClaimThatParkedTheTicket(t *testing.T) {
 	issue := linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Todo"}
 	h.fake.AddIssue("LERP", issue)
 
-	if _, won, err := claimForQueue(ctx, h.fake, issue.ID, queue.Status); err != nil || !won {
+	viewerID, won, err := claimForQueue(ctx, h.fake, issue.ID, queue.Status)
+	if err != nil || !won {
 		t.Fatalf("claimForQueue = (%v, %v), want the claim won", won, err)
 	}
-	if _, err := conclude(ctx, h.fake, issue, queue, repo, 1, nil); err != nil {
+	if _, err := conclude(ctx, h.fake, issue, queue, repo, 1, viewerID, nil); err != nil {
 		t.Fatalf("conclude: %v", err)
 	}
 	parked := h.issue(t, "one")
