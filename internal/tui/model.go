@@ -1509,9 +1509,10 @@ func (m *model) attentionRows(width int) ([]string, int) {
 // titleFloor the project drops out of the row entirely and the title takes
 // the space back — a title cut shorter than this has stopped being a title,
 // and the project is the one column a routing decision can most often do
-// without. The priority is held to a cheaper bar, titleStub: it costs a
-// fraction of the project's width, so it goes on paying for itself down to a
-// title as narrow as the priority column is itself.
+// without. The priority is held to a lower bar, titleStub — what the column
+// itself costs — because it is the fact a routing decision least often does
+// without: it goes on paying for itself down to a title as narrow as the
+// column is.
 const (
 	titleFloor = 20
 	titleStub  = len("Urgent") + 2
@@ -1529,8 +1530,9 @@ const (
 // its width back to the title rather than holding it while the title reads
 // as an ellipsis. Below that the fixed columns are all that is left and the
 // title is the ellipsis; narrower still and the cut reaches the columns
-// themselves, taking the status — the last of them, and the only one a
-// selected row repeats — before the identifier and the leverage, which
+// themselves, taking the status — the last of them, and the only one whose
+// width the operator's own status vocabulary sets — before the identifier
+// and the leverage, the two facts that make a row addressable at all, which
 // survive any width.
 func attentionRow(it loop.AttentionItem, selected bool, idW, statusW, projW, width int) string {
 	id := styleTicket.Render(it.Ticket) + strings.Repeat(" ", max(0, idW-lipgloss.Width(it.Ticket)))
@@ -1857,10 +1859,7 @@ func (m model) attentionDetail(width int) string {
 			styleFaint.Render("(P cycles the project filter back to all)")
 	}
 	it := m.selectedAttention()
-	status := it.Status
-	if it.Relevance == loop.StatusUnnamed {
-		status += " " + styleAttention.Render("⚠")
-	}
+	status := statusText(*it)
 	// These lines come from the pass and always render first, whatever the
 	// read of the ticket itself is doing: a failed fetch must never cost the
 	// operator the pane that works today.

@@ -932,9 +932,24 @@ func TestInboxTitleIsTheLastColumn(t *testing.T) {
 	marked = update(t, marked, keyMsg("1"))
 	marked = update(t, marked, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
 		{Ticket: "LERP-22", Title: "curl", Status: "Waiting for review", Relevance: loop.StatusUnnamed},
+		{Ticket: "LERP-23", Title: "tags", Status: "In Review"},
 	}}})
 	if got := ansi.Strip(rowOf(t, marked.attentionPanel(46, 6), "LERP-22")); !strings.Contains(got, "\u26a0  curl") {
 		t.Fatalf("the unnamed-status mark runs into the title:\n%s", got)
+	}
+
+	// The column is measured with the mark, so a marked status wide enough to
+	// set the column does not push its own row's columns two past every other
+	// row's. LERP-22 carries the widest status on this list and the mark:
+	// the only arrangement where a column measured without it comes up short.
+	wide := marked.attentionPanel(70, 6)
+	at22, at23 := ansi.Strip(rowOf(t, wide, "LERP-22")), ansi.Strip(rowOf(t, wide, "LERP-23"))
+	i22, i23 := strings.Index(at22, "curl"), strings.Index(at23, "tags")
+	if i22 < 0 || i23 < 0 {
+		t.Fatalf("a title is not on its row whole:\n%s", wide)
+	}
+	if lipgloss.Width(at22[:i22]) != lipgloss.Width(at23[:i23]) {
+		t.Fatalf("the marked status pushed its row's title out of the column:\n%s", wide)
 	}
 
 	// Fixed columns to the left means every title starts in the same place,
