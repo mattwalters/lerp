@@ -194,13 +194,22 @@ func statusRelevance(repo *config.RepoConfig) func(status, category string) Stat
 // stayed put and the rule applied normally. The caller carries it to the TUI;
 // conclude has already written it to the log.
 //
-// The claim is released exactly when the ticket comes to rest somewhere a queue
-// picks up from — whether lerp moved it there or the agent did. An assigned
-// ticket is never eligible, so a ticket still holding its claim in a served
-// status is stranded there permanently: no later pass can pick it up, and
-// nothing reports an error. Coming to rest in a status no queue serves keeps
-// the claim on purpose, because that is what parks the ticket on the operator
-// in the inbox view.
+// The claim is released wherever the ticket comes to rest — whether lerp moved
+// it there or the agent did, and whether or not a queue serves that status. An
+// assigned ticket is never eligible, so a ticket still holding its claim is
+// stranded the moment anybody moves it into a served status: no later pass can
+// pick it up, and nothing reports an error.
+//
+// Parking the claim at a gate used to look free, on the reasoning that holding
+// it is what rests the ticket on the operator in the inbox. It was not: the
+// inbox lists unassigned tickets in unserved statuses too, so the gate was
+// always the status and never the claim — while the parked claim stranded
+// every ticket a human then moved on in Linear instead of with `p`, which is
+// the routing the README documents (LERP-113). The claim is a lock on work in
+// progress; a ticket resting at a gate is not in progress.
+//
+// The one exception returns above: an exit code this queue has no route for
+// keeps its claim, in the queue's own served status, to stop the re-run spin.
 //
 // viewerID is the operating user. A ticket assigned to somebody else by the
 // time the run ends was taken over mid-flight, and conclude leaves the whole
@@ -265,9 +274,6 @@ func conclude(ctx context.Context, client linear.Client, issue linear.Issue, que
 		if log != nil {
 			fmt.Fprintln(log, note)
 		}
-	}
-	if !servedStatuses(repo)[final] {
-		return note, nil
 	}
 	if current.AssigneeID != viewerID {
 		// Nobody holds it: whoever released the claim mid-run already did

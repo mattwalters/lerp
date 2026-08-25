@@ -1068,9 +1068,12 @@ func TestReconcilerPromote(t *testing.T) {
 	}
 }
 
-// The rework loop, end to end: a failed run parks the ticket with its claim
-// intact, and promoting it back into the queue has to release that claim or
-// nothing will ever pick it up again — silently, with no run and no error.
+// The rework loop, end to end. A finished run no longer parks its claim
+// (LERP-113), so the claim promote has to clear is the one a human takes:
+// reading the verdict in Linear and assigning the ticket to themselves is
+// exactly how an operator says "mine". Promoting it back into a queue has to
+// release that claim or nothing will ever pick it up again — silently, with
+// no run and no error (LERP-59).
 func TestPromoteReleasesTheClaimThatParkedTheTicket(t *testing.T) {
 	h := newHarness(t, 1, nil)
 	ctx := context.Background()
@@ -1087,8 +1090,12 @@ func TestPromoteReleasesTheClaimThatParkedTheTicket(t *testing.T) {
 		t.Fatalf("conclude: %v", err)
 	}
 	parked := h.issue(t, "one")
-	if parked.Status != "Needs Help" || parked.AssigneeID == "" {
-		t.Fatalf("parked ticket = %+v, want it resting in Needs Help still claimed", parked)
+	if parked.Status != "Needs Help" || parked.AssigneeID != "" {
+		t.Fatalf("parked ticket = %+v, want it resting in Needs Help unclaimed", parked)
+	}
+	// The operator picks it up in Linear while they read the verdict.
+	if err := h.fake.AssignIssue(ctx, "one", viewerID); err != nil {
+		t.Fatal(err)
 	}
 
 	// What the operator does after reading the verdict.
@@ -1201,10 +1208,10 @@ func TestForceStartRunsPastTheLaneLimitAndConcludes(t *testing.T) {
 	waitIdle(t, h.rec)
 
 	// Settled by the queue's own rule, claim and all: "Done" is a pipeline
-	// exit no queue serves, so conclude parks the ticket there still
-	// claimed — exactly what an ordinary run in this queue does.
-	if got := h.issue(t, "two"); got.Status != "Done" || got.AssigneeID != "fake-viewer" {
-		t.Errorf("forced ticket after its run = %+v, want it parked in Done still claimed", got)
+	// exit no queue serves, so conclude parks the ticket there and releases
+	// the claim — exactly what an ordinary run in this queue does.
+	if got := h.issue(t, "two"); got.Status != "Done" || got.AssigneeID != "" {
+		t.Errorf("forced ticket after its run = %+v, want it parked in Done unclaimed", got)
 	}
 	assertReaped(t, h, record)
 	if got := ran(); len(got) != 2 || !slices.Contains(got, "LERP-2") {
@@ -1257,6 +1264,36 @@ func TestForceStartRunIsAdoptedAndReapedOnItsOutOfRangeLane(t *testing.T) {
 	waitIdle(t, h.rec)
 }
 
+// The one claim force-start may take back: the operating user's own, left on a
+// ticket in a status a queue serves by a run that nothing was left to reap. No
+// pass picks an assigned ticket up and the inbox does not list a served status,
+// so without this the ticket is reachable by nothing lerp has (LERP-113).
+func TestForceStartTakesOverTheOperatingUsersOwnClaim(t *testing.T) {
+	ctx := context.Background()
+	execute, ran := recordingExecute("")
+	h := newHarness(t, 2, execute)
+	h.fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Todo"})
+	if err := h.fake.AssignIssue(ctx, "one", "fake-viewer"); err != nil {
+		t.Fatal(err)
+	}
+	if Eligible(h.issue(t, "one"), map[string]bool{"Todo": true}) {
+		t.Fatal("the fixture is not the stranded state: an ordinary pass would pick this up")
+	}
+
+	if err := h.rec.ForceStart(ctx, "one"); err != nil {
+		t.Fatalf("ForceStart on the operator's own claim = %v, want it to run", err)
+	}
+	h.waitEvents(t, EventExited, 1)
+	waitIdle(t, h.rec)
+
+	if got := ran(); len(got) != 1 || got[0] != "LERP-1" {
+		t.Errorf("executed runs = %v, want the stranded ticket re-run", got)
+	}
+	if got := h.issue(t, "one"); got.Status != "Done" {
+		t.Errorf("ticket after the takeover = %+v, want the queue's own move rule applied", got)
+	}
+}
+
 // The fence: force-start overrides the lane count and nothing else. Each
 // refusal must leave the board and the evidence store exactly as it found
 // them — no claim, no record, no lane.
@@ -1283,7 +1320,7 @@ func TestForceStartRefusals(t *testing.T) {
 				panic(err)
 			}
 		},
-		want: "already claimed",
+		want: "claimed by someone else",
 	}, {
 		name: "already occupying a lane here",
 		setup: func(t *testing.T, h *harness) {

@@ -148,15 +148,16 @@ workspace and agent log live under a temporary directory instead, and
 the log's path is printed when the run finishes.
 
 Where a finished run leaves the ticket is the whole of the topology.
-Coming to rest in a status some queue serves releases the claim — the
+A finished run releases the claim wherever it comes to rest — the
 assignment is the claim, and a claimed ticket is someone else's work
-as far as lerp is concerned, even when the someone is you — so the
-next pass picks the ticket up for that stage on its own. Coming to
-rest in a status no queue serves keeps it assigned to you on purpose:
-that is the pipeline waiting on a human, and the stock config waits
-twice, in "Plan Review" for you to read the plan and in "In Review"
-for you to merge the PR. Promote it with `p` in the TUI, or move it in
-Linear; either way the loop carries it on from there. Two things call
+as far as lerp is concerned, even when the someone is you. Coming to
+rest in a status some queue serves means the next pass picks the ticket
+up for that stage on its own. Coming to rest in a status no queue serves
+is the pipeline waiting on a human, and the stock config waits twice, in
+"Plan Review" for you to read the plan and in "In Review" for you to
+merge the PR — the status is the gate, so nothing needs to hold the
+ticket there. Promote it with `p` in the TUI, or move it in Linear;
+either way the loop carries it on from there. Two things call
 the whole rule off: a ticket an agent or a human moved out of the
 queue's status during the run keeps that move — the hop it skipped is
 reported rather than forced — and a ticket assigned to somebody else by
@@ -340,8 +341,10 @@ written, with no configuration, and `r` toggles the pane back to the
 runner's raw output — the log on disk is untouched either way.
 Selecting a queued ticket and pressing `S` starts it now, past the
 lane limit: force-start overrides the lane count and nothing else, so
-the claim protocol still runs and a blocked or already-claimed ticket
-is refused with the reason.
+the claim protocol still runs and a blocked ticket, or one somebody
+else has claimed, is refused with the reason. Your own claim is the
+exception it takes over — that is how a ticket left claimed by a run
+nothing was left to reap gets run again.
 Ordering is not a keystroke; to change what runs *next*, move tickets in
 Linear. `e`, eject, is the other key the list answers to: on a running
 row it stops that agent, frees the lane and hands back the runner's own
@@ -524,16 +527,20 @@ killed before it got that far records nothing, and reaping it releases
 the claim so its ticket becomes eligible again; a failed run whose queue
 has no `on_failure` route keeps its claim and waits on you, as it does
 when lerp watched it fail. One caveat: a `lerp once` killed mid-run has
-no evidence for a later loop to reap, so it leaves the ticket assigned —
-unassign it in Linear yourself to make it eligible again.
+no evidence for a later loop to reap, so it leaves the ticket assigned.
+Select it in the work panel and press `S`: force-start takes back your
+own claim and runs the stage again.
 
 **Why isn't my ticket being picked up?** Check the three eligibility
 conditions from step 3 of [Getting started](#getting-started): a
 queue's status, no assignee, not blocked. The one that surprises
 people is the assignee — the assignment is the claim, so a ticket
 assigned to anyone, including you, is someone else's work as far as
-lerp is concerned. A finished run leaves the ticket assigned to you on
-purpose (see step 4).
+lerp is concerned. A finished run releases its claim, so the usual
+reason one is still on a ticket is that a human put it there, or that a
+run died where nothing was left to reap it. Either way the fix is the
+same: select the row in the work panel and press `S`, which takes back
+your own claim and runs the stage.
 
 **Why does init tell me to set a status's category myself?** Statuses
 lerp creates are always in-progress (Linear's "started" category), and
