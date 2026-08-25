@@ -55,6 +55,8 @@ fmt: ## Format all Go source
 DEMO_BIN := .demo
 DEMO_TAPE := docs/demo.tape
 DEMO_GIF := docs/demo.gif
+# Where vhs writes before the cap is checked; see the demo recipe.
+DEMO_RENDER := $(DEMO_BIN)/demo.gif
 # GIF bytes are not reproducible, so nothing here diffs them. The cap is the
 # only thing standing between "a couple of MB" and drift.
 DEMO_MAX_BYTES := 3145728
@@ -65,13 +67,18 @@ demo: ## Re-record docs/demo.gif from docs/demo.tape (needs vhs)
 	  echo 'demo: vhs is not installed — see https://github.com/charmbracelet/vhs'; \
 	  exit 1; }
 	go build -o $(DEMO_BIN)/lerp ./internal/demo
-# Removed first so the cap below is an existence check too: the GIF is
-# committed, so measuring it would otherwise report a render that never
-# happened as a clean one.
-	rm -f $(DEMO_GIF)
-	vhs $(DEMO_TAPE)
-	@size=$$(wc -c < $(DEMO_GIF) | tr -d ' '); \
+# Rendered into the scratch dir and moved into place only once it is under the
+# cap. -o overrides the tape's own Output; the scratch dir is gitignored and
+# never holds a GIF beforehand, so measuring it is an existence check too — a
+# vhs that exited 0 without writing anything cannot pass by measuring the
+# committed file. And a render that fails, or one that comes back oversized,
+# leaves the committed asset exactly where it was — the rm is for the leftover
+# an oversized render puts there, which a later silent vhs could measure.
+	rm -f $(DEMO_RENDER)
+	vhs -o $(DEMO_RENDER) $(DEMO_TAPE)
+	@size=$$(wc -c < $(DEMO_RENDER) | tr -d ' '); \
 	  test "$$size" -le $(DEMO_MAX_BYTES) || { \
 	    printf 'demo: %s is %s bytes, over the %s cap — shorten the tape or drop the framerate\n' \
-	      '$(DEMO_GIF)' "$$size" '$(DEMO_MAX_BYTES)'; exit 1; }; \
+	      '$(DEMO_RENDER)' "$$size" '$(DEMO_MAX_BYTES)'; exit 1; }; \
+	  mv $(DEMO_RENDER) $(DEMO_GIF); \
 	  printf 'rendered %s (%s bytes)\n' '$(DEMO_GIF)' "$$size"
