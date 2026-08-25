@@ -493,7 +493,10 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Quit):
 		return m, tea.Quit
 	case key.Matches(msg, m.keys.Help):
-		m.helpOn = !m.helpOn
+		// Closing it never needs the room opening it did.
+		if m.helpOn || m.roomForMain() {
+			m.helpOn = !m.helpOn
+		}
 	case key.Matches(msg, m.keys.Attention):
 		m.setFocus(panelAttention)
 	case key.Matches(msg, m.keys.Work):
@@ -510,15 +513,17 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// flips. esc inside the promote picker still cancels the picker, because
 	// handlePromoteKey ran before this switch and returned.
 	case key.Matches(msg, m.keys.Detail):
-		m.detailOpen[m.focus] = true
-		// Size before filling: the viewport was zero-width while the pane
-		// was closed, and refreshMain wraps to that width.
-		m.layout()
-		m.refreshMain()
+		if m.roomForMain() {
+			m.detailOpen[m.focus] = true
+			// Size before filling: the viewport was zero-width while the
+			// pane was closed, and refreshMain wraps to that width.
+			m.layout()
+			m.refreshMain()
+		}
 	case key.Matches(msg, m.keys.Close):
 		m.detailOpen[m.focus] = false
 	case key.Matches(msg, m.keys.Promote):
-		if m.focus == panelAttention && len(m.shown) > 0 && len(m.o.Statuses) > 0 {
+		if m.focus == panelAttention && len(m.shown) > 0 && len(m.o.Statuses) > 0 && m.roomForMain() {
 			m.promoting = true
 			m.promoteSel = 0
 		}
@@ -533,6 +538,11 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.cycleProject()
 			m.refreshMain()
 		}
+	// A closed pane shows nothing to scroll, so these keys are inert rather
+	// than silently unfollowing a log the operator cannot see and parking it
+	// at the top for when it reopens.
+	case !m.mainOpen() && (key.Matches(msg, m.keys.PageUp) || key.Matches(msg, m.keys.PageDown) ||
+		key.Matches(msg, m.keys.Top) || key.Matches(msg, m.keys.Bottom)):
 	// The scroll keys move whatever the main pane shows; follow is the log's
 	// state alone, so a detour through a detail lens can never freeze the tail.
 	case key.Matches(msg, m.keys.PageUp):
@@ -571,8 +581,10 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // a fifteen-row list schedules fifteen ticks and fires one fetch.
 func (m *model) wantDetail() tea.Cmd {
 	// A shut pane is nobody reading: walking the inbox with it closed costs
-	// no Linear calls at all, and enter is what asks for one.
-	if m.focus != panelAttention || !m.mainOpen() {
+	// no Linear calls at all, and enter is what asks for one. The panel's own
+	// flag, not mainOpen: the promote picker and the ? overlay take the pane
+	// for themselves and never render the detail, so neither should fetch it.
+	if m.focus != panelAttention || !m.detailOpen[m.focus] {
 		return nil
 	}
 	it := m.selectedAttention()
@@ -664,6 +676,11 @@ func (m model) doPromote(ticketID, ticket, status string) tea.Cmd {
 func (m *model) setFocus(p panel) {
 	m.focus = p
 	m.retarget()
+	// Size before filling. The two panels remember the pane separately, so
+	// focus moves the width the viewport wraps to — and content wrapped to
+	// the outgoing panel's width would stay wrong until the next byte of log
+	// or the next keystroke.
+	m.layout()
 	m.refreshMain()
 	if !m.showingLog() {
 		m.vp.GotoTop()
@@ -960,6 +977,22 @@ func (m *model) showingLog() bool {
 // closed inbox, the default, without a second rendering path.
 func (m *model) mainOpen() bool {
 	return m.promoting || m.helpOn || m.detailOpen[m.focus]
+}
+
+// roomForMain reports whether this window can hold the main pane at all.
+// The wide layout gives the pane a column of its own, so any window View
+// admits has room; stacked, it comes out of the same body as the panels, and
+// View's own floor arithmetic is the answer.
+//
+// The keys that open the pane ask first. With the pane shut a short terminal
+// is a usable screen, which is the point — but a key that turned that screen
+// into "window too small" would take the panels away, and with the promote
+// picker it would take them away while the picker was still live and still
+// taking the enter that writes to Linear. A key that does nothing is the
+// better half of that trade; at these heights the panels are too short to
+// carry a key line advertising it.
+func (m *model) roomForMain() bool {
+	return m.width >= narrowWidth || m.height >= 2*panelFloor+mainFloor+1
 }
 
 // refreshMain points the main pane's viewport at whatever the selection asks
@@ -2160,9 +2193,12 @@ func (m model) statusBar() string {
 	// The pane's key is contextual, and a key nobody can see is a key nobody
 	// presses. detailOpen, not mainOpen: it is what enter and esc actually
 	// set, so the hint never promises to close an overlay it cannot.
-	hint := "enter detail · ? help · q quit"
-	if m.detailOpen[m.focus] {
-		hint = "esc close · ? help · q quit"
+	hint := "? help · q quit"
+	switch {
+	case m.detailOpen[m.focus]:
+		hint = "esc close · " + hint
+	case m.roomForMain():
+		hint = "enter detail · " + hint
 	}
 	if m.promoting {
 		hint = "↑/↓ choose · enter promote · esc cancel"

@@ -1441,6 +1441,19 @@ func TestAClosedPaneReadsNothing(t *testing.T) {
 		t.Fatalf("a closed pane read %v", got)
 	}
 
+	// The picker and the overlay take the pane for themselves and render the
+	// detail nowhere, so forcing it visible must not fetch one either.
+	for _, k := range []string{"p", "esc", "?", "?"} {
+		var cmd tea.Cmd
+		m, cmd = updateCmd(t, m, keyMsg(k))
+		if cmd != nil {
+			t.Fatalf("%q scheduled a read for a detail it never draws", k)
+		}
+	}
+	if got := reader.fetched(); len(got) != 0 {
+		t.Fatalf("the picker and the overlay read %v", got)
+	}
+
 	m, cmd := updateCmd(t, m, keyMsg("enter"))
 	if cmd == nil {
 		t.Fatal("enter scheduled no read for the row it opened on")
@@ -1453,6 +1466,96 @@ func TestAClosedPaneReadsNothing(t *testing.T) {
 	m = update(t, m, cmd())
 	if got := reader.fetched(); len(got) != 1 || got[0] != id {
 		t.Fatalf("fetched %v, want one read of %s", got, id)
+	}
+}
+
+// Done-when: the pane is current the frame it appears. The panels remember
+// it separately, so focus moves the width the viewport wraps to — and prose
+// wrapped to the panel the operator just left stays wrong until the next
+// keystroke or the next byte of log.
+func TestRefocusingRewrapsThePane(t *testing.T) {
+	m, _, reader := newReadingTestModel(t)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, keyMsg("enter"))
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+	body := strings.TrimSpace(strings.Repeat("wrap me please ", 12))
+	m = selectAndRead(t, m, 0, linear.IssueDetail{Body: body}, nil, reader)
+	if !strings.Contains(m.View(), "wrap me please wrap") {
+		t.Fatalf("the body is not wrapped to the pane to begin with:\n%s", m.View())
+	}
+
+	// Out to work with its pane closed and back. The inbox's pane is the
+	// width it always was; what it holds has to be too.
+	m = update(t, m, keyMsg("2"))
+	m = update(t, m, keyMsg("esc"))
+	m = update(t, m, keyMsg("1"))
+	if !strings.Contains(m.View(), "wrap me please wrap") {
+		t.Fatalf("the pane came back wrapped to the closed panel's width:\n%s", m.View())
+	}
+}
+
+// Done-when: a window too short to hold the pane keeps its screen. The keys
+// that would open one do nothing rather than trade the two panels for
+// "window too small" — and the promote picker, which is modal and writes to
+// Linear, is never live behind that message.
+func TestAWindowTooShortForThePaneKeepsItsScreen(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	resized, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 12})
+	m = resized.(model)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-4", TicketID: "loose", Title: "Nobody's routed this"},
+	}}})
+	m = update(t, m, keyMsg("esc")) // work starts open, and 12 lines cannot hold it
+	m = update(t, m, keyMsg("1"))
+	if strings.Contains(m.View(), "too small") {
+		t.Fatalf("a closed pane did not buy this window a screen:\n%s", m.View())
+	}
+	if strings.Contains(m.View(), "enter detail") {
+		t.Fatalf("the status bar advertises a key this window has no room for:\n%s", m.View())
+	}
+
+	for _, k := range []string{"enter", "p", "?"} {
+		next := update(t, m, keyMsg(k))
+		if strings.Contains(next.View(), "too small") {
+			t.Fatalf("%q took the screen away:\n%s", k, next.View())
+		}
+		if next.promoting {
+			t.Fatalf("%q left the promote picker live with nothing drawn", k)
+		}
+	}
+}
+
+// Done-when: a closed pane is nothing to scroll. Silently unfollowing a log
+// the operator cannot see leaves it parked at the top when it reopens, with
+// nothing on screen to say why.
+func TestScrollingAClosedPaneIsInert(t *testing.T) {
+	log := filepath.Join(t.TempDir(), "one.log")
+	writeLog(t, log, []byte(strings.Repeat("a line of agent output\n", 200)))
+
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		TicketID: "id-1", Ticket: "LERP-1", Queue: "plan", LogPath: log}})
+	if !m.follow {
+		t.Fatal("a fresh log is not being followed")
+	}
+
+	m = update(t, m, keyMsg("esc"))
+	offset := m.vp.YOffset
+	// g is the damaging one — it parks the pane at the top and stops the
+	// tail — so the sequence must not end on the key that undoes it.
+	for _, k := range []string{"pgup", "pgdown", "g"} {
+		m = update(t, m, keyMsg(k))
+		if !m.follow || m.vp.YOffset != offset {
+			t.Fatalf("%q moved a closed pane: follow %v, offset %d then %d",
+				k, m.follow, offset, m.vp.YOffset)
+		}
+	}
+
+	// Reopening it is still the live tail, not the top of the scrollback.
+	m = update(t, m, keyMsg("enter"))
+	if !m.follow || !m.vp.AtBottom() {
+		t.Fatalf("the reopened pane is not following: follow %v, at bottom %v",
+			m.follow, m.vp.AtBottom())
 	}
 }
 
