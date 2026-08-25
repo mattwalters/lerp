@@ -852,6 +852,59 @@ func TestInboxRowsCarryLeverageAndPriority(t *testing.T) {
 	}
 }
 
+// Done-when: every fixed-width column sits on the left in a stable order and
+// the title is the last column, elastic, taking whatever the panel has left.
+// The cut then lands at the right edge, on the title, instead of on the one
+// column whose whole value is the part being cut off.
+func TestInboxTitleIsTheLastColumn(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: board()})
+
+	panel := m.attentionPanel(120, 14)
+	row := ansi.Strip(rowOf(t, panel, "LERP-1"))
+	cols := []struct{ name, cell string }{
+		{"identifier", "LERP-1"}, {"leverage", "\u2193" + "0"}, {"status", "Needs Attention"},
+		{"project", "Open-source readiness"}, {"priority", "Medium"}, {"title", "Fix the build"},
+	}
+	for i := 1; i < len(cols); i++ {
+		if strings.Index(row, cols[i].cell) <= strings.Index(row, cols[i-1].cell) {
+			t.Fatalf("the %s column is not left of the %s column:\n%s", cols[i-1].name, cols[i].name, row)
+		}
+	}
+	if got := strings.Trim(row, " \u2502\u2503"); !strings.HasSuffix(got, "Fix the build") {
+		t.Fatalf("something follows the title, so it is not the last column:\n%s", row)
+	}
+
+	// Elastic: the same row in a narrower panel spends the width on the fixed
+	// columns and cuts the title at the right edge, leaving everything left
+	// of it exactly where it was.
+	narrow := ansi.Strip(rowOf(t, m.attentionPanel(90, 14), "LERP-22"))
+	if !strings.HasSuffix(strings.Trim(narrow, " \u2502\u2503"), "\u2026") {
+		t.Fatalf("the narrower panel did not cut the title at the right edge:\n%s", narrow)
+	}
+	wide := ansi.Strip(rowOf(t, panel, "LERP-22"))
+	if got, want := narrow[:strings.Index(narrow, "GoReleaser")], wide[:strings.Index(wide, "GoReleaser")]; got != want {
+		t.Fatalf("narrowing the panel moved the fixed columns:\n%q\n%q", got, want)
+	}
+
+	// Fixed columns to the left means every title starts in the same place,
+	// whatever the rows around it carry.
+	at := -1
+	for _, tc := range []struct{ ticket, title string }{
+		{"LERP-1", "Fix the build"}, {"LERP-48", "Read the ticket in the TUI"},
+		{"LERP-60", "Unfiled work"},
+	} {
+		row := ansi.Strip(rowOf(t, panel, tc.ticket))
+		i := lipgloss.Width(row[:strings.Index(row, tc.title)])
+		if at >= 0 && i != at {
+			t.Fatalf("the %s title starts at column %d, the rows above it at %d:\n%s",
+				tc.ticket, i, at, panel)
+		}
+		at = i
+	}
+}
+
 // Selecting an inbox item and pressing "p" opens the promote picker in
 // the main pane; choosing a status and confirming calls Promote with the
 // ticket's Linear id and the chosen status, and settles into a transient

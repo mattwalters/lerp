@@ -1512,31 +1512,34 @@ func (m *model) attentionRows(width int) ([]string, int) {
 // most often do without.
 const titleFloor = 20
 
-// attentionRow is one waiting ticket as a table row: identifier, leverage
-// and title, then status, project and priority as right-hand columns. Every
+// attentionRow is one waiting ticket as a table row: the fixed-width columns
+// first, in a stable order — identifier, leverage, status, project, priority
+// — and the title last, elastic, taking whatever the panel has left. Every
 // fact a routing decision needs is on the line, so the choice can be made
 // without selecting the row — which is the whole point of the panel.
 //
-// Columns elide from the right: the title truncates first, and the project
-// drops out before the status column would ever be squeezed. The identifier,
-// the leverage and the real Linear status survive any width.
+// The cut lands at the right edge, on the title, where the part lost costs
+// the least: the fixed columns are packed instead. Narrower than a title
+// worth reading and the project drops out; narrower than the columns
+// themselves and the priority goes too. The identifier, the leverage and the
+// real Linear status survive any width.
 func attentionRow(it loop.AttentionItem, selected bool, idW, statusW, projW, width int) string {
 	id := styleTicket.Render(it.Ticket) + strings.Repeat(" ", max(0, idW-lipgloss.Width(it.Ticket)))
-	head := marker(selected) + id + " " + leverageCell(it) + " "
-	status := statusCell(it, statusW)
-	right := status + "  " + priorityCell(it.Priority)
-	full := status + "  " + projectCell(it.Project, projW) + "  " + priorityCell(it.Priority)
+	head := marker(selected) + id + " " + leverageCell(it) + " " + statusCell(it, statusW)
+	full := head + "  " + projectCell(it.Project, projW) + "  " + priorityCell(it.Priority) + "  "
+	noProject := head + "  " + priorityCell(it.Priority) + "  "
+	// Narrower than even the title-less row and the priority goes too, so the
+	// identifier, the leverage and the status are the last three things
+	// standing. Every row measures the same columns, so the whole panel
+	// elides together and the titles stay in one column.
+	cols := head
 	switch {
-	case width-lipgloss.Width(full) >= lipgloss.Width(head)+titleFloor:
-		right = full
-	case width-lipgloss.Width(right) < lipgloss.Width(head):
-		// Narrower than even the title-less row: the priority goes too, so
-		// the identifier, the leverage and the status are the last three
-		// things standing. Every row measures the same head and the same
-		// columns, so the whole panel elides together.
-		right = status
+	case width-lipgloss.Width(full) >= titleFloor:
+		cols = full
+	case width-lipgloss.Width(noProject) >= 0:
+		cols = noProject
 	}
-	return splitRow(head+it.Title, right, width)
+	return ansi.Truncate(cols+it.Title, max(0, width), "…")
 }
 
 // statusCell is the row's status column: the real Linear status name — the
