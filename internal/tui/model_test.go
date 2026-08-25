@@ -3844,13 +3844,18 @@ func TestStatusBarGoesQuietBetweenPasses(t *testing.T) {
 	// The mark is not the focus badge it replaced: the panel borders draw
 	// which panel has the keys, and the corner stays put across the change.
 	// 2 is the panel lerp does not open on, so this is a real change of
-	// focus rather than a key that lands where the model already was.
+	// focus rather than a key that lands where the model already was. The
+	// left side is the whole of the claim — the pane's key hint on the right
+	// reports what enter does in the focused panel, which is a difference
+	// between the panels rather than a badge repeating them.
 	moved := update(t, m, keyMsg("2"))
 	if moved.focus == m.focus {
 		t.Fatalf("key 2 left focus on %v", m.focus)
 	}
-	if got := moved.statusBar(); got != bar {
-		t.Errorf("the bar moved when focus did:\n%s\n%s", bar, got)
+	for _, seg := range []string{"lerp", "0/2 running"} {
+		if a, b := statusCol(moved.statusBar(), seg), statusCol(bar, seg); a != b || a < 0 {
+			t.Errorf("focus moved %q from column %d to %d:\n%s\n%s", seg, b, a, bar, moved.statusBar())
+		}
 	}
 }
 
@@ -3921,30 +3926,54 @@ func TestAPassStartingDoesNotMoveTheHintsEither(t *testing.T) {
 	}
 }
 
-// An alarm is legible or it is absent. Sized into the left side before the
-// truncation ran, "pass overdue" came out of a narrow window as "pass …" —
-// a warning shredded down to the word that is not the warning, having spent
-// the room the inbox count was holding to say it.
-func TestTheHeartbeatIsNeverSawnOff(t *testing.T) {
+// The heartbeat is legible or it is absent, and the width alone says which.
+// Fitted into whatever gap the rest of the bar left over, it came out of a
+// narrow window as "pass …" — a warning shredded to the word that is not the
+// warning — and out of an ordinary 80-column one as nothing at all, having
+// lost the last of the room to "enter detail · ? help · q quit".
+func TestTheHeartbeatIsWholeOrAbsent(t *testing.T) {
 	var attn []loop.AttentionItem
 	for i := 1; i <= 12; i++ {
 		attn = append(attn, loop.AttentionItem{Ticket: fmt.Sprintf("LERP-%d", i), Title: "waiting"})
 	}
-
-	for w := 30; w <= 120; w++ {
+	bars := func(t *testing.T, w int) (running, stale string) {
+		t.Helper()
 		m, _, _ := newTestModel(t, 2)
 		m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: attn}})
 		sized, _ := m.Update(tea.WindowSizeMsg{Width: w, Height: 30})
+		settled := update(t, sized.(model), tickedMsg{})
+		settled.lastPass = time.Now().Add(-settled.overdueAfter() - time.Second)
+		return ansi.Strip(sized.(model).statusBar()), ansi.Strip(settled.statusBar())
+	}
 
-		running := ansi.Strip(sized.(model).statusBar())
-		if strings.Contains(running, "pass") && !strings.Contains(running, "pass running…") {
+	// A dozen in the inbox and the pane's key on the right is the crowded
+	// case, and 80 columns is not a narrow window — whatever the bar gives
+	// up there, it is not the one segment that reports the board is stuck.
+	running, stale := bars(t, 80)
+	if !strings.Contains(running, "⠋ pass running…") {
+		t.Errorf("80 columns has no room for the spinner:\n%s", running)
+	}
+	if !strings.Contains(stale, "pass overdue") {
+		t.Errorf("80 columns has no room for the alarm:\n%s", stale)
+	}
+
+	// Half a line reports nothing an empty gap does not, so the bar never
+	// serves one; and the width that can hold a heartbeat can hold every
+	// wider one, so dragging a window out never takes the heartbeat away.
+	widest := 0
+	for w := 30; w <= 120; w++ {
+		running, stale := bars(t, w)
+		if strings.Contains(running, "pass") && !strings.Contains(running, "⠋ pass running…") {
 			t.Errorf("at width %d the spinner came out sawn off:\n%s", w, running)
 		}
-
-		stale := update(t, sized.(model), tickedMsg{})
-		stale.lastPass = time.Now().Add(-stale.overdueAfter() - time.Second)
-		if bar := ansi.Strip(stale.statusBar()); strings.Contains(bar, "pass") && !strings.Contains(bar, "pass overdue") {
-			t.Errorf("at width %d the alarm came out sawn off:\n%s", w, bar)
+		if strings.Contains(stale, "pass") && !strings.Contains(stale, "pass overdue") {
+			t.Errorf("at width %d the alarm came out sawn off:\n%s", w, stale)
+		}
+		switch {
+		case strings.Contains(running, "⠋ pass running…"):
+			widest = w
+		case widest > 0:
+			t.Fatalf("width %d carried the spinner and width %d does not:\n%s", widest, w, running)
 		}
 	}
 }
@@ -3989,6 +4018,24 @@ func TestAFastIntervalDoesNotCryStale(t *testing.T) {
 	m.lastPass = time.Now().Add(-61 * time.Second)
 	if !strings.Contains(m.statusBar(), "pass overdue") {
 		t.Errorf("a board a minute behind still reads as fresh:\n%s", m.statusBar())
+	}
+}
+
+// The other half of the same rule: a board polled slowly is not overdue a
+// minute after a pass — it is one interval late by then, which is what a
+// pass taking a while looks like. Two of its own intervals is the line.
+func TestASlowIntervalGetsTwoOfItsOwn(t *testing.T) {
+	m, _, _ := newTestModel(t, 2)
+	m.o.Interval = 10 * time.Minute
+	m = update(t, m, tickedMsg{})
+
+	m.lastPass = time.Now().Add(-19 * time.Minute)
+	if strings.Contains(m.statusBar(), "pass overdue") {
+		t.Errorf("a board 19m behind a 10m interval already reads as stale:\n%s", m.statusBar())
+	}
+	m.lastPass = time.Now().Add(-21 * time.Minute)
+	if !strings.Contains(m.statusBar(), "pass overdue") {
+		t.Errorf("a board two intervals behind still reads as fresh:\n%s", m.statusBar())
 	}
 }
 

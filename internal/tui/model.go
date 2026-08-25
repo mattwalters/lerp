@@ -3032,6 +3032,22 @@ func (m model) overdueAfter() time.Duration {
 	return max(2*m.o.Interval, time.Minute)
 }
 
+// What the heartbeat can say, and the room the bar keeps for it. The slot is
+// held open whether or not there is a heartbeat in it, so it is the widest
+// of them and not whichever one is showing — a slot sized to the line of the
+// moment would move everything beside it as the lines took turns.
+const (
+	heartRunning  = "pass running…"
+	heartOverdue  = "pass overdue"
+	heartStarting = "starting…"
+)
+
+var heartbeatSlot = max(
+	lipgloss.Width(heartbeatFrames[0]+" "+heartRunning),
+	lipgloss.Width(heartOverdue),
+	lipgloss.Width(heartStarting),
+)
+
 // statusBar is the heartbeat line: the lerp mark, what the pass is doing
 // when that is worth saying, capacity, inbox count, keys. A pass error — or
 // a transient note like a promote's outcome — takes over the whole line; a
@@ -3054,9 +3070,9 @@ func (m model) statusBar() string {
 	var heart string
 	switch {
 	case m.inFlight:
-		heart = styleRunning.Render(heartbeatFrames[m.frame%len(heartbeatFrames)]) + " pass running…"
+		heart = styleRunning.Render(heartbeatFrames[m.frame%len(heartbeatFrames)]) + " " + heartRunning
 	case m.lastPass.IsZero():
-		heart = styleFaint.Render("starting…")
+		heart = styleFaint.Render(heartStarting)
 	// Wall clock on purpose. A machine that slept stops the monotonic
 	// reading time.Since would otherwise use — and stops the pending tick
 	// with it — so the one case that leaves a board hours out of date is the
@@ -3065,7 +3081,7 @@ func (m model) statusBar() string {
 	case time.Since(m.lastPass.Round(0)) > m.overdueAfter():
 		// A state, not a clock: that the board is stale is the whole fact,
 		// and how stale changes nothing the operator would do about it.
-		heart = styleAttention.Render("pass overdue")
+		heart = styleAttention.Render(heartOverdue)
 	}
 
 	// The heartbeat is the only segment here that comes and goes, so the bar
@@ -3108,33 +3124,44 @@ func (m model) statusBar() string {
 	}
 	right := styleFaint.Render(hint)
 
-	// The pane's segment is the first thing the bar gives up. Below it the
-	// truncation takes the left side instead, and what it would take is
-	// "● n in the inbox" — the one number the needs-you panel exists for,
-	// spent on advertising a key. A modal's line is not a hint but its
-	// instructions, so it is not up for this.
-	if !m.modal() && m.width-lipgloss.Width(left)-lipgloss.Width(right) < 1 {
-		right = styleFaint.Render(globals)
+	// The heartbeat's room is held open whether or not there is a heartbeat
+	// in it. That is what lets it come and go without moving anything: every
+	// other segment is placed against a width that does not depend on it,
+	// where sizing the bar around the heartbeat itself would have let a pass
+	// starting decide, once an interval, whether the hints could still
+	// afford the pane's key.
+	slot := heartbeatSlot + 2
+	fits := func(slot int) bool {
+		return m.width-lipgloss.Width(left)-slot-lipgloss.Width(right) >= 1
 	}
 
-	pad := m.width - lipgloss.Width(left) - lipgloss.Width(right)
+	// The pane's segment is the first thing the bar gives up — before the
+	// heartbeat, which is the one segment here that reports something is
+	// happening rather than which key does what. Below it the truncation
+	// takes the left side instead, and what it would take is "● n in the
+	// inbox" — the one number the needs-you panel exists for, spent on
+	// advertising a key. A modal's line is not a hint but its instructions,
+	// so it is not up for this.
+	if !m.modal() && !fits(slot) {
+		right = styleFaint.Render(globals)
+	}
+	// Narrower than that and the bar carries no heartbeat at all — at every
+	// frame, so the window that cannot hold one is silent about passes the
+	// whole time rather than flickering one in and out. Width alone decides
+	// it, which keeps the answer monotonic: widening a window never takes
+	// the heartbeat away.
+	if !fits(slot) {
+		slot = 0
+	}
+
+	pad := m.width - lipgloss.Width(left) - slot - lipgloss.Width(right)
 	if pad < 1 {
 		right = ansi.Truncate(right, max(0, m.width-1), "…")
 		left = ansi.Truncate(left, max(0, m.width-lipgloss.Width(right)-1), "…")
 		pad = max(1, m.width-lipgloss.Width(left)-lipgloss.Width(right))
 	}
-
-	// The heartbeat rides in the padding the bar was already holding open,
-	// so a pass starting moves nothing: the segments left of the gap are
-	// placed without it and the hints are right-aligned regardless of it.
-	// Sized in before the gap is measured it would instead have decided,
-	// once an interval, whether the hints had room for the pane's key — and
-	// a window too narrow to hold it whole gets no heartbeat rather than a
-	// sawn-off one, since "⠋ pa…" reports nothing and would drag the hints
-	// sideways to say it.
-	if w := lipgloss.Width(heart); heart != "" && pad-w-2 >= 1 {
-		left += "  " + heart
-		pad -= w + 2
+	if slot > 0 {
+		left += "  " + heart + strings.Repeat(" ", slot-2-lipgloss.Width(heart))
 	}
 	return left + strings.Repeat(" ", pad) + right
 }
