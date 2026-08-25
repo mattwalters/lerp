@@ -1601,11 +1601,11 @@ func projectName(project string) string {
 }
 
 // leverageCell says what routing this ticket would free: ⊘ for a ticket
-// something still blocks, ↓n for the count it transitively unblocks. The pad
-// here is the cell's own floor — a count in the hundreds outgrows it, so the
-// column is measured across the list like the others, and the row pads out
-// to that. Bold marks the ones with downstream —
-// shape and weight, not color alone.
+// something still blocks, ↓n for the count it transitively unblocks. Bold
+// marks the ones with downstream — shape and weight, not color alone. The
+// pad here is the cell's own floor, not the column: a count in the hundreds
+// outgrows it, so the column is measured across the list like the others and
+// the row pads out to that.
 func leverageCell(it loop.AttentionItem) string {
 	if len(it.BlockedBy) > 0 {
 		return styleAttention.Render("⊘") + "  "
