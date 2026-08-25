@@ -417,3 +417,107 @@ func TestEjectDisownsTheRecordBeforeKilling(t *testing.T) {
 		t.Errorf("disowned record after the reap: read error = %v, want it gone", err)
 	}
 }
+
+// A kill that fails changes nothing: the run is still the loop's, its record
+// still owns its workspace and its ticket, and the lane still ends the way it
+// was already ending. A mark left standing here would strand both — no reap
+// would touch the record and no pass would free the lane.
+func TestEjectLeavesTheRunAloneWhenTheKillFails(t *testing.T) {
+	h := newHarness(t, 1, nil)
+	h.rec.o.Alive = func(evidence.Record) bool { return true } // a PID that is not there
+	resumableRunner(h)
+	// PID 2 is the kernel's, not ours: killing its process group fails with
+	// EPERM or ESRCH, which is exactly the case under test.
+	lr := &laneRun{lane: 1, ticketID: "tkt", adopted: true, record: evidence.Record{
+		RunID: "run", Lane: 1, TicketID: "tkt", Ticket: "LERP-1", Queue: "todo",
+		Workspace: "/tmp/ws", PID: 2, SessionID: "1e9a4a0e-0000-4000-8000-00000000abcd",
+	}}
+	h.rec.active = append(h.rec.active, lr)
+
+	if _, err := h.rec.Eject(context.Background(), "tkt"); err == nil ||
+		!strings.Contains(err.Error(), "killing tkt") {
+		t.Fatalf("Eject error = %v, want a failed kill reported", err)
+	}
+	if h.rec.wasEjected("run") {
+		t.Error("a failed kill left the run marked ejected, stranding its record")
+	}
+	if got := h.rec.adoptedRecords(); len(got) != 1 {
+		t.Errorf("adopted lanes after a failed kill = %d, want the lane still held", len(got))
+	}
+	if !h.rec.beginSettling(lr) {
+		t.Error("a run whose eject failed can no longer settle itself")
+	}
+}
+
+// The lane entry of a started run outlives its agent by the moment its
+// goroutine takes to wind down, and a SIGKILLed child is an unreaped zombie
+// for that moment — alive to every check. A second eject in that window used
+// to clear the first one's mark, which would have let the run conclude its
+// ticket and dispose the workspace already handed over.
+func TestEjectRefusesASecondTime(t *testing.T) {
+	h := newHarness(t, 1, nil)
+	h.rec.o.Alive = evidence.Alive
+	resumableRunner(h)
+	agent := startFakeAgent(t)
+	// A started run's lane entry, which its own runLane would drop only once
+	// the goroutine winds down — the window the second eject arrives in.
+	record := orphanRun(t, h, evidence.Record{
+		Lane: 1, TicketID: "tkt", Ticket: "LERP-1", Queue: "todo", StartingStatus: "Todo",
+		SessionID: "1e9a4a0e-0000-4000-8000-00000000abcd",
+	}, agent)
+	h.rec.active = append(h.rec.active, &laneRun{lane: 1, ticketID: "tkt", record: record})
+	h.fake.AddIssue("LERP", linear.Issue{
+		ID: "tkt", Identifier: "LERP-1", Status: "Todo", AssigneeID: "fake-viewer",
+	})
+	ctx := context.Background()
+
+	if _, err := h.rec.Eject(ctx, "tkt"); err != nil {
+		t.Fatal(err)
+	}
+	// The agent is dead but not yet reaped by its parent, so every liveness
+	// check still says yes: only the mark stands between here and a second
+	// eject clearing the first one's.
+	if _, err := h.rec.Eject(ctx, "tkt"); err == nil || !strings.Contains(err.Error(), "already been ejected") {
+		t.Fatalf("second Eject error = %v, want a refusal naming the first", err)
+	}
+	if !h.rec.wasEjected(record.RunID) {
+		t.Error("the second eject cleared the first one's mark")
+	}
+	agent.waitKilled()
+	if got := h.disposedIdentities(); len(got) != 0 {
+		t.Errorf("disposed %v, want an ejected workspace left alone", got)
+	}
+	if got := h.issue(t, "tkt"); got.Status != "Todo" || got.AssigneeID != "fake-viewer" {
+		t.Errorf("ejected ticket = %+v, want it still claimed in Todo", got)
+	}
+}
+
+// CanEject answers for a queue before the operator presses the key, and it
+// has two ways to say no: no resume template, and a command that never opens
+// a session lerp chose — a resume template over one of those is a command
+// nobody could use, because lerp never learns the id.
+func TestCanEjectNeedsBothHalves(t *testing.T) {
+	h := newHarness(t, 1, nil)
+	cases := []struct {
+		name   string
+		runner config.Runner
+		can    bool
+		want   string
+	}{
+		{"both halves", config.Runner{Command: "agent {{session}}", Resume: "agent --resume {{session}}"}, true, ""},
+		{"no resume template", config.Runner{Command: "agent {{session}}"}, false, "no resume command"},
+		{"command opens no session", config.Runner{Command: "agent", Resume: "agent --resume {{session}}"}, false, "{{session}}"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h.rec.o.Repo.Runners["agent"] = tc.runner
+			can, why := h.rec.CanEject("todo")
+			if can != tc.can || !strings.Contains(why, tc.want) {
+				t.Errorf("CanEject = (%v, %q), want (%v, ~%q)", can, why, tc.can, tc.want)
+			}
+		})
+	}
+	if can, why := h.rec.CanEject("gone"); can || !strings.Contains(why, "not configured") {
+		t.Errorf("CanEject for an unconfigured queue = (%v, %q)", can, why)
+	}
+}

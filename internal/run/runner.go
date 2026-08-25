@@ -203,6 +203,14 @@ func ResumeCommand(runner config.Runner, record evidence.Record) string {
 	return expand(runner.Resume, "", record.Ticket, record.Workspace, record.SessionID)
 }
 
+// OpensSession reports whether runs under this runner get a session id lerp
+// chose — the one thing that can later be resumed. It is the rule NewSessionID
+// applies, asked ahead of a run: a caller deciding whether a run could ever be
+// ejected must get the same answer as the run itself.
+func OpensSession(runner config.Runner) bool {
+	return strings.Contains(runner.Command, "{{session}}")
+}
+
 // NewSessionID returns the session id a run under this runner should open
 // with, or "" for a runner whose command never asks for one. The rule lives
 // here alone: a session id exists exactly when the command template has a
@@ -214,7 +222,7 @@ func ResumeCommand(runner config.Runner, record evidence.Record) string {
 // that is not a valid UUID, so a bare hex string would make {{session}} — and
 // with it the resume command that eject hands over — unusable.
 func NewSessionID(runner config.Runner) (string, error) {
-	if !strings.Contains(runner.Command, "{{session}}") {
+	if !OpensSession(runner) {
 		return "", nil
 	}
 	return newUUID()

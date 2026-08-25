@@ -32,6 +32,9 @@ dispose = 'git worktree remove --force "$LERP_WORKSPACE"'
 # Claude Code, headless. {{prompt}} carries the queue's prompt, {{session}} a
 # UUID lerp generates so the run can later be resumed by `resume` below —
 # which is what `eject` hands you when you want to take the wheel yourself.
+# That command starts with `cd {{workdir}}` because Claude Code files a
+# session under the directory it ran in: pasted anywhere else, --resume would
+# not find it. Lerp shell-quotes both values, so it stays one safe command.
 #
 # `--output-format stream-json --verbose` streams every event as a JSON line
 # while the run is live. Without it, `claude -p` prints only the final result
@@ -47,7 +50,7 @@ dispose = 'git worktree remove --force "$LERP_WORKSPACE"'
 # or an `--allowedTools` list you curate.
 [runners.claude]
 command = "claude -p {{prompt}} --session-id {{session}} --output-format stream-json --verbose --permission-mode bypassPermissions"
-resume = "claude --resume {{session}}"
+resume = "cd {{workdir}} && claude --resume {{session}}"
 
 # The agent needs its own Linear access — lerp passes only the ticket
 # identifier, never the ticket body, and stage artifacts (the plan in the

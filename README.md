@@ -196,11 +196,14 @@ dispose = "scripts/lerp-dispose"
 # lowest common denominator: takes a prompt and a working directory,
 # runs to exit, exit code means done or failed.
 [runners.claude]
-command = "claude -p"
+command = "claude -p {{prompt}} --session-id {{session}}"
 # Optional. Handed to you on eject so a headless run becomes your
 # interactive session. {{session}} is the id lerp generated for the
-# run; a runner with no `resume` simply cannot be ejected.
-resume = "claude --resume {{session}}"
+# run — so a command without {{session}} cannot be ejected either,
+# however this line reads — and {{workdir}} is the workspace lerp
+# leaves standing, which Claude Code needs to be in to find the
+# session.
+resume = "cd {{workdir}} && claude --resume {{session}}"
 
 # A queue is a Linear status with instructions attached. Tickets
 # sitting in `status` are picked up, run through `runner` with

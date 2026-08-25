@@ -2701,8 +2701,12 @@ func TestEjectResultKeepsTheWholeCommand(t *testing.T) {
 	resume := "claude --resume '1e9a4a0e-0000-4000-8000-00000000abcd' --cwd '/Users/x/src/lerp/.lerp/workspaces/11f642e6'"
 	workspace := "/Users/x/src/lerp/.lerp/workspaces/11f642e6e35fe9092b7dccb0dc4b69ca"
 	view := m.ejectResult(loop.Ejection{Ticket: "LERP-14", Workspace: workspace, Resume: resume}, 55, 20)
-	if strings.Contains(view, "…") {
-		t.Fatalf("the eject result truncated something:\n%s", view)
+	// Both marks: panelBox cuts a row with "…", fitRows drops the tail with
+	// "⋯ n more", and either one would mean a command the operator cannot use.
+	for _, cut := range []string{"…", "⋯"} {
+		if strings.Contains(view, cut) {
+			t.Fatalf("the eject result cut something (%s):\n%s", cut, view)
+		}
 	}
 	// Wrapped rather than cut, so the assertion is that every wrapped line of
 	// both — including the last, which is what fitRows would have dropped —
@@ -2768,6 +2772,19 @@ func TestEjectConfirmClosesWhenItsRunEnds(t *testing.T) {
 	}
 	if got := ejector.ejected(); len(got) != 0 {
 		t.Fatalf("enter ejected a finished run: %v", got)
+	}
+}
+
+// A runner whose command never opens a session lerp chose cannot be resumed
+// either, however its resume template reads: lerp has no id to hand back. The
+// key is not offered, rather than failing after the operator has confirmed.
+func TestEjectIsNotOfferedWithoutASession(t *testing.T) {
+	ejector := &recordingEjector{resumable: []string{"implement"}}
+	m, _ := newEjectTestModel(t, 1, ejector)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		TicketID: "id-9", Ticket: "LERP-9", Queue: "plan", LogPath: "/dev/null"}})
+	if m.canEjectSelected() {
+		t.Fatal("a run whose runner the loop says cannot resume reads as ejectable")
 	}
 }
 

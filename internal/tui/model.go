@@ -2047,8 +2047,9 @@ func (m model) ejectResult(ej loop.Ejection, w, h int) string {
 		"esc dismisses this panel; the whole command is on one line in .lerp/loop.log", width) {
 		rows = append(rows, styleFaint.Render(line))
 	}
+	// Split back into single lines: a styled block is one string, and
+	// panelBox draws — and elides — by row.
 	rows = strings.Split(strings.Join(rows, "\n"), "\n")
-	rows = fitRows(rows, h-2)
 	title := "ejected"
 	if ej.Ticket != "" {
 		title += " " + ej.Ticket

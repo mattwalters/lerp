@@ -601,6 +601,12 @@ func (r *Reconciler) ejectLane(ticketID string) (Ejection, evidence.Record, bool
 	// the kill below negates it.
 	case lr.record.PID <= 1:
 		return fail("%s has no agent to eject yet", ticketID)
+	case r.ejected[lr.record.RunID]:
+		// Already the operator's. A started run keeps its lane entry until
+		// its goroutine winds down, and its killed agent is an unreaped
+		// zombie for that moment — alive enough to pass every check below and
+		// be ejected a second time.
+		return fail("%s has already been ejected", ticketID)
 	case lr.settling:
 		// The agent has already exited and its run is being concluded. There
 		// is no session left to take over, and pretending otherwise would
@@ -618,18 +624,28 @@ func (r *Reconciler) ejectLane(ticketID string) (Ejection, evidence.Record, bool
 		return fail("the runner for queue %q has no resume command", record.Queue)
 	}
 
+	// The kill comes first, and a failed one changes nothing at all — not the
+	// mark, not the record, not the lane. Including ESRCH: the agent died in
+	// the moment between the liveness check and here, so there was never a
+	// session to hand over, and the run is left to end the way it was
+	// already ending.
+	if err := syscall.Kill(-record.PID, syscall.SIGKILL); err != nil {
+		return fail("killing %s: %w", ticketID, err)
+	}
+	// Past the kill nothing may refuse: the agent is dead, so this run is the
+	// operator's whatever the disk says next. The mark is what tells the rest
+	// of this process so, and it is set under the same lock the kill happened
+	// under — every reader of it (adopt, reap, beginSettling) takes that lock,
+	// so no pass and no winding-down goroutine can see the death without also
+	// seeing the mark.
 	r.ejected[record.RunID] = true
 	if err := r.o.Evidence.Disown(record.RunID); err != nil {
-		delete(r.ejected, record.RunID)
-		return fail("eject %s: %w", ticketID, err)
-	}
-	if err := syscall.Kill(-record.PID, syscall.SIGKILL); err != nil {
-		// Including ESRCH: the agent died in the moment between the liveness
-		// check and here, so there is no session to hand over. The mark
-		// stands and the disowned record is left for the reaper — which now
-		// disposes nothing, exactly as it should for a workspace this eject
-		// already promised away.
-		return fail("killing %s: %w", ticketID, err)
+		// Best effort, and reported rather than returned: the eject happened.
+		// The mark keeps this process off the record; a successor that finds
+		// it still owning a workspace and a ticket is the one case where a
+		// leftover reap could still dispose an ejected workspace, and it
+		// needs both this write and the removal below to have failed.
+		r.fail(fmt.Errorf("eject %s: %w", ticketID, err))
 	}
 	if lr.adopted {
 		// The lane is freed here for an adopted run, which nothing else is
@@ -649,8 +665,16 @@ func (r *Reconciler) CanEject(queue string) (bool, string) {
 	if !ok {
 		return false, fmt.Sprintf("queue %q is not configured", queue)
 	}
-	if r.o.Repo.Runners[q.Runner].Resume == "" {
+	runner := r.o.Repo.Runners[q.Runner]
+	switch {
+	case runner.Resume == "":
 		return false, fmt.Sprintf("runner %q has no resume command", q.Runner)
+	case !run.OpensSession(runner):
+		// A resume template over a command that never asks for {{session}} is
+		// a resume nobody can use: lerp never chose the session id, so it has
+		// none to hand back. Answering yes here would offer the key on every
+		// such run and fail only once the operator had confirmed it.
+		return false, fmt.Sprintf("runner %q does not use {{session}}, so lerp has no session to resume", q.Runner)
 	}
 	return true, ""
 }
