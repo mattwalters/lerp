@@ -927,6 +927,12 @@ func (m *model) retarget() {
 // scrollback, the pulse only counts what arrives — and a poll that finds
 // nothing new costs a stat, so the duplication buys each of them its own
 // place for a price the poll was already paying.
+//
+// This does decode every live lane's log, where before only the selected
+// one was parsed at all. That is the count being of events rather than of
+// bytes, which is what makes it degrade with logfmt; an agent writes a few
+// kilobytes a second and a whole tool result is one line, so the poll's
+// share of a 250ms budget stays small.
 func (m *model) readPulses() {
 	now := time.Now()
 	for _, ln := range m.lanes {
