@@ -103,6 +103,13 @@ const (
 	sortModes // the count, so one key can cycle them
 )
 
+// defaultSort is the mode the inbox opens on. Grouping by status puts the
+// two things most worth acting on — where runs fail, then where they
+// finish — at the top under headers that say so, where a flat list buries
+// a nearly-done ticket among the backlog rows. Leverage keeps its
+// throughput job as the order within each group, one `s` away as a mode.
+const defaultSort = sortStatus
+
 func (s sortMode) String() string {
 	switch s {
 	case sortPriority:
@@ -292,6 +299,8 @@ type model struct {
 	// key cycles the order, another scopes the rows to a single Linear
 	// project ("" is every project). Neither is saved anywhere — they are a
 	// way to read one list the pass already fetched, not a view to keep.
+	// sortMode starts at defaultSort, so it is set in newModel rather than
+	// left to the zero value.
 	sortMode sortMode
 	project  string
 
@@ -367,6 +376,7 @@ func newModel(ctx context.Context, o Options) model {
 	m := model{o: o, ctx: ctx, focus: panelWork, lanes: make(map[int]*lane),
 		details: make(map[string]*ticketDetail), lastLog: make(map[string]string),
 		vp: viewport.New(0, 0), follow: true, keys: newKeymap(), help: h,
+		sortMode: defaultSort,
 		inFlight: true, // Init starts the first pass immediately
 		passes:   &sync.WaitGroup{}}
 	for n := 1; n <= o.Lanes; n++ {

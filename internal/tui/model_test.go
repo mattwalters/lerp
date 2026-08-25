@@ -659,15 +659,49 @@ func TestInboxSortModesCycle(t *testing.T) {
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: board()})
 
-	// Leverage is the default: what promoting frees first, then priority,
-	// then the identifier — and a blocked ticket below every routable one.
-	panel := m.attentionPanel(96, 14)
-	want := []string{"LERP-22", "LERP-48", "LERP-1", "LERP-60", "LERP-70", "LERP-23"}
+	// Status is the default: pipeline-relevance first — a failure route,
+	// then where a clean run comes to rest, then the statuses the pipeline
+	// never names — with a header per status carrying the note that
+	// explains the rank, and leverage ordering the rows inside a group.
+	panel := m.attentionPanel(96, 16)
+	want := []string{"LERP-1", "LERP-48", "LERP-22", "LERP-60", "LERP-70", "LERP-23"}
+	if got := order(panel, want...); !slices.Equal(got, want) {
+		t.Fatalf("status order = %v, want %v:\n%s", got, want, panel)
+	}
+	if !strings.Contains(panel, "by status") {
+		t.Fatalf("the panel title does not name the sort mode:\n%s", panel)
+	}
+	for _, note := range []string{"a run failed here", "a run finished here", "the pipeline never names it"} {
+		if !strings.Contains(panel, note) {
+			t.Fatalf("status headers do not carry %q:\n%s", note, panel)
+		}
+	}
+
+	// Project, alphabetically, with the unfiled ticket last.
+	m = update(t, m, keyMsg("s"))
+	panel = m.attentionPanel(96, 16)
+	want = []string{"LERP-22", "LERP-1", "LERP-23", "LERP-48", "LERP-60", "LERP-70"}
+	if got := order(panel, want...); !slices.Equal(got, want) {
+		t.Fatalf("project order = %v, want %v:\n%s", got, want, panel)
+	}
+	if !strings.Contains(panel, "TUI redesign") || !strings.Contains(panel, "no project") {
+		t.Fatalf("project mode draws no project headers:\n%s", panel)
+	}
+
+	// Leverage: what promoting frees first, then priority, then the
+	// identifier — and a blocked ticket below every routable one. Flat, so
+	// no headers.
+	m = update(t, m, keyMsg("s"))
+	panel = m.attentionPanel(96, 14)
+	want = []string{"LERP-22", "LERP-48", "LERP-1", "LERP-60", "LERP-70", "LERP-23"}
 	if got := order(panel, want...); !slices.Equal(got, want) {
 		t.Fatalf("leverage order = %v, want %v:\n%s", got, want, panel)
 	}
 	if !strings.Contains(panel, "by leverage") {
 		t.Fatalf("the panel title does not name the sort mode:\n%s", panel)
+	}
+	if strings.Contains(panel, "a run failed here") || strings.Contains(panel, "no project") {
+		t.Fatalf("a flat mode still draws headers:\n%s", panel)
 	}
 
 	// Priority, then leverage.
@@ -682,41 +716,18 @@ func TestInboxSortModesCycle(t *testing.T) {
 	if !strings.Contains(panel, "by priority") {
 		t.Fatalf("the panel title does not name the sort mode:\n%s", panel)
 	}
-
-	// Status: pipeline-relevance first — a failure route, then where a
-	// clean run comes to rest, then the statuses the pipeline never names —
-	// with a header per status carrying the note that explains the rank.
-	m = update(t, m, keyMsg("s"))
-	panel = m.attentionPanel(96, 16)
-	want = []string{"LERP-1", "LERP-48", "LERP-22", "LERP-60", "LERP-70", "LERP-23"}
-	if got := order(panel, want...); !slices.Equal(got, want) {
-		t.Fatalf("status order = %v, want %v:\n%s", got, want, panel)
-	}
-	for _, note := range []string{"a run failed here", "a run finished here", "the pipeline never names it"} {
-		if !strings.Contains(panel, note) {
-			t.Fatalf("status headers do not carry %q:\n%s", note, panel)
-		}
-	}
-
-	// Project, alphabetically, with the unfiled ticket last.
-	m = update(t, m, keyMsg("s"))
-	panel = m.attentionPanel(96, 14)
-	want = []string{"LERP-22", "LERP-1", "LERP-23", "LERP-48", "LERP-60", "LERP-70"}
-	if got := order(panel, want...); !slices.Equal(got, want) {
-		t.Fatalf("project order = %v, want %v:\n%s", got, want, panel)
-	}
-	if !strings.Contains(panel, "TUI redesign") || !strings.Contains(panel, "no project") {
-		t.Fatalf("project mode draws no project headers:\n%s", panel)
-	}
-
-	// One more press is back to the flat default, headers and all.
-	m = update(t, m, keyMsg("s"))
-	panel = m.attentionPanel(96, 14)
-	if !strings.Contains(panel, "by leverage") {
-		t.Fatalf("the sort key does not cycle back to the default:\n%s", panel)
-	}
 	if strings.Contains(panel, "a run failed here") || strings.Contains(panel, "no project") {
 		t.Fatalf("a flat mode still draws headers:\n%s", panel)
+	}
+
+	// One more press is back to the grouped default, headers and all.
+	m = update(t, m, keyMsg("s"))
+	panel = m.attentionPanel(96, 16)
+	if !strings.Contains(panel, "by status") {
+		t.Fatalf("the sort key does not cycle back to the default:\n%s", panel)
+	}
+	if !strings.Contains(panel, "a run failed here") {
+		t.Fatalf("the grouped default draws no headers:\n%s", panel)
 	}
 }
 
@@ -726,7 +737,7 @@ func TestSortKeepsTheSelectedTicket(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: board()})
-	m = update(t, m, keyMsg("j")) // LERP-48, second under leverage
+	m = update(t, m, keyMsg("j")) // LERP-48, second under the status default
 
 	if got := m.selectedAttention().Ticket; got != "LERP-48" {
 		t.Fatalf("selection = %s, want LERP-48", got)

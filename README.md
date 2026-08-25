@@ -318,13 +318,16 @@ Linear status, the project and the priority — the vocabulary is
 Linear's own, never a category invented by lerp. A status the
 configured pipeline never names — neither a queue's status nor any
 `on_success` or `on_failure` target — is marked, because that is the
-fingerprint of a ticket that left the pipeline. Rows are ordered by
-leverage by default: how many other listed tickets promoting this one
-would transitively unblock, then priority, then identifier — so the
-promote worth making is the top row. `s` cycles that to priority,
-status or project; the two grouping modes draw a header per group, and
-the status order is derived from the pipeline itself — where runs
-fail, then where they finish, then the statuses it never names. `P`
+fingerprint of a ticket that left the pipeline. Rows are grouped by
+status by default, in an order derived from the pipeline itself —
+where runs fail, then where they finish, then the statuses it never
+names — so the run to retriage and the review to read are the top
+rows rather than two of sixteen. Within a group, rows fall through to
+leverage: how many other listed tickets promoting this one would
+transitively unblock, then priority, then identifier — so the promote
+worth making is the top row of its group. `s` cycles that to project,
+leverage or priority; the two grouping modes draw a header per group,
+the two flat ones order the whole list. `P`
 scopes the panel to one project and cycles back to all. Both are
 session-only: no saved views, no filter syntax, and neither changes
 which tickets are fetched. Selecting a row
