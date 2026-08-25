@@ -1856,9 +1856,11 @@ func TestRefocusingRewrapsThePane(t *testing.T) {
 }
 
 // Done-when: a window too short to hold the pane keeps its screen. The keys
-// that would open one do nothing rather than trade the two panels for
-// "window too small" — and the promote picker, which is modal and writes to
-// Linear, is never live behind that message.
+// that *open* a pane — enter, p, ? — do nothing rather than trade the two
+// panels for "window too small", and the promote picker, which is modal and
+// writes to Linear, is never live behind that message. The panel keys are
+// the deliberate exception, since they edit nobody's pane: see
+// TestAFocusMoveNeverEditsAPanelsPane.
 //
 // The opening state is the one under test, so nothing sets it up: lerp lands
 // on the inbox with its pane closed, which is what makes twelve lines a
@@ -1966,11 +1968,12 @@ func TestTheReopenedPaneIsCurrent(t *testing.T) {
 // is the same screen a shrink under an open pane lands on, naming the same
 // key, and `esc` gets the board back.
 //
-// The alternative — closing the pane on the operator's behalf — is worse
-// than the screen it avoids: nothing ever sets detailOpen back, so the pane
-// would stay shut at every later size. A `2` typed ahead of the first
-// WindowSizeMsg, when width and height are still zero and no window has
-// room, would shut it for the whole session.
+// The alternative — closing the pane on the operator's behalf — is a change
+// they did not ask for, at the moment they asked for something else, with no
+// line on screen to say it happened. `enter` would bring it back, but only
+// once they noticed the log was gone. A `2` typed ahead of the first
+// WindowSizeMsg, when width and height are still zero and nothing has room,
+// would shut work's pane before any window had been measured.
 func TestAFocusMoveNeverEditsAPanelsPane(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	resized, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 12})
@@ -1999,6 +2002,22 @@ func TestAFocusMoveNeverEditsAPanelsPane(t *testing.T) {
 		t.Fatal("a window with room reopened a pane the operator closed")
 	}
 
+	// The same in the other direction, which needs the inbox's pane opened
+	// first: a window with room, `enter` on the inbox, away to work, and
+	// then shrink under it. Coming back to the inbox still finds its answer.
+	back, _, _ := newTestModel(t, 1)
+	back = fillBoard(t, back, 5)
+	back = update(t, back, keyMsg("enter"))
+	if !back.detailOpen[panelAttention] {
+		t.Fatal("enter did not open the inbox's pane in a window with room")
+	}
+	back = update(t, back, keyMsg("2"))
+	shrunk, _ := back.Update(tea.WindowSizeMsg{Width: 80, Height: 12})
+	back = update(t, shrunk.(model), keyMsg("1"))
+	if !back.detailOpen[panelAttention] {
+		t.Fatal("moving focus back to the inbox closed the pane it remembers")
+	}
+
 	// And a panel key before the first WindowSizeMsg — no window has room
 	// for anything yet — leaves both defaults exactly where they started.
 	early := newModel(t.Context(), Options{Ticker: &countingTicker{}, Promoter: &recordingPromoter{},
@@ -2007,6 +2026,44 @@ func TestAFocusMoveNeverEditsAPanelsPane(t *testing.T) {
 	early = update(t, early, keyMsg("2"))
 	if early.detailOpen != ([2]bool{panelAttention: false, panelWork: true}) {
 		t.Fatalf("a keystroke before the first size edited the pane defaults: %v", early.detailOpen)
+	}
+}
+
+// Done-when: the too-small frame names the key that is actually next. esc
+// resolves nearest-first, so a filter still on the list is what the first one
+// takes — and that frame draws no status bar, so an esc that looks like it
+// did nothing is all the operator gets.
+func TestTheTooSmallScreenNamesTheFilterItWillClearFirst(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = fillBoard(t, m, 5)
+	m = update(t, m, keyMsg("/"))
+	m = update(t, m, keyMsg("something"))
+	m = update(t, m, keyMsg("enter")) // keep the filter, hand the keys back
+	if m.search == "" {
+		t.Fatal("the filter did not survive the prompt closing")
+	}
+
+	// `2` is the documented way to a log, and work's pane is open: on this
+	// window that lands on the too-small screen.
+	resized, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 12})
+	m = update(t, resized.(model), keyMsg("2"))
+	view := m.View()
+	if !strings.Contains(view, "too small") {
+		t.Fatalf("this window holds work's pane after all:\n%s", view)
+	}
+	if !strings.Contains(view, "clears the filter") {
+		t.Fatalf("the frame promises a pane the first esc will not close:\n%s", view)
+	}
+
+	// And it is telling the truth: esc takes the filter, esc takes the pane.
+	m = update(t, m, keyMsg("esc"))
+	if m.search != "" || !m.detailOpen[panelWork] {
+		t.Fatalf("the first esc did not take the filter alone: search %q, pane %v",
+			m.search, m.detailOpen[panelWork])
+	}
+	m = update(t, m, keyMsg("esc"))
+	if m.detailOpen[panelWork] || strings.Contains(m.View(), "too small") {
+		t.Fatalf("the second esc did not give the window its screen:\n%s", m.View())
 	}
 }
 

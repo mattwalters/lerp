@@ -95,7 +95,7 @@ func TestTheHarnessWiresEveryOptionTheTUIRequires(t *testing.T) {
 		t.Fatalf("build the reconciler the harness builds: %v", err)
 	}
 	events := make(chan loop.Event)
-	if err := tuiOptions(rec, repo, events, interval, lanes).Validate(); err != nil {
+	if err := tuiOptions(rec, repo, events).Validate(); err != nil {
 		t.Fatalf("the harness would render a cast of this error instead of lerp: %v", err)
 	}
 }

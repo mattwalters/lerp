@@ -148,7 +148,7 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return tui.Run(ctx, tuiOptions(rec, repo, events, interval, lanes))
+	return tui.Run(ctx, tuiOptions(rec, repo, events))
 }
 
 // tuiOptions is the harness's wiring to the TUI, split out of run so a test
@@ -157,8 +157,11 @@ func run(ctx context.Context) error {
 // and Run rejects it at startup, which vhs records as a bash error and exits
 // 0 on. That is a blank cast under the size cap and a green CI job; the
 // guard for it is TestTheHarnessWiresEveryOptionTheTUIRequires.
-func tuiOptions(rec *loop.Reconciler, repo *config.RepoConfig, events <-chan loop.Event,
-	interval time.Duration, lanes int) tui.Options {
+//
+// lanes and interval are read from the package constants rather than passed
+// in, so that guard covers the harness's own choice of them: a caller handing
+// this a zero lane count would otherwise validate here and be refused by Run.
+func tuiOptions(rec *loop.Reconciler, repo *config.RepoConfig, events <-chan loop.Event) tui.Options {
 	return tui.Options{
 		Ticker:   rec,
 		Promoter: rec,

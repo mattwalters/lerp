@@ -66,10 +66,10 @@ type Options struct {
 	Events   <-chan loop.Event
 }
 
-// Validate reports whether the Options are wired for Run. Run calls it
-// before opening the screen; it is exported so a caller assembled
-// somewhere a terminal is not — the demo harness — can be held to the
-// same contract by a test.
+// Validate returns an error naming the first option Run needs and does not
+// have. Run calls it before opening the screen; it is exported because the
+// demo harness assembles its Options in a package of its own, and a test
+// there can only hold them to this contract if it can call it.
 func (o Options) Validate() error {
 	switch {
 	case o.Ticker == nil:
@@ -856,15 +856,21 @@ func (m *model) setHelp(on bool) {
 func (m *model) setFocus(p panel) {
 	m.focus = p
 	// Deliberately no roomForMain check here, unlike the keys that open the
-	// pane. Moving focus to a panel that remembers its pane open can land on
-	// the too-small screen in a short window — but that is the same screen a
-	// shrink under an open pane lands on, and it names the same key. Closing
-	// the pane on the operator's behalf instead would be a preference
-	// destroyed by a navigation key: nothing ever sets detailOpen back, so
-	// the pane would stay shut at every later size, including one with room
-	// for it. A key that arrives before the first WindowSizeMsg — width and
-	// height still zero, so no window has room — would do it for the whole
-	// session.
+	// pane. detailOpen is the operator's answer to whether they want a
+	// panel's detail, not a fact about the window: enter and esc are the
+	// keys that mean open and close, and a resize leaves it alone on
+	// purpose. A key that only moves between panels may not edit it either.
+	//
+	// The cost is that moving to a panel whose pane is open can land on the
+	// too-small screen in a short window. That screen is the existing answer
+	// to a pane that does not fit, it names its key, and a shrink under an
+	// open pane lands on the same one — one rule for both routes beats two.
+	// Closing the pane here instead would be a change the operator did not
+	// ask for at the moment they asked for something else, with no line on
+	// screen to say it happened; enter would bring it back, but only once
+	// they noticed the log was gone. Worst case, a panel key typed ahead of
+	// the first WindowSizeMsg — width and height still zero, so nothing has
+	// room — would close work's pane before any window had been measured.
 	m.retarget()
 	// Size before filling. The two panels remember the pane separately, so
 	// focus moves the width the viewport wraps to — and content wrapped to
@@ -1748,10 +1754,17 @@ func (m model) View() string {
 	if m.width < minWidth || m.height < m.minHeight(m.mainOpen()) {
 		// When the pane is the whole of what does not fit, name the key that
 		// gives the window back: this frame has no status bar to carry the
-		// hint, and a window that shrank under an open pane still has one
-		// open — detailOpen is the operator's own preference, and a resize
-		// never edits it.
+		// hint. Two routes reach it — moving focus to a panel whose pane is
+		// open, and shrinking a window under one — because neither a panel
+		// key nor a resize edits detailOpen.
 		if m.width >= minWidth && m.height >= m.minHeight(false) {
+			// esc resolves nearest-first, so a live filter is what the first
+			// one takes. Say so rather than promise a pane it will not
+			// close: with no status bar here, an esc that looks like it did
+			// nothing is the worse half of the trade.
+			if m.search != "" {
+				return "lerp — window too small\nesc clears the filter, then closes the pane\n"
+			}
 			return "lerp — window too small\nesc closes the pane\n"
 		}
 		return "lerp — window too small\n"
