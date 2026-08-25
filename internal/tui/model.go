@@ -35,6 +35,15 @@ type Promoter interface {
 	Promote(ctx context.Context, ticketID, status string) error
 }
 
+// Starter is the TUI's other write action: running one selected queued
+// ticket now, past the lane limit. It is Reconciler.ForceStart in
+// production, and it overrides exactly one thing — the lane count. Every
+// refusal lives behind it, decided against the board rather than against a
+// snapshot up to an interval old.
+type Starter interface {
+	ForceStart(ctx context.Context, ticketID string) error
+}
+
 // Reader is the inbox pane's one read beyond the pass: the body and
 // comments of the ticket the operator selected. It is Reconciler.IssueDetail
 // in production. Read-only, one ticket at a time — SCOPE's "not a Linear
@@ -48,6 +57,7 @@ type Reader interface {
 type Options struct {
 	Ticker   Ticker
 	Promoter Promoter
+	Starter  Starter
 	Reader   Reader
 	Statuses []string      // promote targets: configured queue statuses, plus the pipeline's exits
 	Interval time.Duration // tick cadence; loop.DefaultInterval when zero
@@ -61,6 +71,8 @@ func (o Options) validate() error {
 		return fmt.Errorf("tui: ticker is required")
 	case o.Promoter == nil:
 		return fmt.Errorf("tui: promoter is required")
+	case o.Starter == nil:
+		return fmt.Errorf("tui: starter is required")
 	case o.Reader == nil:
 		return fmt.Errorf("tui: reader is required")
 	case o.Lanes < 1:
@@ -191,6 +203,13 @@ type (
 	promotedMsg struct {
 		ticket string
 		status string
+		err    error
+	}
+	// forcedMsg reports the outcome of a force-start: the claim and the
+	// provision it kicks off run off the render loop, like every other
+	// write, so a slow Linear call never blocks a frame.
+	forcedMsg struct {
+		ticket string
 		err    error
 	}
 	// detailDueMsg is the debounce firing for a ticket; detailMsg is the
@@ -489,6 +508,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.note(fmt.Sprintf("promoted %s to %s", msg.ticket, msg.status), false)
 		}
 		return m, nil
+	case forcedMsg:
+		if msg.err != nil {
+			m.lastErr = clean(msg.err.Error())
+		} else {
+			m.note("force-started "+msg.ticket, false)
+		}
+		return m, nil
 	}
 	return m, nil
 }
@@ -542,6 +568,17 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.focus == panelAttention && len(m.shown) > 0 && len(m.o.Statuses) > 0 && m.roomForMain() {
 			m.promoting = true
 			m.promoteSel = 0
+		}
+	case key.Matches(msg, m.keys.ForceStart):
+		// No gate here beyond having a row: every refusal is the
+		// reconciler's, decided against the board rather than against a
+		// snapshot up to an interval old. Pressing S on a running row gets
+		// its refusal back like any other — "already claimed", since a run
+		// this lerp started holds the ticket.
+		if m.focus == panelWork {
+			if r := m.selectedWork(); r != nil && r.ticketID != "" {
+				return m, m.doForceStart(r.ticketID, r.ticket)
+			}
 		}
 	case key.Matches(msg, m.keys.Sort):
 		if m.focus == panelAttention {
@@ -682,8 +719,11 @@ func (m model) handlePromoteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			cmd = m.doPromote(it.TicketID, it.Ticket, m.o.Statuses[m.promoteSel])
 		}
 	}
-	// Closing the picker hands the main pane back to a lens of a different
-	// height; re-fit before the next frame draws into the old one.
+	// The picker and the lens under it are the same box now, so this is not
+	// resizing anything — it is the clamp. A pass landing while the picker
+	// was open can swap a long detail for a short one under a scrolled
+	// viewport, and layout re-pins the offset inside the content before the
+	// pane is handed back.
 	m.layout()
 	return m, cmd
 }
@@ -695,6 +735,16 @@ func (m model) doPromote(ticketID, ticket, status string) tea.Cmd {
 	return func() tea.Msg {
 		err := m.o.Promoter.Promote(m.ctx, ticketID, status)
 		return promotedMsg{ticket: ticket, status: status, err: err}
+	}
+}
+
+// doForceStart runs the second of the TUI's two writes off the render loop,
+// for the same reason doPromote does: a claim plus a provision must never
+// block a frame.
+func (m model) doForceStart(ticketID, ticket string) tea.Cmd {
+	return func() tea.Msg {
+		err := m.o.Starter.ForceStart(m.ctx, ticketID)
+		return forcedMsg{ticket: ticket, err: err}
 	}
 }
 
@@ -1029,15 +1079,14 @@ func (m *model) refreshMain() {
 		m.refreshLog()
 		return
 	}
-	// The viewport's width is the pane's inner width, and it follows the
-	// terminal's alone — so wrapping against it here can never disagree with
-	// the width geometry measured the same content at.
+	// The viewport's width is the pane's inner width, so prose wrapped here
+	// is wrapped to the columns it will be drawn in — panelBox truncates its
+	// rows rather than wrapping them, and a line too long is a line cut.
 	m.vp.SetContent(m.detail(m.vp.Width))
 }
 
 // detail is the read-only lens the main pane shows for a selection with no
-// log — and the measure geometry fits the pane's box to. width is the pane's
-// inner width, which the inbox lens wraps prose to.
+// log. width is the pane's inner width, which the inbox lens wraps prose to.
 func (m *model) detail(width int) string {
 	if m.focus == panelWork {
 		return m.workDetail()
@@ -1313,9 +1362,11 @@ func (m *model) cycleProject() {
 // for the rows it renders, held to about a third of the panel stack, and
 // needs-you takes everything left over. Focus is not in the arithmetic at
 // all: moving between panels never moves the geometry, and a panel that is
-// quiet keeps its border rather than collapsing to a line. Heights include
-// borders, and the stack always fits bodyH so the status bar stays on
-// screen.
+// quiet keeps its border rather than collapsing to a line. The main pane is
+// not in that split: wide, it is a column of its own and fills the body;
+// stacked, it takes half the body and the panels share the rest. Heights
+// include borders, and the stack always fits bodyH so the status bar stays
+// on screen.
 type geometry struct {
 	wide         bool
 	sideW, mainW int
@@ -1383,9 +1434,14 @@ func (m *model) geometry() geometry {
 		// mainH stays 0 and the whole body is the stack's: fitPanels hands
 		// it to the two panels exactly as it does the rest of the time.
 	case g.wide:
-		// The main pane has the other column to itself, so it fits its own
-		// content and never competes with the stack.
-		g.mainH = min(g.bodyH, m.mainWant(g.bodyH, padMain.inner(g.mainW)))
+		// The main pane has the other column to itself, so it takes the whole
+		// of it. Fitting it to its content ended the box a third of the way
+		// down the screen on a short ticket and at the bottom on a long one,
+		// with dead space under it and no visible reason why — a pane that
+		// changes size with its contents reads as a glitch rather than as a
+		// rule. It competes with nothing here, so there was nothing to win by
+		// fitting. What it holds scrolls.
+		g.mainH = g.bodyH
 	default:
 		// Stacked, the body is split rather than fitted: half the screen is
 		// the board, half is whatever the selected row opens. Fitting the
@@ -1434,16 +1490,6 @@ func workHeight(stackH, want, attnWant int) int {
 // shrinks its panels to nothing rather than push the status bar off screen.
 func fitH(h, lo, hi int) int {
 	return max(0, min(max(h, lo), hi))
-}
-
-// mainWant is the main pane's height by the same rule. The detail lenses ask
-// for the lines they draw; the log tail, the promote picker and the help
-// overlay ask for the whole body, because what they hold scrolls.
-func (m *model) mainWant(bodyH, width int) int {
-	if m.promoting || m.helpOn || m.showingLog() {
-		return bodyH
-	}
-	return strings.Count(m.detail(width), "\n") + 3
 }
 
 // layout sizes the main pane's viewport from the geometry.
@@ -1816,24 +1862,44 @@ func (m model) attentionPanel(w, h int) string {
 	return panelBox(panelTitle(1, "inbox", focused, extra), focused, w, h, rows, padList)
 }
 
-// busyLanes counts the configured lanes hosting live runs. Adopted runs
-// above N are visible as extra rows but sit outside the configured
-// capacity, so they stay out of the fraction.
-func (m model) busyLanes() int {
-	busy := 0
-	for n, ln := range m.lanes {
-		if n <= m.o.Lanes && ln.state != laneIdle {
-			busy++
+// liveLanes counts every lane hosting a live run, including the ones above
+// N: a forced run, or one adopted from a previous process with a bigger lane
+// count. The loop charges those against the budget too — freeLanes computes
+// capacity as Lanes minus every active run, wherever it sits — so counting
+// them is what makes the fraction below agree with what can actually start.
+func (m model) liveLanes() int {
+	live := 0
+	for _, ln := range m.lanes {
+		if ln.state != laneIdle {
+			live++
 		}
 	}
-	return busy
+	return live
+}
+
+// capacityLabel is the one number the status bar and the work panel title
+// both render. The fraction says whether anything can start, so it is the
+// loop's own arithmetic: full at N live runs, whatever lane numbers they
+// hold. The suffix says the board is over capacity, which is a state the
+// operator asked for and should be able to see.
+//
+// Counting only lanes 1..N here would read "1/2 running" while two runs are
+// live and freeLanes returns nothing — a free lane the operator would wait
+// on and never get.
+func (m model) capacityLabel() string {
+	live := m.liveLanes()
+	label := fmt.Sprintf("%d/%d running", min(live, m.o.Lanes), m.o.Lanes)
+	if over := live - m.o.Lanes; over > 0 {
+		label += fmt.Sprintf(" · +%d over", over)
+	}
+	return label
 }
 
 func (m model) workPanel(w, h int) string {
 	focused := m.focus == panelWork
 	// Capacity has two homes now that the lane rows are gone: this title and
 	// the status bar. It is the number that says whether anything can start.
-	extra := styleFaint.Render(fmt.Sprintf(" · %d/%d running", m.busyLanes(), m.o.Lanes))
+	extra := styleFaint.Render(" · " + m.capacityLabel())
 	rows, sel := m.workListRows(padList.inner(w))
 	rows = m.panelBody(panelWork, rows, sel, padList.inner(w), h-2)
 	return panelBox(panelTitle(2, "work", focused, extra), focused, w, h, rows, padList)
@@ -2230,7 +2296,7 @@ func (m model) statusBar() string {
 	}
 
 	left := badge + " " + heart
-	left += "  " + styleFaint.Render(fmt.Sprintf("%d/%d running", m.busyLanes(), m.o.Lanes))
+	left += "  " + styleFaint.Render(m.capacityLabel())
 	if len(m.attention) > 0 {
 		left += "  " + styleAttention.Render(fmt.Sprintf("● %d in the inbox", len(m.attention)))
 	}

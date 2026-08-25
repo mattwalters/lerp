@@ -5,25 +5,26 @@ import "github.com/charmbracelet/bubbles/key"
 // keymap declares every binding once; the status bar hint and the ? overlay
 // both render from it, so the help can never drift from the keys.
 type keymap struct {
-	Attention key.Binding
-	Work      key.Binding
-	NextPanel key.Binding
-	PrevPanel key.Binding
-	Up        key.Binding
-	Down      key.Binding
-	PageUp    key.Binding
-	PageDown  key.Binding
-	Top       key.Binding
-	Bottom    key.Binding
-	Detail    key.Binding
-	Close     key.Binding
-	Promote   key.Binding
-	Sort      key.Binding
-	Project   key.Binding
-	Open      key.Binding
-	Raw       key.Binding
-	Help      key.Binding
-	Quit      key.Binding
+	Attention  key.Binding
+	Work       key.Binding
+	NextPanel  key.Binding
+	PrevPanel  key.Binding
+	Up         key.Binding
+	Down       key.Binding
+	PageUp     key.Binding
+	PageDown   key.Binding
+	Top        key.Binding
+	Bottom     key.Binding
+	Detail     key.Binding
+	Close      key.Binding
+	Promote    key.Binding
+	ForceStart key.Binding
+	Sort       key.Binding
+	Project    key.Binding
+	Open       key.Binding
+	Raw        key.Binding
+	Help       key.Binding
+	Quit       key.Binding
 }
 
 func newKeymap() keymap {
@@ -45,12 +46,22 @@ func newKeymap() keymap {
 		Detail:  key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open detail")),
 		Close:   key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "close detail")),
 		Promote: key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "promote")),
-		Sort:    key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort inbox")),
-		Project: key.NewBinding(key.WithKeys("P"), key.WithHelp("P", "filter by project")),
-		Open:    key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "open in Linear")),
-		Raw:     key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "raw log")),
-		Help:    key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
-		Quit:    key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
+		// S, not s: a letter that means two different things depending on
+		// which panel has focus is worse than a letter nothing else uses.
+		// The description is "past the limit", not LERP-53's "past the lane
+		// limit": "lane" is the noun the TUI keeps to itself, and the longer
+		// phrase is wide enough to push this whole help column off a
+		// hundred-column terminal — every key in it, not just this one. It
+		// is trimmed again now that enter shares the column: the widest key
+		// and the widest description are added together, so the detail
+		// pane's own keys cost this one three characters back.
+		ForceStart: key.NewBinding(key.WithKeys("S"), key.WithHelp("S", "start past the limit")),
+		Sort:       key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort inbox")),
+		Project:    key.NewBinding(key.WithKeys("P"), key.WithHelp("P", "filter by project")),
+		Open:       key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "open in Linear")),
+		Raw:        key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "raw log")),
+		Help:       key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
+		Quit:       key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
 	}
 }
 
@@ -68,7 +79,8 @@ func (k keymap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Attention, k.Work, k.NextPanel, k.PrevPanel,
 			k.Up, k.Down, k.PageUp, k.PageDown, k.Top, k.Bottom},
-		{k.Detail, k.Close, k.Promote, k.Sort, k.Project, k.Open, k.Raw, k.Help, k.Quit},
+		{k.Detail, k.Close, k.Promote, k.ForceStart, k.Sort, k.Project,
+			k.Open, k.Raw, k.Help, k.Quit},
 	}
 }
 
