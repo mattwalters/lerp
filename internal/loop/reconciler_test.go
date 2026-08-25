@@ -585,8 +585,7 @@ func TestRunAnnouncesProvisioningBeforeStart(t *testing.T) {
 	}
 }
 
-// The loop applies the same move rule as the single-lane flow: a non-zero
-// exit routes to on_failure.
+// The move rule, on the live path: a non-zero exit routes to on_failure.
 func TestRunFailureRoutesToOnFailure(t *testing.T) {
 	h := newHarness(t, 1, func(context.Context, run.Invocation) (run.Result, error) {
 		return run.Result{ExitCode: 3}, nil
@@ -631,7 +630,7 @@ func TestRunProvisionFailureReleasesTheClaimAndDisposes(t *testing.T) {
 }
 
 // An agent that moved its own ticket has already decided; the loop respects
-// whatever it finds, exactly as the single-lane flow does.
+// whatever it finds.
 func TestRunRespectsAgentMove(t *testing.T) {
 	var h *harness
 	h = newHarness(t, 1, func(context.Context, run.Invocation) (run.Result, error) {

@@ -71,24 +71,28 @@ func TestConcludeReleasesTheClaimAtAGate(t *testing.T) {
 func TestConcludeReleasesTheClaimWhenTheAgentMovedIntoAServedStatus(t *testing.T) {
 	ctx := context.Background()
 	fake := linear.NewFake()
-	fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Todo"})
-	repo := chainedRepo()
-	queue := repo.Queues["todo"]
+	fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Planning"})
+	// The agent's destination is not where the queue's rule would have sent
+	// it: this run's clean exit routes to the "Plan Review" gate, so a
+	// conclude that forced its hop would overwrite the move rather than
+	// respect it, and the assertion below would catch it.
+	repo := gatedRepo()
+	queue := repo.Queues["plan"]
 
 	issue, viewerID := claimed(t, fake, "one", queue.Status)
 	// The agent's own move, made while the run was still going, into the
-	// status the review queue serves.
-	if err := fake.MoveIssue(ctx, "one", "Done"); err != nil {
+	// status the implement queue serves.
+	if err := fake.MoveIssue(ctx, "one", "Implementing"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := conclude(ctx, fake, issue, queue, repo, 0, viewerID, nil); err != nil {
 		t.Fatalf("conclude: %v", err)
 	}
 	got, _ := fake.GetIssue(ctx, "one")
-	if got.Status != "Done" {
+	if got.Status != "Implementing" {
 		t.Fatalf("agent move was overwritten: status = %q", got.Status)
 	}
-	if !Eligible(got, map[string]bool{"Done": true}) {
+	if !Eligible(got, map[string]bool{"Implementing": true}) {
 		t.Errorf("ticket is stranded after the agent's move: %+v", got)
 	}
 }
