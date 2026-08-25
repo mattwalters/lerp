@@ -1207,15 +1207,14 @@ func (m *model) cycleProject() {
 	m.resort()
 }
 
-// geometry is the screen's arithmetic. One rule: every panel asks for the
-// rows it will render, and the panel with focus absorbs whatever is left
-// over — so the panel being worked in is the one that grows, and moving
-// focus moves the space without an expand key to press. A panel with
-// nothing to show asks for a single line, its title row, and takes its body
-// back the moment it has something to say or the operator focuses it. When
-// the wants exceed the body, the unfocused panels are squeezed to a floor
-// before the focused one gives anything up. Heights include borders, and
-// the stack always fits bodyH so the status bar stays on screen.
+// geometry is the screen's arithmetic. One rule: needs-you gets the room.
+// Work is the smaller panel because it is the smaller question — it asks
+// for the rows it renders, held to about a third of the panel stack, and
+// needs-you takes everything left over. Focus is not in the arithmetic at
+// all: moving between panels never moves the geometry, and a panel that is
+// quiet keeps its border rather than collapsing to a line. Heights include
+// borders, and the stack always fits bodyH so the status bar stays on
+// screen.
 type geometry struct {
 	wide         bool
 	sideW, mainW int
@@ -1225,20 +1224,22 @@ type geometry struct {
 }
 
 const (
-	// panelFloor is the smallest a panel is squeezed to: a border, one row,
-	// a border. mainFloor is the same for the main pane in the stacked
-	// layout, where it shares the body with the panels. collapsedH is what a
-	// panel with nothing to show costs.
-	panelFloor = 3
+	// panelFloor is the smallest a panel is drawn at: a border, two rows, a
+	// border. Two, not one: with a single row windowRows has nothing to
+	// window (its own guard gives up under two lines) and panelBox spends
+	// that row on the "⋯ n more" marker, so a panel holding a list would
+	// render none of it — including the row the selection is on.
+	// mainFloor is the same for the main pane in the stacked layout, where
+	// it shares the body with the panels.
+	panelFloor = 4
 	mainFloor  = 5
-	collapsedH = 1
 )
 
 func (m *model) geometry() geometry {
 	g := geometry{bodyH: max(4, m.height-1)}
 	g.wide = m.width >= narrowWidth
 	// Widths first: the row builders lay their rows out to the panel width,
-	// and the wants are counted from those very rows.
+	// and work's want is counted from those very rows.
 	g.sideW, g.mainW = m.width, m.width
 	if g.wide {
 		// Four columns need the room: a third of the terminal truncated the
@@ -1247,57 +1248,64 @@ func (m *model) geometry() geometry {
 		g.sideW = max(28, m.width*45/100)
 		g.mainW = m.width - g.sideW
 	}
-
 	// Wants come from the same row builders the panels draw with, so the
-	// counts can never drift from what lands on screen. The panel constants
-	// are the stack's order, so a panel doubles as its index.
-	attnRows, _ := m.attentionRows(padList.inner(g.sideW))
+	// counts can never drift from what lands on screen.
 	workRows, _ := m.workListRows(padList.inner(g.sideW))
-	want := []int{
-		m.panelWant(panelAttention, len(attnRows)),
-		m.panelWant(panelWork, len(workRows)),
-	}
-	floor := []int{panelFloor, panelFloor}
+	attnRows, _ := m.attentionRows(padList.inner(g.sideW))
 
+	stackH := g.bodyH
 	if g.wide {
 		// The main pane has the other column to itself, so it fits its own
 		// content and never competes with the stack.
 		g.mainH = min(g.bodyH, m.mainWant(g.bodyH, padMain.inner(g.mainW)))
-		h := fitPanels(want, floor, g.bodyH, int(m.focus))
-		g.attnH, g.workH = h[0], h[1]
-		return g
+	} else {
+		// Stacked, the body is split rather than fitted: half the screen is
+		// the board, half is whatever the selected row opens. Fitting the
+		// main pane to its content here would put focus straight back into
+		// the arithmetic — the log lens asks for the whole body and opens on
+		// focusing work — and both panels would jump on the keystroke. What
+		// the lens holds scrolls; a panel that shrank under the operator
+		// does not.
+		g.mainH = fitH(g.bodyH/2, mainFloor, g.bodyH-2*panelFloor)
+		stackH = g.bodyH - g.mainH
 	}
-	// Stacked, the main pane is one more claimant on the same body.
-	h := fitPanels(append(want, m.mainWant(g.bodyH, padMain.inner(g.mainW))), append(floor, mainFloor), g.bodyH, int(m.focus))
-	g.attnH, g.workH, g.mainH = h[0], h[1], h[2]
+	g.workH = workHeight(stackH, m.panelWant(panelWork, len(workRows)), m.panelWant(panelAttention, len(attnRows)))
+	g.attnH = stackH - g.workH
 	return g
 }
 
-// panelWant is one panel's height in the stack: the rows it will render
-// plus its borders, or a single title row when it has nothing to show. The
-// focused panel is never collapsed — focus is how the operator opens an
-// empty panel back up to select in it.
+// panelWant is one panel's height: the rows it renders plus its borders, and
+// one line more when it is the focused panel carrying key hints. Both the
+// height bought here and the line panelBody draws ask keyHints, so the two
+// can never disagree about whether the line is there.
 func (m *model) panelWant(p panel, rows int) int {
-	if m.focus != p && m.panelEmpty(p) {
-		return collapsedH
-	}
 	if m.focus == p && m.keyHints(p) {
-		rows++ // the focused panel spends its last line on the key hints
+		rows++
 	}
 	return rows + 2
 }
 
-// panelEmpty is the content test behind the collapse: nothing waits on the
-// operator, nothing is running and no queue holds a ticket. Not knowing yet
-// is not empty — a panel no pass has reported on keeps its body and says so.
-func (m *model) panelEmpty(p panel) bool {
-	switch p {
-	case panelAttention:
-		return m.attentionSeen && len(m.attention) == 0
-	case panelWork:
-		return m.queues != nil && len(m.workRows()) == 0
-	}
-	return false
+// workHeight is work's share of the stack: the rows it renders plus its
+// borders, held to about a third of the stack however much it holds and
+// never under a panel's floor however little. A quiet work panel is still a
+// panel, and a busy one still leaves needs-you the room.
+//
+// The third is a ceiling, not a reservation: work may take what needs-you
+// has no rows to put in, so neither panel truncates its list while the
+// other holds blank lines — and needs-you takes its two thirds back the
+// moment it has the rows to fill them. Content decides that; focus never
+// does. In a window too short for both floors needs-you keeps its own
+// first, being the panel the backlog is in.
+func workHeight(stackH, want, attnWant int) int {
+	share := max(stackH/3, stackH-attnWant)
+	return fitH(want, panelFloor, min(max(panelFloor, share), stackH-panelFloor))
+}
+
+// fitH holds a height between lo and hi, and hi wins a conflict: the body
+// is a hard limit where the floors are a preference, so a window under both
+// shrinks its panels to nothing rather than push the status bar off screen.
+func fitH(h, lo, hi int) int {
+	return max(0, min(max(h, lo), hi))
 }
 
 // mainWant is the main pane's height by the same rule. The detail lenses ask
@@ -1308,54 +1316,6 @@ func (m *model) mainWant(bodyH, width int) int {
 		return bodyH
 	}
 	return strings.Count(m.detail(width), "\n") + 3
-}
-
-// fitPanels turns wants into heights summing to avail: grant every want when
-// they fit and hand the slack to focused, otherwise take rows from the
-// tallest panel still above its floor, sparing focused until the others have
-// nothing left to give. A panel asking for less than its floor keeps its
-// want as the floor, so a collapsed panel is never padded back out.
-func fitPanels(want, floors []int, avail, focused int) []int {
-	h := slices.Clone(want)
-	floor := make([]int, len(h))
-	total := 0
-	for i, v := range h {
-		floor[i] = min(v, floors[i])
-		total += v
-	}
-	if total <= avail {
-		h[focused] += avail - total
-		return h
-	}
-	over := squeeze(h, floor, total-avail, focused)
-	over = squeeze(h, floor, over, -1)
-	// Under every floor at once means a window smaller than View's guard
-	// allows. Keep the arithmetic honest anyway: panels shrink to nothing
-	// rather than push the status bar off screen.
-	squeeze(h, make([]int, len(h)), over, -1)
-	return h
-}
-
-// squeeze takes rows one at a time from the tallest panel above its floor,
-// skipping the panel at keep, and reports what it could not take.
-func squeeze(h, floor []int, need, keep int) int {
-	for need > 0 {
-		tallest := -1
-		for i := range h {
-			if i == keep || h[i] <= floor[i] {
-				continue
-			}
-			if tallest < 0 || h[i] > h[tallest] {
-				tallest = i
-			}
-		}
-		if tallest < 0 {
-			return need
-		}
-		h[tallest]--
-		need--
-	}
-	return 0
 }
 
 // layout sizes the main pane's viewport from the geometry.
@@ -1665,12 +1625,6 @@ func (m model) attentionPanel(w, h int) string {
 			extra += styleFaint.Render(" · " + m.project)
 		}
 	}
-	if h <= collapsedH {
-		if m.panelEmpty(panelAttention) {
-			extra += styleFaint.Render(" — empty")
-		}
-		return panelLine(panelTitle(1, "inbox", focused, extra), w)
-	}
 	rows, sel := m.attentionRows(padList.inner(w))
 	rows = m.panelBody(panelAttention, rows, sel, padList.inner(w), h-2)
 	return panelBox(panelTitle(1, "inbox", focused, extra), focused, w, h, rows, padList)
@@ -1694,12 +1648,6 @@ func (m model) workPanel(w, h int) string {
 	// Capacity has two homes now that the lane rows are gone: this title and
 	// the status bar. It is the number that says whether anything can start.
 	extra := styleFaint.Render(fmt.Sprintf(" · %d/%d running", m.busyLanes(), m.o.Lanes))
-	if h <= collapsedH {
-		if m.panelEmpty(panelWork) {
-			extra += styleFaint.Render(" — nothing queued")
-		}
-		return panelLine(panelTitle(2, "work", focused, extra), w)
-	}
 	rows, sel := m.workListRows(padList.inner(w))
 	rows = m.panelBody(panelWork, rows, sel, padList.inner(w), h-2)
 	return panelBox(panelTitle(2, "work", focused, extra), focused, w, h, rows, padList)

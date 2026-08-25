@@ -113,13 +113,6 @@ func panelBox(title string, focused bool, w, h int, rows []string, pad padding) 
 	return b.String()
 }
 
-// panelLine renders a panel collapsed to its title row — the one line a
-// panel with nothing to show costs. Indented by the border's width, so the
-// stack still reads as one column.
-func panelLine(title string, w int) string {
-	return ansi.Truncate(" "+title, max(0, w), "…")
-}
-
 // splitRow lays one list row out as left content and a right-hand column
 // that survives a narrow panel: the left is truncated (ANSI-aware) to
 // whatever the right does not need, so the trailing fact — a clock, a
