@@ -622,8 +622,12 @@ func (m model) handlePromoteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			cmd = m.doPromote(it.TicketID, it.Ticket, m.o.Statuses[m.promoteSel])
 		}
 	}
-	// No re-fit on the way out: the picker and the lens under it are the
-	// same box. The main pane's height is the body's, whatever it holds.
+	// The picker and the lens under it are the same box now, so this is not
+	// resizing anything — it is the clamp. A pass landing while the picker
+	// was open can swap a long detail for a short one under a scrolled
+	// viewport, and layout re-pins the offset inside the content before the
+	// pane is handed back.
+	m.layout()
 	return m, cmd
 }
 
