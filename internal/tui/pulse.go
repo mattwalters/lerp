@@ -12,9 +12,11 @@ const (
 	// how long each covers: two minutes of history, which is the span the
 	// question behind this — "has it been sitting there for four minutes" —
 	// is asked over, in cells narrow enough that a run falling quiet shows
-	// within a poll or two.
-	sparkCells  = 12
-	sparkBucket = 10 * time.Second
+	// within a bucket or two. Eight of them, because the line shares a
+	// narrow panel with the numbers it illustrates and the numbers come
+	// first.
+	sparkCells  = 8
+	sparkBucket = 15 * time.Second
 )
 
 // sparkBars is the ramp, lowest first. Index 0 is an empty bucket, so a
@@ -39,10 +41,13 @@ type pulse struct {
 	// previous process, rather than only once a byte arrives.
 	heard time.Time
 	// cells is a ring of event counts, one per bucket; head is the bucket
-	// now filling and at is when it opened.
+	// now filling, at is when it opened, and seen is how many buckets have
+	// existed at all — a young run draws a short line rather than a long
+	// empty one, which would be the picture of a run that had died.
 	cells [sparkCells]int
 	head  int
 	at    time.Time
+	seen  int
 }
 
 // newPulse attaches at the end of the file. What is already in it happened at
@@ -56,14 +61,22 @@ func newPulse(path string) *pulse {
 // so a caller polling several lanes buckets them all against one clock.
 func (p *pulse) read(now time.Time) {
 	b, mid, reset := p.follower.next()
+	// The file's own time, or none at all: a log that is gone is not a log
+	// that has fallen quiet, and reporting the last time it was there would
+	// read as an agent still being watched.
+	p.heard = p.mod
+	if p.offset < 0 {
+		// Nothing to attach to yet. A lane still provisioning is given its
+		// log path before the runner creates the file, and buckets rolling
+		// against a file that does not exist would draw the flat line of a
+		// run that has stopped saying anything.
+		return
+	}
 	if reset {
 		p.stream = logfmt.Stream{}
 	}
 	if mid {
 		p.stream.SkipLine()
-	}
-	if !p.mod.IsZero() {
-		p.heard = p.mod
 	}
 	p.roll(now)
 	p.cells[p.head] += len(p.stream.Feed(b))
@@ -74,13 +87,14 @@ func (p *pulse) read(now time.Time) {
 // run that has gone quiet flatten its own line.
 func (p *pulse) roll(now time.Time) {
 	if p.at.IsZero() {
-		p.at = now
+		p.at, p.seen = now, 1
 		return
 	}
 	steps := int(now.Sub(p.at) / sparkBucket)
 	if steps <= 0 {
 		return
 	}
+	p.seen = min(p.seen+steps, sparkCells)
 	if steps >= sparkCells {
 		p.cells, p.head, p.at = [sparkCells]int{}, 0, now
 		return
@@ -92,11 +106,15 @@ func (p *pulse) roll(now time.Time) {
 	p.at = p.at.Add(time.Duration(steps) * sparkBucket)
 }
 
-// window is the counts oldest first, which is the order a sparkline draws.
+// window is the counts of the buckets that have existed, oldest first, which
+// is the order a sparkline draws. It is short while a run is young: a line
+// that has not had time to fall is not a line that has fallen, and a run
+// picked up ten seconds ago must not read like one that stopped two minutes
+// ago.
 func (p *pulse) window() []int {
-	out := make([]int, sparkCells)
-	for i := range out {
-		out[i] = p.cells[(p.head+1+i)%sparkCells]
+	out := make([]int, 0, p.seen)
+	for i := sparkCells - p.seen; i < sparkCells; i++ {
+		out = append(out, p.cells[(p.head+1+i)%sparkCells])
 	}
 	return out
 }

@@ -1451,11 +1451,11 @@ func TestWorkIsCappedAndScrollsUnderTheCap(t *testing.T) {
 	if g2 := m.geometry(); g2.workH != g.workH {
 		t.Fatalf("work grew as the selection walked: %d then %d lines", g.workH, g2.workH)
 	}
-	rows, sel := m.workListRows(g.sideW - 2)
-	if sel < 0 {
+	rows, cur := m.workListRows(g.sideW - 2)
+	if cur.at < 0 {
 		t.Fatal("work has no selection to keep on screen")
 	}
-	want := strings.TrimRight(ansi.Strip(rows[sel]), " ")
+	want := strings.TrimRight(ansi.Strip(rows[cur.at]), " ")
 	if !strings.Contains(ansi.Strip(m.View()), want) {
 		t.Fatalf("the selected row walked off the capped panel:\n%s", m.View())
 	}
@@ -1480,11 +1480,11 @@ func TestFlooredPanelStillShowsTheSelection(t *testing.T) {
 		if g.workH < panelFloor {
 			t.Fatalf("%dx%d: work is %d lines, under the floor", tc.w, tc.h, g.workH)
 		}
-		rows, sel := m.workListRows(g.sideW - 2)
-		if sel < 0 {
+		rows, cur := m.workListRows(g.sideW - 2)
+		if cur.at < 0 {
 			t.Fatalf("%dx%d: work has no selection to show", tc.w, tc.h)
 		}
-		want := strings.TrimRight(ansi.Strip(rows[sel]), " ")
+		want := strings.TrimRight(ansi.Strip(rows[cur.at]), " ")
 		if !strings.Contains(ansi.Strip(m.View()), want) {
 			t.Fatalf("%dx%d: the selected row is not on screen:\n%s", tc.w, tc.h, m.View())
 		}
@@ -2357,7 +2357,7 @@ func TestRunningRowShowsHowTheRunIsGoing(t *testing.T) {
 	m = update(t, m, pollMsg{})
 
 	view := m.View()
-	for _, want := range []string{"running", "1m30s", "last heard", "ago", "█"} {
+	for _, want := range []string{"running", "1m30s", "heard", "ago", "█"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("the running row is missing %q:\n%s", want, view)
 		}
@@ -2395,10 +2395,90 @@ func TestProvisioningRowClaimsNoReading(t *testing.T) {
 		TicketID: "id-9", Ticket: "LERP-9", Queue: "plan", StartedAt: time.Now()}})
 	m = update(t, m, pollMsg{})
 	view := m.View()
-	if strings.Contains(view, "last heard") {
+	if strings.Contains(view, "heard") {
 		t.Fatalf("a provisioning row reports a log it does not have:\n%s", view)
 	}
 	if !strings.Contains(view, "provisioning") {
 		t.Fatalf("a provisioning row lost its state:\n%s", view)
+	}
+}
+
+// The focus window slides by line, and a run's two lines are one row: a
+// window that keeps only the first cuts the reading off the very row the
+// operator is looking at, and leaves the row above's reading sitting under
+// this row's name, where it reads as this ticket's.
+func TestScrolledRunKeepsBothOfItsLines(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.log")
+	writeLog(t, path, []byte("agent at work\n"))
+
+	m, _, _ := newTestModel(t, 3)
+	resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 22})
+	m = fillBoard(t, resized.(model), 40)
+	for lane := 1; lane <= 3; lane++ {
+		m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted,
+			RunID: fmt.Sprintf("r%d", lane), Lane: lane,
+			TicketID: fmt.Sprintf("t%d", lane-1), Ticket: fmt.Sprintf("QUEUED-%d", lane),
+			Queue: "implement", LogPath: path}})
+	}
+	m = update(t, m, pollMsg{})
+	m = update(t, m, keyMsg("2"))
+
+	// Walk down to each running row in turn: the panel is capped near a
+	// third of the stack, so the window is scrolling by the second one.
+	for _, want := range []string{"QUEUED-1", "QUEUED-2", "QUEUED-3"} {
+		for m.selectedWork() == nil || m.selectedWork().ticket != want {
+			m = update(t, m, keyMsg("down"))
+		}
+		lines := strings.Split(ansi.Strip(m.View()), "\n")
+		at := slices.IndexFunc(lines, func(l string) bool {
+			return strings.Contains(l, "▸") && strings.Contains(l, want)
+		})
+		if at < 0 {
+			t.Fatalf("the selected row %s is not on screen:\n%s", want, m.View())
+		}
+		if at+1 >= len(lines) || !strings.Contains(lines[at+1], "heard") {
+			t.Fatalf("%s lost its reading to the window:\n%s", want, m.View())
+		}
+		// And no other row's reading is left stranded above a name it does
+		// not belong to.
+		for i, l := range lines {
+			if !strings.Contains(l, "heard") {
+				continue
+			}
+			if i == 0 || !strings.Contains(lines[i-1], "QUEUED-") {
+				t.Fatalf("a reading line sits under %q, not under a run:\n%s",
+					strings.TrimSpace(lines[max(i-1, 0)]), m.View())
+			}
+		}
+	}
+}
+
+// The panel the wide layout starts at is the narrowest one it draws, and the
+// numbers are the reading: the sparkline is the thing that yields to a
+// narrow panel, never the digits.
+func TestRunLineKeepsItsNumbersWhenNarrow(t *testing.T) {
+	r := workRow{lane: 1, since: time.Now().Add(-65 * time.Minute),
+		heard: time.Now().Add(-12*time.Minute - 30*time.Second),
+		rate:  []int{1, 0, 3, 0, 9, 0, 0, 0}}
+	// What a 100-column terminal — the wide layout's own threshold — leaves
+	// a list panel for its rows.
+	width := padList.inner(max(28, 100*45/100))
+	line := ansi.Strip(runLine(r, width))
+	if !strings.Contains(line, "1h5m0s") || !strings.Contains(line, "heard 12m30s ago") {
+		t.Fatalf("the numbers did not survive a %d-column panel: %q", width, line)
+	}
+	if !strings.ContainsAny(line, "▁█") {
+		t.Fatalf("the sparkline was dropped where it fits: %q", line)
+	}
+	if lipgloss.Width(line) > width {
+		t.Fatalf("the line is %d columns wide, panel is %d: %q", lipgloss.Width(line), width, line)
+	}
+	// Narrower than both will fit, the line goes rather than the digits.
+	tight := ansi.Strip(runLine(r, 34))
+	if strings.ContainsAny(tight, "▁█") {
+		t.Fatalf("a sparkline crowded out the numbers: %q", tight)
+	}
+	if !strings.Contains(tight, "heard 12m30s ago") {
+		t.Fatalf("the reading was truncated to make room for decoration: %q", tight)
 	}
 }

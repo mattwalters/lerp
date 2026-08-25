@@ -1427,7 +1427,7 @@ func panelTitle(n int, name string, focused bool, extra string) string {
 // — the key hints on the last line. A panel squeezed down to a single row
 // keeps the row and drops the hints: a key line over an empty body says what
 // the keys do to nothing.
-func (m *model) panelBody(p panel, rows []string, sel, width, ih int) []string {
+func (m *model) panelBody(p panel, rows []string, cur cursor, width, ih int) []string {
 	if m.focus != p {
 		return rows
 	}
@@ -1443,8 +1443,8 @@ func (m *model) panelBody(p panel, rows []string, sel, width, ih int) []string {
 	if hint != "" {
 		ih--
 	}
-	if sel >= 0 {
-		rows = windowRows(rows, sel, ih)
+	if cur.at >= 0 {
+		rows = windowRows(rows, cur, ih)
 	}
 	if hint == "" {
 		return rows
@@ -1508,16 +1508,17 @@ func marker(on bool) string {
 }
 
 // attentionRows builds the inbox table's rows — under a grouping mode,
-// a header above each run of them; sel is the selected row's index (-1 with
-// nothing to select), for the focus window.
-func (m *model) attentionRows(width int) ([]string, int) {
+// a header above each run of them — and where the cursor sits among them,
+// for the focus window. Every inbox row is one line.
+func (m *model) attentionRows(width int) ([]string, cursor) {
+	none := cursor{at: -1}
 	switch {
 	case !m.attentionSeen:
-		return []string{styleFaint.Render("reading the board…")}, -1
+		return []string{styleFaint.Render("reading the board…")}, none
 	case len(m.attention) == 0:
-		return []string{styleFaint.Render("the inbox is empty")}, -1
+		return []string{styleFaint.Render("the inbox is empty")}, none
 	case len(m.shown) == 0:
-		return []string{styleFaint.Render("nothing in " + m.project)}, -1
+		return []string{styleFaint.Render("nothing in " + m.project)}, none
 	}
 	focused := m.focus == panelAttention
 	// Every column is padded to the widest cell on the list, so the four of
@@ -1554,7 +1555,7 @@ func (m *model) attentionRows(width int) ([]string, int) {
 		}
 		rows = append(rows, attentionRow(it, focused && i == m.attnSel, idW, statusW, projW, width))
 	}
-	return rows, sel
+	return rows, cursor{at: sel, span: 1}
 }
 
 // oneGroup reports whether every shown row falls under the same header.
@@ -1690,8 +1691,8 @@ func (m model) attentionPanel(w, h int) string {
 			extra += styleFaint.Render(" · " + m.project)
 		}
 	}
-	rows, sel := m.attentionRows(padList.inner(w))
-	rows = m.panelBody(panelAttention, rows, sel, padList.inner(w), h-2)
+	rows, cur := m.attentionRows(padList.inner(w))
+	rows = m.panelBody(panelAttention, rows, cur, padList.inner(w), h-2)
 	return panelBox(panelTitle(1, "inbox", focused, extra), focused, w, h, rows, padList)
 }
 
@@ -1713,22 +1714,23 @@ func (m model) workPanel(w, h int) string {
 	// Capacity has two homes now that the lane rows are gone: this title and
 	// the status bar. It is the number that says whether anything can start.
 	extra := styleFaint.Render(fmt.Sprintf(" · %d/%d running", m.busyLanes(), m.o.Lanes))
-	rows, sel := m.workListRows(padList.inner(w))
-	rows = m.panelBody(panelWork, rows, sel, padList.inner(w), h-2)
+	rows, cur := m.workListRows(padList.inner(w))
+	rows = m.panelBody(panelWork, rows, cur, padList.inner(w), h-2)
 	return panelBox(panelTitle(2, "work", focused, extra), focused, w, h, rows, padList)
 }
 
 // workListRows renders the merged list: each queue's header, then its
-// tickets — running first, then what runs next. sel is the selected row's
-// index among the rendered lines (-1 with nothing to select), for the focus
-// window.
-func (m *model) workListRows(width int) ([]string, int) {
+// tickets — running first, then what runs next — and where the cursor sits
+// among the rendered lines, for the focus window. A ticket a lane holds
+// draws two lines, so the cursor carries that span rather than a bare index.
+func (m *model) workListRows(width int) ([]string, cursor) {
+	none := cursor{at: -1}
 	groups := m.workGroups()
 	if len(groups) == 0 {
 		if m.queues == nil {
-			return []string{styleFaint.Render("waiting for the first pass…")}, -1
+			return []string{styleFaint.Render("waiting for the first pass…")}, none
 		}
-		return []string{styleFaint.Render("no queues configured")}, -1
+		return []string{styleFaint.Render("no queues configured")}, none
 	}
 	n := 0
 	for _, g := range groups {
@@ -1740,18 +1742,19 @@ func (m *model) workListRows(width int) ([]string, int) {
 	}
 	focused := m.focus == panelWork
 	var rows []string
-	sel, idx := -1, 0
+	cur, idx := cursor{at: -1}, 0
 	for _, g := range groups {
 		rows = append(rows, groupHeader(g))
 		for _, r := range g.rows {
+			lines := m.workRowLines(r, focused && idx == selRow, width)
 			if idx == selRow {
-				sel = len(rows)
+				cur = cursor{at: len(rows), span: len(lines)}
 			}
-			rows = append(rows, m.workRowLines(r, focused && idx == selRow, width)...)
+			rows = append(rows, lines...)
 			idx++
 		}
 	}
-	return rows, sel
+	return rows, cur
 }
 
 // groupHeader is one queue's line: its name, the Linear status a ticket
@@ -1825,13 +1828,21 @@ func (m model) workRowLines(r workRow, selected bool, width int) []string {
 // the operator what the log already knows and leaves the decision to eject
 // theirs.
 func runLine(r workRow, width int) string {
-	left := elapsed(r.since)
-	if !r.heard.IsZero() {
-		left += " · last heard " + elapsed(r.heard) + " ago"
-	}
 	// Four spaces: the cursor column and the state dot, so the line starts
 	// under the ticket identifier rather than under the cursor.
-	return splitRow("    "+styleFaint.Render(left), styleFaint.Render(sparkline(r.rate)), width)
+	left := "    " + elapsed(r.since)
+	if !r.heard.IsZero() {
+		left += " · heard " + elapsed(r.heard) + " ago"
+	}
+	// The numbers are the reading; the sparkline is the shape behind them.
+	// splitRow protects its right column against a narrow panel, and here
+	// the right column is the one that can be spared — a panel too narrow
+	// for both drops the line rather than truncate the digits.
+	right := ""
+	if spark := sparkline(r.rate); spark != "" && len(left)+1+len([]rune(spark)) <= width {
+		right = styleFaint.Render(spark)
+	}
+	return splitRow(styleFaint.Render(left), right, width)
 }
 
 // mainPanel is the lens: the promote picker while it is open, the ? overlay,
@@ -1864,7 +1875,7 @@ func (m model) promotePicker(it loop.AttentionItem, w, h int) string {
 		}
 	}
 	// The highlighted status must be on screen before enter can confirm it.
-	rows = windowRows(rows, 2+m.promoteSel, h-2)
+	rows = windowRows(rows, cursor{at: 2 + m.promoteSel, span: 1}, h-2)
 	return panelBox(styleTitleFocus.Render("promote "+it.Ticket), true, w, h, rows, padMain)
 }
 

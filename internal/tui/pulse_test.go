@@ -8,6 +8,16 @@ import (
 	"time"
 )
 
+// newest is the bucket now filling, which is where a poll's events land.
+func newest(t *testing.T, p *pulse) int {
+	t.Helper()
+	w := p.window()
+	if len(w) == 0 {
+		t.Fatal("the window has no buckets at all")
+	}
+	return w[len(w)-1]
+}
+
 func appendLog(t *testing.T, path, data string) {
 	t.Helper()
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
@@ -59,12 +69,12 @@ func TestPulseWaitsForAWholeLine(t *testing.T) {
 
 	appendLog(t, path, "half a ")
 	p.read(now)
-	if got := p.window()[sparkCells-1]; got != 0 {
+	if got := newest(t, p); got != 0 {
 		t.Fatalf("a half-written line counted as %d events", got)
 	}
 	appendLog(t, path, "line\n")
 	p.read(now)
-	if got := p.window()[sparkCells-1]; got != 1 {
+	if got := newest(t, p); got != 1 {
 		t.Fatalf("the finished line counted as %d events, want 1", got)
 	}
 }
@@ -98,10 +108,13 @@ func TestPulseQuietGoesFlat(t *testing.T) {
 
 	p.read(start.Add(2 * sparkBucket))
 	got := p.window()
-	if got[sparkCells-1] != 0 || got[sparkCells-2] != 0 {
+	if len(got) != 3 {
+		t.Fatalf("window = %v, want the three buckets that have existed", got)
+	}
+	if got[1] != 0 || got[2] != 0 {
 		t.Fatalf("two quiet buckets still show activity: %v", got)
 	}
-	if got[sparkCells-3] == 0 {
+	if got[0] == 0 {
 		t.Fatalf("the busy bucket did not slide back with the clock: %v", got)
 	}
 	if bars := sparkline(got); !strings.HasSuffix(bars, "▁▁") {
@@ -137,11 +150,53 @@ func TestPulseHeardIsTheFilesOwnTime(t *testing.T) {
 func TestPulseWithoutAFileHasNothingToSay(t *testing.T) {
 	p := newPulse(filepath.Join(t.TempDir(), "not-yet"))
 	p.read(time.Now())
+	p.read(time.Now().Add(time.Minute))
 	if !p.heard.IsZero() {
 		t.Fatalf("a missing log claimed it was last heard at %v", p.heard)
 	}
-	if bars := sparkline(p.window()); bars != strings.Repeat("▁", sparkCells) {
-		t.Fatalf("a missing log drew activity: %q", bars)
+	if bars := sparkline(p.window()); bars != "" {
+		t.Fatalf("a log that does not exist drew a line: %q", bars)
+	}
+}
+
+// A log deleted under a live agent — which invariant 1 says may cost compute,
+// never correctness — is not an agent that has gone quiet. The row stops
+// reporting rather than freezing the last time the file was there.
+func TestPulseStopsReadingALogThatVanished(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.log")
+	appendLog(t, path, "working\n")
+	p := newPulse(path)
+	p.read(time.Now())
+	if p.heard.IsZero() {
+		t.Fatal("a log that is there reports no time")
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	p.read(time.Now())
+	if !p.heard.IsZero() {
+		t.Fatalf("a deleted log still reports %v as when it last spoke", p.heard)
+	}
+}
+
+// A run picked up seconds ago has no history to draw, and a long flat line is
+// the picture of one that died. The window grows with the run instead.
+func TestPulseWindowGrowsWithTheRun(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.log")
+	appendLog(t, path, "started\n")
+	start := time.Now()
+	p := newPulse(path)
+	p.read(start)
+	if got := len(p.window()); got != 1 {
+		t.Fatalf("a run one poll old draws %d buckets, want 1", got)
+	}
+	p.read(start.Add(3 * sparkBucket))
+	if got := len(p.window()); got != 4 {
+		t.Fatalf("a run four buckets old draws %d, want 4", got)
+	}
+	p.read(start.Add(time.Hour))
+	if got := len(p.window()); got != sparkCells {
+		t.Fatalf("an old run draws %d buckets, want the whole window of %d", got, sparkCells)
 	}
 }
 

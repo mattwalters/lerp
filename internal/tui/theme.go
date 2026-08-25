@@ -130,24 +130,40 @@ func splitRow(left, right string, width int) string {
 	return left + pad + " " + right
 }
 
-// windowRows slides rows so the row at sel stays visible within ih lines,
+// cursor is where a panel's selection sits among its rendered lines: the
+// line the row starts on, and how many lines that row draws. A work row a
+// lane holds is two lines, and a window that keeps only the first cuts the
+// run's own reading off — or leaves it under the row above, reading as that
+// ticket's. at is -1 when the panel has nothing to select.
+type cursor struct {
+	at   int
+	span int
+}
+
+// windowRows slides rows so the selected row stays visible within ih lines,
 // standing in for the spans cut at either edge with a faint "⋯ n more".
 // panelBox's own cut covers unfocused panels; this is the focused variant,
 // so a selection can never walk off the rendered rows.
-func windowRows(rows []string, sel, ih int) []string {
+func windowRows(rows []string, cur cursor, ih int) []string {
 	if ih < 2 || len(rows) <= ih {
 		return rows
 	}
-	sel = clampIndex(sel, len(rows))
+	at := clampIndex(cur.at, len(rows))
+	end := min(at+max(1, cur.span), len(rows)) // one past the row's last line
 	more := func(n int) string { return styleFaint.Render(fmt.Sprintf("⋯ %d more", n)) }
-	if sel < ih-1 {
+	if end <= ih-1 {
 		return append(append([]string{}, rows[:ih-1]...), more(len(rows)-(ih-1)))
 	}
-	if lo := len(rows) - (ih - 1); sel >= lo {
+	if lo := len(rows) - (ih - 1); at >= lo {
 		return append([]string{more(lo)}, rows[lo:]...)
 	}
-	hi := sel + 1
-	lo := hi - max(1, ih-2)
+	// The window ends just past the selected row, so a row drawing several
+	// lines keeps all of them. Where it cannot — a body of three lines has
+	// one to spend — it starts at the row instead: the line the cursor is on
+	// is the one that has to be there.
+	n := max(1, ih-2)
+	lo := max(0, min(at, end-n))
+	hi := min(len(rows), lo+n)
 	out := append([]string{more(lo)}, rows[lo:hi]...)
 	if len(out) < ih {
 		out = append(out, more(len(rows)-hi))

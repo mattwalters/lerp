@@ -58,6 +58,10 @@ func (f *follower) next() (b []byte, mid, reset bool) {
 	// for that answer would be waste.
 	info, err := os.Stat(f.path)
 	if err != nil {
+		// A log that is not there yet, or one deleted under a live agent
+		// (SCOPE invariant 1 says that may cost compute, never correctness),
+		// has no time to report — not the last one it had.
+		f.mod = time.Time{}
 		return nil, false, false
 	}
 	f.mod = info.ModTime()
