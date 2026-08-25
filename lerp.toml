@@ -216,48 +216,91 @@ approved the merge by promoting the ticket here. What is left is mechanics —
 up to date with the default branch, checks green, merged — and mechanics is
 the whole of what you may do.
 
-Find the pull request with `gh`. If {{ticket}} has none, or its pull request
-is closed without having merged, there is nothing here to merge: say so in a
-comment and move {{ticket}} to {{on_failure}}.
+This run ends one of exactly two ways: the pull request merged, or
+{{ticket}} moved to {{on_failure}} with a comment saying what stopped you.
+There is no third ending where you stop quietly, and any step below that
+meets something it has no instruction for takes the second one. Stopping
+without either is the worst outcome available here: lerp applies the success
+rule to a run that simply exits, so {{ticket}} would land in
+"{{on_success}}" — a completed status, dropped from the inbox — with the
+pull request still open and nothing anywhere saying the merge never
+happened.
 
-If it is already merged, this run has nothing to do: say so and stop, without
-commenting and without touching the branch. That is the ordinary shape of a
-re-run — nothing here is checkpointed, so a run killed mid-rebase is safe to
-start again from the top, and the second one usually finds the work done.
+Find the pull request with `gh`: its number, its branch, its state. If
+{{ticket}} has none, or its pull request is closed without having merged, or
+it is still a draft — a draft is an implement run that never finished, so
+what the human promoted was a pull request its own author had not marked
+ready — there is nothing here to merge: say so in a comment and move
+{{ticket}} to {{on_failure}}.
 
-Before merging, fetch, and check with `gh` that the default branch is green
-— its latest CI run against main's own head, not a required-checks setting:
-this repository requires no checks of anybody, so asking after required ones
-comes back empty and proves nothing. Merging onto a red main buries somebody else's
-breakage inside your merge, where the next person to look will find it
-attributed to this pull request. If main is red, do not merge: comment on
-{{ticket}} saying so and move it to {{on_failure}}. Main is not yours to fix
-from here.
+If it is already merged, this run has nothing to do: say so and stop,
+without commenting and without touching the branch. That is the ordinary
+shape of a re-run — nothing here is checkpointed, so a run killed mid-rebase
+is safe to start again from the top, and the second one usually finds the
+work done.
+
+Your workspace is a fresh worktree sharing the operator's git directory,
+detached at whatever their clone had checked out — most often their own copy
+of main, never this pull request. Treat nothing already in it as your base:
+fetch, check the pull request's head out detached with
+`git checkout --detach origin/<branch>`, and keep the sha you got, which the
+push below needs. `git checkout <branch>` by name fails outright when
+another worktree holds that branch, which is the ordinary case for a ticket
+a human has just been reading. Skip this step and everything after it still
+appears to work: you would rebase the operator's main onto main, pass the
+check, force that over the approved branch, and merge an empty diff.
+
+Before merging, check with `gh` that the default branch is green — its
+latest CI run against main's own head, not a required-checks setting: this
+repository requires no checks of anybody, so asking after required ones
+comes back empty and proves nothing. Green means a finished, successful run
+against that exact head. One still going is not green yet, so wait for it,
+and a head GitHub has no run for at all is not green either — read that as
+red rather than reaching back to the previous head's run, which tested code
+that is no longer what you would be merging onto. Merging onto a red main
+buries somebody else's breakage inside your merge, where the next person to
+look will find it attributed to this pull request. If main is red, do not
+merge: comment on {{ticket}} saying so and move it to {{on_failure}}. Main
+is not yours to fix from here.
 
 Then bring the branch up to date with the default branch — rebase it, or
 merge the default branch into it — and resolve the conflicts textually. Run
 whatever this repository uses as its check. It has to pass before anything
 merges, whether or not this run resolved a conflict to get there; a check
 that comes back red is a stop and not something to fix — comment on
-{{ticket}} with what failed and move it to {{on_failure}}.
+{{ticket}} with what failed, move it to {{on_failure}}, and leave the branch
+where it is. What is in the workspace at that point is a resolution nobody
+has read which does not even build, and the one place it cannot go is on top
+of the commits a human approved.
 
-Then push. Your workspace is a fresh worktree sharing the operator's git
-directory, detached, so `git checkout <branch>` by name fails when another
-worktree holds that branch: push with `git push origin HEAD:<branch>`. A
-rebase rewrites the branch's commits, so that push comes back rejected as a
-non-fast-forward; the answer is `--force-with-lease`, which refuses if
-anything reached the branch since you fetched, and never a plain `--force`.
-Nothing on this repo's branches stops a plain force, and what it throws away
-is whatever arrived while you were rebasing — most likely a review fix a
-human pushed, which is the one thing this queue must not lose.
+Then push, with `git push origin HEAD:<branch>` — the branch is checked out
+detached here, so the refspec is how the push names it. A rebase rewrites
+the branch's commits, so that push comes back rejected as a
+non-fast-forward. The answer is `--force-with-lease`, pinned to the sha you
+checked the branch out at — `--force-with-lease=<branch>:<sha>` — and never
+a plain `--force`. Pinned, because the unpinned form trusts your
+remote-tracking ref, and every lane on this machine shares one git
+directory: another run's `git fetch` moves `origin/<branch>` under you, and
+the lease then measures against a value that already contains the push it
+existed to protect. Nothing on this repo's branches stops a plain force
+either, and what both mistakes throw away is whatever arrived while you were
+rebasing — most likely a review fix a human pushed, which is the one thing
+this queue must not lose.
 
-Then merge, by number: `gh pr merge <number>`, in whatever way this
-repository merges its pull requests — on a detached HEAD there is no branch
-for `gh` to infer it from. Merge only once the pull request's own checks are
-green against the head you just pushed; they will still be running when you
-get there, so wait for them (`--auto` does the waiting, or watch them with
-`gh pr checks`). Your local check passing says the code is fine; these say
-what will actually land on main is. Linear's GitHub automation will usually move {{ticket}} to "{{on_success}}"
+Then merge, by number and by method: `gh pr merge <number> --squash`. The
+number, because a detached HEAD gives `gh` no branch to infer it from; the
+method, because this repository allows all three and `gh` will not pick one
+for you outside a terminal — and squash is what this history is made of.
+Merge only once the pull request's own checks are green against the head you
+just pushed. They will still be running when you get there, so watch them
+with `gh pr checks --watch`; if they come back red, that is the second
+ending — comment, move {{ticket}} to {{on_failure}}, and do not set about
+fixing them. Auto-merge is not the shortcut it looks like: this repository
+has it switched off, it returns without waiting for anything, and what it
+waits on is required checks, which this repository has none of. Your local
+check says the code is fine; these say that what actually lands on main is.
+
+Linear's GitHub automation will usually move {{ticket}} to "{{on_success}}"
 as the merge lands, a moment before this run would have; that race is
 harmless, since both are taking it to the same place.
 
@@ -268,14 +311,16 @@ Stop if two changes touch the same behaviour; if resolving means writing new
 logic rather than choosing between two texts; if the tests fail after a
 resolution that was textually clean; or if your resolution diff comes out
 bigger than the conflict hunks it settles. On any of those, do not merge —
-pushing the rebase you already made is fine — comment on {{ticket}} naming
-the files and the two intents that collide, and move it to {{on_failure}}.
-If the push you made carried a resolution you wrote, the comment has to say
-so and name the files it touched: the branch now looks conflict-free, so
-whoever reads your comment, agrees, and promotes the ticket back here would
-otherwise get a second run that finds nothing left to resolve and merges
-your guess unread. Never guess and merge. A merge you guessed at is code that nobody reviewed,
-sitting inside two changes that each were.
+pushing the rebase you already made is fine, except where what stopped you
+was the check going red, which the paragraph above leaves unpushed for the
+reason it gives — comment on {{ticket}} naming the files and the two intents
+that collide, and move it to {{on_failure}}. If the push you made carried a
+resolution you wrote, the comment has to say so and name the files it
+touched: the branch now looks conflict-free, so whoever reads the comment,
+agrees, and promotes the ticket back here would otherwise get a second run
+that finds nothing left to resolve and merges your guess unread. Never guess
+and merge. A merge you guessed at is code that nobody reviewed, sitting
+inside two changes that each were.
 
 Everything you write stays inside a conflict hunk. The diff a human approved
 is the diff that lands: no drive-by fixes, no reformatting, no "while I was
