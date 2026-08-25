@@ -97,11 +97,8 @@ func Init(ctx context.Context, board Board, out io.Writer, answers io.Reader, re
 	}
 	reportExits(out, cfg, categories)
 	// Every init, not only a fresh one: an adopter who set this repo up with
-	// an earlier lerp picks the ignore up by repeating init. Before the
-	// config is written, so a failure here still leaves nothing behind.
-	if err := ignoreStateDir(out, repoRoot); err != nil {
-		return false, err
-	}
+	// an earlier lerp picks the ignore up by repeating init.
+	ignoreStateDir(out, repoRoot)
 	if !fresh {
 		return false, nil
 	}
@@ -157,10 +154,27 @@ const stateDirPattern = ".lerp/"
 // whose directory it is, since the adopter reads this file later without us.
 const stateDirBlock = "# lerp's run records, workspaces and logs\n" + stateDirPattern + "\n"
 
-// ignoreStateDir appends stateDirPattern to the repository's .gitignore,
-// creating the file when there is none, and says so in init's loud style. A
-// repository that already ignores the directory is left untouched.
-func ignoreStateDir(out io.Writer, repoRoot string) error {
+// ignoreStateDir makes sure the repository ignores lerp's state directory
+// and says what it did, in init's loud style.
+//
+// A .gitignore lerp cannot write is reported and survived, never fatal: the
+// ignore is a convenience, and failing over it would leave the operator with
+// a board init had already changed and no lerp.toml at all — a state no
+// repeat of init could repair, since the next run fails at the same file.
+func ignoreStateDir(out io.Writer, repoRoot string) {
+	err := appendStateDirIgnore(out, repoRoot)
+	if err == nil {
+		return
+	}
+	fmt.Fprintf(out, "could not ignore %s: %v\n", stateDirPattern, err)
+	fmt.Fprintf(out, "  Add %s to %s yourself — until you do, lerp's run records and\n", stateDirPattern, gitignoreFile)
+	fmt.Fprintf(out, "  workspace worktrees show up in this repo's git status.\n")
+}
+
+// appendStateDirIgnore appends stateDirPattern to the repository's
+// .gitignore, creating the file when there is none. A repository that
+// already ignores the directory is left untouched.
+func appendStateDirIgnore(out io.Writer, repoRoot string) error {
 	path := filepath.Join(repoRoot, gitignoreFile)
 	existing, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
@@ -170,14 +184,16 @@ func ignoreStateDir(out io.Writer, repoRoot string) error {
 		fmt.Fprintf(out, "%s already ignores %s\n", gitignoreFile, stateDirPattern)
 		return nil
 	}
+	// Never continue somebody's last line, and keep one blank line between
+	// the block and whatever section it lands after — no more, on a file
+	// that already ends blank.
 	block := stateDirBlock
-	if len(existing) > 0 {
-		// Never continue somebody's last line, and keep the block apart from
-		// whatever section it lands after.
-		if !bytes.HasSuffix(existing, []byte("\n")) {
-			block = "\n" + block
-		}
+	switch {
+	case len(existing) == 0 || bytes.HasSuffix(existing, []byte("\n\n")):
+	case bytes.HasSuffix(existing, []byte("\n")):
 		block = "\n" + block
+	default:
+		block = "\n\n" + block
 	}
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
 	if err != nil {
@@ -191,7 +207,9 @@ func ignoreStateDir(out io.Writer, repoRoot string) error {
 	if closeErr != nil {
 		return fmt.Errorf("close %s: %w", gitignoreFile, closeErr)
 	}
-	fmt.Fprintf(out, "added %s to %s\n", stateDirPattern, gitignoreFile)
+	fmt.Fprintf(out, "added %s to %s — check that in alongside %s, or only this\n",
+		stateDirPattern, gitignoreFile, config.RepoConfigFile)
+	fmt.Fprintf(out, "  clone is covered: a colleague who clones this repo never runs lerp init.\n")
 	return nil
 }
 

@@ -557,6 +557,13 @@ func TestInitIgnoresStateDir(t *testing.T) {
 			message: "added .lerp/ to .gitignore",
 		},
 		{
+			// One blank line of separation, never a second.
+			name:    "appends after a file that already ends blank",
+			before:  "*.out\n\n",
+			want:    "*.out\n\n" + stateDirBlock,
+			message: "added .lerp/ to .gitignore",
+		},
+		{
 			name:    "leaves a repo that already ignores it alone",
 			before:  "*.out\n.lerp/\n",
 			want:    "*.out\n.lerp/\n",
@@ -628,19 +635,29 @@ func TestInitIgnoresStateDirOnRepeat(t *testing.T) {
 	}
 }
 
-// An ignore step that cannot run stops init before it writes a config, so a
-// failed init still leaves nothing behind and repeating it is the fix.
-func TestInitStopsWhenGitignoreIsUnreadable(t *testing.T) {
+// A .gitignore lerp cannot write is reported and survived: init still writes
+// the config it exists to write, rather than leaving a repo whose board is
+// set up and whose lerp.toml never arrived.
+func TestInitSurvivesUnwritableGitignore(t *testing.T) {
 	dir := t.TempDir()
-	// A directory where the file goes: readable by nobody, on every platform.
+	// A directory where the file goes: unwritable on every platform.
 	if err := os.Mkdir(filepath.Join(dir, ".gitignore"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	_, err := Init(context.Background(), &fakeBoard{existing: linearDefaults}, io.Discard, nil, dir, "LERP", "")
-	if err == nil || !strings.Contains(err.Error(), ".gitignore") {
+	var out bytes.Buffer
+	created, err := Init(context.Background(), &fakeBoard{existing: linearDefaults}, &out, nil, dir, "LERP", "")
+	if err != nil {
 		t.Fatalf("Init error = %v", err)
 	}
-	if _, statErr := os.Stat(filepath.Join(dir, config.RepoConfigFile)); !os.IsNotExist(statErr) {
-		t.Fatalf("config was created: %v", statErr)
+	if !created {
+		t.Error("created = false: the config was not written")
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, config.RepoConfigFile)); statErr != nil {
+		t.Fatalf("config missing: %v", statErr)
+	}
+	for _, wanted := range []string{"could not ignore .lerp/", "Add .lerp/ to .gitignore yourself"} {
+		if !strings.Contains(out.String(), wanted) {
+			t.Errorf("out %q\nmissing %q", out.String(), wanted)
+		}
 	}
 }
