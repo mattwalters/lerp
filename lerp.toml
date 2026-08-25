@@ -192,6 +192,75 @@ If the brief turns out to be wrong or missing, move {{ticket}} to
 {{on_failure}} and say why in a comment rather than inventing your own.
 """
 
+# Dogfooding, and only here: this block is in *this* repository's config, not
+# in the stock one lerp writes at init. Invariant 5's "a human merge" is still
+# what ships. What is being tested is whether the refusal clause below holds
+# under real conflicts; if it does for a few weeks, promoting this to the
+# stock config is a separate ticket with its own SCOPE amendment.
+#
+# The gate at "In Review" used to bundle two things: the decision (this should
+# land) and the mechanics (rebase, watch CI, resolve conflicts, click merge).
+# The decision belongs on the board and stays there — a human reads the pull
+# request and promotes the ticket here, and that promote is the merge
+# approval. The mechanics are what this queue does. Nothing in the engine
+# changed to allow it: a queue is a status with a prompt, and this is a fourth
+# one.
+[queues.merge]
+status = "To Merge"
+runner = "claude"
+on_success = "Done"
+on_failure = "Needs Attention"
+prompt = """
+Merge the pull request for {{ticket}}. A human has already read it and
+approved the merge by promoting the ticket here. What is left is mechanics —
+up to date with the default branch, checks green, merged — and mechanics is
+the whole of what you may do.
+
+Find the pull request with `gh`. If {{ticket}} has none, or its pull request
+is closed without having merged, there is nothing here to merge: say so in a
+comment and move {{ticket}} to {{on_failure}}.
+
+If it is already merged, this run has nothing to do: say so and stop, without
+commenting and without touching the branch. That is the ordinary shape of a
+re-run — nothing here is checkpointed, so a run killed mid-rebase is safe to
+start again from the top, and the second one usually finds the work done.
+
+Before merging, fetch, and check with `gh` that the default branch's own
+required checks are green. Merging onto a red main buries somebody else's
+breakage inside your merge, where the next person to look will find it
+attributed to this pull request. If main is red, do not merge: comment on
+{{ticket}} saying so and move it to {{on_failure}}. Main is not yours to fix
+from here.
+
+Then bring the branch up to date with the default branch — rebase it, or
+merge the default branch into it — and resolve the conflicts textually. Run
+whatever this repository uses as its check, and push. Your workspace is a
+fresh worktree sharing the operator's git directory, detached, so
+`git checkout <branch>` by name fails when another worktree holds that
+branch: push with `git push origin HEAD:<branch>`. Then merge it with
+`gh pr merge`, in whatever way this repository merges its pull requests.
+Linear's GitHub automation will usually move {{ticket}} to "{{on_success}}"
+as the merge lands, a moment before this run would have; that race is
+harmless, since both are taking it to the same place.
+
+The refusal clause is the load-bearing part of this queue, and it is what
+earns an agent the right to touch a branch a human has already approved:
+anything that takes a judgment call is a hard stop, not a puzzle to solve.
+Stop if two changes touch the same behaviour; if resolving means writing new
+logic rather than choosing between two texts; if the tests fail after a
+resolution that was textually clean; or if your resolution diff comes out
+bigger than the conflict hunks it settles. On any of those, do not merge —
+pushing the rebase you already made is fine — comment on {{ticket}} naming
+the files and the two intents that collide, and move it to {{on_failure}}.
+Never guess and merge. A merge you guessed at is code that nobody reviewed,
+sitting inside two changes that each were.
+
+Everything you write stays inside a conflict hunk. The diff a human approved
+is the diff that lands: no drive-by fixes, no reformatting, no "while I was
+in here". Work the branch needs beyond its conflicts is a judgment call, and
+the paragraph above says what to do with one of those.
+"""
+
 # A status no queue watches is how this pipeline waits for a human: the
 # ticket comes to rest there, still assigned to whoever claimed it, and shows
 # up in the inbox — named by the status it is resting in.
@@ -205,9 +274,13 @@ If the brief turns out to be wrong or missing, move {{ticket}} to
 # promote is the approval. Work that needs no plan never enters "Planning"
 # and never meets this gate — routing is placement.
 #
-# "In Review" is where work leaves the automated path: a ticket that
-# lands there on success waits for a human to merge the pull request — and
-# Linear's GitHub integration moves it to Done.
+# "In Review" is the second such gate, and in this repo it is now a reading
+# gate rather than a merging one: a ticket that lands there waits for a human
+# to read the pull request and decide. Approving is promoting it to
+# "To Merge", where the merge queue above takes over the mechanics; promoting
+# it back to "Implementing" with review threads on the pull request is the
+# other answer. The decision stayed with the human — only the rebasing and
+# the merge button moved.
 #
 # "Needs Attention" is the same idea for failures: no queue watches it,
 # so a ticket that lands there waits for you rather than being retried
