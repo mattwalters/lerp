@@ -295,6 +295,12 @@ type model struct {
 	width, height int
 	ready         bool
 	helpOn        bool
+	// helpOffset is where the main pane was scrolled to when the ? overlay
+	// took it over, and helpLens is what it was showing, so closing the
+	// overlay gives the operator back the place they were reading — and
+	// knows not to, when they re-aimed the pane behind it.
+	helpOffset int
+	helpLens   mainLens
 
 	lanes map[int]*lane
 	order []int // lane numbers, sorted; adopted runs may sit above N
@@ -563,7 +569,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Help):
 		// Closing it never needs the room opening it did.
 		if m.helpOn || m.roomForMain() {
-			m.helpOn = !m.helpOn
+			m.setHelp(!m.helpOn)
 		}
 	case key.Matches(msg, m.keys.Attention):
 		m.setFocus(panelAttention)
@@ -599,7 +605,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// list wherever the operator is standing.
 		switch {
 		case m.helpOn:
-			m.helpOn = false
+			m.setHelp(false)
 		case m.search != "":
 			m.setSearch("")
 			m.refreshMain()
@@ -798,6 +804,44 @@ func (m model) doForceStart(ticketID, ticket string) tea.Cmd {
 	}
 }
 
+// setHelp opens or closes the ? overlay. The overlay is one more thing the
+// pane holds, so it goes through the viewport the log and the detail already
+// scroll in: a legend under the key table is only a legend if a short
+// terminal can reach it. Which means it is drawn over the place the operator
+// was reading — a plan halfway down a ticket as much as a tail scrolled back
+// through — so that place is parked on the way in and put back on the way
+// out. A followed tail needs nothing put back: refreshLog has already pinned
+// it to the bottom.
+//
+// Both keys that leave the overlay come through here, so ? and esc cannot
+// put the pane back differently.
+func (m *model) setHelp(on bool) {
+	if m.helpOn == on {
+		return
+	}
+	m.helpOn = on
+	if on {
+		m.helpOffset, m.helpLens = m.vp.YOffset, m.lens()
+	}
+	// Size before filling, as enter does: the overlay changes whether the
+	// pane is open at all, and refreshMain fills the viewport that height
+	// and width leave it.
+	m.layout()
+	m.refreshMain()
+	switch {
+	case on:
+		m.vp.GotoTop()
+	case m.showingLog() && m.follow:
+		// refreshLog has pinned the tail to the bottom.
+	case m.lens() != m.helpLens:
+		// The operator re-aimed the pane behind the overlay, so what comes
+		// back is not what was parked, and comes back at its top.
+		m.vp.GotoTop()
+	default:
+		m.vp.SetYOffset(m.helpOffset)
+	}
+}
+
 func (m *model) setFocus(p panel) {
 	m.focus = p
 	m.retarget()
@@ -806,6 +850,12 @@ func (m *model) setFocus(p panel) {
 	// the outgoing panel's width would stay wrong until the next byte of log
 	// or the next keystroke.
 	m.layout()
+	if m.helpOn {
+		// The overlay is nobody's row. Moving between panels behind it
+		// re-aims the lens under it — which refreshMain draws on the way
+		// out — but must not scroll the help the operator is reading. The
+		return
+	}
 	m.refreshMain()
 	if !m.showingLog() {
 		m.vp.GotoTop()
@@ -832,6 +882,9 @@ func (m *model) moveSelection(delta int) {
 		m.workPos = clampIndex(m.workPos+delta, len(rows))
 		m.workSel = rows[m.workPos].ticketID
 		m.retarget()
+		if m.helpOn {
+			return // see setFocus
+		}
 		m.refreshMain()
 		switch {
 		case !m.showingLog():
@@ -843,6 +896,9 @@ func (m *model) moveSelection(delta int) {
 		}
 	case panelAttention:
 		m.attnSel = clampIndex(m.attnSel+delta, len(m.shown))
+		if m.helpOn {
+			return // see setFocus
+		}
 		m.refreshMain()
 		m.vp.GotoTop()
 	}
@@ -1132,11 +1188,35 @@ func (m *model) selectedLogPath() string {
 	return m.lastLog[r.ticketID]
 }
 
+// mainLens identifies what the main pane is showing: the panel whose cursor
+// it follows, and the row under that cursor. It is an identity and not a
+// position — the inbox's selection follows its ticket through a re-sort —
+// so it answers one question: is the pane still showing what it was?
+type mainLens struct {
+	panel  panel
+	ticket string
+}
+
+func (m *model) lens() mainLens {
+	if m.focus == panelWork {
+		return mainLens{panelWork, m.workSel}
+	}
+	if it := m.selectedAttention(); it != nil {
+		return mainLens{panelAttention, it.Ticket}
+	}
+	return mainLens{panel: panelAttention}
+}
+
 // showingLog reports whether the main pane is the log rather than a detail.
 // The lens is the selected row's, not the panel's: a ticket with a log shows
-// it, a ticket without shows what the pass knows about it.
+// it, a ticket without shows what the pass knows about it. The ? overlay is
+// that same viewport holding neither, so while it is up the answer is no:
+// every caller is asking what the pane is showing, and what the pane is
+// showing is the help. It is the detail lens's own rule — a detour through
+// something that is not the log neither freezes the tail nor gets written
+// over by it — and the overlay is one more detour.
 func (m *model) showingLog() bool {
-	return m.focus == panelWork && m.selectedLogPath() != ""
+	return !m.helpOn && m.focus == panelWork && m.selectedLogPath() != ""
 }
 
 // mainOpen is the single question everything else asks: is the main pane on
@@ -1166,6 +1246,10 @@ func (m *model) roomForMain() bool {
 // for. Scroll position is the caller's concern — focus and selection changes
 // jump to the top; a data refresh keeps the operator's place.
 func (m *model) refreshMain() {
+	if m.helpOn {
+		m.vp.SetContent(m.helpText())
+		return
+	}
 	if !m.mainOpen() {
 		return
 	}
@@ -1538,6 +1622,12 @@ func (m *model) geometry() geometry {
 	// counts can never drift from what lands on screen.
 	workRows, _ := m.workListRows(padList.inner(g.sideW))
 	attnRows, _ := m.attentionRows(padList.inner(g.sideW))
+	// The pinned header is a line the panel draws and so a line it asks
+	// for, the same as any row.
+	attnLines := len(attnRows)
+	if m.attentionHeader(padList.inner(g.sideW)) != "" {
+		attnLines++
+	}
 
 	stackH := g.bodyH
 	switch {
@@ -1564,7 +1654,7 @@ func (m *model) geometry() geometry {
 		g.mainH = fitH(g.bodyH/2, mainFloor, g.bodyH-2*panelFloor)
 		stackH = g.bodyH - g.mainH
 	}
-	g.workH = workHeight(stackH, m.panelWant(panelWork, len(workRows)), m.panelWant(panelAttention, len(attnRows)))
+	g.workH = workHeight(stackH, m.panelWant(panelWork, len(workRows)), m.panelWant(panelAttention, attnLines))
 	g.attnH = stackH - g.workH
 	return g
 }
@@ -1804,25 +1894,11 @@ func marker(on bool) string {
 // a header above each run of them — and where the cursor sits among them,
 // for the focus window. Every inbox row is one line.
 func (m *model) attentionRows(width int) ([]string, cursor) {
-	none := cursor{at: -1}
-	switch {
-	case !m.attentionSeen:
-		return []string{styleFaint.Render("reading the board…")}, none
-	case len(m.attention) == 0:
-		return []string{styleFaint.Render("the inbox is empty")}, none
-	case len(m.shown) == 0:
-		return []string{styleFaint.Render(m.emptyNote())}, none
+	if line := m.attentionEmptyLine(); line != "" {
+		return []string{line}, cursor{at: -1}
 	}
 	focused := m.focus == panelAttention
-	// Every column is padded to the widest cell on the list, so the four of
-	// them line up as columns worth scanning rather than as ragged text.
-	idW, levW, statusW, projW := 0, 0, 0, 0
-	for _, it := range m.shown {
-		idW = max(idW, lipgloss.Width(it.Ticket))
-		levW = max(levW, lipgloss.Width(leverageCell(it)))
-		statusW = max(statusW, lipgloss.Width(statusText(it)))
-		projW = max(projW, lipgloss.Width(projectName(it.Project)))
-	}
+	cols := m.attentionColumns()
 	var rows []string
 	sel := -1
 	header := ""
@@ -1847,7 +1923,7 @@ func (m *model) attentionRows(width int) ([]string, cursor) {
 		if i == m.attnSel {
 			sel = len(rows)
 		}
-		rows = append(rows, attentionRow(it, focused && i == m.attnSel, idW, levW, statusW, projW, width, m.search))
+		rows = append(rows, attentionRow(it, focused && i == m.attnSel, cols, width, m.search))
 	}
 	return rows, cursor{at: sel, span: 1}
 }
@@ -1887,17 +1963,94 @@ func (m *model) oneGroup() bool {
 	return true
 }
 
+// attentionEmptyLine is the one line the inbox panel draws instead of a
+// table, empty when there is a table to draw. It is the single reading of
+// that question: the header sits above rows only when there are rows, and
+// the two can never disagree about which the panel is showing.
+func (m *model) attentionEmptyLine() string {
+	switch {
+	case !m.attentionSeen:
+		return styleFaint.Render("reading the board…")
+	case len(m.attention) == 0:
+		return styleFaint.Render("the inbox is empty")
+	case len(m.shown) == 0:
+		return styleFaint.Render(m.emptyNote())
+	}
+	return ""
+}
+
+// The inbox table's column names. Six columns and no names is a table the
+// reader is expected to decode — the leverage cell and the mark beside a
+// status especially, which say nothing at all on their own. The header
+// costs a line of a panel that has few to spare, so these are the shortest
+// words that are still words; the marks inside the columns are spelled out
+// in the ? overlay, which is the one place with room (see inboxLegend).
+const (
+	hdrTicket   = "ticket"
+	hdrLeverage = "frees"
+	hdrStatus   = "status"
+	hdrProject  = "project"
+	hdrPriority = "priority"
+	hdrTitle    = "title"
+)
+
+// attentionColumns is the width of each padded column: the widest cell on
+// the list, but never narrower than the header naming it — a header is a
+// column of the table, measured with the rest, not a label squeezed on top
+// of one.
+type attentionColumns struct{ id, status, project int }
+
+func (m *model) attentionColumns() attentionColumns {
+	c := attentionColumns{id: len(hdrTicket), status: len(hdrStatus), project: len(hdrProject)}
+	for _, it := range m.shown {
+		c.id = max(c.id, lipgloss.Width(it.Ticket))
+		c.status = max(c.status, lipgloss.Width(statusText(it)))
+		c.project = max(c.project, lipgloss.Width(projectName(it.Project)))
+	}
+	return c
+}
+
+// attentionHeader is the inbox table's header row, faint, laid out through
+// the same assembler as the rows so it elides with them and its labels
+// stand over the columns they name. Empty when the panel is drawing an
+// empty state rather than a table.
+//
+// It is drawn every time and not conditionally on how full the table is: a
+// header that comes and goes is worse than none, because then its absence
+// has to be read too. The panel pins it above the rows (see
+// attentionPanel), so scrolling the list never scrolls it away.
+func (m *model) attentionHeader(width int) string {
+	if m.attentionEmptyLine() != "" {
+		return ""
+	}
+	c := m.attentionColumns()
+	return inboxLine(marker(false), headerCell(hdrTicket, c.id), headerCell(hdrLeverage, leverageW),
+		headerCell(hdrStatus, c.status), headerCell(hdrProject, c.project),
+		headerCell(hdrPriority, priorityW), styleFaint.Render(hdrTitle), width)
+}
+
+// headerCell is one column name padded out to its column.
+func headerCell(label string, w int) string {
+	return styleFaint.Render(label) + strings.Repeat(" ", max(0, w-lipgloss.Width(label)))
+}
+
+// The two columns that are the same width on every row: wide enough for the
+// widest value each can hold, and for the header that names it.
+const (
+	leverageW = len(hdrLeverage) // wider than ⊘ or ↓n
+	priorityW = len(hdrPriority) // wider than "Urgent"
+)
+
 // A column earns its width only while the title still reads as one. Below
 // titleFloor the project drops out of the row entirely and the title takes
 // the space back — a title cut shorter than this has stopped being a title,
 // and the project is the one column a routing decision can most often do
-// without. The priority is held to a lower bar, titleStub — what the column
-// itself costs — because it is the fact a routing decision least often does
-// without: it goes on paying for itself down to a title as narrow as the
-// column is.
+// without. The priority is held to a cheaper bar, titleStub: it costs a
+// fraction of the project's width, so it goes on paying for itself down to a
+// title as narrow as the priority column is itself.
 const (
 	titleFloor = 20
-	titleStub  = len("Urgent") + 2
+	titleStub  = priorityW + 2
 )
 
 // attentionRow is one waiting ticket as a table row: the fixed-width columns
@@ -1912,22 +2065,29 @@ const (
 // its width back to the title rather than holding it while the title reads
 // as an ellipsis. Below that the fixed columns are all that is left and the
 // title is the ellipsis; narrower still and the cut reaches the columns
-// themselves, taking the status — the last of them, and the only one whose
-// width the operator's own status vocabulary sets — before the identifier
-// and the leverage, the two facts that make a row addressable at all, which
+// themselves, taking the status — the last of them, and the only one a
+// selected row repeats — before the identifier and the leverage, which
 // survive any width.
 //
 // query is the search the row highlights its matches from, "" for no search.
-func attentionRow(it loop.AttentionItem, selected bool, idW, levW, statusW, projW, width int, query string) string {
-	id := highlight(it.Ticket, query, styleTicket) + strings.Repeat(" ", max(0, idW-lipgloss.Width(it.Ticket)))
-	lev := leverageCell(it)
-	lev += strings.Repeat(" ", max(0, levW-lipgloss.Width(lev)))
+func attentionRow(it loop.AttentionItem, selected bool, c attentionColumns, width int, query string) string {
+	id := highlight(it.Ticket, query, styleTicket) + strings.Repeat(" ", max(0, c.id-lipgloss.Width(it.Ticket)))
+	return inboxLine(marker(selected), id, leverageCell(it), statusCell(it, c.status, query),
+		projectCell(it.Project, c.project, query), priorityCell(it.Priority),
+		highlight(it.Title, query, stylePlain), width)
+}
+
+// inboxLine assembles one line of the inbox table from cells already padded
+// to their columns and already carrying their highlights — a ticket's row,
+// or the header naming them — so the two are laid out by one piece of code
+// and cannot drift apart.
+func inboxLine(mark, id, leverage, status, project, priority, title string, width int) string {
 	// statusCell pads to the column and no further, so head carries the
 	// gutter itself: every branch below ends in one, and a status wide
 	// enough to leave no pad of its own still cannot touch the title.
-	head := marker(selected) + id + " " + lev + " " + statusCell(it, statusW, query) + "  "
-	full := head + projectCell(it.Project, projW, query) + "  " + priorityCell(it.Priority) + "  "
-	noProject := head + priorityCell(it.Priority) + "  "
+	head := mark + id + " " + leverage + " " + status + "  "
+	full := head + project + "  " + priority + "  "
+	noProject := head + priority + "  "
 	// Both columns priced out and the identifier, the leverage and the status
 	// are the last three things standing. Every row measures the same
 	// columns, so the whole panel elides together and the titles stay in one
@@ -1939,7 +2099,7 @@ func attentionRow(it loop.AttentionItem, selected bool, idW, levW, statusW, proj
 	case width-lipgloss.Width(noProject) >= titleStub:
 		cols = noProject
 	}
-	return ansi.Truncate(cols+highlight(it.Title, query, stylePlain), max(0, width), "…")
+	return ansi.Truncate(cols+title, max(0, width), "…")
 }
 
 // statusText is the row's status as it reads: the real Linear status name —
@@ -1997,10 +2157,10 @@ func projectName(project string) string {
 // the row pads out to that.
 func leverageCell(it loop.AttentionItem) string {
 	if len(it.BlockedBy) > 0 {
-		return styleAttention.Render("⊘") + "  "
+		return styleAttention.Render("⊘") + strings.Repeat(" ", leverageW-1)
 	}
 	cell := fmt.Sprintf("↓%d", it.Unblocks)
-	pad := strings.Repeat(" ", max(0, 3-lipgloss.Width(cell)))
+	pad := strings.Repeat(" ", max(0, leverageW-lipgloss.Width(cell)))
 	if it.Unblocks > 0 {
 		return styleTicket.Render(cell) + pad
 	}
@@ -2009,8 +2169,8 @@ func leverageCell(it loop.AttentionItem) string {
 
 // priorityCell renders Linear's priority scale as its own words. An unset
 // priority is a dash: saying "none" would read as a rank of its own. The
-// cell is padded to the widest label so the columns to its left stay put
-// from row to row.
+// cell is padded to priorityW so the columns to its left stay put from row
+// to row.
 func priorityCell(p int) string {
 	label, style := "—", styleFaint
 	switch p {
@@ -2023,7 +2183,7 @@ func priorityCell(p int) string {
 	case 4:
 		label = "Low"
 	}
-	return style.Render(label) + strings.Repeat(" ", max(0, len("Urgent")-lipgloss.Width(label)))
+	return style.Render(label) + strings.Repeat(" ", max(0, priorityW-lipgloss.Width(label)))
 }
 
 func (m model) attentionPanel(w, h int) string {
@@ -2050,8 +2210,26 @@ func (m model) attentionPanel(w, h int) string {
 			extra += styleFaint.Render(" · " + m.project)
 		}
 	}
-	rows, cur := m.attentionRows(padList.inner(w))
-	rows = m.panelBody(panelAttention, rows, cur, padList.inner(w), h-2)
+	inner := padList.inner(w)
+	rows, cur := m.attentionRows(inner)
+	// The header is pinned rather than listed: windowing a header is how a
+	// header scrolls away. It costs the rows a line, and — by the same rule
+	// panelBody holds the key hint to — only when what is left can still
+	// show the rows: either two lines remain, the least windowRows needs to
+	// keep the selection visible, or the rows all fit in one line anyway.
+	// The rule reads the height and not the focus, so tabbing between
+	// panels can never be what makes a column header appear.
+	ih := h - 2
+	header := ""
+	if ih >= 3 || len(rows) <= ih-1 {
+		if header = m.attentionHeader(inner); header != "" {
+			ih--
+		}
+	}
+	rows = m.panelBody(panelAttention, rows, cur, inner, ih)
+	if header != "" {
+		rows = append([]string{header}, rows...)
+	}
 	return panelBox(panelTitle(1, "inbox", focused, extra), focused, w, h, rows, padList)
 }
 
@@ -2258,11 +2436,36 @@ func (m model) mainPanel(w, h int) string {
 	}
 	if m.helpOn {
 		return panelBox(styleTitleFocus.Render("help"), true, w, h,
-			strings.Split(m.help.View(m.keys), "\n"), padMain)
+			strings.Split(m.vp.View(), "\n"), padMain)
 	}
 	title := m.mainTitle()
 	return panelBox(styleFaint.Render(title), false, w, h,
 		strings.Split(m.vp.View(), "\n"), padMain)
+}
+
+// helpText is the ? overlay: every binding the keymap declares, and then
+// the legend for the marks the inbox draws inside its columns.
+func (m model) helpText() string {
+	return strings.Join(append(strings.Split(m.help.View(m.keys), "\n"), inboxLegend()...), "\n")
+}
+
+// inboxLegend spells out the three marks the inbox table draws inside its
+// columns. The header names the columns; a glyph standing in one still says
+// nothing on its own, and the ? overlay is the one place with the room to
+// say it in a sentence. Each mark is rendered exactly as the row renders
+// it, so the legend is read by matching shapes and not by trusting a
+// description of one.
+func inboxLegend() []string {
+	rows := []string{"", styleFaint.Render("inbox marks")}
+	for _, l := range []struct{ glyph, says string }{
+		{styleTicket.Render("↓n"), "routing this frees n other tickets"},
+		{styleAttention.Render("⊘"), "something unfinished still blocks it"},
+		{styleAttention.Render("⚠"), "the pipeline never named this status"},
+	} {
+		pad := strings.Repeat(" ", max(0, 2-lipgloss.Width(l.glyph)))
+		rows = append(rows, "  "+l.glyph+pad+"  "+styleFaint.Render(l.says))
+	}
+	return rows
 }
 
 // promotePicker renders the target-status list for the selected inbox
@@ -2336,14 +2539,13 @@ func (m model) attentionDetail(width int) string {
 		return styleFaint.Render(m.emptyNote()) + "\n" + styleFaint.Render(m.emptyHint())
 	}
 	it := m.selectedAttention()
-	status := statusText(*it)
 	// These lines come from the pass and always render first, whatever the
 	// read of the ticket itself is doing: a failed fetch must never cost the
 	// operator the pane that works today.
 	lines := []string{
 		styleTicket.Render(it.Ticket) + " " + it.Title,
 		"",
-		styleFaint.Render("status  ") + status,
+		styleFaint.Render("status  ") + statusText(*it),
 		styleFaint.Render("project ") + projectName(it.Project),
 	}
 	// The reason is a sentence, not a cell. panelBox truncates its rows, and

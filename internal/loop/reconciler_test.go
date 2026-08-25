@@ -827,9 +827,15 @@ func TestTickEmitsAttention(t *testing.T) {
 	h.fake.AddIssue("LERP", linear.Issue{ID: "theirs", Identifier: "LERP-3", Status: "Needs Help",
 		AssigneeID: "somebody-else"})
 	// Unclaimed, in a status no queue serves — one the pipeline never names
-	// at all, so nothing lerp ran put it there.
+	// at all, and one Linear files under its backlog category, so the
+	// ticket has not entered the pipeline rather than fallen out of it.
 	h.fake.AddIssue("LERP", linear.Issue{ID: "loose", Identifier: "LERP-4", Title: "Nobody's routed this",
 		Status: "Backlog", URL: "https://linear.app/l/LERP-4"})
+	// Unclaimed in a status the pipeline never names that Linear files as
+	// started: something moved this one out of the pipeline.
+	h.fake.SetStatusCategory("started", "In Progress")
+	h.fake.AddIssue("LERP", linear.Issue{ID: "adrift", Identifier: "LERP-6", Title: "Someone dragged this",
+		Status: "In Progress", URL: "https://linear.app/l/LERP-6"})
 	// Neither: finished tickets wait on nobody.
 	h.fake.AddIssue("LERP", linear.Issue{ID: "done", Identifier: "LERP-5", Status: "Done",
 		AssigneeID: "fake-viewer"})
@@ -846,9 +852,15 @@ func TestTickEmitsAttention(t *testing.T) {
 		},
 		{
 			Ticket: "LERP-4", TicketID: "loose", Title: "Nobody's routed this", Status: "Backlog",
-			Relevance: StatusUnnamed,
-			Reason:    `unassigned in "Backlog" — the pipeline never names it`,
+			Relevance: StatusBacklog,
+			Reason:    `unassigned in "Backlog" — waiting to enter the pipeline`,
 			URL:       "https://linear.app/l/LERP-4",
+		},
+		{
+			Ticket: "LERP-6", TicketID: "adrift", Title: "Someone dragged this", Status: "In Progress",
+			Relevance: StatusUnnamed,
+			Reason:    `unassigned in "In Progress" — the pipeline never names it`,
+			URL:       "https://linear.app/l/LERP-6",
 		},
 	}
 	if !reflect.DeepEqual(got.Attention, want) {
@@ -862,8 +874,8 @@ func TestTickEmitsAttention(t *testing.T) {
 	}
 	h.rec.Tick(ctx)
 	got = h.waitEvents(t, EventAttention, 1)[0]
-	if len(got.Attention) != 1 || got.Attention[0].Ticket != "LERP-4" {
-		t.Errorf("attention after the operator routed it = %+v, want only the unrouted LERP-4", got.Attention)
+	if len(got.Attention) != 2 || got.Attention[0].Ticket != "LERP-4" {
+		t.Errorf("attention after the operator routed it = %+v, want the two unrouted tickets", got.Attention)
 	}
 }
 
@@ -929,8 +941,8 @@ func TestAttentionCarriesLeverageAndRelevance(t *testing.T) {
 	if it := items["LERP-3"]; it.Relevance != StatusFailed || it.Project != "Open-source readiness" {
 		t.Errorf("LERP-3 = %+v, want a failure status in the Open-source readiness project", it)
 	}
-	if it := items["LERP-22"]; it.Relevance != StatusUnnamed || it.Project != "" {
-		t.Errorf("LERP-22 = %+v, want a status the pipeline never names and no project", it)
+	if it := items["LERP-22"]; it.Relevance != StatusBacklog || it.Project != "" {
+		t.Errorf("LERP-22 = %+v, want a ticket waiting to enter the pipeline and no project", it)
 	}
 }
 
@@ -955,6 +967,7 @@ func TestStatusRelevanceNotesAreTrue(t *testing.T) {
 		StatusFailed:   "a run failed here",
 		StatusFinished: "a run finished here",
 		StatusUnnamed:  "the pipeline never names it",
+		StatusBacklog:  "waiting to enter the pipeline",
 		StatusOther:    "a queue serves it",
 	} {
 		if got := rank.Note(); got != want {
@@ -980,27 +993,40 @@ func TestStatusRelevanceIsDerivedFromTheQueues(t *testing.T) {
 		},
 	}
 	relevance := statusRelevance(repo)
-	for status, want := range map[string]StatusRelevance{
-		"Needs Attention": StatusFailed,
-		"In Review":       StatusFinished,
-		"Done":            StatusFinished,
-		"Backlog":         StatusUnnamed,
-		"In Progress":     StatusUnnamed,
-		"Implementing":    StatusOther,
+	for k, want := range map[[2]string]StatusRelevance{
+		{"Needs Attention", "unstarted"}: StatusFailed,
+		{"In Review", "started"}:         StatusFinished,
+		{"Done", "completed"}:            StatusFinished,
+		// Unnamed by the pipeline, and never routed anywhere by anything:
+		// Linear's own category is what tells the two apart.
+		{"Backlog", linear.CategoryBacklog}: StatusBacklog,
+		{"Inbox", linear.CategoryTriage}:    StatusBacklog,
+		{"In Progress", "started"}:          StatusUnnamed,
+		// A board that takes its intake in an unstarted Todo column rather
+		// than a backlog is the same board: nothing has routed these
+		// either, and marking every one of them would be the noise this
+		// rank exists to stop.
+		{"Todo", linear.CategoryUnstarted}: StatusBacklog,
+		{"Implementing", "started"}:        StatusOther,
 		// Served by the review queue, though the plan queue's on_success
 		// also points at it.
-		"Plan Review": StatusOther,
+		{"Plan Review", "started"}: StatusOther,
 		// A queue's own status, and another queue's failure route: the
 		// pipeline serves it, so a ticket there is not resting.
-		"Planning": StatusOther,
+		{"Planning", "started"}: StatusOther,
+		// A status the pipeline serves stays served whatever Linear files
+		// it under: config outranks the category, and only a status config
+		// never mentions is read off the board at all.
+		{"Implementing", linear.CategoryBacklog}: StatusOther,
 	} {
-		if got := relevance(status); got != want {
-			t.Errorf("relevance of %q = %d, want %d", status, got, want)
+		if got := relevance(k[0], k[1]); got != want {
+			t.Errorf("relevance of %q (%s) = %d, want %d", k[0], k[1], got, want)
 		}
 	}
 	// The ranks order the way the table groups by them.
-	if !(StatusFailed < StatusFinished && StatusFinished < StatusUnnamed && StatusUnnamed < StatusOther) {
-		t.Error("status relevance ranks do not order failure, finished, unnamed, served")
+	if !(StatusFailed < StatusFinished && StatusFinished < StatusUnnamed &&
+		StatusUnnamed < StatusBacklog && StatusBacklog < StatusOther) {
+		t.Error("status relevance ranks do not order failure, finished, unnamed, backlog, served")
 	}
 }
 

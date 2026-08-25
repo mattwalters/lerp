@@ -106,10 +106,18 @@ const (
 	// finished here, and the next move is a human's.
 	StatusFinished
 	// StatusUnnamed is a status the pipeline never names — neither a
-	// queue's own status nor any on_success or on_failure target. It is the
-	// fingerprint of a ticket that left the pipeline: an external
-	// automation moved it, or a human dragged it.
+	// queue's own status nor any on_success or on_failure target — and that
+	// Linear does not file under a waiting category. It is the fingerprint
+	// of a ticket that left the pipeline: an external automation moved it,
+	// or a human dragged it.
 	StatusUnnamed
+	// StatusBacklog is a status the pipeline never names either, but one
+	// Linear files as somewhere work has not started: the ticket has not
+	// entered the pipeline, rather than fallen out of it. It is the
+	// ordinary resting place of most of a board, which is why it is not
+	// StatusUnnamed — a fingerprint the whole board carries identifies
+	// nothing.
+	StatusBacklog
 	// StatusOther is a status the pipeline serves. A waiting ticket is
 	// never in one, since attention lists only unserved statuses; the rank
 	// exists so the ordering is total for any status handed to it.
@@ -126,6 +134,8 @@ func (r StatusRelevance) Note() string {
 		return "a run finished here"
 	case StatusUnnamed:
 		return "the pipeline never names it"
+	case StatusBacklog:
+		return "waiting to enter the pipeline"
 	case StatusOther:
 		return "a queue serves it"
 	}
@@ -367,7 +377,7 @@ func (r *Reconciler) attention(ctx context.Context) {
 		if served[issue.Status] {
 			return
 		}
-		rel := relevance(issue.Status)
+		rel := relevance(issue.Status, issue.StatusType)
 		items = append(items, AttentionItem{
 			Ticket:    issue.Identifier,
 			TicketID:  issue.ID,
