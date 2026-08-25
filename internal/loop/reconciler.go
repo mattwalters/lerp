@@ -386,7 +386,8 @@ const AttentionDefinition = "unclaimed tickets, and your claimed tickets, sittin
 // no live run in a lane (a failed run whose queue has no on_failure route).
 // From one Linear read that state is indistinguishable from a live run
 // under the same user on another machine, so v0 leaves it to the log line
-// conclude writes. This is a reading of the board plus a place to route
+// conclude writes — and, since it sits in a served status, to the row the
+// work panel already draws for it, where S takes the claim back (LERP-113). This is a reading of the board plus a place to route
 // from, not a catch-all for anything that might want attention; resist
 // growing it further.
 //
@@ -747,9 +748,26 @@ func (r *Reconciler) ForceStart(ctx context.Context, ticketID string) error {
 			strings.Join(issue.BlockedBy, ", "))
 	}
 	if issue.AssigneeID != "" {
-		// Any assignee, including the operating user's own claim: that is
-		// Eligible's rule, and force-start overrides the lane count alone.
-		return fmt.Errorf("force-start %s: already claimed", issue.Identifier)
+		// Somebody else's claim is refused — that is Eligible's rule, and
+		// force-start overrides the lane count alone. The operating user's own
+		// claim is not: a ticket claimed in a served status with no live run
+		// is reachable by nothing else lerp has, and taking back your own
+		// claim is the only way off the board's one dead end (LERP-113). The
+		// claim protocol still runs; it simply reads the assignment back as
+		// already yours.
+		//
+		// The state this cannot tell apart is a live run under the same user
+		// on another machine, which one Linear read never could. Bounding it
+		// is the keystroke itself: force-start is a human looking at a row and
+		// asking for it, never a pass deciding on its own, and the worst case
+		// is invariant 4's declared one — duplicated compute.
+		viewerID, err := r.o.Client.Viewer(ctx)
+		if err != nil {
+			return fmt.Errorf("force-start %s: read viewer: %w", issue.Identifier, err)
+		}
+		if issue.AssigneeID != viewerID {
+			return fmt.Errorf("force-start %s: claimed by someone else", issue.Identifier)
+		}
 	}
 	reserved, err := r.recordedLanes()
 	if err != nil {

@@ -463,8 +463,11 @@ func TestKillSafetyDuplicateClaimRace(t *testing.T) {
 	if got := ha.disposedIdentities(); len(got) != 0 {
 		t.Errorf("loser disposed %v, want nothing", got)
 	}
-	if got := hb.issue(t, "contested"); got.Status != "Done" || got.AssigneeID != "lerp-b" {
-		t.Errorf("contested ticket = %+v, want Done and held by the winner", got)
+	// The winner's claim did its job while the run held it; finishing gives it
+	// back, so the board converges on Done with nobody holding it. Which lerp
+	// won is what bRan/aRan above assert — the claim is a lock, not a record.
+	if got := hb.issue(t, "contested"); got.Status != "Done" || got.AssigneeID != "" {
+		t.Errorf("contested ticket = %+v, want Done and released by the winner", got)
 	}
 }
 
@@ -528,10 +531,12 @@ func TestKillSafetyBothWinClaimRace(t *testing.T) {
 			t.Errorf("%s disposed %v, want exactly its own run's workspace", who, got)
 		}
 	}
-	// The final board is the winner's: B holds the claim, and the ticket
-	// sits where the first conclude moved it, untouched by the second.
-	if got := hb.issue(t, "contested"); got.Status != "Done" || got.AssigneeID != "lerp-b" {
-		t.Errorf("contested ticket = %+v, want Done and held by the winner", got)
+	// The final board is the winner's: the ticket sits where B's conclude
+	// moved it and B's conclude released it, untouched by A — whose own
+	// conclude found somebody else holding the ticket and left the whole rule
+	// alone, hop and claim together.
+	if got := hb.issue(t, "contested"); got.Status != "Done" || got.AssigneeID != "" {
+		t.Errorf("contested ticket = %+v, want Done, settled once by the winner", got)
 	}
 }
 
@@ -582,26 +587,28 @@ func TestAdoptedRunSettlesFromItsRecordedExitStatus(t *testing.T) {
 		name: "a non-zero exit takes the on_failure hop",
 		exit: "1\n",
 		// Nothing serves "Needs Help", so the ticket rests there on the
-		// operator, claim intact.
-		wantEvent: EventExited, wantExitCode: 1, wantStatus: "Needs Help", wantAssignee: "fake-viewer",
+		// operator — unclaimed, because the status is the gate and the claim
+		// only ever locked work in progress (LERP-113).
+		wantEvent: EventExited, wantExitCode: 1, wantStatus: "Needs Help", wantAssignee: "",
 	}, {
 		// A shell reports a signalled child as 128+n. It is non-zero, so it
 		// is a failure, with no special case anywhere for the number.
 		name:      "a signalled agent is a failure",
 		exit:      "137\n",
-		wantEvent: EventExited, wantExitCode: 137, wantStatus: "Needs Help", wantAssignee: "fake-viewer",
+		wantEvent: EventExited, wantExitCode: 137, wantStatus: "Needs Help", wantAssignee: "",
 	}, {
-		name: "an on_success destination no queue serves keeps its claim",
+		name: "an on_success destination no queue serves releases its claim",
 		exit: "0\n",
 		// testRepo's "Done" is nobody's queue status: the ticket has finished
-		// the pipeline and waits on a human, which is what the claim marks.
-		wantEvent: EventExited, wantStatus: "Done", wantAssignee: "fake-viewer",
+		// the pipeline and waits on a human. The status is what says so — and
+		// a claim left here is what strands the ticket if anybody moves it on.
+		wantEvent: EventExited, wantStatus: "Done", wantAssignee: "",
 	}, {
 		// LERP-54 unchanged: whoever moved the ticket keeps their move, and
 		// the stage that did not run is reported rather than forced.
 		name: "a ticket moved mid-run keeps the move and reports the skipped hop",
 		exit: "0\n", movedTo: "Escalated",
-		wantEvent: EventExited, wantStatus: "Escalated", wantAssignee: "fake-viewer", wantNote: true,
+		wantEvent: EventExited, wantStatus: "Escalated", wantAssignee: "", wantNote: true,
 	}, {
 		// SIGKILL, or a laptop that lost power: the run never reached its own
 		// last line. Precisely today's behaviour — status untouched, claim

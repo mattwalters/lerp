@@ -258,10 +258,12 @@ func TestOnceChainsThroughTwoQueues(t *testing.T) {
 	}
 }
 
-// Finishing into a status no queue serves keeps the claim: that is what parks
-// the ticket on the operator in the inbox view, and it is how an unserved
-// status works as a human gate.
-func TestOnceKeepsClaimWhenFinishingOutsideEveryQueue(t *testing.T) {
+// Finishing into a status no queue serves releases the claim too. The gate is
+// the status — no queue picks up from it, so the ticket rests there either way
+// — and the inbox lists it unassigned exactly as it listed it claimed. What
+// the claim did do was strand the ticket the moment anybody moved it on
+// (LERP-113).
+func TestOnceReleasesClaimWhenFinishingOutsideEveryQueue(t *testing.T) {
 	fake := linear.NewFake()
 	fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Todo"})
 	started, err := Once(context.Background(), onceOptions(fake, func(context.Context, run.Invocation) (run.Result, error) {
@@ -274,8 +276,47 @@ func TestOnceKeepsClaimWhenFinishingOutsideEveryQueue(t *testing.T) {
 	if got.Status != "Done" {
 		t.Fatalf("status = %q, want Done", got.Status)
 	}
-	if got.AssigneeID == "" {
-		t.Error("finishing outside every queue released the claim, so the ticket is not parked on the operator")
+	if got.AssigneeID != "" {
+		t.Error("a ticket parked at a gate kept its claim: every later move into a served status is stranded")
+	}
+}
+
+// LERP-113's acceptance, end to end: a plan run parks its ticket at a gate, a
+// human reads it and moves it on in Linear itself — the routing the README
+// documents, and the move `p` is not — and the next pass picks it up. Before
+// the gate released its claim this ran zero stages and reported nothing.
+func TestOnceRunsATicketMovedOnFromAGateInLinear(t *testing.T) {
+	ctx := context.Background()
+	fake := linear.NewFake()
+	fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Planning"})
+
+	var ran []string
+	o := onceOptions(fake, func(_ context.Context, inv run.Invocation) (run.Result, error) {
+		ran = append(ran, inv.Queue.Status)
+		return run.Result{ExitCode: 0}, nil
+	}, nil, nil)
+	o.Repo.Queues = map[string]config.Queue{
+		"plan":      {Status: "Planning", Prompt: "plan it", Runner: "agent", OnSuccess: "Plan Review", OnFailure: "Needs Help"},
+		"implement": {Status: "Implementing", Prompt: "build it", Runner: "agent", OnSuccess: "Done", OnFailure: "Needs Help"},
+	}
+
+	if started, err := Once(ctx, o); err != nil || !started {
+		t.Fatalf("plan pass: Once = (%v, %v), want (true, nil)", started, err)
+	}
+	parked, _ := fake.GetIssue(ctx, "one")
+	if parked.Status != "Plan Review" || parked.AssigneeID != "" {
+		t.Fatalf("ticket at the gate = %+v, want it resting in Plan Review unclaimed", parked)
+	}
+
+	// The human promotes it the way Linear promotes anything: by moving it.
+	if err := fake.MoveIssue(ctx, "one", "Implementing"); err != nil {
+		t.Fatal(err)
+	}
+	if started, err := Once(ctx, o); err != nil || !started {
+		t.Fatalf("implement pass: Once = (%v, %v), want (true, nil)", started, err)
+	}
+	if len(ran) != 2 || ran[1] != "Implementing" {
+		t.Fatalf("stages run = %v, want the ticket moved on in Linear to be picked up", ran)
 	}
 }
 

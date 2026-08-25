@@ -2922,6 +2922,15 @@ func (m model) workDetail() string {
 	case r.assigned:
 		gate = styleFaint.Render("claimed — an assigned ticket is never picked up")
 	}
+	// A claimed row with no lane is the one gate a keystroke can lift: the
+	// claim may be this operator's own, left on the ticket by a run that died
+	// where nothing reaps it. Naming S here is what makes that recoverable
+	// rather than merely visible — every other row keeps the ordering hint,
+	// since ordering is deliberately not a keystroke.
+	hint := "to change what runs next, move the ticket in Linear"
+	if r.lane == 0 && r.assigned && len(r.blockedBy) == 0 {
+		hint = "S takes over your own claim and runs it here"
+	}
 	return strings.Join([]string{
 		styleTicket.Render(r.ticket) + " " + r.title,
 		"",
@@ -2929,7 +2938,7 @@ func (m model) workDetail() string {
 		styleFaint.Render("pickup  ") + gate,
 		styleFaint.Render("linear  ") + r.url,
 		"",
-		styleFaint.Render("to change what runs next, move the ticket in Linear"),
+		styleFaint.Render(hint),
 	}, "\n")
 }
 

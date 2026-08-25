@@ -441,6 +441,8 @@ func TestWorkPanelShowsWhatRunsNext(t *testing.T) {
 		"review · In Review · LERP · empty",
 		"team LERP", "position 1 of 3", // the selected ticket's detail lens
 		"https://linear.app/acme/issue/LERP-1/ship",
+		"to change what runs next", // ordering is not a keystroke
+
 	} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("work view is missing %q:\n%s", want, view)
@@ -453,8 +455,17 @@ func TestWorkPanelShowsWhatRunsNext(t *testing.T) {
 		t.Fatalf("blocked ticket's lens does not name its blockers:\n%s", view)
 	}
 	m = update(t, m, keyMsg("down"))
-	if view := m.View(); !strings.Contains(view, "claimed") {
+	view = m.View()
+	if !strings.Contains(view, "claimed") {
 		t.Fatalf("claimed ticket's lens does not say so:\n%s", view)
+	}
+	// A claim is the one gate a keystroke lifts, so the claimed row is the one
+	// row whose hint names S instead of the ordering rule (LERP-113).
+	if !strings.Contains(view, "S takes over your own claim") {
+		t.Fatalf("claimed ticket's lens does not offer the takeover:\n%s", view)
+	}
+	if strings.Contains(view, "to change what runs next") {
+		t.Fatalf("claimed ticket's lens still shows the ordering hint:\n%s", view)
 	}
 
 	// The next pass's snapshot replaces the whole view: a ticket that left

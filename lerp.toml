@@ -193,8 +193,10 @@ If the brief turns out to be wrong or missing, move {{ticket}} to
 """
 
 # A status no queue watches is how this pipeline waits for a human: the
-# ticket comes to rest there, still assigned to whoever claimed it, and shows
-# up in the inbox — named by the status it is resting in.
+# ticket comes to rest there and shows up in the inbox — named by the status
+# it is resting in. The run releases its claim on the way out, because the
+# status is the gate; a claim left here would only strand the ticket the
+# moment anyone moved it on.
 #
 # "Plan Review" is the first such gate. A plan is worth writing only if
 # someone reads it, so a finished plan stops here instead of flowing straight
