@@ -95,8 +95,16 @@ runner = "claude"
 on_success = "In Review"
 on_failure = "Needs Attention"
 prompt = """
-Implement {{ticket}}. Establish the brief first — the first of these that
-exists is the brief, and the rest are not:
+Implement {{ticket}}. This run is not finished while its pull request is a
+draft. It ends one of two ways: the pull request marked ready for review and
+a verdict comment on {{ticket}}, or {{ticket}} moved to {{on_failure}} with a
+comment saying what stopped you. Nothing checks this for you — running out of
+prompt without doing one of them leaves {{ticket}} resting in
+"{{on_success}}" looking finished when it is not. Everything below is how to
+get to one of those two endings.
+
+Establish the brief first — the first of these that exists is the brief, and
+the rest are not:
 
 1. Unresolved review threads on the pull request for {{ticket}} that no later
    commit has answered, a human's before an agent's. Address exactly what
@@ -150,6 +158,12 @@ When the work is ready for a human, mark the pull request ready for review
 anything you know is still weak, and the pull request's link. That comment is
 the whole of what Linear gets — the pull request is the artifact, so never
 paste diffs or transcripts into a ticket.
+
+That comment is also the only artifact that shows the review happened. The
+board reads a ticket's comments into the main pane, so a ticket resting in
+"{{on_success}}" with no verdict on it reads as unfinished at a glance,
+without anyone opening the pull request to find out. Leaving one is not
+optional.
 
 If the brief turns out to be wrong or missing, move {{ticket}} to
 {{on_failure}} and say why in a comment rather than inventing your own.
