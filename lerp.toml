@@ -161,11 +161,12 @@ still wrong and what you tried, and move it to {{on_failure}}.
 When the work is ready for a human, mark the pull request ready for review
 (`gh pr ready`) and leave one short comment on {{ticket}}: what changed,
 anything you know is still weak, and the pull request's link. That is the
-verdict comment, and it is the whole of what Linear gets — the pull request is the artifact, so never
-paste diffs or transcripts into a ticket.
+verdict comment, and it is the whole of what Linear gets — the pull request
+is the artifact, so never paste diffs or transcripts into a ticket.
 
-That comment is also the only artifact that shows the review happened. The
-board reads a ticket's comments into the main pane, so a ticket resting in
+That comment is also the only artifact Linear gets showing the review
+happened — the findings themselves live on the pull request. The board reads
+a ticket's comments into the main pane, so a ticket resting in
 "{{on_success}}" with no verdict on it reads as unfinished at a glance,
 without anyone opening the pull request to find out. Leaving one is not
 optional.
