@@ -4,6 +4,7 @@ package initcmd
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -44,6 +45,9 @@ type Board interface {
 // leaves nothing behind; created reports whether this invocation wrote it.
 // The file lands uncommitted in the working tree, where any grant it carries
 // is reviewed and checked in like any other code.
+//
+// Init also makes sure the repository ignores lerp's state directory, since
+// a first run fills it with things nobody wants staged.
 //
 // out receives the whole conversation and report; nil discards it.
 func Init(ctx context.Context, board Board, out io.Writer, answers io.Reader, repoRoot, teamKey, teamName string) (created bool, err error) {
@@ -92,6 +96,12 @@ func Init(ctx context.Context, board Board, out io.Writer, answers io.Reader, re
 		return false, fmt.Errorf("ensure workflow states for %q: %w", teamKey, err)
 	}
 	reportExits(out, cfg, categories)
+	// Every init, not only a fresh one: an adopter who set this repo up with
+	// an earlier lerp picks the ignore up by repeating init. Before the
+	// config is written, so a failure here still leaves nothing behind.
+	if err := ignoreStateDir(out, repoRoot); err != nil {
+		return false, err
+	}
 	if !fresh {
 		return false, nil
 	}
@@ -129,6 +139,75 @@ func writeRepoConfig(path, teamKey, stock string) (created bool, err error) {
 		return false, fmt.Errorf("close repo config: %w", closeErr)
 	}
 	return true, nil
+}
+
+// gitignoreFile is the ignore list init appends to, at the repository root.
+const gitignoreFile = ".gitignore"
+
+// stateDirPattern ignores lerp's state directory. A first run fills .lerp
+// with run records, the loop log, the lock, and a full git worktree per
+// workspace: noise in every git status, and gitlinks that `git add .` will
+// stage as embedded repositories. None of it is the adopter's code. The
+// directory itself is internal/evidence's; this is the only place setup-time
+// code names it, so the constant lives here rather than making init depend
+// on the runtime.
+const stateDirPattern = ".lerp/"
+
+// stateDirBlock is what init appends: the pattern under a comment saying
+// whose directory it is, since the adopter reads this file later without us.
+const stateDirBlock = "# lerp's run records, workspaces and logs\n" + stateDirPattern + "\n"
+
+// ignoreStateDir appends stateDirPattern to the repository's .gitignore,
+// creating the file when there is none, and says so in init's loud style. A
+// repository that already ignores the directory is left untouched.
+func ignoreStateDir(out io.Writer, repoRoot string) error {
+	path := filepath.Join(repoRoot, gitignoreFile)
+	existing, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("read %s: %w", gitignoreFile, err)
+	}
+	if ignoresStateDir(existing) {
+		fmt.Fprintf(out, "%s already ignores %s\n", gitignoreFile, stateDirPattern)
+		return nil
+	}
+	block := stateDirBlock
+	if len(existing) > 0 {
+		// Never continue somebody's last line, and keep the block apart from
+		// whatever section it lands after.
+		if !bytes.HasSuffix(existing, []byte("\n")) {
+			block = "\n" + block
+		}
+		block = "\n" + block
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", gitignoreFile, err)
+	}
+	_, writeErr := f.WriteString(block)
+	closeErr := f.Close()
+	if writeErr != nil {
+		return fmt.Errorf("write %s: %w", gitignoreFile, writeErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("close %s: %w", gitignoreFile, closeErr)
+	}
+	fmt.Fprintf(out, "added %s to %s\n", stateDirPattern, gitignoreFile)
+	return nil
+}
+
+// ignoresStateDir reports whether an existing .gitignore already lists the
+// state directory, in any of the spellings that mean the same thing at the
+// repository root. It reads lines, not gitignore semantics: a pattern that
+// covers .lerp some other way (a "**/" prefix, a global excludes file) costs
+// one redundant line the first time, and is recognised on every run after.
+func ignoresStateDir(gitignore []byte) bool {
+	for _, line := range strings.Split(string(gitignore), "\n") {
+		switch strings.TrimSpace(line) {
+		case ".lerp", ".lerp/", "/.lerp", "/.lerp/":
+			return true
+		}
+	}
+	return false
 }
 
 // converse runs the short init conversation and returns the choices it

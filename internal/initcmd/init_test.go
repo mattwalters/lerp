@@ -527,3 +527,120 @@ func TestInitStopsWhenBoardFails(t *testing.T) {
 		t.Fatalf("config was created: %v", statErr)
 	}
 }
+
+// A first run fills .lerp with run records, logs and a worktree per
+// workspace, so init makes the repository ignore it — appending to whatever
+// ignore list is already there, and saying so like it says everything else.
+func TestInitIgnoresStateDir(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		before  string // "" means no .gitignore at all
+		want    string
+		message string
+	}{
+		{
+			name:    "creates the file when there is none",
+			want:    stateDirBlock,
+			message: "added .lerp/ to .gitignore",
+		},
+		{
+			name:    "appends after a trailing newline",
+			before:  "*.out\ncoverage.*\n",
+			want:    "*.out\ncoverage.*\n\n" + stateDirBlock,
+			message: "added .lerp/ to .gitignore",
+		},
+		{
+			// Nothing gets appended to somebody's last line.
+			name:    "appends after a file with no trailing newline",
+			before:  "*.out",
+			want:    "*.out\n\n" + stateDirBlock,
+			message: "added .lerp/ to .gitignore",
+		},
+		{
+			name:    "leaves a repo that already ignores it alone",
+			before:  "*.out\n.lerp/\n",
+			want:    "*.out\n.lerp/\n",
+			message: ".gitignore already ignores .lerp/",
+		},
+		{
+			// The other spellings of the same rule at the repo root.
+			name:    "recognises the rooted spelling",
+			before:  "  /.lerp  \n",
+			want:    "  /.lerp  \n",
+			message: ".gitignore already ignores .lerp/",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, ".gitignore")
+			if tc.before != "" {
+				if err := os.WriteFile(path, []byte(tc.before), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var out bytes.Buffer
+			if _, err := Init(context.Background(), &fakeBoard{existing: linearDefaults}, &out, nil, dir, "LERP", ""); err != nil {
+				t.Fatal(err)
+			}
+			got, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != tc.want {
+				t.Errorf(".gitignore = %q, want %q", got, tc.want)
+			}
+			if !strings.Contains(out.String(), tc.message) {
+				t.Errorf("out %q\nmissing %q", out.String(), tc.message)
+			}
+		})
+	}
+}
+
+// Repeating init on a repo that already has a config still ignores the state
+// directory — that is how a repo set up by an earlier lerp picks it up — and
+// a second run adds nothing further.
+func TestInitIgnoresStateDirOnRepeat(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, config.RepoConfigFile), []byte(existingConfig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b := &fakeBoard{existing: []string{"Planning", "Implementing"}}
+	if _, err := Init(context.Background(), b, io.Discard, nil, dir, "LERP", ""); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, ".gitignore")
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != stateDirBlock {
+		t.Fatalf(".gitignore = %q, want %q", after, stateDirBlock)
+	}
+	if _, err := Init(context.Background(), b, io.Discard, nil, dir, "LERP", ""); err != nil {
+		t.Fatal(err)
+	}
+	twice, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(twice) != string(after) {
+		t.Errorf("second init changed .gitignore to %q", twice)
+	}
+}
+
+// An ignore step that cannot run stops init before it writes a config, so a
+// failed init still leaves nothing behind and repeating it is the fix.
+func TestInitStopsWhenGitignoreIsUnreadable(t *testing.T) {
+	dir := t.TempDir()
+	// A directory where the file goes: readable by nobody, on every platform.
+	if err := os.Mkdir(filepath.Join(dir, ".gitignore"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Init(context.Background(), &fakeBoard{existing: linearDefaults}, io.Discard, nil, dir, "LERP", "")
+	if err == nil || !strings.Contains(err.Error(), ".gitignore") {
+		t.Fatalf("Init error = %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, config.RepoConfigFile)); !os.IsNotExist(statErr) {
+		t.Fatalf("config was created: %v", statErr)
+	}
+}
