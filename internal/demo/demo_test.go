@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/mattwalters/lerp/internal/config"
+	"github.com/mattwalters/lerp/internal/evidence"
 	"github.com/mattwalters/lerp/internal/logfmt"
 	"github.com/mattwalters/lerp/internal/loop"
 )
@@ -64,5 +65,37 @@ func TestFixtureDecodesAsClaude(t *testing.T) {
 	// pane in front of a reader.
 	if !strings.Contains(agentFixture, "__TICKET__") {
 		t.Error("the fixture names no ticket; agent.sh has nothing to substitute")
+	}
+}
+
+// TestTheHarnessWiresEveryOptionTheTUIRequires is the guard for the rot that
+// took docs/demo.gif out once already: internal/demo stopped passing a
+// Starter when force-start landed, tui.Run refused the Options, and the cast
+// became a recording of a shell error — which vhs exits 0 on, so the demo job
+// stayed green and nothing said the README's asset was blank.
+//
+// Options is a struct, so the next required field is not a compile error
+// either. This holds the harness's own wiring to the same validation Run
+// runs, without needing a terminal.
+func TestTheHarnessWiresEveryOptionTheTUIRequires(t *testing.T) {
+	repo, err := config.ParseRepoConfig(boardTOML, "board.toml")
+	if err != nil {
+		t.Fatalf("parse board.toml: %v", err)
+	}
+	rec, err := loop.NewReconciler(loop.ReconcilerOptions{
+		Client:   seedBoard(),
+		Repo:     repo,
+		RepoDir:  t.TempDir(),
+		Evidence: evidence.New(t.TempDir()),
+		Lanes:    lanes,
+		Interval: interval,
+		Events:   func(loop.Event) {},
+	})
+	if err != nil {
+		t.Fatalf("build the reconciler the harness builds: %v", err)
+	}
+	events := make(chan loop.Event)
+	if err := tuiOptions(rec, repo, events, interval, lanes).Validate(); err != nil {
+		t.Fatalf("the harness would render a cast of this error instead of lerp: %v", err)
 	}
 }

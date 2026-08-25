@@ -1855,10 +1855,15 @@ func TestRefocusingRewrapsThePane(t *testing.T) {
 	}
 }
 
-// Done-when: a window too short to hold the pane keeps its screen. The keys
-// that would open one do nothing rather than trade the two panels for
-// "window too small" — and the promote picker, which is modal and writes to
-// Linear, is never live behind that message.
+// Done-when: a window too short to hold the pane keeps its screen. No key
+// trades the two panels for "window too small" — the ones that would open a
+// pane do nothing, and the ones that only move focus drop the destination's
+// pane rather than the screen. The promote picker, which is modal and writes
+// to Linear, is never live behind that message either.
+//
+// The opening state is the one under test, so nothing sets it up: lerp lands
+// on the inbox with its pane closed, which is what makes twelve lines a
+// usable screen at all.
 func TestAWindowTooShortForThePaneKeepsItsScreen(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	resized, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 12})
@@ -1866,8 +1871,6 @@ func TestAWindowTooShortForThePaneKeepsItsScreen(t *testing.T) {
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
 		{Ticket: "LERP-4", TicketID: "loose", Title: "Nobody's routed this"},
 	}}})
-	m = update(t, m, keyMsg("esc")) // work starts open, and 12 lines cannot hold it
-	m = update(t, m, keyMsg("1"))
 	if strings.Contains(m.View(), "too small") {
 		t.Fatalf("a closed pane did not buy this window a screen:\n%s", m.View())
 	}
@@ -1879,7 +1882,9 @@ func TestAWindowTooShortForThePaneKeepsItsScreen(t *testing.T) {
 		t.Fatalf("the status bar dropped the key that still works:\n%s", view)
 	}
 
-	for _, k := range []string{"enter", "p", "?"} {
+	// "2" and "tab" are here because work's pane is open by default: moving
+	// focus to it is the one navigation key that can put a pane on screen.
+	for _, k := range []string{"enter", "p", "?", "2", "tab"} {
 		next := update(t, m, keyMsg(k))
 		if strings.Contains(next.View(), "too small") {
 			t.Fatalf("%q took the screen away:\n%s", k, next.View())
@@ -1898,6 +1903,7 @@ func TestScrollingAClosedPaneIsInert(t *testing.T) {
 	writeLog(t, log, []byte(strings.Repeat("a line of agent output\n", 200)))
 
 	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("2"))
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 		TicketID: "id-1", Ticket: "LERP-1", Queue: "plan", LogPath: log}})
 	if !m.follow {
@@ -1967,8 +1973,8 @@ func TestThePanesFloorIsTheGuardsFloor(t *testing.T) {
 		m, _, _ := newTestModel(t, 1)
 		resized, _ := m.Update(tea.WindowSizeMsg{Width: w, Height: tc.h})
 		m = fillBoard(t, resized.(model), 20)
-		m = update(t, m, keyMsg("esc")) // work starts open; start from a screen
-		m = update(t, m, keyMsg("1"))
+		// No setup: lerp opens on the inbox with its pane closed, which is
+		// the screen this floor is measured against.
 		if strings.Contains(m.View(), "too small") {
 			t.Fatalf("height %d: a closed pane did not buy this window a screen", tc.h)
 		}
@@ -2045,11 +2051,11 @@ func TestShrinkingTheWindowClosesWhatTookThePane(t *testing.T) {
 }
 
 // Done-when: a window too short for the pane names the key that gives it
-// back. That frame draws no status bar, and a terminal this short starts
-// with work's pane open — so without this the only way out is a guess.
+// back. That frame draws no status bar, and a window that shrank under an
+// open pane keeps it open — so without this the only way out is a guess.
 func TestTheTooSmallScreenNamesTheWayOut(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
-	m = update(t, m, keyMsg("2"))
+	m = update(t, m, keyMsg("2")) // work's pane is the open one; shrink under it
 	resized, _ := m.Update(tea.WindowSizeMsg{Width: 70, Height: 12})
 	m = resized.(model)
 	view := m.View()

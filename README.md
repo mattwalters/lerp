@@ -2,7 +2,7 @@
 
 [![ci](https://github.com/mattwalters/lerp/actions/workflows/ci.yml/badge.svg)](https://github.com/mattwalters/lerp/actions/workflows/ci.yml)
 
-![The lerp board: an inbox of tickets waiting on a human above, three lanes running coding agents below, and, once the work panel has focus, one lane's log tail streaming beside them](docs/demo.gif)
+![The lerp board: an inbox of tickets waiting on a human above, three lanes running coding agents below, and one lane's log tail streaming beside them](docs/demo.gif)
 
 <sub>Recorded from [`docs/demo.tape`](docs/demo.tape) against a fake board and
 a stub agent; `make demo` regenerates it.</sub>

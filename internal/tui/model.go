@@ -66,7 +66,11 @@ type Options struct {
 	Events   <-chan loop.Event
 }
 
-func (o Options) validate() error {
+// Validate reports whether the Options are wired for Run. Run calls it
+// before opening the screen; it is exported so a caller assembled
+// somewhere a terminal is not — the demo harness — can be held to the
+// same contract by a test.
+func (o Options) Validate() error {
 	switch {
 	case o.Ticker == nil:
 		return fmt.Errorf("tui: ticker is required")
@@ -431,11 +435,11 @@ func newModel(ctx context.Context, o Options) model {
 	h.Styles.Ellipsis = styleFaint
 	// Focus opens on the inbox: the loop runs the board on its own, so what
 	// the operator is at the terminal for the moment they open it is what
-	// needs them. It agrees with the panel numbering, and it leaves the
-	// inbox table at full width, which is the only width its project and
-	// priority columns fit in. The pane defaults below are unchanged, so
-	// the first screen is two lists and no main pane — the log is one `2`
-	// away, with no `enter` behind it, because work's pane stays open.
+	// needs them, and it agrees with the panel numbering. The pane defaults
+	// below are unchanged, so the first screen is two lists and no main
+	// pane — the inbox table gets the full width, where it keeps the project
+	// column an open pane squeezes out of it, and the log is one `2` away
+	// with no `enter` behind it, because work's pane stays open.
 	m := model{o: o, ctx: ctx, focus: panelAttention, lanes: make(map[int]*lane),
 		details: make(map[string]*ticketDetail), lastLog: make(map[string]string),
 		vp: viewport.New(0, 0), follow: true, keys: newKeymap(), help: h,
@@ -851,6 +855,15 @@ func (m *model) setHelp(on bool) {
 
 func (m *model) setFocus(p panel) {
 	m.focus = p
+	// Each panel remembers its own pane, so moving focus can put one on
+	// screen — and in a window too short to hold it, that would trade two
+	// working panels for "window too small" on a navigation key. The keys
+	// that open the pane ask roomForMain first; so does this one. It drops
+	// the pane it cannot show rather than refusing the move: navigation is
+	// never refused, and the panel the operator left keeps its own answer.
+	if m.detailOpen[p] && !m.roomForMain() {
+		m.detailOpen[p] = false
+	}
 	m.retarget()
 	// Size before filling. The two panels remember the pane separately, so
 	// focus moves the width the viewport wraps to — and content wrapped to
@@ -1734,8 +1747,9 @@ func (m model) View() string {
 	if m.width < minWidth || m.height < m.minHeight(m.mainOpen()) {
 		// When the pane is the whole of what does not fit, name the key that
 		// gives the window back: this frame has no status bar to carry the
-		// hint, and a terminal that starts this short starts with work's
-		// pane open.
+		// hint, and a window that shrank under an open pane still has one
+		// open — detailOpen is the operator's own preference, and a resize
+		// never edits it.
 		if m.width >= minWidth && m.height >= m.minHeight(false) {
 			return "lerp — window too small\nesc closes the pane\n"
 		}

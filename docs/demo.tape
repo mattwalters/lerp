@@ -68,14 +68,17 @@ Sleep 4s
 Down
 Sleep 4s
 
-# The first three runs exit, their tickets move to "In Review", and the next
-# three come off the queue into the lanes that just freed.
+# The first three lanes turned over while the ticket above was open — their
+# tickets are in the inbox now, under "In Review". This is the second set
+# finishing, and the queue behind them is down to what it cannot run.
 Sleep 5s
 
 # `1` back to the inbox, where the finished tickets have just landed under
 # "In Review — a run finished here", and the table is at full width again.
 Type "1"
 Sleep 4s
+# Every run so far has landed here, which is the shape of the thing: the loop
+# works the board down, and what it finishes stacks up waiting on a human.
 Down
 Sleep 3s
 

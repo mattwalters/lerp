@@ -148,7 +148,18 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return tui.Run(ctx, tui.Options{
+	return tui.Run(ctx, tuiOptions(rec, repo, events, interval, lanes))
+}
+
+// tuiOptions is the harness's wiring to the TUI, split out of run so a test
+// can put it through tui.Options.Validate without a terminal. A required
+// option the harness forgets is not a compile error — Options is a struct —
+// and Run rejects it at startup, which vhs records as a bash error and exits
+// 0 on. That is a blank cast under the size cap and a green CI job; the
+// guard for it is TestTheHarnessWiresEveryOptionTheTUIRequires.
+func tuiOptions(rec *loop.Reconciler, repo *config.RepoConfig, events <-chan loop.Event,
+	interval time.Duration, lanes int) tui.Options {
+	return tui.Options{
 		Ticker:   rec,
 		Promoter: rec,
 		Starter:  rec,
@@ -157,7 +168,7 @@ func run(ctx context.Context) error {
 		Interval: interval,
 		Lanes:    lanes,
 		Events:   events,
-	})
+	}
 }
 
 // boardStates are the DEMO team's workflow states in board order. The
