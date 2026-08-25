@@ -3843,7 +3843,13 @@ func TestStatusBarGoesQuietBetweenPasses(t *testing.T) {
 	}
 	// The mark is not the focus badge it replaced: the panel borders draw
 	// which panel has the keys, and the corner stays put across the change.
-	if got := update(t, m, keyMsg("1")).statusBar(); got != bar {
+	// 2 is the panel lerp does not open on, so this is a real change of
+	// focus rather than a key that lands where the model already was.
+	moved := update(t, m, keyMsg("2"))
+	if moved.focus == m.focus {
+		t.Fatalf("key 2 left focus on %v", m.focus)
+	}
+	if got := moved.statusBar(); got != bar {
 		t.Errorf("the bar moved when focus did:\n%s\n%s", bar, got)
 	}
 }
