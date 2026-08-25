@@ -371,8 +371,8 @@ is the agent's own context, which costs the board nothing. One short verdict
 comment on the ticket says how it went.
 
 That comment is also what makes a skipped review visible. The hop out of
-Implementing keys on the run's exit code and nothing else — lerp never looks
-at a pull request — so an agent that implements, opens the draft and stops
+Implementing keys on the run's exit code and the ticket's status, never on a
+pull request — so an agent that implements, opens the draft and stops
 still lands its ticket in In Review looking finished. The prompt answers that
 by leading with the contract rather than trailing it: a run is not finished
 while its pull request is a draft, and it ends either ready-for-review with a
