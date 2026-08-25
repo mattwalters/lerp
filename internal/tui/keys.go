@@ -21,10 +21,14 @@ type keymap struct {
 	ForceStart key.Binding
 	Sort       key.Binding
 	Project    key.Binding
-	Open       key.Binding
-	Raw        key.Binding
-	Help       key.Binding
-	Quit       key.Binding
+	// Search opens the inbox's prompt; ClearSearch is the way back out of a
+	// filter the prompt already closed on.
+	Search      key.Binding
+	ClearSearch key.Binding
+	Open        key.Binding
+	Raw         key.Binding
+	Help        key.Binding
+	Quit        key.Binding
 }
 
 func newKeymap() keymap {
@@ -52,16 +56,19 @@ func newKeymap() keymap {
 		// limit": "lane" is the noun the TUI keeps to itself, and the longer
 		// phrase is wide enough to push this whole help column off a
 		// hundred-column terminal — every key in it, not just this one. It
-		// is trimmed again now that enter shares the column: the widest key
-		// and the widest description are added together, so the detail
-		// pane's own keys cost this one three characters back.
-		ForceStart: key.NewBinding(key.WithKeys("S"), key.WithHelp("S", "start past the limit")),
-		Sort:       key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort inbox")),
-		Project:    key.NewBinding(key.WithKeys("P"), key.WithHelp("P", "filter by project")),
-		Open:       key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "open in Linear")),
-		Raw:        key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "raw log")),
-		Help:       key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
-		Quit:       key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
+		// is trimmed again now that enter and esc share the column: the
+		// widest key and the widest description are added together, so the
+		// detail pane's and the search's own keys cost this one three
+		// characters back.
+		ForceStart:  key.NewBinding(key.WithKeys("S"), key.WithHelp("S", "start past the limit")),
+		Sort:        key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort inbox")),
+		Project:     key.NewBinding(key.WithKeys("P"), key.WithHelp("P", "filter by project")),
+		Search:      key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "search inbox")),
+		ClearSearch: key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "clear search")),
+		Open:        key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "open in Linear")),
+		Raw:         key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "raw log")),
+		Help:        key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
+		Quit:        key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
 	}
 }
 
@@ -79,9 +86,23 @@ func (k keymap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Attention, k.Work, k.NextPanel, k.PrevPanel,
 			k.Up, k.Down, k.PageUp, k.PageDown, k.Top, k.Bottom},
-		{k.Detail, k.Close, k.Promote, k.ForceStart, k.Sort, k.Project,
+		{k.Detail, k.Close, k.Promote, k.ForceStart, k.Sort, k.Project, k.Search,
 			k.Open, k.Raw, k.Help, k.Quit},
 	}
+}
+
+// rowKeys says which of a panel's keys are live where the cursor is
+// standing: r renders something, o has a door to open, esc has a filter to
+// clear, P has a project to cycle to, p has somewhere to promote into and
+// the room to draw the picker. An advertised key that does nothing is worse
+// than one left out, because pressing it is how the operator finds out —
+// and r would flip the raw toggle invisibly.
+type rowKeys struct {
+	hasLog     bool
+	hasURL     bool
+	filtered   bool
+	projects   bool
+	canPromote bool
 }
 
 // panelHelp is the line a focused panel carries: the keys that act on the
@@ -91,27 +112,43 @@ func (k keymap) FullHelp() [][]key.Binding {
 // keys are left out — the status bar already carries "? help · q quit", and
 // a hint that gets truncated away is a hint that was not there.
 //
-// hasLog, hasURL and canPromote say which of these keys the row under the
-// cursor actually answers to: r is inert on a ticket that has never run, o on
-// a run whose ticket the pass no longer lists, and p where there is no status
-// to promote into or no room for the picker the key opens. An advertised key
-// that does nothing is worse than one left out, because pressing it is how
-// the operator finds out — and r would flip the raw toggle invisibly.
-func (k keymap) panelHelp(p panel, hasLog, hasURL, canPromote bool) []key.Binding {
+// Which is also why a filter swaps / for esc rather than adding it, why P
+// drops out of a list with no project in it, and why p drops out where there
+// is no status to promote into or no room for the picker it opens: the line
+// is about forty columns wide, so a key that does nothing here costs one
+// that does.
+//
+// The order is what survives a narrow panel, since bubbles drops hints off
+// the end to fit: what acts on the row under the cursor first, then the two
+// display cycles, whose state the panel title already carries in words. All
+// five fit from about 120 columns; under that the cycles go first and the
+// ellipsis says where to look for them.
+func (k keymap) panelHelp(p panel, live rowKeys) []key.Binding {
 	var b []key.Binding
 	switch p {
 	case panelAttention:
-		b = []key.Binding{short(k.Sort, "sort"), short(k.Project, "project")}
-		if canPromote {
+		find := short(k.Search, "search")
+		if live.filtered {
+			find = short(k.ClearSearch, "clear")
+		}
+		b = []key.Binding{find}
+		if live.canPromote {
 			b = append([]key.Binding{k.Promote}, b...)
 		}
+		if live.hasURL {
+			b = append(b, short(k.Open, "open"))
+		}
+		b = append(b, short(k.Sort, "sort"))
+		if live.projects {
+			b = append(b, short(k.Project, "project"))
+		}
 	case panelWork:
-		if hasLog {
+		if live.hasLog {
 			b = append(b, short(k.Raw, "raw"))
 		}
-	}
-	if hasURL {
-		b = append(b, short(k.Open, "open"))
+		if live.hasURL {
+			b = append(b, short(k.Open, "open"))
+		}
 	}
 	return b
 }
