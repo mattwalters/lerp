@@ -1962,6 +1962,14 @@ func TestScrollingAClosedPaneIsInert(t *testing.T) {
 		t.Fatal("a fresh log is not being followed")
 	}
 
+	// Open the pane and shut it again: a viewport that was never filled has
+	// nothing to scroll either way, and the keys would look inert on any
+	// implementation.
+	m = openMain(t, m)
+	if m.vp.Height >= m.vp.TotalLineCount() {
+		t.Fatalf("the pane holds %d lines in %d rows: there is nothing to scroll",
+			m.vp.TotalLineCount(), m.vp.Height)
+	}
 	m = update(t, m, keyMsg("esc"))
 	offset := m.vp.YOffset
 	// g is the damaging one — it parks the pane at the top and stops the
@@ -1997,6 +2005,12 @@ func TestTheReopenedPaneIsCurrent(t *testing.T) {
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r2", Lane: 2,
 		TicketID: "id-2", Ticket: "LERP-2", Queue: "plan", LogPath: two}})
 
+	// The pane has to have held the first row's log for reopening on the
+	// second to be able to come back stale.
+	m = openMain(t, m)
+	if !strings.Contains(m.View(), "agent one says hello") {
+		t.Fatalf("the pane never held the first row's log:\n%s", m.View())
+	}
 	m = update(t, m, keyMsg("esc"))
 	m = update(t, m, keyMsg("down"))
 	m = update(t, m, keyMsg("enter"))
@@ -3730,14 +3744,28 @@ func TestEjectConfirmAndResult(t *testing.T) {
 		t.Fatalf("the work panel does not offer eject on a running row:\n%s", m.View())
 	}
 
+	// The pane is shut — the screen work starts on — so the confirm is one
+	// of the things that opens it. Live behind a closed pane it would hold
+	// the keyboard, and the enter that kills the agent, with nothing on
+	// screen saying so.
+	if m.mainOpen() {
+		t.Fatal("the pane was open before anything asked for it")
+	}
+
 	// esc backs out without touching the run.
 	m = update(t, m, keyMsg("e"))
 	if !m.ejecting {
 		t.Fatal("e did not open the eject confirm")
 	}
+	if !m.mainOpen() || !strings.Contains(m.View(), "eject LERP-42") {
+		t.Fatalf("the confirm is live but not on screen:\n%s", m.View())
+	}
 	m = update(t, m, keyMsg("esc"))
 	if m.ejecting {
 		t.Fatal("esc did not close the eject confirm")
+	}
+	if m.mainOpen() {
+		t.Fatal("esc closed the confirm and left its pane behind")
 	}
 	if len(ejector.ejected()) != 0 {
 		t.Fatalf("esc ejected anyway: %v", ejector.ejected())

@@ -149,9 +149,14 @@ func run(ctx context.Context) error {
 		return err
 	}
 	return tui.Run(ctx, tui.Options{
+		// Every one of these is required, and a named-field literal that
+		// misses one still compiles: the harness then dies inside tui.Run
+		// with "X is required" before it draws a frame, which is what makes
+		// `make demo` fail rather than record a broken cast.
 		Ticker:   rec,
 		Promoter: rec,
 		Starter:  rec,
+		Ejector:  rec,
 		Reader:   rec,
 		Statuses: repo.PromoteTargets(),
 		Interval: interval,

@@ -150,6 +150,10 @@ func (p *pulse) window() []int {
 //
 // An empty bucket is always the floor bar and any activity at all clears it,
 // so one event is visibly not none however busy the rest of the window is.
+// A long line makes that the ordinary reading rather than the rare one: a
+// burst at the start of a run holds the scale for as long as it stays in the
+// window, and steady work under it sits on the bar above the floor. Alive
+// rather than how alive is what the row is for, with heard beside it.
 func sparkline(counts []int) string {
 	hi := 0
 	for _, c := range counts {

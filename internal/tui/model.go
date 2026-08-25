@@ -522,13 +522,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.ready = true
-		// A window that shrank below the pane's floor closes the two things
-		// that took it modally. detailOpen is the operator's own preference
-		// and survives — esc is on the too-small screen — but a picker left
-		// live behind that screen would still take the enter that writes to
-		// Linear, and the overlay would still eat the keyboard.
+		// A window that shrank below the pane's floor closes what took it
+		// modally. detailOpen is the operator's own preference and survives
+		// — esc is on the too-small screen — but a picker left live behind
+		// that screen would still take the enter that writes to Linear, an
+		// eject confirm the enter that kills an agent, and the overlay would
+		// still eat the keyboard. An eject that already happened is not
+		// cancellable and its panel is the only copy of the resume command,
+		// so it waits for the window to come back rather than being thrown
+		// away here.
 		if !m.roomForMain() {
-			m.promoting, m.helpOn = false, false
+			m.promoting, m.helpOn, m.ejecting = false, false, false
 		}
 		m.layout()
 		m.refreshMain()
@@ -898,7 +902,7 @@ func (m model) doEject(ticketID, ticket string) tea.Cmd {
 // key line's silence about "e" is easy to miss. The others — a ticket that
 // is not running, a lane still provisioning — are plain on the row itself.
 func (m *model) startEject() {
-	if m.focus != panelWork {
+	if m.focus != panelWork || !m.roomForMain() {
 		return
 	}
 	r := m.selectedWork()
@@ -917,7 +921,11 @@ func (m *model) startEject() {
 // command. A provisioning lane has no agent yet and a waiting ticket has no
 // run at all, so neither offers the key.
 func (m *model) canEjectSelected() bool {
-	if m.focus != panelWork {
+	// The confirm is drawn in the main pane, so a window with no room for
+	// the pane has none for it: the same trade p makes, and the same reason
+	// — a key that replaced the panels with "window too small" would leave
+	// a live confirm behind it, still holding the enter that kills an agent.
+	if m.focus != panelWork || !m.roomForMain() {
 		return false
 	}
 	r := m.selectedWork()
@@ -1388,12 +1396,16 @@ func (m *model) logOnScreen() bool {
 }
 
 // mainOpen is the single question everything else asks: is the main pane on
-// screen? The focused panel's own state, forced open by the promote picker
-// and the ? overlay — both live in that pane, so they take the width while
-// they are up and hand it back when they close. That keeps p working from a
-// closed inbox, the default, without a second rendering path.
+// screen? The focused panel's own state, forced open by the promote picker,
+// the ? overlay and eject's two panels — every one of them is drawn in that
+// pane, so they take the width while they are up and hand it back when they
+// close. That keeps p and e working from a closed panel — which both panels
+// now are until the operator opens one — without a second rendering path.
+// Miss one here and the key still takes the keyboard while nothing it draws
+// reaches the screen.
 func (m *model) mainOpen() bool {
-	return m.promoting || m.helpOn || m.detailOpen[m.focus]
+	return m.promoting || m.helpOn || m.ejecting || m.ejection != nil ||
+		m.detailOpen[m.focus]
 }
 
 // roomForMain reports whether this window can hold the main pane at all —
@@ -1896,7 +1908,9 @@ func (m model) View() string {
 		// When the pane is the whole of what does not fit, name the key that
 		// gives the window back: this frame has no status bar to carry the
 		// hint, and the pane is the operator's own state — a window that
-		// shrank under an open one keeps it open, so esc is the way out.
+		// shrank under an open one keeps it open, so esc is the way out. A
+		// filter on the list takes that esc first, as it does everywhere
+		// else, so under one it is the second press.
 		if m.width >= minWidth && m.height >= m.minHeight(false) {
 			return "lerp — window too small\nesc closes the pane\n"
 		}
