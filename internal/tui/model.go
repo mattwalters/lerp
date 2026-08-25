@@ -1505,12 +1505,17 @@ func (m *model) attentionRows(width int) ([]string, int) {
 	return rows, sel
 }
 
-// titleFloor is how much of a title has to survive for the project column
-// to earn its width. Below it the project drops out of the row entirely and
-// the title takes the space back — a title cut shorter than this has stopped
-// being a title, and the project is the one column a routing decision can
-// most often do without.
-const titleFloor = 20
+// A column earns its width only while the title still reads as one. Below
+// titleFloor the project drops out of the row entirely and the title takes
+// the space back — a title cut shorter than this has stopped being a title,
+// and the project is the one column a routing decision can most often do
+// without. The priority is held to a cheaper bar, titleStub: it costs a
+// fraction of the project's width, so it goes on paying for itself down to a
+// title as narrow as the priority column is itself.
+const (
+	titleFloor = 20
+	titleStub  = len("Urgent") + 2
+)
 
 // attentionRow is one waiting ticket as a table row: the fixed-width columns
 // first, in a stable order — identifier, leverage, status, project, priority
@@ -1519,24 +1524,28 @@ const titleFloor = 20
 // without selecting the row — which is the whole point of the panel.
 //
 // The cut lands at the right edge, on the title, where the part lost costs
-// the least: the fixed columns are packed instead. Narrower than a title
-// worth reading and the project drops out; narrower than the columns
-// themselves and the priority goes too. The identifier, the leverage and the
-// real Linear status survive any width.
+// the least: the fixed columns are packed instead. Below titleFloor the
+// project drops out and below titleStub the priority follows, each giving
+// its width back to the title rather than holding it while the title reads
+// as an ellipsis. The identifier, the leverage and the real Linear status
+// survive any width.
 func attentionRow(it loop.AttentionItem, selected bool, idW, statusW, projW, width int) string {
 	id := styleTicket.Render(it.Ticket) + strings.Repeat(" ", max(0, idW-lipgloss.Width(it.Ticket)))
-	head := marker(selected) + id + " " + leverageCell(it) + " " + statusCell(it, statusW)
-	full := head + "  " + projectCell(it.Project, projW) + "  " + priorityCell(it.Priority) + "  "
-	noProject := head + "  " + priorityCell(it.Priority) + "  "
-	// Narrower than even the title-less row and the priority goes too, so the
-	// identifier, the leverage and the status are the last three things
-	// standing. Every row measures the same columns, so the whole panel
-	// elides together and the titles stay in one column.
+	// statusCell pads to statusW+2, but a status carrying the unnamed mark
+	// fills that pad, so head keeps a gutter of its own: every branch below
+	// ends in one, and nothing ever touches the title.
+	head := marker(selected) + id + " " + leverageCell(it) + " " + statusCell(it, statusW) + "  "
+	full := head + projectCell(it.Project, projW) + "  " + priorityCell(it.Priority) + "  "
+	noProject := head + priorityCell(it.Priority) + "  "
+	// Both columns priced out and the identifier, the leverage and the status
+	// are the last three things standing. Every row measures the same
+	// columns, so the whole panel elides together and the titles stay in one
+	// column.
 	cols := head
 	switch {
 	case width-lipgloss.Width(full) >= titleFloor:
 		cols = full
-	case width-lipgloss.Width(noProject) >= 0:
+	case width-lipgloss.Width(noProject) >= titleStub:
 		cols = noProject
 	}
 	return ansi.Truncate(cols+it.Title, max(0, width), "…")

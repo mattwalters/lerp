@@ -877,15 +877,39 @@ func TestInboxTitleIsTheLastColumn(t *testing.T) {
 	}
 
 	// Elastic: the same row in a narrower panel spends the width on the fixed
-	// columns and cuts the title at the right edge, leaving everything left
-	// of it exactly where it was.
+	// columns and cuts the title at the right edge.
 	narrow := ansi.Strip(rowOf(t, m.attentionPanel(90, 14), "LERP-22"))
 	if !strings.HasSuffix(strings.Trim(narrow, " \u2502\u2503"), "\u2026") {
 		t.Fatalf("the narrower panel did not cut the title at the right edge:\n%s", narrow)
 	}
-	wide := ansi.Strip(rowOf(t, panel, "LERP-22"))
-	if got, want := narrow[:strings.Index(narrow, "GoReleaser")], wide[:strings.Index(wide, "GoReleaser")]; got != want {
-		t.Fatalf("narrowing the panel moved the fixed columns:\n%q\n%q", got, want)
+
+	// A column holds its width only while the title still reads as one: at
+	// no width does a row spend columns on the project or the priority while
+	// the title itself has been cut to less than they cost. Sweeping every
+	// width crosses both boundaries of the elision ladder, where the row
+	// prefix actually changes.
+	for w := 24; w <= 120; w++ {
+		row := ansi.Strip(rowOf(t, m.attentionPanel(w, 14), "LERP-22"))
+		body := strings.Trim(row, " \u2502\u2503")
+		title := lipgloss.Width(body) - lipgloss.Width(body[:strings.LastIndex(body, "  ")+2])
+		switch {
+		case strings.Contains(body, "Open-source readiness") && title < titleFloor:
+			t.Fatalf("a %d-column panel kept the project for a %d-column title:\n%s", w, title, row)
+		case strings.Contains(body, "High") && title < titleStub:
+			t.Fatalf("a %d-column panel kept the priority for a %d-column title:\n%s", w, title, row)
+		}
+	}
+
+	// The status column carries a gutter of its own, so the mark on a status
+	// the pipeline never names cannot run into the title on the narrowest
+	// row, where the status is the last column before it.
+	marked, _, _ := newTestModel(t, 1)
+	marked = update(t, marked, keyMsg("1"))
+	marked = update(t, marked, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-22", Title: "curl", Status: "Waiting for review", Relevance: loop.StatusUnnamed},
+	}}})
+	if got := ansi.Strip(rowOf(t, marked.attentionPanel(46, 6), "LERP-22")); !strings.Contains(got, "\u26a0  curl") {
+		t.Fatalf("the unnamed-status mark runs into the title:\n%s", got)
 	}
 
 	// Fixed columns to the left means every title starts in the same place,
