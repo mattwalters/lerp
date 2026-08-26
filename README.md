@@ -70,6 +70,55 @@ nothing else beyond Git, but the stock pipeline shells out to `claude`
 runner and its implementing prompt opens PRs with `gh` — install both
 before step 4.
 
+### Lerp needs the status field
+
+One more prerequisite, in the same class as the API key. On the teams
+lerp serves, the status field is lerp's: a queue *is* a status, and a
+stage finishes by moving the ticket to the next one. Lerp is not
+privileged — it keeps whatever move it finds, because that is how an
+agent escalates or refuses — so an automation that moves a ticket
+*during* a stage takes that stage's own move away, and the queue's
+`on_success` hop never happens.
+
+Linear's GitHub integration is the one nearly everybody has. Its
+automations are configured **per team**, under the team's workflow
+settings, as a list of pull-request triggers each mapping to a status
+or to No action. On the teams lerp serves:
+
+- **On draft PR open**, **On PR open**, **On review requested** and
+  **On PR ready for merge** all fire while a pull request is open,
+  which for a ticket a queue is running is mid-stage. Set every one of
+  them to **No action**.
+- **On PR merge** fires once the pull request has landed, after the
+  pipeline is finished with the ticket. Leave it on — moving a merged
+  ticket to Done is the benign automation, and it is what carries the
+  stock pipeline's "In Review" column to the end.
+
+It is a two-minute settings change, and it is scoped: teams lerp does
+not serve are unaffected. Skip it and the failure is total rather than
+intermittent — the implement stage's whole job is to open a pull
+request, so "On PR open" moves its ticket out of Implementing before
+the run exits, and every ticket, every time, stops short of review.
+
+Nothing here has to be audited by hand. Every `lerp` start reads the
+served teams' real automations and, before the board opens, names any
+mid-stage one whose target status `lerp.toml` never mentions, what
+each queue would lose to it, and the fix. After the fact the symptom
+reaches the status bar from the run itself: `LERP-42 left
+"Implementing" for "In Progress" during its run — the on_success hop
+to "In Review" was skipped.`
+
+**The road less travelled.** If you would rather keep an automation
+than turn it off, point the pipeline at what it does: give the queue
+whose runs open the pull request an `on_success` of the status the
+integration moves tickets *to*, and that automation becomes the
+trigger for the next stage rather than the thief of the last one's
+hop. Lerp stays quiet about an automation whose target the config
+names, for exactly that reason. This is not the stock config and it is
+the harder road: it couples your pipeline to integration behaviour you
+do not control, and a setting changed in Linear breaks the chain with
+no diff to read.
+
 **1. Wire the repo to a team.** From anywhere inside your Git
 repository:
 
@@ -123,7 +172,9 @@ instead.
 Init may also print a report about where your pipeline ends — statuses
 Linear does not yet count as completing work. Act on what it prints;
 the reasoning is under
-[How it behaves](#how-it-behaves).
+[How it behaves](#how-it-behaves). It closes by restating the
+status-field prerequisite above, since the team's settings are the one
+part of setup lerp will not do for you.
 
 **2. Give the agent what it needs.** Lerp hands the runner a prompt and
 the ticket identifier, nothing more. The stock prompts expect the agent
@@ -611,6 +662,14 @@ reason one is still on a ticket is that a human put it there, or that a
 run died where nothing was left to reap it. Either way the fix is the
 same: select the row in the work panel and press `S`, which takes back
 your own claim and runs the stage.
+
+**Why did my ticket skip a stage?** A run whose ticket left its queue
+status before it finished keeps that move, and says on the status bar
+which hop it therefore skipped. Something moved the ticket mid-stage:
+an agent escalating (a status your pipeline names), or an automation
+(usually one it does not) — see
+[Lerp needs the status field](#lerp-needs-the-status-field), which is
+also what lerp warns about at startup.
 
 **Why does init tell me to set a status's category myself?** Statuses
 lerp creates are always in-progress (Linear's "started" category), and

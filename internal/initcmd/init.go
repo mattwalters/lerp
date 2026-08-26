@@ -46,6 +46,10 @@ type Board interface {
 // it. The file lands uncommitted in the working tree, where any grant it
 // carries is reviewed and checked in like any other code.
 //
+// Every init closes by restating what lerp needs of the team — the status
+// field — since the team's automation settings are the one part of setup
+// lerp does not do itself.
+//
 // Init also makes sure the repository ignores lerp's state directory, since
 // a first run fills it with things nobody wants staged. That comes before
 // the config is written, so an init that fails on the config can leave the
@@ -98,6 +102,7 @@ func Init(ctx context.Context, board Board, out io.Writer, answers io.Reader, re
 		return false, fmt.Errorf("ensure workflow states for %q: %w", teamKey, err)
 	}
 	reportExits(out, cfg, categories)
+	reportStatusOwnership(out, teamKey)
 	// Every init, not only a fresh one: an adopter who set this repo up with
 	// an earlier lerp picks the ignore up by repeating init.
 	ignoreStateDir(out, repoRoot)
@@ -138,6 +143,36 @@ func writeRepoConfig(path, teamKey, stock string) (created bool, err error) {
 		return false, fmt.Errorf("close repo config: %w", closeErr)
 	}
 	return true, nil
+}
+
+// reportStatusOwnership states the price of lerp's central bet, at the one
+// moment the operator is configuring this team: a queue is a status, a stage
+// finishes by moving the ticket, so lerp needs the status field on the teams
+// it serves. An automation that moves a ticket mid-stage takes that stage's
+// move away — the loop keeps whatever move it finds, since that is how an
+// agent escalates — and the on_success hop never happens. Nothing in the
+// config expresses that requirement, so an adopter who is never told pays it
+// by surprise, one silently skipped stage at a time.
+//
+// Setup time is where it belongs (SCOPE invariant 6): the team's settings
+// screen is the one part of setup lerp does not do, and this is the moment
+// the operator is already on the board.
+//
+// Deliberately short, and deliberately not a list of trigger names. The
+// startup check reads the team's actual automations and names the colliding
+// rule, its target, what each queue loses and the fix; repeating any of that
+// here would be a second copy going stale against the real one. What init
+// adds is the rule itself, before there is anything to detect — an operator
+// who hears "lerp owns this field" while setting the team up does not have
+// to trip the collision to learn it.
+func reportStatusOwnership(out io.Writer, teamKey string) {
+	fmt.Fprintf(out, "lerp now drives team %s by moving tickets between statuses, so it needs that\n", teamKey)
+	fmt.Fprintf(out, "  field: an automation that moves a ticket while a stage is running takes the\n")
+	fmt.Fprintf(out, "  stage's own move away, and the hop it would have made never happens. Under\n")
+	fmt.Fprintf(out, "  team %s's workflow settings, set the pull-request triggers that fire while a\n", teamKey)
+	fmt.Fprintf(out, "  pull request is open to No action; the one for a merged pull request fires\n")
+	fmt.Fprintf(out, "  after the pipeline is done with the ticket and can stay. Every `lerp` start\n")
+	fmt.Fprintf(out, "  re-reads this team's automations and names any that collide.\n")
 }
 
 // gitignoreFile is the ignore list init appends to, at the repository root.
