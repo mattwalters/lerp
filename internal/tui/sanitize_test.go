@@ -256,10 +256,13 @@ func escapeFree(t *testing.T, what, view string) {
 	}
 }
 
-// bidiFree is escapeFree's counterpart for the spoofing half: a rendered
-// screen carries no format character, so no row can be reordered into
-// naming a ticket other than its own. The log pane's raw fallback is the
-// deliberate exception and is not held to this.
+// bidiFree is escapeFree's counterpart for the spoofing half: no rendered
+// screen carries a format character, so no row can be reordered by one. Not
+// the same as a row that cannot be reordered at all — a title written in
+// Hebrew still moves the neutrals around it, because that is the bidi
+// algorithm doing its job and clean cannot strip a language. What it fixes
+// is the override a Latin title has no reason to carry. The log pane's raw
+// fallback is the deliberate exception and is not held to this.
 func bidiFree(t *testing.T, what, view string) {
 	t.Helper()
 	for _, r := range view {
