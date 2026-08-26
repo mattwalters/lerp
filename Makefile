@@ -61,8 +61,11 @@ fmt: ## Format all Go source
 
 .PHONY: snapshot
 snapshot: ## Build the release binaries locally, publishing nothing (needs goreleaser)
+# v2.6 is the floor, not a wish: `archives.formats` in .goreleaser.yaml is the
+# key that replaced `format`, and an older v2 rejects the config with an error
+# CI — which floats to the latest v2 — can never reproduce.
 	@command -v goreleaser >/dev/null || { \
-	  echo 'snapshot: goreleaser is not installed — see https://goreleaser.com/install/'; \
+	  echo 'snapshot: goreleaser (v2.6+) is not installed — see https://goreleaser.com/install/'; \
 	  exit 1; }
 	goreleaser release --snapshot --clean
 # The hint names this platform's binary so the stamp is one command away.
@@ -76,6 +79,17 @@ snapshot: ## Build the release binaries locally, publishing nothing (needs gorel
 	  else \
 	    printf 'built into dist/\n'; \
 	  fi
+
+# Semver's own grammar, spelled out because the looser pattern this replaces
+# waved through tags goreleaser then refused — and it refuses at `parsing tag`,
+# which is after the push. `v1.0.0-01` and `v1.0.0-rc.01` (a plausible typo for
+# `-rc.1`) are the cases that cost a version number: semver forbids leading
+# zeros in numeric identifiers, so an identifier is either a zeroless number or
+# something containing a non-digit. Build metadata (`+…`) is left out; nothing
+# here has a use for it.
+SEMVER_NUM := (0|[1-9][0-9]*)
+SEMVER_ID := ($(SEMVER_NUM)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)
+SEMVER_RE := ^v$(SEMVER_NUM)\.$(SEMVER_NUM)\.$(SEMVER_NUM)(-$(SEMVER_ID)(\.$(SEMVER_ID))*)?
 
 .PHONY: release
 release: ## Tag main and push it, which starts the release build (VERSION=v0.1.0)
@@ -92,14 +106,17 @@ release: ## Tag main and push it, which starts the release build (VERSION=v0.1.0
 	@test '$(origin VERSION)' = 'command line' || { \
 	  echo 'release: name the tag on the command line — make release VERSION=v0.1.0'; \
 	  exit 1; }
-	@printf '%s' '$(VERSION)' \
-	  | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$$' || { \
+	@printf '%s' '$(VERSION)' | grep -Eq '$(SEMVER_RE)$$' || { \
 	  printf 'release: %s is not a version tag — vMAJOR.MINOR.PATCH, optionally -rc1\n' \
 	    '$(VERSION)'; exit 1; }
 	@test -z "$$(git status --porcelain)" || { \
 	  echo 'release: the tree is dirty — commit or stash before tagging'; exit 1; }
 # Cut from merged main and nothing else, so the commit inside the release is
-# one CI has already had its say about and one everybody else can see.
+# one everybody else can already see rather than something local. Note what
+# this does not prove: main having a commit is not CI having finished with it,
+# so a release cut a minute after a merge tags a commit whose run is still
+# going. Checking that would mean asking GitHub, which is a second API and a
+# different tool's job.
 	git fetch --quiet origin main
 	@test "$$(git rev-parse HEAD)" = "$$(git rev-parse origin/main)" || { \
 	  echo 'release: HEAD is not origin/main — releases are cut from merged main'; \
@@ -108,7 +125,10 @@ release: ## Tag main and push it, which starts the release build (VERSION=v0.1.0
 # local check below needs. --exit-code so the three answers stay three: 0 the
 # tag is there, 2 it is not, anything else means the question was never put to
 # origin — and a guard that reads "unreachable" as "absent" is not a guard.
-	@git ls-remote --exit-code --tags origin 'refs/tags/$(VERSION)' >/dev/null 2>&1; \
+# stderr is deliberately not redirected: a revoked key, a renamed repo and a
+# dropped VPN all land in the `*` branch below, and git has already said which
+# one it was.
+	@git ls-remote --exit-code --tags origin 'refs/tags/$(VERSION)' >/dev/null; \
 	  case $$? in \
 	  0) printf 'release: %s already exists on origin — pick the next version\n' \
 	       '$(VERSION)'; exit 1 ;; \

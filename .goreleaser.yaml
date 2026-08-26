@@ -46,6 +46,8 @@ archives:
   # different things. The stamp is read by a person comparing `lerp version`
   # against a tag, so it matches the tag. A filename is read by installers and
   # fetch scripts, which expect goreleaser's convention, so it keeps it.
+  # `formats`, plural, is the key that replaced `format` — goreleaser v2.6 and
+  # up. `make snapshot` names that floor in its not-installed message.
   - formats: [tar.gz]
     name_template: "lerp_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:

@@ -74,8 +74,10 @@ jobs:
   # Makefile that cannot be undone. A config error, a schema rule a later
   # goreleaser tightens, or a dependency bump that quietly needs cgo would all
   # surface there: tag already on origin, no release attached, and the next
-  # version number burnt. Cross-building four binaries costs seconds, so the
-  # question gets asked here instead, where the answer is just a red PR.
+  # version number burnt. The four cross-builds themselves take seconds; the
+  # job around them — depth-0 checkout, setup-go, installing goreleaser, then
+  # archives and checksums — is closer to a minute per PR. Worth paying, to
+  # ask the question here where the answer is only a red PR.
   release-config:
     runs-on: ubuntu-latest
     steps:

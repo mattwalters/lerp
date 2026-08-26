@@ -6,7 +6,11 @@ name: release
 on:
   push:
     tags:
-      - "v*"
+      # Narrower than `v*` on purpose: `v*` also matches `vhs-fix` and
+      # `v2-spike`, which would fire this workflow and fail at `parsing tag` —
+      # a red run on a tag that had nothing to do with releasing, in a repo
+      # where a red run is supposed to mean something.
+      - "v[0-9]*"
 
 # The default token is read-only on this repo; publishing the release and its
 # assets needs write. Scoped to this workflow rather than the repo's default.
