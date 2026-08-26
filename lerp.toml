@@ -235,9 +235,10 @@ ready — there is nothing here to merge: say so in a comment and move
 
 If it is already merged, this run has nothing to do: say so and stop,
 without commenting and without touching the branch. That is the ordinary
-shape of a re-run — nothing here is checkpointed, so a run killed mid-rebase
-is safe to start again from the top, and the second one usually finds the
-work done.
+shape of a re-run — nothing here is checkpointed, so a run killed anywhere
+in this prompt is safe to start again from the top: killed mid-rebase it
+redoes the rebase, and killed in the seconds after `gh pr merge` returns it
+arrives here, with nothing left to do.
 
 Your workspace is a fresh worktree sharing the operator's git directory,
 detached at whatever their clone had checked out — most often their own copy
@@ -292,13 +293,16 @@ number, because a detached HEAD gives `gh` no branch to infer it from; the
 method, because this repository allows all three and `gh` will not pick one
 for you outside a terminal — and squash is what this history is made of.
 Merge only once the pull request's own checks are green against the head you
-just pushed. They will still be running when you get there, so watch them
-with `gh pr checks --watch`; if they come back red, that is the second
-ending — comment, move {{ticket}} to {{on_failure}}, and do not set about
-fixing them. Auto-merge is not the shortcut it looks like: this repository
-has it switched off, it returns without waiting for anything, and what it
-waits on is required checks, which this repository has none of. Your local
-check says the code is fine; these say that what actually lands on main is.
+just pushed: your local check says the code is fine, these say that what
+lands on main is. They will still be running when you get there, so watch
+them with `gh pr checks <number> --watch` — by number for the same reason as
+above. An answer of no checks reported is the window before GitHub has
+attached runs to the head you just pushed; that is a look-again, not a
+verdict. Red results are the verdict, and they are the second ending:
+comment, move {{ticket}} to {{on_failure}}, and do not set about fixing them.
+Auto-merge is not the shortcut it looks like — this repository has it
+switched off, it returns without waiting for anything, and what it waits on
+is required checks, which this repository has none of.
 
 Linear's GitHub automation will usually move {{ticket}} to "{{on_success}}"
 as the merge lands, a moment before this run would have; that race is
@@ -312,15 +316,15 @@ logic rather than choosing between two texts; if the tests fail after a
 resolution that was textually clean; or if your resolution diff comes out
 bigger than the conflict hunks it settles. On any of those, do not merge —
 pushing the rebase you already made is fine, except where what stopped you
-was the check going red, which the paragraph above leaves unpushed for the
-reason it gives — comment on {{ticket}} naming the files and the two intents
-that collide, and move it to {{on_failure}}. If the push you made carried a
-resolution you wrote, the comment has to say so and name the files it
-touched: the branch now looks conflict-free, so whoever reads the comment,
-agrees, and promotes the ticket back here would otherwise get a second run
-that finds nothing left to resolve and merges your guess unread. Never guess
-and merge. A merge you guessed at is code that nobody reviewed, sitting
-inside two changes that each were.
+was the check going red, which the paragraph on running the check leaves
+unpushed for the reason it gives — comment on {{ticket}} naming the files
+and the two intents that collide, and move it to {{on_failure}}. If the push
+you made carried a resolution you wrote, the comment has to say so and name
+the files it touched: the branch now looks conflict-free, so whoever reads
+the comment, agrees, and promotes the ticket back here would otherwise get a
+second run that finds nothing left to resolve and merges your guess unread.
+Never guess and merge. A merge you guessed at is code that nobody reviewed,
+sitting inside two changes that each were.
 
 Everything you write stays inside a conflict hunk. The diff a human approved
 is the diff that lands: no drive-by fixes, no reformatting, no "while I was
