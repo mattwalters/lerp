@@ -897,18 +897,23 @@ func (m *model) applyDetail(msg detailMsg) {
 // inbox panel's selected ticket, or back out without touching Linear.
 func (m model) handlePromoteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
-	switch msg.String() {
-	case "esc", "q", "ctrl+c":
+	switch {
+	// Quit backs the picker out rather than leaving the board, which is what
+	// the raw switch did with the same two keys: the modal has the keyboard,
+	// and q here means "not this status" and not "not this session". (The
+	// eject overlay answers ctrl+c the other way, with tea.Quit. That
+	// disagreement is older than this switch and is not ours to settle.)
+	case key.Matches(msg, m.keys.Close), key.Matches(msg, m.keys.Quit):
 		m.promoting = false
-	case "up", "k":
+	case key.Matches(msg, m.keys.Up):
 		if m.promoteSel > 0 {
 			m.promoteSel--
 		}
-	case "down", "j":
+	case key.Matches(msg, m.keys.Down):
 		if m.promoteSel < len(m.o.Statuses)-1 {
 			m.promoteSel++
 		}
-	case "enter":
+	case key.Matches(msg, m.keys.Detail):
 		it := m.selectedAttention()
 		m.promoting = false
 		if it != nil {
@@ -3522,6 +3527,35 @@ var heartbeatSlot = func() int {
 	return w
 }()
 
+// pickerLine is the promote picker's instructions, in the room the bar has
+// for them. They are bindings rather than a string, drawn by the same
+// component that draws the panels' key lines — one renderer, so the
+// separator and the faint are declared once and a rebind moves the line
+// with the keys.
+//
+// Reading the keys off the bindings costs columns the hardcoded line never
+// paid, and this is where they come from. The bar gives up a key line
+// before the heartbeat and the heartbeat before "● n in the inbox", so the
+// room offered here is what is left after both: what a narrow window spends
+// is the pair that only moves inside the picker, not somebody else's
+// segment. Both lines are rendered whole and measured — bubbles' own fitting
+// keeps an over-wide hint when the ellipsis marking the cut would not fit
+// either, which is a way to come back wider than the room.
+//
+// Below the exits there is nothing left to drop, and they are handed back
+// anyway: a line that cannot say how to leave the picker is worse than a
+// clipped count, which the panel underneath is showing in full regardless.
+// statusBar's truncation then takes what it takes, exactly as it did while
+// this was a string.
+func (m model) pickerLine(room int) string {
+	h := m.help
+	h.Width = 0
+	if full := h.ShortHelpView(m.keys.promoteHelp()); lipgloss.Width(full) <= room {
+		return full
+	}
+	return h.ShortHelpView(m.keys.promoteExits())
+}
+
 // statusBar is the heartbeat line: the lerp mark, what the pass is doing
 // when that is worth saying, capacity, inbox count, keys. A pass error — or
 // a transient note like a promote's outcome — takes over the whole line; a
@@ -3598,8 +3632,6 @@ func (m model) statusBar() string {
 	}
 	// A modal has the keyboard, so its own instructions replace the line.
 	switch {
-	case m.promoting:
-		hint = "↑/↓ choose · enter promote · esc cancel"
 	case m.ejecting:
 		hint = "enter eject · esc cancel"
 	case m.ejection != nil:
@@ -3616,6 +3648,12 @@ func (m model) statusBar() string {
 	// starting decide, once an interval, whether the hints could still
 	// afford the pane's key.
 	slot := heartbeatSlot + 2
+	// The picker's line is fitted against that held-open room rather than
+	// into it: a key line is the segment the bar gives up before the
+	// heartbeat, so the picker's hints go before the heartbeat does.
+	if m.promoting {
+		right = m.pickerLine(m.width - lipgloss.Width(left) - slot - 1)
+	}
 	fits := func(slot int) bool {
 		return m.width-lipgloss.Width(left)-slot-lipgloss.Width(right) >= 1
 	}

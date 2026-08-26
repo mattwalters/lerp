@@ -1,6 +1,10 @@
 package tui
 
-import "github.com/charmbracelet/bubbles/key"
+import (
+	"slices"
+
+	"github.com/charmbracelet/bubbles/key"
+)
 
 // keymap declares every binding once; the status bar hint and the ? overlay
 // both render from it, so the help can never drift from the keys.
@@ -183,4 +187,49 @@ func (k keymap) panelHelp(p panel, live rowKeys) []key.Binding {
 // itself, so the two lines can never disagree about what to press.
 func short(b key.Binding, desc string) key.Binding {
 	return key.NewBinding(key.WithKeys(b.Keys()...), key.WithHelp(b.Help().Key, desc))
+}
+
+// promoteHelp is the promote picker's instruction line. The picker is
+// modal, so this is the whole of what it answers to, and it is built from
+// the same bindings handlePromoteKey matches — rebind Up and the picker and
+// its line move together. Quit backs the picker out as well and is left
+// off: two ways out is one more than the line has columns for, and esc is
+// the one the rest of the TUI already means it by. That is a hint the
+// picker does not give rather than one it gets wrong — rebind Quit and
+// nothing here starts naming the wrong key.
+// The order is what survives a narrow bar, the way panelHelp's is: bubbles
+// drops hints off the end to fit, so the two keys that end the modal come
+// before the pair that only moves inside it. A picker whose line has been
+// cut down to "enter promote · esc cancel…" still says both ways out; one
+// cut down to "↑/k ↓/j choose…" says neither. promoteExits is where that
+// cutting stops.
+func (k keymap) promoteHelp() []key.Binding {
+	return []key.Binding{
+		short(k.Detail, "promote"),
+		short(k.Close, "cancel"),
+		pair(k.Up, k.Down, "choose"),
+	}
+}
+
+// promoteExits is what the picker's line falls back to rather than cut
+// down: the two keys that end the modal. Taken from promoteHelp itself, so
+// the floor can never come to name a key the line does not. It is a floor
+// under what pickerLine drops, not under statusBar's truncation — a window
+// too narrow to hold even these has the bar shear them like anything else.
+func (k keymap) promoteExits() []key.Binding { return k.promoteHelp()[:2] }
+
+// pair renders two bindings as one hint — "↑/k ↓/j choose" — where naming a
+// direction twice would cost more than the line has. Reading the labels off
+// the bindings is what this ticket is for, and "↑/k ↓/j" is four columns
+// wider than the "↑/↓" the hardcoded line could afford to write; spelling up
+// and down out as two hints costs seven. The bar's budget decides what a
+// narrow window keeps, so the saving is in what is left to drop.
+//
+// Keys from both, so the binding is honest about what it stands for, though
+// nothing matches against it — it is only ever rendered, and Help().Key is
+// what the operator reads.
+func pair(a, b key.Binding, desc string) key.Binding {
+	return key.NewBinding(
+		key.WithKeys(slices.Concat(a.Keys(), b.Keys())...),
+		key.WithHelp(a.Help().Key+" "+b.Help().Key, desc))
 }
