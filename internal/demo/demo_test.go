@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -102,4 +105,44 @@ func TestTheHarnessWiresEveryOptionTheTUIRequires(t *testing.T) {
 	if err := tuiOptions(rec, repo, events).Validate(); err != nil {
 		t.Fatalf("the harness would render a cast of this error instead of lerp: %v", err)
 	}
+}
+
+// TestTheHarnessReportsItsExitStatus pins the file `make demo` gates on. The
+// harness runs inside the terminal vhs records, so its exit code stops at
+// bash and vhs exits 0 either way; this file is the only thing carrying the
+// harness's own verdict out of the recording, and a render whose status says
+// anything but 0 is a cast of an error message.
+func TestTheHarnessReportsItsExitStatus(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "exit")
+	t.Setenv(exitEnv, path)
+
+	reportExit(nil)
+	if got := readReport(t, path); got != "0\n" {
+		t.Errorf("a run that returned no error reported %q, want %q", got, "0\n")
+	}
+	reportExit(errors.New("the harness died at startup"))
+	if got := readReport(t, path); got != "1\n" {
+		t.Errorf("a failed run reported %q, want %q — make demo would pass it", got, "1\n")
+	}
+
+	// Unset, nothing is written: `go run ./internal/demo` by hand leaves no
+	// file behind, and the Makefile's own rm is what makes a stale one from a
+	// previous render unable to answer for this one.
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(exitEnv, "")
+	reportExit(nil)
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("a run nobody asked about wrote a status anyway: %v", err)
+	}
+}
+
+func readReport(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("the harness reported no exit status: %v", err)
+	}
+	return string(b)
 }

@@ -87,3 +87,27 @@ func TestAwaitPassesGivesUpOnTheBoundNoMatterHowChattyThePassIs(t *testing.T) {
 		t.Fatalf("awaitPasses gave up without telling the operator the pass may still be mutating; wrote %q", got)
 	}
 }
+
+// Options is still a struct where Run cannot check it at compile time —
+// lanes, events, and now the one engine. This holds Validate to naming the
+// missing one rather than opening the screen and finding out.
+func TestValidateNamesTheOptionRunDoesNotHave(t *testing.T) {
+	whole := Options{Engine: newFakeEngine(), Lanes: 1, Events: make(chan loop.Event)}
+	if err := whole.Validate(); err != nil {
+		t.Fatalf("a fully wired Options was refused: %v", err)
+	}
+	for name, o := range map[string]Options{
+		"engine": {Lanes: 1, Events: make(chan loop.Event)},
+		"lanes":  {Engine: newFakeEngine(), Events: make(chan loop.Event)},
+		"events": {Engine: newFakeEngine(), Lanes: 1},
+	} {
+		err := o.Validate()
+		if err == nil {
+			t.Errorf("Options without a %s validated", name)
+			continue
+		}
+		if !strings.Contains(err.Error(), name) {
+			t.Errorf("Options without a %s was refused with %q, which does not name it", name, err)
+		}
+	}
+}

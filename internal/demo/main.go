@@ -47,6 +47,11 @@ const (
 	// agent.sh both reach their fixture through it, which is what lets the
 	// config file be checked in byte-for-byte as the file that is loaded.
 	dirEnv = "LERP_DEMO_DIR"
+	// exitEnv names a file this process writes its exit status into, so that
+	// `make demo` can gate on the harness's own exit rather than on vhs's.
+	// The tape exports it; run it by hand with the variable unset and nothing
+	// is written.
+	exitEnv = "LERP_DEMO_EXIT"
 	// lanes is small enough that a reader can follow one of them across a
 	// 1000-pixel-wide GIF, and large enough that tickets visibly queue behind
 	// the running ones.
@@ -63,9 +68,39 @@ const (
 )
 
 func main() {
-	if err := run(context.Background()); err != nil {
+	err := run(context.Background())
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "lerp demo:", err)
+	}
+	reportExit(err)
+	if err != nil {
 		os.Exit(1)
+	}
+}
+
+// reportExit writes this process's exit status to the file named by
+// LERP_DEMO_EXIT, and does nothing when that variable is unset.
+//
+// It exists because the recording hides the status: the harness runs inside
+// the terminal vhs is recording, so its exit code reaches bash and stops
+// there — vhs itself exits 0 whether lerp opened the board or died at
+// startup, which is a blank cast under the size cap and a green CI job. That
+// is how the missing Starter shipped. The file is the status the recorded
+// shell would otherwise swallow, and `make demo` refuses a render whose
+// harness did not report 0. A crash writes nothing at all, which the same
+// check reads as a failure — the file missing and the file saying 1 are the
+// same answer.
+func reportExit(err error) {
+	path := os.Getenv(exitEnv)
+	if path == "" {
+		return
+	}
+	status := "0"
+	if err != nil {
+		status = "1"
+	}
+	if werr := os.WriteFile(path, []byte(status+"\n"), 0o600); werr != nil {
+		fmt.Fprintln(os.Stderr, "lerp demo: report exit status:", werr)
 	}
 }
 
@@ -156,22 +191,20 @@ func run(ctx context.Context) error {
 }
 
 // tuiOptions is the harness's wiring to the TUI, split out of run so a test
-// can put it through tui.Options.Validate without a terminal. A required
-// option the harness forgets is not a compile error — Options is a struct —
-// and Run rejects it at startup, which vhs records as a bash error and exits
-// 0 on. That is a blank cast under the size cap and a green CI job; the
-// guard for it is TestTheHarnessWiresEveryOptionTheTUIRequires.
+// can put it through tui.Options.Validate without a terminal. The engine
+// roles are one interface now, so a role the harness fails to satisfy is a
+// compile error — but the rest of Options is still a struct, and a required
+// field left unset is refused by Run at startup, which vhs records as a bash
+// error and exits 0 on. That is a blank cast under the size cap; the guards
+// for it are TestTheHarnessWiresEveryOptionTheTUIRequires and, for the render
+// itself, the exit status make demo gates on (see reportExit).
 //
 // lanes and interval are read from the package constants rather than passed
 // in, so that guard covers the harness's own choice of them: a caller handing
 // this a zero lane count would otherwise validate here and be refused by Run.
 func tuiOptions(rec *loop.Reconciler, repo *config.RepoConfig, events <-chan loop.Event) tui.Options {
 	return tui.Options{
-		Ticker:   rec,
-		Promoter: rec,
-		Starter:  rec,
-		Ejector:  rec,
-		Reader:   rec,
+		Engine:   rec,
 		Statuses: repo.PromoteTargets(),
 		Interval: interval,
 		Lanes:    lanes,

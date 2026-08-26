@@ -24,8 +24,14 @@ Set TypingSpeed 60ms
 
 # The harness builds as `lerp` into .demo. Putting that on PATH is what makes
 # the prompt below read the way a reader's own would.
+#
+# LERP_DEMO_EXIT is where the harness leaves its own exit status. vhs exits 0
+# on whatever the recorded shell did, so without this a harness that dies at
+# startup renders a cast of a bash error and passes; `make demo` reads the
+# file and refuses. The path is .demo/exit on both sides — keep it in step
+# with the Makefile's DEMO_EXIT.
 Hide
-Type "export PATH=$PWD/.demo:$PATH"
+Type "export PATH=$PWD/.demo:$PATH LERP_DEMO_EXIT=$PWD/.demo/exit"
 Enter
 Type "clear"
 Enter

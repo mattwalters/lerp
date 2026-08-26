@@ -82,6 +82,9 @@ DEMO_TAPE := docs/demo.tape
 DEMO_GIF := docs/demo.gif
 # Where vhs writes before the cap is checked; see the demo recipe.
 DEMO_RENDER := $(DEMO_BIN)/demo.gif
+# Where the harness leaves its own exit status. The tape exports this path as
+# LERP_DEMO_EXIT; the two spellings have to agree.
+DEMO_EXIT := $(DEMO_BIN)/exit
 # GIF bytes are not reproducible, so nothing here diffs them. The cap is the
 # only thing standing between "a couple of MB" and drift.
 DEMO_MAX_BYTES := 3145728
@@ -99,8 +102,21 @@ demo: ## Re-record docs/demo.gif from docs/demo.tape (needs vhs)
 # committed file. And a render that fails, or one that comes back oversized,
 # leaves the committed asset exactly where it was — the rm is for the leftover
 # an oversized render puts there, which a later silent vhs could measure.
-	rm -f $(DEMO_RENDER)
+	rm -f $(DEMO_RENDER) $(DEMO_EXIT)
 	vhs -o $(DEMO_RENDER) $(DEMO_TAPE)
+# The harness runs inside the terminal vhs is recording, so its exit code
+# reaches bash and stops there: vhs exits 0 whether the board opened or the
+# harness died at startup, and a cast of a bash error still renders under the
+# cap. This is that exit code, carried out of the recording in a file the tape
+# points the harness at. Read before the size check so a failed run is named
+# as a failed run rather than as an oversized GIF — and so it never reaches
+# the mv. Removed above, so a previous render's status cannot answer for this
+# one; missing means the harness never got far enough to write it, which is a
+# failure too.
+	@status=$$(cat $(DEMO_EXIT) 2>/dev/null); \
+	  test "$$status" = 0 || { \
+	    printf 'demo: the harness exited %s — the cast would be a recording of that, not of lerp (left at %s)\n' \
+	      "$${status:-without reporting a status}" '$(DEMO_RENDER)'; exit 1; }
 	@size=$$(wc -c < $(DEMO_RENDER) | tr -d ' '); \
 	  test "$$size" -le $(DEMO_MAX_BYTES) || { \
 	    printf 'demo: %s came back %s bytes, over the %s cap — shorten the tape or drop the framerate (left at %s)\n' \
