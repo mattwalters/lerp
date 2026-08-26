@@ -109,23 +109,25 @@ five. If that trade is unappealing, the feature is out of scope.
    so "assigned to Sarah" means Sarah. Two credentials do that — a
    personal API key in `LINEAR_API_KEY`, which remains supported, or a
    token from `lerp login`: OAuth with `actor=user`, against Linear's
-   own endpoints, as a PKCE public client, so it needs no server and
-   has no client secret to keep. (OAuth was out while it implied a
-   server; that premise is gone, not the reasoning.) Both are an auth
-   header to every caller, but they differ underneath: a key returns
-   itself forever, a token expires, refreshes, and is revocable at
-   Linear — carrying a long run across an expiry is real work, not a
-   detail. What stays out is an app or agent *actor*: work showing up
-   as *lerp* rather than as a person, which would make the claim a
-   lock held by a bot and the board stop reading like a human team's.
-   A PKCE client is registered, so a Linear application named lerp
-   exists in the operator's authorized apps — that is a way to sign in
-   as them, not a second party on the board. All of which changes who
-   signs the request, not what a claim means: the protocol above and
-   the multiplayer semantics are untouched. And the credential is
-   config, not a store — the operator's own, kept outside the clone
-   rather than layered over its `lerp.toml`, and losing the file costs
-   a re-login, never correctness.
+   own endpoints, as a PKCE public client. No service of lerp's own
+   stands behind either; login's momentary loopback listener is the
+   single exception, carved out under "What lerp is not". (OAuth was
+   out while it implied a server; that premise is gone, not the
+   reasoning.) Both are an auth header to every caller, and neither is
+   a constant a caller can hold forever — a token expires and is
+   renewed, and either can be revoked in Linear. What stays out is an
+   app or agent *actor*: work showing up as *lerp* rather than as a
+   person, which would make the claim a lock held by a bot and the
+   board stop reading like a human team's. Lerp does ship one public
+   client ID, so a Linear application named lerp appears in the
+   operator's authorized apps — a way to sign in as them, not a second
+   party. All of which changes who signs the request, not what a claim
+   means: the protocol above and the multiplayer semantics are
+   untouched. And the token file is a credential, not a store and not
+   a second config layer: `lerp.toml` stays the whole of lerp's
+   configuration, the credential is the operator's own and lives
+   outside the clone, and losing it costs a re-login, never
+   correctness.
 
 5. **The engine is generic; the opinion ships as config.** Lerp's stock
    config encodes planning → human plan approval → implementing → a
@@ -250,12 +252,12 @@ that wants a scheduler wants a different product.
   hooks. The board is the workflow.
 - Not a process supervisor, CI system, or deployment tool.
 - Not a server, daemon, or web service. Nothing listens on a port
-  while lerp works. The one exception is `lerp login`, at setup time:
-  it opens a loopback socket for the seconds an OAuth redirect takes,
-  and closes it before anything runs — `127.0.0.1`, an ephemeral
-  port, one redirect, gone. That is the whole exception: no other
-  command listens, and the loop never listens, ever. Setup time and
-  run time not mixing is invariant 6.
+  while lerp works. The one exception is `lerp login`: it opens a
+  loopback socket on `127.0.0.1`, on an ephemeral port, for the
+  seconds an OAuth redirect takes, and closes it before anything
+  runs. No other command listens and the loop never listens, ever —
+  login is setup time, which invariant 6 keeps on its own side of the
+  line.
 - Not a database. See invariant 1.
 - Not an agent framework. Runners are command templates, not SDKs.
 - Not a Linear client, with one narrow exception: the inbox lists
