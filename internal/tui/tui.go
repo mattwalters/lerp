@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"sync"
 	"time"
@@ -33,7 +34,7 @@ func Run(ctx context.Context, o Options) error {
 	m := newModel(ctx, o)
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	_, err := p.Run()
-	awaitPasses(m.passes, o.Events)
+	awaitPasses(os.Stderr, m.passes, o.Events, quitWait)
 	return err
 }
 
@@ -49,24 +50,29 @@ func Run(ctx context.Context, o Options) error {
 // full quitWait, so quit would hang for 30s and then claim the pass was slow.
 // Discarding is the point: the events are screen detail, and the evidence a
 // later lerp reads is on disk.
-func awaitPasses(passes *sync.WaitGroup, events <-chan loop.Event) {
+// bound is quitWait; it and the writer are arguments only so a test can hold
+// the give-up path to a duration it can afford to wait out.
+func awaitPasses(w io.Writer, passes *sync.WaitGroup, events <-chan loop.Event, bound time.Duration) {
 	done := make(chan struct{})
 	go func() { passes.Wait(); close(done) }()
-	// Outside the loop: a deadline re-armed on every drained event would let
-	// a chatty pass push the bound out indefinitely.
-	deadline := time.After(quitWait)
+	// Armed once, outside the loop. Re-arming it on every drained event would
+	// let a pass with a steady stream to emit push the bound out forever —
+	// an unbounded stall, which is worse than the 30s one this fixes.
+	deadline := time.After(bound)
 	for {
 		select {
 		case <-done:
 			return
 		case _, ok := <-events:
-			// A closed channel is ready forever; nil it out so the select
-			// blocks on the wait instead of spinning a core through it.
+			// A closed channel is ready forever, so re-selecting on it would
+			// spin a core until the deadline. Nothing closes this one today;
+			// waitEvent guards the same case. A nil channel blocks, which is
+			// what the wait wants once there is nothing left to drain.
 			if !ok {
 				events = nil
 			}
 		case <-deadline:
-			fmt.Fprintf(os.Stderr, "lerp: gave up waiting for the in-flight pass after %s\n", quitWait)
+			fmt.Fprintf(w, "lerp: gave up waiting for the in-flight pass after %s\n", bound)
 			return
 		}
 	}
