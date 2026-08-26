@@ -181,8 +181,11 @@ func short(b key.Binding, desc string) key.Binding {
 // promoteHelp is the promote picker's instruction line. The picker is
 // modal, so this is the whole of what it answers to, and it is built from
 // the same bindings handlePromoteKey matches — rebind Up and the picker and
-// its line move together. q and ctrl+c back out too; the line names esc
-// alone, the way the ? overlay names q for Quit's two keys.
+// its line move together. Quit backs the picker out as well and is left
+// off: two ways out is one more than the line has columns for, and esc is
+// the one the rest of the TUI already means it by. That is a hint the
+// picker does not give rather than one it gets wrong — rebind Quit and
+// nothing here starts naming the wrong key.
 // The order is what survives a narrow bar, the way panelHelp's is: bubbles
 // drops hints off the end to fit, so the two keys that end the modal come
 // before the pair that only moves inside it. A picker whose line has been
@@ -197,9 +200,11 @@ func (k keymap) promoteHelp() []key.Binding {
 	}
 }
 
-// promoteExits is the part of promoteHelp a narrow bar must not cut down:
-// the two keys that end the modal. Taken from promoteHelp itself, so the
-// floor can never come to name a key the line does not.
+// promoteExits is what the picker's line falls back to rather than cut
+// down: the two keys that end the modal. Taken from promoteHelp itself, so
+// the floor can never come to name a key the line does not. It is a floor
+// under what pickerLine drops, not under statusBar's truncation — a window
+// too narrow to hold even these has the bar shear them like anything else.
 func (k keymap) promoteExits() []key.Binding { return k.promoteHelp()[:2] }
 
 // pair renders two bindings as one hint — "↑/k ↓/j choose" — where naming a

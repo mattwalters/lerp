@@ -3297,31 +3297,32 @@ var heartbeatSlot = func() int {
 }()
 
 // pickerLine is the promote picker's instructions, in the room the bar has
-// after its left side. It is bindings rather than a string, drawn by the
-// same component that draws the panels' key lines — one renderer, so the
+// for them. They are bindings rather than a string, drawn by the same
+// component that draws the panels' key lines — one renderer, so the
 // separator and the faint are declared once and a rebind moves the line
 // with the keys.
 //
-// It is also the one line here handed a width to fit into. Reading the keys
-// off the bindings costs columns the hardcoded line did not pay, and this is
-// where they come from: bubbles drops whole hints off the end and marks the
-// cut with an ellipsis, so what a tight bar loses is promoteHelp's last
-// hint. The truncation at the end of statusBar would take "● n in the
-// inbox" instead — the one number the needs-you panel exists for, spent on
-// advertising a key.
+// Reading the keys off the bindings costs columns the hardcoded line never
+// paid, and this is where they come from. The bar gives up a key line
+// before the heartbeat and the heartbeat before "● n in the inbox", so the
+// room offered here is what is left after both: what a narrow window spends
+// is the pair that only moves inside the picker, not somebody else's
+// segment. Both lines are rendered whole and measured — bubbles' own fitting
+// keeps an over-wide hint when the ellipsis marking the cut would not fit
+// either, which is a way to come back wider than the room.
 //
-// Under the two ways out of the modal the trade turns round, which is what
-// the floor is: a line that no longer says how to leave the picker is worse
-// than a clipped count, and the panel underneath is still showing that count
-// in full. So the line is handed back whole and statusBar truncates what it
-// truncates, exactly as it did while this was a string.
+// Below the exits there is nothing left to drop, and they are handed back
+// anyway: a line that cannot say how to leave the picker is worse than a
+// clipped count, which the panel underneath is showing in full regardless.
+// statusBar's truncation then takes what it takes, exactly as it did while
+// this was a string.
 func (m model) pickerLine(room int) string {
 	h := m.help
 	h.Width = 0
-	if room >= lipgloss.Width(h.ShortHelpView(m.keys.promoteExits())) {
-		h.Width = room
+	if full := h.ShortHelpView(m.keys.promoteHelp()); lipgloss.Width(full) <= room {
+		return full
 	}
-	return h.ShortHelpView(m.keys.promoteHelp())
+	return h.ShortHelpView(m.keys.promoteExits())
 }
 
 // statusBar is the heartbeat line: the lerp mark, what the pass is doing
@@ -3401,9 +3402,6 @@ func (m model) statusBar() string {
 		hint = "type to filter · enter accept · esc cancel"
 	}
 	right := styleFaint.Render(hint)
-	if m.promoting {
-		right = m.pickerLine(m.width - lipgloss.Width(left) - 1)
-	}
 
 	// The heartbeat's room is held open whether or not there is a heartbeat
 	// in it. That is what lets it come and go without moving anything: every
@@ -3412,6 +3410,12 @@ func (m model) statusBar() string {
 	// starting decide, once an interval, whether the hints could still
 	// afford the pane's key.
 	slot := heartbeatSlot + 2
+	// The picker's line is fitted against that held-open room rather than
+	// into it: a key line is the segment the bar gives up before the
+	// heartbeat, so the picker's hints go before the heartbeat does.
+	if m.promoting {
+		right = m.pickerLine(m.width - lipgloss.Width(left) - slot - 1)
+	}
 	fits := func(slot int) bool {
 		return m.width-lipgloss.Width(left)-slot-lipgloss.Width(right) >= 1
 	}

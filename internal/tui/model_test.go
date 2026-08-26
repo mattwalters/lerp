@@ -1946,6 +1946,12 @@ func TestPromotePickerFollowsTheKeymap(t *testing.T) {
 	m, _, _, promoter := newPromoteTestModel(t, 1, []string{"Planning", "Implementing"})
 	m.keys.Up = key.NewBinding(key.WithKeys("ctrl+p"), key.WithHelp("ctrl+p", "select up"))
 	m.keys.Down = key.NewBinding(key.WithKeys("ctrl+n"), key.WithHelp("ctrl+n", "select down"))
+	// Wide enough to be about the keys and not about the room: these labels
+	// are six columns each where the arrows were three, and on the stock
+	// hundred-column window the bar would rightly spend that on the count
+	// instead — which TestThePickersLineGivesWayBeforeTheInboxCount is for.
+	resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	m = resized.(model)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
 		{Ticket: "LERP-4", TicketID: "loose", Title: "Nobody's routed this", Status: "Backlog"},
@@ -1988,60 +1994,62 @@ func TestPromotePickerFollowsTheKeymap(t *testing.T) {
 
 // The picker's line is built from bindings now, so its width is whatever
 // their labels add up to rather than a string somebody counted — and
-// reading them off the bindings costs columns the hardcoded line did not
-// pay. Those columns come out of the line, which bubbles cuts from its own
-// end, and not out of "● n in the inbox": the number the truncation at the
-// bottom of statusBar is written to protect. Ten lanes and three digits is
-// the stock board at its widest on the left, which is where a line that
-// will not fit has nowhere else to take the room from.
+// reading them off the bindings costs columns the hardcoded line never
+// paid. Those columns come out of the line, which drops the pair that only
+// moves inside the picker, and never out of "● n in the inbox": the number
+// the truncation at the bottom of statusBar is written to protect.
 //
-// The floor is the two ways out of the modal. Below that the trade turns
-// round and the count gives way instead, so the line always says how to
-// leave the picker.
+// Swept rather than pinned, because the widths where this goes wrong are
+// the ones nobody thought to pin. Every width the picker can be open at, on
+// the stock two-lane board and on ten lanes with a three-digit count, has
+// to hold: the bar fits its window, the line still says how to leave the
+// modal, the count never comes back and go away again as the window widens,
+// and the line never spends columns on the nav pair while the count is
+// clipped.
 func TestThePickersLineGivesWayBeforeTheInboxCount(t *testing.T) {
-	for _, tc := range []struct {
-		width, lanes, items int
-		wantCount, wantNav  bool
-	}{
-		{width: 100, lanes: 2, items: 12, wantCount: true, wantNav: true},
-		{width: 80, lanes: 2, items: 12, wantCount: true, wantNav: true},
-		// The stock ten lanes and a three-digit count: the line is a few
-		// columns too wide now, and what it gives up is its own last hint.
-		{width: 80, lanes: 10, items: 120, wantCount: true, wantNav: false},
-		// Under the floor: the line is whole and the count is the one that
-		// gets clipped, the way it did before any of this was bindings.
-		{width: 60, lanes: 10, items: 120, wantCount: false, wantNav: true},
-	} {
-		m, _, _, _ := newPromoteTestModel(t, tc.lanes, defaultTestStatuses)
-		resized, _ := m.Update(tea.WindowSizeMsg{Width: tc.width, Height: 30})
-		m = resized.(model)
-		m = update(t, m, keyMsg("1"))
-		var items []loop.AttentionItem
-		for i := range tc.items {
-			items = append(items, loop.AttentionItem{
-				Ticket: fmt.Sprintf("LERP-%d", i), TicketID: fmt.Sprintf("id-%d", i),
-				Title: "Nobody's routed this", Status: "Backlog"})
-		}
-		m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: items}})
-		m = update(t, m, keyMsg("p"))
+	for _, cfg := range []struct{ lanes, items int }{{lanes: 2, items: 12}, {lanes: 10, items: 120}} {
+		count := fmt.Sprintf("● %d in the inbox", cfg.items)
+		var whole []int
+		for w := 30; w <= 120; w++ {
+			m, _, _, _ := newPromoteTestModel(t, cfg.lanes, defaultTestStatuses)
+			resized, _ := m.Update(tea.WindowSizeMsg{Width: w, Height: 30})
+			m = resized.(model)
+			m = update(t, m, keyMsg("1"))
+			var items []loop.AttentionItem
+			for i := range cfg.items {
+				items = append(items, loop.AttentionItem{
+					Ticket: fmt.Sprintf("LERP-%d", i), TicketID: fmt.Sprintf("id-%d", i),
+					Title: "Nobody's routed this", Status: "Backlog"})
+			}
+			m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: items}})
+			m = update(t, m, keyMsg("p"))
 
-		bar := m.statusBar()
-		where := fmt.Sprintf("%d columns, %d lanes, %d in the inbox", tc.width, tc.lanes, tc.items)
-		if w := lipgloss.Width(bar); w > tc.width {
-			t.Fatalf("%s: the bar came out %d wide:\n%s", where, w, bar)
-		}
-		// Both ways out of the modal, at every width: that is the floor.
-		for _, want := range []string{"enter promote", "esc cancel"} {
-			if !strings.Contains(bar, want) {
-				t.Fatalf("%s: the picker's line lost %q:\n%s", where, want, bar)
+			bar := m.statusBar()
+			where := fmt.Sprintf("%d columns, %d lanes, %d in the inbox", w, cfg.lanes, cfg.items)
+			if got := lipgloss.Width(bar); got > w {
+				t.Fatalf("%s: the bar came out %d wide:\n%s", where, got, bar)
+			}
+			// promoteExits, at every width this loop covers.
+			for _, want := range []string{"enter promote", "esc cancel"} {
+				if !strings.Contains(bar, want) {
+					t.Fatalf("%s: the picker's line lost %q:\n%s", where, want, bar)
+				}
+			}
+			hasCount := strings.Contains(bar, count)
+			if hasCount {
+				whole = append(whole, w)
+			} else if len(whole) > 0 {
+				t.Fatalf("%s: the count was whole at %d and is clipped again here:\n%s",
+					where, whole[0], bar)
+			}
+			// The nav pair is what the line gives up to leave the count
+			// alone, so it can never be on screen while the count is not.
+			if strings.Contains(bar, "↑/k ↓/j choose") && !hasCount {
+				t.Fatalf("%s: the line kept the nav hint and clipped the count:\n%s", where, bar)
 			}
 		}
-		count := fmt.Sprintf("● %d in the inbox", tc.items)
-		if got := strings.Contains(bar, count); got != tc.wantCount {
-			t.Fatalf("%s: count whole = %v, want %v:\n%s", where, got, tc.wantCount, bar)
-		}
-		if got := strings.Contains(bar, "↑/k ↓/j choose"); got != tc.wantNav {
-			t.Fatalf("%s: nav hint shown = %v, want %v:\n%s", where, got, tc.wantNav, bar)
+		if len(whole) == 0 {
+			t.Fatalf("%d lanes, %d in the inbox: the count was clipped at every width", cfg.lanes, cfg.items)
 		}
 	}
 }
