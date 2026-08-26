@@ -1000,6 +1000,19 @@ func (r *Reconciler) ForceStart(ctx context.Context, ticketID string) error {
 			return fmt.Errorf("force-start %s: claimed by someone else", issue.Identifier)
 		}
 	}
+	// The refusals above each name their cause, which is what an operator
+	// pressing a key needs; Eligible is the rule they spell out. This backstop
+	// is what keeps them from drifting apart — a criterion added to Eligible
+	// gates fill and would otherwise leave force-start running a ticket the
+	// loop refuses, which is not overriding the lane count. Only the operating
+	// user's own claim is allowed to differ, and by here that is the only
+	// claim left standing, so the backstop reads the issue as releasing it
+	// would leave it.
+	unclaimed := issue
+	unclaimed.AssigneeID = ""
+	if !Eligible(unclaimed, map[string]bool{queue.Status: true}) {
+		return fmt.Errorf("force-start %s: not eligible", issue.Identifier)
+	}
 	reserved, err := r.recordedLanes()
 	if err != nil {
 		return fmt.Errorf("force-start %s: %w", issue.Identifier, err)
@@ -1285,6 +1298,11 @@ func (r *Reconciler) settleDead(ctx context.Context, record evidence.Record) (Ev
 // same status the run started from, still assigned to this operating user.
 // Anything else means a human, an agent, or an automation acted since, and
 // the loop leaves their work alone.
+//
+// The assignee half of that is releaseClaim's rule, and this deliberately
+// does not route through it: both halves are read from one GetIssue here,
+// and a ticket deleted since the run started is a no-op rather than the
+// error a second read would raise.
 func (r *Reconciler) releaseDead(ctx context.Context, record evidence.Record) error {
 	if record.TicketID == "" {
 		return nil
