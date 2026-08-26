@@ -14,6 +14,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/mattwalters/lerp/internal/childenv"
 )
 
 // tempStore returns a store in a temp dir, holding tok when one is given.
@@ -91,7 +93,7 @@ func TestResolveEnvKeyWins(t *testing.T) {
 	if err := os.WriteFile(path, []byte("not json"), 0o600); err != nil {
 		t.Fatalf("write poison: %v", err)
 	}
-	t.Setenv(apiKeyEnv, "lin_api_key")
+	t.Setenv(childenv.LinearAPIKeyEnv, "lin_api_key")
 
 	src, err := resolve(s, nil)
 	if err != nil {
@@ -105,12 +107,36 @@ func TestResolveEnvKeyWins(t *testing.T) {
 	if got != "lin_api_key" {
 		t.Errorf("header = %q, want %q", got, "lin_api_key")
 	}
+	// And the read consumed it: whoever reads the credential drops it, so a
+	// child spawned with a nil Env has nothing to inherit. The closure still
+	// answers with the key it captured before that.
+	if v, ok := os.LookupEnv(childenv.LinearAPIKeyEnv); ok {
+		t.Errorf("%s still set to %q after Resolve; it should be dropped from lerp's own environment", childenv.LinearAPIKeyEnv, v)
+	}
+}
+
+// The consequence of that drop, said out loud because it is surprising: a
+// second Resolve in the same process no longer sees the key. Both of lerp's
+// startup paths resolve exactly once, so this is a documented property
+// rather than a bug — but it should fail loudly if it ever stops being true
+// of the doc comment.
+func TestResolveConsumesTheEnvKey(t *testing.T) {
+	t.Setenv(childenv.LinearAPIKeyEnv, "lin_api_key")
+	s := tempStore(t, nil)
+
+	if _, err := resolve(s, nil); err != nil {
+		t.Fatalf("first resolve: %v", err)
+	}
+	// No token file to fall back on, so the second resolve refuses.
+	if _, err := resolve(s, nil); !errors.Is(err, ErrNoCredentials) {
+		t.Errorf("second resolve error = %v, want ErrNoCredentials", err)
+	}
 }
 
 // A hand-written token file authenticates, and the header it produces is
 // what a linear client actually puts on the wire.
 func TestResolveStoredToken(t *testing.T) {
-	t.Setenv(apiKeyEnv, "")
+	t.Setenv(childenv.LinearAPIKeyEnv, "")
 	s := tempStore(t, ptr(liveToken()))
 
 	src, err := resolve(s, nil)
@@ -130,7 +156,7 @@ func TestResolveStoredToken(t *testing.T) {
 // and concurrent callers share the one exchange rather than each starting
 // their own.
 func TestRefreshUnderConcurrency(t *testing.T) {
-	t.Setenv(apiKeyEnv, "")
+	t.Setenv(childenv.LinearAPIKeyEnv, "")
 	expired := liveToken()
 	expired.ExpiresAt = time.Now().Add(-time.Minute)
 	s := tempStore(t, &expired)
@@ -234,7 +260,7 @@ func TestRefreshUnderConcurrency(t *testing.T) {
 // A refresh Linear refuses is one actionable error, latched: the endpoint is
 // asked once and never again.
 func TestRejectedRefreshIsLatched(t *testing.T) {
-	t.Setenv(apiKeyEnv, "")
+	t.Setenv(childenv.LinearAPIKeyEnv, "")
 	expired := liveToken()
 	expired.ExpiresAt = time.Now().Add(-time.Minute)
 	s := tempStore(t, &expired)
@@ -272,7 +298,7 @@ func TestRejectedRefreshIsLatched(t *testing.T) {
 // A refusal the token endpoint did not make — a 500, a network failure — is
 // not latched: it is worth trying again.
 func TestServerErrorIsNotLatched(t *testing.T) {
-	t.Setenv(apiKeyEnv, "")
+	t.Setenv(childenv.LinearAPIKeyEnv, "")
 	expired := liveToken()
 	expired.ExpiresAt = time.Now().Add(-time.Minute)
 	s := tempStore(t, &expired)
@@ -316,7 +342,7 @@ func TestServerErrorIsNotLatched(t *testing.T) {
 // grant, and must not latch: `lerp login` is unauthenticated from the same
 // address and could not help.
 func TestRateLimitIsNotLatched(t *testing.T) {
-	t.Setenv(apiKeyEnv, "")
+	t.Setenv(childenv.LinearAPIKeyEnv, "")
 	expired := liveToken()
 	expired.ExpiresAt = time.Now().Add(-time.Minute)
 	s := tempStore(t, &expired)
@@ -364,7 +390,7 @@ func TestRateLimitIsNotLatched(t *testing.T) {
 // refresh token Linear has retired — which would come back a refusal and
 // latch a credential that is live.
 func TestRenewalPrefersTheFileOverStaleMemory(t *testing.T) {
-	t.Setenv(apiKeyEnv, "")
+	t.Setenv(childenv.LinearAPIKeyEnv, "")
 	expired := liveToken()
 	expired.ExpiresAt = time.Now().Add(-time.Minute)
 	s := tempStore(t, &expired)
@@ -406,7 +432,7 @@ func TestRenewalPrefersTheFileOverStaleMemory(t *testing.T) {
 // can recover is worse than not renewing — and it is latched, so a pass does
 // not keep spending rotations against a disk that cannot hold the result.
 func TestRefreshWriteFailureIsLatched(t *testing.T) {
-	t.Setenv(apiKeyEnv, "")
+	t.Setenv(childenv.LinearAPIKeyEnv, "")
 	expired := liveToken()
 	expired.ExpiresAt = time.Now().Add(-time.Minute)
 	s := tempStore(t, &expired)
@@ -461,7 +487,7 @@ func TestRefreshWriteFailureIsLatched(t *testing.T) {
 // A lifetime shorter than the renewal window is refused rather than adopted:
 // adopting it would mean an exchange per GraphQL call.
 func TestShortLifetimeIsRefused(t *testing.T) {
-	t.Setenv(apiKeyEnv, "")
+	t.Setenv(childenv.LinearAPIKeyEnv, "")
 	source, s, exchanges := expiredSource(t, func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"access_token":"access-2","refresh_token":"refresh-2","expires_in":60}`))
 	})
@@ -487,7 +513,7 @@ func TestShortLifetimeIsRefused(t *testing.T) {
 // used — a proxy's HTML error page where the token pair should be — is
 // latched for the same reason: the rotation has already been spent.
 func TestUndecodableExchangeIsLatched(t *testing.T) {
-	t.Setenv(apiKeyEnv, "")
+	t.Setenv(childenv.LinearAPIKeyEnv, "")
 	source, s, exchanges := expiredSource(t, func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("<html>gateway timeout</html>"))
 	})
@@ -509,7 +535,7 @@ func TestUndecodableExchangeIsLatched(t *testing.T) {
 func TestNonGrantRefusalsAreNotLatched(t *testing.T) {
 	for _, status := range []int{http.StatusForbidden, http.StatusNotFound, http.StatusMethodNotAllowed} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
-			t.Setenv(apiKeyEnv, "")
+			t.Setenv(childenv.LinearAPIKeyEnv, "")
 			var calls int
 			source, _, exchanges := expiredSource(t, func(w http.ResponseWriter, r *http.Request) {
 				calls++
@@ -543,7 +569,7 @@ func TestNonGrantRefusalsAreNotLatched(t *testing.T) {
 // A refusal names what came back, so a disabled client id does not read as
 // an expired session an operator can log their way out of.
 func TestRefusalCarriesTheEndpointsAnswer(t *testing.T) {
-	t.Setenv(apiKeyEnv, "")
+	t.Setenv(childenv.LinearAPIKeyEnv, "")
 	source, _, _ := expiredSource(t, func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"invalid_client"}`, http.StatusBadRequest)
 	})
@@ -559,7 +585,7 @@ func TestRefusalCarriesTheEndpointsAnswer(t *testing.T) {
 // The latch is memory too, and the file outranks memory: an operator who
 // re-authorizes in another terminal does not have to restart this lerp.
 func TestReloginOnDiskClearsTheLatch(t *testing.T) {
-	t.Setenv(apiKeyEnv, "")
+	t.Setenv(childenv.LinearAPIKeyEnv, "")
 	source, s, exchanges := expiredSource(t, func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"invalid_grant"}`, http.StatusBadRequest)
 	})
@@ -591,7 +617,7 @@ func TestReloginOnDiskClearsTheLatch(t *testing.T) {
 // A build with no client id cannot renew anything, and says so rather than
 // sending the operator after a `lerp login` it does not have.
 func TestNoClientIDIsNotAnExpiredSession(t *testing.T) {
-	t.Setenv(apiKeyEnv, "")
+	t.Setenv(childenv.LinearAPIKeyEnv, "")
 	expired := liveToken()
 	expired.ExpiresAt = time.Now().Add(-time.Minute)
 	s := tempStore(t, &expired)
@@ -617,7 +643,7 @@ func TestNoClientIDIsNotAnExpiredSession(t *testing.T) {
 	if errors.Is(err, ErrLoginRequired) {
 		t.Errorf("reported as an expired session: %v", err)
 	}
-	if !strings.Contains(err.Error(), apiKeyEnv) {
+	if !strings.Contains(err.Error(), childenv.LinearAPIKeyEnv) {
 		t.Errorf("error %q does not name a remedy this build has", err)
 	}
 	if exchanges != 0 {
@@ -627,12 +653,12 @@ func TestNoClientIDIsNotAnExpiredSession(t *testing.T) {
 
 // No credential at all names both remedies.
 func TestResolveNoCredentials(t *testing.T) {
-	t.Setenv(apiKeyEnv, "")
+	t.Setenv(childenv.LinearAPIKeyEnv, "")
 	_, err := resolve(store{dir: t.TempDir()}, nil)
 	if !errors.Is(err, ErrNoCredentials) {
 		t.Fatalf("err = %v, want ErrNoCredentials", err)
 	}
-	for _, want := range []string{"lerp login", apiKeyEnv} {
+	for _, want := range []string{"lerp login", childenv.LinearAPIKeyEnv} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not name %q", err, want)
 		}
@@ -642,7 +668,7 @@ func TestResolveNoCredentials(t *testing.T) {
 // A token file that is there but will not decode is the same dead end, and
 // says what was wrong with it.
 func TestResolveUndecodableTokenFile(t *testing.T) {
-	t.Setenv(apiKeyEnv, "")
+	t.Setenv(childenv.LinearAPIKeyEnv, "")
 	s := store{dir: t.TempDir()}
 	path, err := s.path()
 	if err != nil {

@@ -13,13 +13,9 @@ import (
 	"strings"
 	"sync"
 	"time"
-)
 
-// apiKeyEnv holds a Linear personal API key. It is the credential lerp has
-// always read, and it still wins: an operator who exports it gets exactly
-// the behaviour they had before `lerp login` existed, with nothing on disk
-// consulted.
-const apiKeyEnv = "LINEAR_API_KEY"
+	"github.com/mattwalters/lerp/internal/childenv"
+)
 
 // defaultTokenEndpoint is Linear's OAuth token endpoint. Still Linear's own
 // API, so invariant 8 is intact — and it is this package that speaks to it,
@@ -43,7 +39,7 @@ const refreshSkew = 5 * time.Minute
 var (
 	// ErrNoCredentials means neither credential is present: no
 	// LINEAR_API_KEY, and no token file to fall back on.
-	ErrNoCredentials = errors.New(`no Linear credentials: run "lerp login" or set ` + apiKeyEnv)
+	ErrNoCredentials = errors.New(`no Linear credentials: run "lerp login" or set ` + childenv.LinearAPIKeyEnv)
 	// ErrLoginRequired means Linear rejected the stored refresh token —
 	// revoked, or rotated past its replay grace. Only a new login fixes
 	// it, so a source that sees this returns it forever after rather than
@@ -59,6 +55,14 @@ var (
 // API key returns itself forever; a stored token renews itself when it is
 // close to expiry. A nil hc gets a default client with a 30s timeout, the
 // same as linear.New.
+//
+// Resolve consumes the environment variable: the key is captured and then
+// removed from lerp's own environment, so a child spawned with a nil Env
+// has nothing to inherit (childenv covers the children lerp builds an
+// environment for; this covers the rest). It follows that a second Resolve
+// in the same process no longer sees the key and falls through to the
+// token file — both of lerp's startup paths resolve exactly once, which is
+// what makes that acceptable.
 func Resolve(hc *http.Client) (func(context.Context) (string, error), error) {
 	return resolve(store{}, hc)
 }
@@ -67,7 +71,17 @@ func Resolve(hc *http.Client) (func(context.Context) (string, error), error) {
 // point a store at a temp dir rather than depending on how os.UserConfigDir
 // differs between macOS and Linux.
 func resolve(s store, hc *http.Client) (func(context.Context) (string, error), error) {
-	if key := os.Getenv(apiKeyEnv); key != "" {
+	if key := os.Getenv(childenv.LinearAPIKeyEnv); key != "" {
+		// Captured, then dropped from lerp's own environment. childenv keeps
+		// the key out of the children lerp builds an environment for, but a
+		// child spawned with a nil Env inherits this process wholesale — the
+		// ordinary way to write exec.Command, and the way the next spawn
+		// site will probably be written. Dropping it where it is read means
+		// there is nothing left to inherit either way, and it stays with the
+		// read rather than with one caller who has to remember. Not
+		// containment: the original block is still in /proc/<pid>/environ on
+		// Linux, and the operator's shell profile still exports it.
+		os.Unsetenv(childenv.LinearAPIKeyEnv)
 		// Verbatim, forever, and the token file is not even opened: a
 		// personal API key goes in the header as-is and never expires.
 		return func(context.Context) (string, error) { return key, nil }, nil
@@ -208,7 +222,7 @@ func (s *oauthSource) refresh(ctx context.Context) error {
 		// operator after a `lerp login` this build does not have. Reachable
 		// only from a hand-written token file until LERP-109 fills the
 		// constant in.
-		s.dead = errors.New("credentials: this lerp has no Linear OAuth client id, so a stored token cannot be renewed; set " + apiKeyEnv)
+		s.dead = errors.New("credentials: this lerp has no Linear OAuth client id, so a stored token cannot be renewed; set " + childenv.LinearAPIKeyEnv)
 		return s.dead
 	}
 	next, err := exchange(ctx, s.hc, s.endpoint, s.clientID, s.tok.RefreshToken)
