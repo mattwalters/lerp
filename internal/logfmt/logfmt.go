@@ -51,9 +51,10 @@ type Event struct {
 	// rest, so that sum is per call rather than per line. Zero on a line
 	// that reports no usage, which is most of them, and on a runner that
 	// reports none at all. A line whose content decodes to nothing worth
-	// showing is dropped with its usage; the loss is one call's worth on a
-	// stream that reports per call, which the next line's arrival makes
-	// invisible.
+	// showing reports no usage either; a runner that writes a call as
+	// several lines leaves that call's usage to the next line of it, and one
+	// that writes a call as a single line loses one call's worth, which the
+	// next line's arrival makes invisible.
 	Usage   int
 	IsError bool
 }

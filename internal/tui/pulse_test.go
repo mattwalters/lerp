@@ -412,13 +412,17 @@ func TestPulseBillsOneCallOnce(t *testing.T) {
 	p := newPulse(path, now, now)
 	p.read(now) // attach at the end of what is already there
 
-	// Three lines of one call, each repeating the same 1,000-token usage.
+	// Three lines of one call, each repeating the same 1,000-token usage,
+	// and read a poll apart: a live board reads a message's blocks as they
+	// are written, not all at once, so the count has to survive the gap.
 	const usage = `"usage":{"input_tokens":100,"output_tokens":900}`
 	appendLog(t, path,
 		`{"type":"assistant","message":{"id":"msg_01","content":[{"type":"thinking","thinking":"weighing it"}],`+usage+`}}`+"\n"+
-			`{"type":"assistant","message":{"id":"msg_01","content":[{"type":"text","text":"reading it"}],`+usage+`}}`+"\n"+
-			`{"type":"assistant","message":{"id":"msg_01","content":[{"type":"tool_use","name":"Read","input":{"file_path":"/a/b.go"}}],`+usage+`}}`+"\n")
+			`{"type":"assistant","message":{"id":"msg_01","content":[{"type":"text","text":"reading it"}],`+usage+`}}`+"\n")
 	p.read(now)
+	appendLog(t, path,
+		`{"type":"assistant","message":{"id":"msg_01","content":[{"type":"tool_use","name":"Read","input":{"file_path":"/a/b.go"}}],`+usage+`}}`+"\n")
+	p.read(now.Add(sparkBucket))
 	if p.tokens != 1000 {
 		t.Fatalf("one call across three lines billed %d tokens, want 1000", p.tokens)
 	}

@@ -1,6 +1,7 @@
 package logfmt
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -146,6 +147,31 @@ func TestClaudeCountsInterleavedCallsOnce(t *testing.T) {
 	}
 	if total != 2000 {
 		t.Fatalf("two interleaved calls billed %d tokens, want 2000", total)
+	}
+}
+
+// The ring is what holds interleaved calls apart, so how many it remembers is
+// the promise. A run fans out to several subagents at once and every one of
+// them streams into this log, so a dozen calls in flight is an ordinary
+// afternoon rather than a worst case; a ring too small forgets the oldest and
+// bills its next line again, which is the bug back for one call.
+func TestClaudeCountsManyCallsInFlightOnce(t *testing.T) {
+	const inFlight = 12
+	dec := &claude{}
+	var total int
+	// Every call opens, then every one of them writes a second line: the
+	// widest interleaving of that many messages there is.
+	for range 2 {
+		for i := range inFlight {
+			ev, ok := dec.Decode(claudeBlockLine(fmt.Sprintf("msg_%02d", i), "text", `"text":"working"`))
+			if !ok {
+				t.Fatal("line was not decoded")
+			}
+			total += ev.Usage
+		}
+	}
+	if total != 1000*inFlight {
+		t.Fatalf("%d interleaved calls billed %d tokens, want %d", inFlight, total, 1000*inFlight)
 	}
 }
 
