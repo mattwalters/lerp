@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -64,7 +65,14 @@ var palette = []struct {
 // describes the repo's pipeline, and this is one operator's terminal.
 const backgroundEnv = "LERP_BACKGROUND"
 
-// useBackground applies the override, read once at startup. Unset leaves
+// UseBackground applies the override if the operator set one. Run calls it
+// before it renders anything, so every way into the TUI gets it; main calls
+// it at the top of startup as well, so a value lerp cannot read is refused
+// before the board check and the clone lock rather than after them.
+// Applying it twice is applying it once.
+func UseBackground() error { return useBackground(os.Getenv(backgroundEnv)) }
+
+// useBackground applies one value, read once at startup. Unset leaves
 // detection alone; a value that is neither light nor dark is an error
 // rather than a silent fall back to the guess the override exists to
 // escape.

@@ -89,6 +89,12 @@ func openTUI(ctx context.Context, lanes int) error {
 	if apiKey == "" {
 		return errors.New("LINEAR_API_KEY is required")
 	}
+	// Up here with the other environment refusal: the TUI applies this
+	// itself, but only once everything below has run, and an operator who
+	// misspelled it should not pay for a board check and a lock first.
+	if err := tui.UseBackground(); err != nil {
+		return err
+	}
 	repoDir, err := gitRoot()
 	if err != nil {
 		return err

@@ -1,6 +1,9 @@
 package tui
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io"
 	"math"
 	"strconv"
@@ -88,31 +91,67 @@ func TestUseBackgroundOverridesDetection(t *testing.T) {
 // the guess the override exists to escape. Unset is not a value at all.
 //
 // Both cases are checked for what they left behind as well as what they
-// returned: the whole of what this function does is write to a global, so a
-// branch that quietly wrote the wrong thing would otherwise pass.
+// returned: writing to a global is the whole of what this function does, so
+// a branch that wrote the wrong thing would otherwise pass. From both seeds,
+// because one of them is whatever detection already returns here — a branch
+// that pinned dark would sit still against that seed and look untouched.
 func TestUseBackgroundLeavesDetectionAloneOtherwise(t *testing.T) {
 	restoreBackground(t)
-	// Somewhere detection would not have left it, so a stray write shows.
-	lipgloss.SetHasDarkBackground(true)
-	if err := useBackground(""); err != nil {
-		t.Fatalf("useBackground(\"\") = %v, want no error", err)
+	for _, seed := range []bool{true, false} {
+		lipgloss.SetHasDarkBackground(seed)
+		if err := useBackground(""); err != nil {
+			t.Fatalf("useBackground(\"\") = %v, want no error", err)
+		}
+		if lipgloss.HasDarkBackground() != seed {
+			t.Errorf("unset flipped the background to %v — it is meant to leave detection alone",
+				!seed)
+		}
+		for _, in := range []string{"White", "0", "auto", "no"} {
+			err := useBackground(in)
+			if err == nil {
+				t.Errorf("useBackground(%q) = nil, want an error", in)
+				continue
+			}
+			if !strings.Contains(err.Error(), backgroundEnv) || !strings.Contains(err.Error(), in) {
+				t.Errorf("useBackground(%q) = %q, want it to name both %s and the value",
+					in, err, backgroundEnv)
+			}
+			if lipgloss.HasDarkBackground() != seed {
+				t.Errorf("useBackground(%q) changed the background before refusing it", in)
+			}
+		}
 	}
-	if !lipgloss.HasDarkBackground() {
-		t.Error("unset changed the background — it is meant to leave detection alone")
+}
+
+// The floor is only a floor if it covers everything, and palette is a list
+// somebody has to remember to add to. So the list is checked against the
+// declarations themselves: a colour added to theme.go and not to palette
+// fails here rather than going unmeasured.
+func TestPaletteListsEveryColorInTheme(t *testing.T) {
+	f, err := parser.ParseFile(token.NewFileSet(), "theme.go", nil, 0)
+	if err != nil {
+		t.Fatalf("parse theme.go: %v", err)
 	}
-	for _, in := range []string{"White", "0", "auto", "no"} {
-		err := useBackground(in)
-		if err == nil {
-			t.Errorf("useBackground(%q) = nil, want an error", in)
-			continue
+	var declared []string
+	ast.Inspect(f, func(n ast.Node) bool {
+		spec, ok := n.(*ast.ValueSpec)
+		if !ok {
+			return true
 		}
-		if !strings.Contains(err.Error(), backgroundEnv) || !strings.Contains(err.Error(), in) {
-			t.Errorf("useBackground(%q) = %q, want it to name both %s and the value",
-				in, err, backgroundEnv)
+		for i, v := range spec.Values {
+			lit, ok := v.(*ast.CompositeLit)
+			if !ok {
+				continue
+			}
+			if sel, ok := lit.Type.(*ast.SelectorExpr); ok && sel.Sel.Name == "AdaptiveColor" {
+				declared = append(declared, spec.Names[i].Name)
+			}
 		}
-		if !lipgloss.HasDarkBackground() {
-			t.Errorf("useBackground(%q) changed the background before refusing it", in)
-		}
+		return true
+	})
+	if len(declared) != len(palette) {
+		t.Errorf("theme.go declares %d adaptive colours %v, palette lists %d — an unlisted colour is an unmeasured one",
+			len(declared), declared, len(palette))
 	}
 }
 
