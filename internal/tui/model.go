@@ -310,7 +310,15 @@ type model struct {
 	o   Options
 	ctx context.Context
 
-	focus         panel
+	focus panel
+	// keysInMain is the operator's answer to which surface the keys are
+	// talking to: the focused panel's list, or the pane open beside it.
+	// focus stays the panel either way — the pane is a lens on that
+	// panel's selected row, not a third panel with a cursor of its own —
+	// so everything about what the pane shows is unchanged while it holds
+	// the keys. Ask mainFocused, never this: the pane can only hold them
+	// while it is the operator's own detail on screen.
+	keysInMain    bool
 	width, height int
 	ready         bool
 	helpOn        bool
@@ -640,13 +648,24 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Work):
 		m.setFocus(panelWork)
 	case key.Matches(msg, m.keys.NextPanel):
-		m.setFocus((m.focus + 1) % 2)
+		m.cycleSurface(1)
 	case key.Matches(msg, m.keys.PrevPanel):
-		m.setFocus((m.focus + 1) % 2)
+		m.cycleSurface(-1)
+	// The selection keys move the selection, everywhere the selection is
+	// what the keys are pointed at. In the pane they move the pane, a line
+	// at a time, which is the movement the scroll keys never had.
 	case key.Matches(msg, m.keys.Up):
-		m.moveSelection(-1)
+		if m.mainFocused() {
+			m.scrollMain(-1)
+		} else {
+			m.moveSelection(-1)
+		}
 	case key.Matches(msg, m.keys.Down):
-		m.moveSelection(1)
+		if m.mainFocused() {
+			m.scrollMain(1)
+		} else {
+			m.moveSelection(1)
+		}
 	// enter opens the focused panel's detail and esc closes it — neither
 	// flips. esc inside the promote picker still cancels the picker, because
 	// handlePromoteKey ran before this switch and returned.
@@ -674,7 +693,12 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.setSearch("")
 			m.refreshMain()
 		default:
+			// esc means the same thing it always meant — close the pane —
+			// and the keys it was holding go back to the list that opened
+			// it. Left set, they would be waiting inside the next pane the
+			// operator opened, which is not what enter asked for.
 			m.detailOpen[m.focus] = false
+			m.keysInMain = false
 		}
 	case key.Matches(msg, m.keys.Promote):
 		if m.focus == panelAttention && len(m.shown) > 0 && len(m.o.Statuses) > 0 && m.roomForMain() {
@@ -1001,8 +1025,68 @@ func (m *model) setHelp(on bool) {
 	}
 }
 
+// mainFocused reports whether the keys are in the main pane rather than in
+// the focused panel's list. It is derived and never stale: the pane holds
+// them only while the operator's own detail is what is on screen in it, so
+// a window that shrinks under the pane, the ? overlay, or a modal drawn in
+// that same pane each hand the keys straight back to the list — and give
+// them back when they are done, the way detailOpen survives a resize.
+func (m *model) mainFocused() bool {
+	return m.keysInMain && m.paneTakesKeys(m.focus)
+}
+
+// paneTakesKeys reports whether p's pane is a surface tab can reach: open,
+// with the room to draw, and showing p's detail rather than the help or a
+// modal that has the keyboard already.
+func (m *model) paneTakesKeys(p panel) bool {
+	return m.detailOpen[p] && m.roomForMain() && !m.helpOn && !m.modal()
+}
+
+// cycleSurface is tab: the two panels, and after each one the pane it has
+// open, which is a surface exactly when it is open. Nothing here changes
+// what a key means — the pane joins a cycle that already meant "move
+// between surfaces", and enter and esc still only open and close.
+//
+// shift+tab is the exact inverse, which is what makes tab safe to lean on:
+// stepping back off a panel lands in that panel's pane when it has one, and
+// stepping back off a pane lands on the panel whose row it is showing.
+func (m *model) cycleSurface(delta int) {
+	switch {
+	case delta > 0 && !m.mainFocused() && m.paneTakesKeys(m.focus):
+		// Into the pane the focused panel already has open. Deliberately
+		// not setFocus: the panel is not changing, and re-aiming the lens
+		// would scroll the pane the operator is moving into back to its top.
+		m.keysInMain = true
+	case delta < 0 && m.mainFocused():
+		m.keysInMain = false
+	default:
+		next := (m.focus + 1) % 2
+		m.setFocus(next)
+		m.keysInMain = delta < 0 && m.paneTakesKeys(next)
+	}
+}
+
+// scrollMain moves the pane a line at a time while it holds the keys: the
+// movement the page keys never had, under the page keys' own rule about the
+// tail. follow is the log's state, so a line off the bottom stops it and a
+// line back onto the bottom picks it up again.
+func (m *model) scrollMain(delta int) {
+	if delta < 0 {
+		m.vp.LineUp(1)
+	} else {
+		m.vp.LineDown(1)
+	}
+	if m.showingLog() {
+		m.follow = m.vp.AtBottom()
+	}
+}
+
 func (m *model) setFocus(p panel) {
 	m.focus = p
+	// A panel key is a key for a list: 1, 2 and tab's move between panels
+	// all put the keys on the row, and cycleSurface sets this again when it
+	// is the pane it is stepping into.
+	m.keysInMain = false
 	// Deliberately no roomForMain check here, unlike the keys that open the
 	// pane. detailOpen is the operator's answer to whether they want a
 	// panel's detail, not a fact about the window: enter and esc are the
@@ -2427,6 +2511,10 @@ func priorityCell(p int) string {
 
 func (m model) attentionPanel(w, h int) string {
 	focused := m.focus == panelAttention
+	// Two different questions: focused is whose selection this is, and it
+	// is why the row stays marked while the pane reads it; keys is which
+	// surface the keys are talking to, which is what the border says.
+	keys := focused && !m.mainFocused()
 	extra := ""
 	if len(m.attention) > 0 {
 		// The sort mode and the project filter live in the title because
@@ -2469,7 +2557,7 @@ func (m model) attentionPanel(w, h int) string {
 	if header != "" {
 		rows = append([]string{header}, rows...)
 	}
-	return panelBox(panelTitle(1, "inbox", focused, extra), focused, w, h, rows, padList)
+	return panelBox(panelTitle(1, "inbox", keys, extra), keys, w, h, rows, padList)
 }
 
 // liveLanes counts every lane hosting a live run, including the ones above
@@ -2507,12 +2595,13 @@ func (m model) capacityLabel() string {
 
 func (m model) workPanel(w, h int) string {
 	focused := m.focus == panelWork
+	keys := focused && !m.mainFocused() // see attentionPanel
 	// Capacity has two homes now that the lane rows are gone: this title and
 	// the status bar. It is the number that says whether anything can start.
 	extra := styleFaint.Render(" · " + m.capacityLabel())
 	rows, sel := m.workListRows(padList.inner(w))
 	rows = m.panelBody(panelWork, rows, sel, padList.inner(w), h-2)
-	return panelBox(panelTitle(2, "work", focused, extra), focused, w, h, rows, padList)
+	return panelBox(panelTitle(2, "work", keys, extra), keys, w, h, rows, padList)
 }
 
 // workListRows renders the merged list: each queue's header, then its
@@ -2695,6 +2784,14 @@ func (m model) mainPanel(w, h int) string {
 			strings.Split(m.vp.View(), "\n"), padMain)
 	}
 	title := m.mainTitle()
+	// The pane lights up the same way a panel does — heavy box, title in
+	// the focus accent — so "where are my keys pointed" is answered by the
+	// chrome the operator already reads for it, and only ever by one
+	// surface at a time.
+	if m.mainFocused() {
+		return panelBox(styleTitleFocus.Render(title), true, w, h,
+			strings.Split(m.vp.View(), "\n"), padMain)
+	}
 	return panelBox(styleFaint.Render(title), false, w, h,
 		strings.Split(m.vp.View(), "\n"), padMain)
 }

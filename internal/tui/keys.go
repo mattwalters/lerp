@@ -36,8 +36,14 @@ func newKeymap() keymap {
 	return keymap{
 		Attention: key.NewBinding(key.WithKeys("1"), key.WithHelp("1", "inbox")),
 		Work:      key.NewBinding(key.WithKeys("2"), key.WithHelp("2", "work")),
-		NextPanel: key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next panel")),
-		PrevPanel: key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "prev panel")),
+		// "cycle", not "next panel": tab reaches the open main pane too, and
+		// it is the pane that most wants saying — the panels have 1 and 2
+		// of their own. The word is also the one that fits. The ? overlay's
+		// first column is as wide as its widest description, and this
+		// column is already flush against a hundred-column terminal's main
+		// pane, so "next surface" would truncate the row beside it.
+		NextPanel: key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "cycle")),
+		PrevPanel: key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "cycle back")),
 		Up:        key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "select up")),
 		Down:      key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "select down")),
 		PageUp:    key.NewBinding(key.WithKeys("pgup", "b"), key.WithHelp("pgup/b", "scroll up")),
