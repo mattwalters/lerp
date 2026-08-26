@@ -1,6 +1,7 @@
 package logfmt
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -55,7 +56,7 @@ func TestClaudeDecodesTheStream(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, ok := claude{}.Decode(tc.line)
+			got, ok := (&claude{}).Decode(tc.line)
 			if !ok {
 				t.Fatalf("line was not decoded: %s", tc.line)
 			}
@@ -78,8 +79,9 @@ func TestClaudeDropsWhatItDoesNotRender(t *testing.T) {
 		`_tokens":100,"session_id":"7420e6f8"}`,
 		"",
 	}
+	dec := &claude{}
 	for _, line := range lines {
-		if ev, ok := (claude{}).Decode(line); ok {
+		if ev, ok := dec.Decode(line); ok {
 			t.Fatalf("line %q decoded to %+v, want it dropped", line, ev)
 		}
 	}
@@ -88,7 +90,7 @@ func TestClaudeDropsWhatItDoesNotRender(t *testing.T) {
 func TestClaudeShortensLongTargets(t *testing.T) {
 	line := `{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"` +
 		strings.Repeat("go test ./... ", 20) + `"}}]}}`
-	ev, ok := claude{}.Decode(line)
+	ev, ok := (&claude{}).Decode(line)
 	if !ok {
 		t.Fatal("line was not decoded")
 	}
@@ -98,4 +100,123 @@ func TestClaudeShortensLongTargets(t *testing.T) {
 	if !strings.HasSuffix(ev.Text, "…") {
 		t.Fatalf("a cut target does not say so: %q", ev.Text)
 	}
+}
+
+// Claude Code writes one API call as several lines — one per content block —
+// and every one of them repeats the call's identical usage. Summing them all
+// billed a thinking-plus-prose-plus-tool call three times; against a real run
+// log it read 2.08x high.
+func TestClaudeCountsOneCallOnce(t *testing.T) {
+	dec := &claude{}
+	lines := []string{
+		claudeBlockLine("msg_01", "thinking", `"thinking":"weighing it"`),
+		claudeBlockLine("msg_01", "text", `"text":"Reading the ticket."`),
+		claudeBlockLine("msg_01", "tool_use", `"name":"Read","input":{"file_path":"/repo/a.go"}`),
+	}
+	var total int
+	for _, line := range lines {
+		ev, ok := dec.Decode(line)
+		if !ok {
+			t.Fatalf("line was not decoded: %s", line)
+		}
+		total += ev.Usage
+	}
+	if total != 1000 {
+		t.Fatalf("three lines of one call billed %d tokens, want 1000", total)
+	}
+	// A second call is a second charge; the guard is against repeats, not
+	// against spending.
+	ev, _ := dec.Decode(claudeBlockLine("msg_02", "text", `"text":"Done."`))
+	if ev.Usage != 1000 {
+		t.Fatalf("the next call billed %d tokens, want 1000", ev.Usage)
+	}
+}
+
+// Parallel subagents write into one log, so nothing keeps the lines of two
+// calls from arriving interleaved. Remembering only the last message id would
+// bill both of them once per line all over again.
+func TestClaudeCountsInterleavedCallsOnce(t *testing.T) {
+	dec := &claude{}
+	var total int
+	for _, id := range []string{"msg_a", "msg_b", "msg_a", "msg_b", "msg_a"} {
+		ev, ok := dec.Decode(claudeBlockLine(id, "text", `"text":"working"`))
+		if !ok {
+			t.Fatal("line was not decoded")
+		}
+		total += ev.Usage
+	}
+	if total != 2000 {
+		t.Fatalf("two interleaved calls billed %d tokens, want 2000", total)
+	}
+}
+
+// The ring is what holds interleaved calls apart. This does not pin its size
+// — countedMessages has room to spare over what is asserted here — it pins
+// the floor: a run fans out to several subagents at once, so a dozen calls in
+// flight is the order of fan-out to hold against, and a ring that could not
+// hold that many would forget the oldest and bill its next line again, which
+// is the bug back for one call.
+func TestClaudeCountsManyCallsInFlightOnce(t *testing.T) {
+	const inFlight = 12
+	dec := &claude{}
+	var total int
+	// Every call opens, then every one of them writes a second line: the
+	// widest interleaving of that many messages there is.
+	for range 2 {
+		for i := range inFlight {
+			ev, ok := dec.Decode(claudeBlockLine(fmt.Sprintf("msg_%02d", i), "text", `"text":"working"`))
+			if !ok {
+				t.Fatal("line was not decoded")
+			}
+			total += ev.Usage
+		}
+	}
+	if total != 1000*inFlight {
+		t.Fatalf("%d interleaved calls billed %d tokens, want %d", inFlight, total, 1000*inFlight)
+	}
+}
+
+// A line that decodes to nothing worth showing never reports its usage, so it
+// must not spend the call's one charge either: the next line of the same
+// message still has to carry it.
+func TestClaudeKeepsUsageBehindADroppedLine(t *testing.T) {
+	dec := &claude{}
+	if ev, ok := dec.Decode(claudeBlockLine("msg_01", "text", `"text":"   "`)); ok {
+		t.Fatalf("a blank block decoded to %+v, want it dropped", ev)
+	}
+	ev, ok := dec.Decode(claudeBlockLine("msg_01", "tool_use", `"name":"Read","input":{"file_path":"/a.go"}`))
+	if !ok {
+		t.Fatal("line was not decoded")
+	}
+	if ev.Usage != 1000 {
+		t.Fatalf("the call billed %d tokens after a dropped line, want 1000", ev.Usage)
+	}
+}
+
+// A line naming no message cannot be told apart from a repeat of itself, and
+// dropping its usage would undercount a real call — the worse of the two
+// errors, and the one nobody would spot.
+func TestClaudeCountsLinesWithNoMessageID(t *testing.T) {
+	dec := &claude{}
+	line := `{"type":"assistant","message":{"content":[{"type":"text","text":"hello"}],` +
+		`"usage":{"input_tokens":400,"output_tokens":600}}}`
+	var total int
+	for range 2 {
+		ev, ok := dec.Decode(line)
+		if !ok {
+			t.Fatal("line was not decoded")
+		}
+		total += ev.Usage
+	}
+	if total != 2000 {
+		t.Fatalf("two unidentified lines billed %d tokens, want 2000", total)
+	}
+}
+
+// claudeBlockLine is one assistant line: a message id, one content block, and
+// the 1,000-token usage every line of that call repeats.
+func claudeBlockLine(id, kind, body string) string {
+	return `{"type":"assistant","message":{"id":"` + id + `","role":"assistant","content":[{"type":"` +
+		kind + `",` + body + `}],"usage":{"input_tokens":100,"output_tokens":200,` +
+		`"cache_creation_input_tokens":300,"cache_read_input_tokens":400}}}`
 }
