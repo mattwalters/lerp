@@ -148,6 +148,44 @@ printf 'env=%s\n' "$LERP_TICKET"
 	}
 }
 
+// Substitution happens in one pass, so a value can never be re-read as a
+// template. Prompt prose is the value most likely to name a placeholder — the
+// prose that tells an agent what {{workdir}} means is prose about lerp — and a
+// second pass over the quoted prompt would splice a quoted path into it and
+// end the quote mid-argument, splitting one argument into several or leaving
+// the command unparseable. The runner prints its whole argument list, so a
+// prompt that arrives as one argument, verbatim, is the proof.
+func TestExecuteDoesNotExpandPlaceholdersInsideSubstitutedValues(t *testing.T) {
+	dir := t.TempDir()
+	script := writeScript(t, dir, "runner.sh", `
+printf 'argc=%s\n' "$#"
+printf 'prompt=%s\n' "$1"
+`)
+	logPath := filepath.Join(dir, "runner.log")
+
+	if _, err := Execute(context.Background(), Invocation{
+		Runner: config.Runner{Command: shellQuote(script) + " {{prompt}} {{session}}"},
+		Queue: config.Queue{
+			Prompt: "Work {{ticket}} in {{workdir}}; resume with {{session}}.",
+		},
+		Ticket:  "LERP-42",
+		Workdir: dir,
+		LogPath: logPath,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "argc=2\n" +
+		"prompt=Work LERP-42 in {{workdir}}; resume with {{session}}.\n"
+	if string(got) != want {
+		t.Errorf("log = %q, want %q", got, want)
+	}
+}
+
 // Adoption needs the PID of a process that is still alive: Started reports it
 // as soon as the runner is spawned, not after it exits.
 func TestExecuteReportsPIDOnceStarted(t *testing.T) {

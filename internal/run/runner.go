@@ -182,11 +182,21 @@ func withExitStatus(command, exitPath string) (string, error) {
 // quoted for /bin/sh so ticket text cannot alter the configured command. A
 // resume template is expanded through here too, with no prompt: resuming
 // hands the operator the session, and the session already holds the prompt.
+//
+// One pass, via strings.NewReplacer, which never rescans what it has already
+// written — the same rule config.Queue.ExpandPrompt follows. Replacing one
+// placeholder at a time would let a later pass see text that came from an
+// earlier value: a literal {{workdir}} carried in the prompt would have a
+// quoted path spliced into the already-quoted prompt, ending the quote
+// mid-string. Nothing lerp substitutes today contains a placeholder, so this
+// is the shape holding rather than a bug being fixed.
 func expand(command, prompt, ticket, workdir, sessionID string) string {
-	command = strings.ReplaceAll(command, "{{prompt}}", shellQuote(prompt))
-	command = strings.ReplaceAll(command, "{{ticket}}", shellQuote(ticket))
-	command = strings.ReplaceAll(command, "{{workdir}}", shellQuote(workdir))
-	return strings.ReplaceAll(command, "{{session}}", shellQuote(sessionID))
+	return strings.NewReplacer(
+		"{{prompt}}", shellQuote(prompt),
+		"{{ticket}}", shellQuote(ticket),
+		"{{workdir}}", shellQuote(workdir),
+		"{{session}}", shellQuote(sessionID),
+	).Replace(command)
 }
 
 func shellQuote(value string) string {
