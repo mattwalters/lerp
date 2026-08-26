@@ -61,9 +61,11 @@ fmt: ## Format all Go source
 
 .PHONY: snapshot
 snapshot: ## Build the release binaries locally, publishing nothing (needs goreleaser)
-# v2.6 is the floor, not a wish: `archives.formats` in .goreleaser.yaml is the
-# key that replaced `format`, and an older v2 rejects the config with an error
-# CI — which floats to the latest v2 — can never reproduce.
+# Presence is all this checks. There is a version floor too — v2.6, where
+# `archives.formats` replaced `format` — but nothing here enforces it: an
+# older v2 fails on the config a moment later, saying which key, which is a
+# legible enough answer not to be worth parsing `goreleaser --version` for.
+# The floor is in the message so it is at hand when that happens.
 	@command -v goreleaser >/dev/null || { \
 	  echo 'snapshot: goreleaser (v2.6+) is not installed — see https://goreleaser.com/install/'; \
 	  exit 1; }

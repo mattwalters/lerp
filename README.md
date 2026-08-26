@@ -45,8 +45,8 @@ go install github.com/mattwalters/lerp/cmd/lerp@latest
 Or, without a Go toolchain, take a prebuilt binary — macOS and Linux,
 amd64 and arm64 — from the
 [releases page](https://github.com/mattwalters/lerp/releases). Every
-tag publishes an archive per platform and a `checksums.txt` beside
-them.
+release tag — `v0.1.0` and the like — publishes an archive per platform
+and a `checksums.txt` beside them.
 
 Or from a clone:
 
@@ -72,9 +72,9 @@ binaries locally and publishes nothing — it needs
 in the gate — though CI runs it on every pull request, so a config that
 would fail the real build fails there first. `make release
 VERSION=v0.1.0` tags merged main and pushes the tag; pushing a version
-tag is the only thing that cuts a release, and
-the build itself happens in CI, from a clean checkout of the tag rather
-than from whatever was lying around on somebody's laptop.
+tag is the only thing that cuts a release, and the build itself happens
+in CI, from a clean checkout of the tag rather than from whatever was
+lying around on somebody's laptop.
 
 ## Getting started
 
