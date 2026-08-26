@@ -125,6 +125,10 @@ func (q Queue) ExpandPrompt(ticket string) string {
 // names. bypass keeps the stock runner's `--permission-mode
 // bypassPermissions` grant; declining strips the flag, leaving a runner the
 // operator must widen deliberately before unattended runs can do real work.
+//
+// This is also what the shipped lerp.example.toml is, byte for byte, for
+// teams ["LERP"] with bypass accepted: `internal/config/example` writes it
+// and TestStockMatchesExample pins it.
 func StockRepoConfig(teams []string, bypass bool) string {
 	return Stock{Teams: teams, Bypass: bypass, Plan: true, Review: true}.Render()
 }

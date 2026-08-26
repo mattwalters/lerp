@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -540,18 +541,46 @@ func TestStockVariants(t *testing.T) {
 	}
 }
 
+// The shipped example is exactly what StockRepoConfig renders, byte for
+// byte, and this is what says so. Comparing the parsed structs would pin
+// only the decoded fields and leave the ~90 lines of operator-facing
+// commentary — the PERMISSIONS warning, the plan-gate explanation, the "no
+// review queue" rationale — free to drift: revise a paragraph in stock.toml,
+// tests stay green, and the file a new operator reads first carries stale
+// guidance. Bytes cover both, since equal text parses equal.
+//
+// The repo-root lerp.toml is deliberately not pinned: it edits the stock
+// pipeline for this repo, and pinning it would be pinning a fork.
 func TestStockMatchesExample(t *testing.T) {
-	stock, err := ParseRepoConfig(StockRepoConfig([]string{"LERP"}, true), "stock")
+	rendered := StockRepoConfig([]string{"LERP"}, true)
+	example, err := os.ReadFile(filepath.Join("..", "..", "lerp.example.toml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	example, err := LoadRepoConfig(filepath.Join("..", "..", "lerp.example.toml"))
-	if err != nil {
-		t.Fatal(err)
+	if diff := firstLineDiff(rendered, string(example)); diff != "" {
+		t.Errorf("lerp.example.toml is not what StockRepoConfig renders:\n%s\n\n"+
+			"Regenerate it from the template — the rendering is the source of truth:\n"+
+			"    go run ./internal/config/example > lerp.example.toml", diff)
 	}
-	if !reflect.DeepEqual(stock, example) {
-		t.Error("embedded stock config differs from lerp.example.toml")
+}
+
+// firstLineDiff describes where two texts first differ, as the line number
+// and the two lines, or "" when they are identical. A 400-line file needs a
+// failure that names the line, not one that reports two byte counts.
+func firstLineDiff(got, want string) string {
+	gotLines, wantLines := strings.Split(got, "\n"), strings.Split(want, "\n")
+	for i := 0; i < len(gotLines) && i < len(wantLines); i++ {
+		if gotLines[i] != wantLines[i] {
+			return fmt.Sprintf("first difference at line %d:\n  rendered: %q\n  example:  %q", i+1, gotLines[i], wantLines[i])
+		}
 	}
+	switch {
+	case len(gotLines) > len(wantLines):
+		return fmt.Sprintf("example ends at line %d; rendered continues: %q", len(wantLines), gotLines[len(wantLines)])
+	case len(wantLines) > len(gotLines):
+		return fmt.Sprintf("rendered ends at line %d; example continues: %q", len(gotLines), wantLines[len(gotLines)])
+	}
+	return ""
 }
 
 // The shipped example is what a new operator reads first, so it has to load
