@@ -129,7 +129,7 @@ func openTUI(ctx context.Context, lanes int) error {
 	// After the lock, not before: a second lerp on this clone should fail on
 	// the lock rather than make the operator read and acknowledge a warning
 	// about a run it is never going to start.
-	announce(os.Stderr, os.Stdin, warnings)
+	announce(os.Stderr, os.Stdin, warnings, isTerminal(os.Stderr))
 
 	// The loop's diagnostic stream — provision, dispose, and runner output —
 	// is ephemeral process detail: a local file, discarded without ceremony
@@ -281,10 +281,15 @@ func initCommand(args []string) {
 // per launch is the price of a warning that is read, and the warning ends the
 // moment either side of the disagreement is fixed.
 //
+// It waits only when visible says the warnings went somewhere the operator is
+// looking — a terminal. Redirected away with `lerp 2>/dev/null`, the prompt
+// lands nowhere, and waiting for an answer to a question nobody was asked
+// would hang the launch behind a blank screen.
+//
 // The acknowledgement is read a byte at a time rather than through a buffered
 // reader: whatever they type after the newline belongs to the TUI, and a
 // buffered read would swallow it.
-func announce(w io.Writer, r io.Reader, warnings []string) {
+func announce(w io.Writer, r io.Reader, warnings []string, visible bool) {
 	if len(warnings) == 0 {
 		return
 	}
@@ -293,6 +298,9 @@ func announce(w io.Writer, r io.Reader, warnings []string) {
 		// and `lerp 2>&-` must not be the difference between a run and no
 		// run — the same reasoning as the unreadable stdin below.
 		fmt.Fprintln(w, line)
+	}
+	if !visible {
+		return
 	}
 	fmt.Fprint(w, "\npress enter to start anyway ")
 	var b [1]byte

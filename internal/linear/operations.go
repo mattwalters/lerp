@@ -599,7 +599,11 @@ func (c *HTTP) TeamGitAutomations(ctx context.Context, teamKey string) ([]GitAut
 			}
 			automations = append(automations, a)
 		}
-		if !states.PageInfo.HasNextPage {
+		// A cursor that has not moved would fetch this page forever, and this
+		// read happens before the screen opens: the symptom would be a launch
+		// that hangs with nothing on it.
+		if !states.PageInfo.HasNextPage || states.PageInfo.EndCursor == "" ||
+			states.PageInfo.EndCursor == after {
 			return automations, nil
 		}
 		after = states.PageInfo.EndCursor
