@@ -197,16 +197,18 @@ func orStock(name, stock string) string {
 
 // WatchedStatuses is the set of statuses some configured queue picks up from
 // — SCOPE concept 2's `status` field, collected. It is the single spelling of
-// "a queue watches this", and three separate rules turn on it: whether a
-// finished run releases its claim (the rule LERP-50 and LERP-59 each got
-// wrong by writing it out a second time), which tickets the inbox calls
-// waiting on a human, and which of the statuses a config names init reports
-// as an exit rather than a stage. The loop's own prose calls these the
-// *served* statuses; they are the same set.
+// "a queue watches this", and three rules turn on it: whether promote
+// releases the claim on the ticket it just moved (LERP-59; conclude no longer
+// asks, since LERP-113 made a finished run's release unconditional), which
+// tickets the inbox calls waiting on a human, and which of the statuses a
+// config names init reports as an exit rather than a stage. The loop's own
+// prose calls these the *served* statuses; they are the same set.
 //
-// Every other status lerp.toml names — the on_success and on_failure targets
-// no queue watches — is a pipeline exit by construction, so no method spells
-// that out separately: it is PromoteTargets minus this.
+// There is no matching method for the statuses no queue watches, because
+// "unwatched" alone does not name one thing: an unwatched on_success is where
+// work leaves the automated path, an unwatched on_failure is where it lands
+// when it breaks, and init reports the two differently (see pipelineExits and
+// statusRoles). PromoteTargets is where the whole named set lives.
 func (c *RepoConfig) WatchedStatuses() map[string]bool {
 	// One entry per queue exactly: validate rejects two queues sharing a
 	// status.
