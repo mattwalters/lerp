@@ -5947,7 +5947,9 @@ func TestAWaitingRowBandsTheOneLineItDraws(t *testing.T) {
 }
 
 // The band is the cursor's, and the cursor is in the focused panel: an
-// unfocused list must not draw a second one for the operator to read.
+// unfocused list must not draw a second one for the operator to read. Both
+// panels, and the inbox especially — it is the one lerp opens on, so it is
+// the one that spends most of a session with the focus somewhere else.
 func TestAnUnfocusedPanelDrawsNoBand(t *testing.T) {
 	forceColour(t)
 	m, _, _ := newTestModel(t, 1)
@@ -5955,25 +5957,49 @@ func TestAnUnfocusedPanelDrawsNoBand(t *testing.T) {
 		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
 			{ID: "id-1", Identifier: "LERP-1", Title: "one"}}},
 	}}})
-	if m.focus == panelWork {
-		t.Fatal("lerp opened on the work panel; this test needs it unfocused")
-	}
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-2", Title: "waiting", Status: "Todo"},
+	}}})
 	g := m.geometry()
-	if panel := m.workPanel(g.sideW, g.workH); strings.Contains(panel, bandOpen()) {
-		t.Fatalf("the unfocused work panel bands a row:\n%s", panel)
+	for _, tc := range []struct {
+		name  string
+		focus panel
+		draw  func() string
+	}{
+		{"work", panelAttention, func() string { return m.workPanel(g.sideW, g.workH) }},
+		{"inbox", panelWork, func() string { return m.attentionPanel(g.sideW, g.attnH) }},
+	} {
+		m.focus = tc.focus
+		if panel := tc.draw(); strings.Contains(panel, bandOpen()) {
+			t.Fatalf("the unfocused %s panel bands a row:\n%s", tc.name, panel)
+		}
 	}
 }
 
 // The band is a background and nothing else: a foreground would paint over
 // the very colours a row uses to say what it is. Adaptive, because one
 // picked tint reads as a band on a dark terminal and a smudge on a light
-// one.
+// one — and spelled out per profile, because a background is the one thing
+// lipgloss's own degradation cannot approximate quietly.
 func TestTheSelectionBandIsBackgroundOnlyAndAdaptive(t *testing.T) {
-	if colorSelected.Light == "" || colorSelected.Dark == "" || colorSelected.Light == colorSelected.Dark {
-		t.Fatalf("the selection band is not adaptive: %+v", colorSelected)
-	}
 	if fg := styleSelected.GetForeground(); fg != lipgloss.TerminalColor(lipgloss.NoColor{}) {
 		t.Fatalf("the selection band paints a foreground %v over the row's own colours", fg)
+	}
+	if colorSelected.Light == colorSelected.Dark {
+		t.Fatalf("the selection band is not adaptive: %+v", colorSelected)
+	}
+	for _, c := range []struct {
+		name string
+		lipgloss.CompleteColor
+	}{{"light", colorSelected.Light}, {"dark", colorSelected.Dark}} {
+		if c.TrueColor == "" || c.ANSI256 == "" {
+			t.Fatalf("the %s band has no tint of its own to fall back to: %+v", c.name, c.CompleteColor)
+		}
+		// Empty on purpose: 16 colours holds nothing quiet enough to lay
+		// under a row, so that profile draws no band and keeps the marker.
+		if c.ANSI != "" {
+			t.Fatalf("the %s band names a 16-colour tint %q; there is no quiet one", c.name, c.ANSI)
+		}
 	}
 }
 

@@ -8,7 +8,6 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/muesli/termenv"
 )
 
 // The palette: one accent, three semantic states, a faint ramp. Adaptive
@@ -40,7 +39,22 @@ var (
 	// band against 3.86:1 on black, and 3.14:1 on the light one against
 	// 3.90:1 on white. Adaptive, because the same tint that reads as a band
 	// on a dark terminal is a smudge on a light one.
-	colorSelected = lipgloss.AdaptiveColor{Light: "#E9E4F7", Dark: "#272138"}
+	//
+	// It is the one colour here spelled out per profile rather than left to
+	// lipgloss to degrade, because it is the only one used as a background,
+	// where degrading is destructive rather than approximate: the 6×6×6 cube
+	// has no quiet tint of this hue — #272138 quantises to xterm 17, a
+	// saturated navy — and 16 colours has none at any hue, where it comes out
+	// a solid blue or magenta bar. The 256-colour pair is off the grey ramp
+	// instead, chosen to hold the design point rather than the hue: the same
+	// step off the terminal's own background, and faint left where it was.
+	// The 16-colour slots are empty on purpose, which renders no band at all
+	// — ▸ is the cursor there, which is what the marker is kept as the
+	// fallback for.
+	colorSelected = lipgloss.CompleteAdaptiveColor{
+		Light: lipgloss.CompleteColor{TrueColor: "#E9E4F7", ANSI256: "254"},
+		Dark:  lipgloss.CompleteColor{TrueColor: "#272138", ANSI256: "234"},
+	}
 )
 
 // contrastFloor is the ratio every colour here has to clear against its
@@ -227,22 +241,25 @@ func padTo(s string, w int) string {
 // it. The band is re-opened after each reset instead, which tints a string
 // that is already ANSI without rebuilding the spans that made it.
 //
-// Where bandOpen draws no band the row comes back padded but untinted, and
-// marker's ▸ is the cursor, as it was.
-// bandOpen is the sequence that turns the selection background on, and ""
-// on a profile that has no band to draw. Two of them do not: an uncoloured
-// one has nothing to turn on, and a 16-colour one has nothing quiet enough —
-// lipgloss quantises this tint to a solid ANSI blue or magenta, which is a
-// bar across the row rather than a band under it, and it takes the row's
-// faint cells down to about 1.3:1 with it. ▸ is the cursor on those, which
-// is what it is the fallback for.
+// bandOpen is the sequence that turns the selection band on, and "" on a
+// profile that draws no band. Which profiles those are is colorSelected's
+// own declaration to make and not a second rule here: the slots it leaves
+// empty render nothing, so this is only ever asking what the style rendered.
 func bandOpen() string {
-	if lipgloss.ColorProfile() > termenv.ANSI256 {
-		return ""
-	}
 	return strings.TrimSuffix(styleSelected.Render(""), ansiReset)
 }
 
+// selectRow lays the selection band under one line of the row the cursor is
+// on, out to the panel's inner width so the whole line reads as one object.
+//
+// A row is a run of styled spans and every span ends in a full reset, so a
+// background wrapped around the outside would stop at the first one — the
+// row would be tinted up to its first faint or coloured cell and bare after
+// it. The band is re-opened after each reset instead, which tints a string
+// that is already ANSI without rebuilding the spans that made it.
+//
+// Where bandOpen draws no band the row comes back padded but untinted, and
+// marker's ▸ is the cursor, as it was.
 func selectRow(row string, width int) string {
 	row = padTo(row, width)
 	open := bandOpen()
