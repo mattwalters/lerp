@@ -42,6 +42,12 @@ lerp is concerned, and that is the Windows answer.
 go install github.com/mattwalters/lerp/cmd/lerp@latest
 ```
 
+Or, without a Go toolchain, take a prebuilt binary — macOS and Linux,
+amd64 and arm64 — from the
+[releases page](https://github.com/mattwalters/lerp/releases). Every
+tag publishes an archive per platform and a `checksums.txt` beside
+them.
+
 Or from a clone:
 
 ```sh
@@ -59,6 +65,14 @@ vulnerability database that is only ever current, and re-recording the
 demo cast, which needs vhs installed —
 [CONTRIBUTING.md](CONTRIBUTING.md) describes both. The gate needs
 nothing installed beyond Go itself.
+
+Releases are two commands. `make snapshot` builds the four release
+binaries locally and publishes nothing — it needs
+[goreleaser](https://goreleaser.com/install/), which is why it is not
+in the gate. `make release VERSION=v0.1.0` tags merged main and pushes
+the tag; pushing a `v*` tag is the only thing that cuts a release, and
+the build itself happens in CI so that what ships is reproducible from
+a clean checkout rather than from somebody's laptop.
 
 ## Getting started
 

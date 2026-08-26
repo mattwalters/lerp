@@ -1,0 +1,38 @@
+# A tag push is the only thing that cuts a release. Not a merge to main, not a
+# schedule, not a button: `make release VERSION=v0.1.0` pushes the tag, and
+# this is what the tag sets off.
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+# The default token is read-only on this repo; publishing the release and its
+# assets needs write. Scoped to this workflow rather than the repo's default.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # goreleaser reads the tag history to work out the version and the
+          # changelog range; a shallow clone has neither and it refuses to run.
+          fetch-depth: 0
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          # A major-version constraint, not a pin: `.goreleaser.yaml` declares
+          # `version: 2`, and goreleaser refuses a config whose schema version
+          # it does not know rather than guessing. Floating inside v2 keeps
+          # this in step with the goreleaser a developer's `make snapshot`
+          # installs; a v3 would be a deliberate change to both.
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

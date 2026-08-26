@@ -46,6 +46,62 @@ check: ## The gate, on Linux and macOS in CI: gofmt, vet, build, test
 fmt: ## Format all Go source
 	gofmt -w .
 
+# --------------------------------------------------------------------------
+# Releases
+# --------------------------------------------------------------------------
+
+# The two halves of cutting a release. `snapshot` builds what a tag would
+# build, without publishing anything; `release` pushes the tag and stops,
+# because the build itself belongs to .github/workflows/release.yml — a
+# release nobody can reproduce from a clean checkout is a release built on
+# somebody's laptop.
+#
+# Neither is in `check`. The gate needs nothing installed beyond Go, and
+# cross-building four binaries is not what a pre-commit run is for.
+
+.PHONY: snapshot
+snapshot: ## Build the release binaries locally, publishing nothing (needs goreleaser)
+	@command -v goreleaser >/dev/null || { \
+	  echo 'snapshot: goreleaser is not installed — see https://goreleaser.com/install/'; \
+	  exit 1; }
+	goreleaser release --snapshot --clean
+	@printf 'built into dist/ — check the stamp with: %s version\n' \
+	  "$$(ls -d dist/lerp_$$(go env GOOS)_$$(go env GOARCH)*/lerp 2>/dev/null | head -1)"
+
+.PHONY: release
+release: ## Tag main and push it, which starts the release build (VERSION=v0.1.0)
+# Every guard below is here because pushing a tag is the one thing in this
+# file that cannot be undone: the workflow fires on the push, and a published
+# release is not something to move afterwards.
+#
+# VERSION defaults to `git describe` output for the benefit of `install`, and
+# that default must never become a tag. `origin` is how make tells a value it
+# supplied itself from one the operator did.
+	@test '$(origin VERSION)' != 'file' || { \
+	  echo 'release: name the tag — make release VERSION=v0.1.0'; exit 1; }
+	@printf '%s' '$(VERSION)' \
+	  | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$$' || { \
+	  printf 'release: %s is not a version tag — vMAJOR.MINOR.PATCH, optionally -rc1\n' \
+	    '$(VERSION)'; exit 1; }
+	@test -z "$$(git status --porcelain)" || { \
+	  echo 'release: the tree is dirty — commit or stash before tagging'; exit 1; }
+# Cut from merged main and nothing else, so the commit inside the release is
+# one CI has already had its say about and one everybody else can see.
+	git fetch --quiet origin main
+	@test "$$(git rev-parse HEAD)" = "$$(git rev-parse origin/main)" || { \
+	  echo 'release: HEAD is not origin/main — releases are cut from merged main'; \
+	  exit 1; }
+	@if git rev-parse -q --verify 'refs/tags/$(VERSION)' >/dev/null; then \
+	  printf 'release: %s already exists here — a released tag is never moved\n' \
+	    '$(VERSION)'; exit 1; fi
+	@if [ -n "$$(git ls-remote --tags origin 'refs/tags/$(VERSION)')" ]; then \
+	  printf 'release: %s already exists on origin — pick the next version\n' \
+	    '$(VERSION)'; exit 1; fi
+	git tag -a '$(VERSION)' -m 'lerp $(VERSION)'
+	git push origin 'refs/tags/$(VERSION)'
+	@printf 'pushed %s — the release build takes it from here:\n' '$(VERSION)'
+	@printf '  https://github.com/mattwalters/lerp/actions/workflows/release.yml\n'
+
 # Where the example generator writes before it is moved into place. Gitignored
 # and beside the target, not in TMPDIR, so the move is a same-filesystem
 # rename rather than a copy.

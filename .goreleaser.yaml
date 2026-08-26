@@ -1,0 +1,58 @@
+# Prebuilt binaries for people who do not have a Go toolchain. `go install`
+# stays the documented path (see README); this exists so that a tagged release
+# is also a download.
+#
+# Nothing here is a build system either — the same two facts the Makefile
+# stamps, an import path and a version, expressed for four platforms at once.
+version: 2
+
+builds:
+  - id: lerp
+    main: ./cmd/lerp
+    binary: lerp
+    # Lerp shells out to git, gh and a runner CLI; it links no C. Static
+    # binaries cross-compile from one runner and run on any libc.
+    env:
+      - CGO_ENABLED=0
+    # macOS and Linux only, because that is what lerp supports: the loop
+    # holds an advisory flock, starts agents in their own process groups and
+    # reaps by killing the group, none of which Windows has as such.
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    # The same -X target `make install` uses, so a downloaded binary and a
+    # locally built one report their version through the same hook. `v` is
+    # prepended rather than left to goreleaser, whose .Version drops it: a
+    # release stamped `0.1.0` while `make install` stamps `v0.1.0-3-gabc1234`
+    # would make the two impossible to compare at a glance, and the tag it
+    # came from is the thing a user wants to match.
+    ldflags:
+      - -s -w -X github.com/mattwalters/lerp/internal/version.Version=v{{ .Version }}
+    # Archives whose contents differ only by build time produce different
+    # checksums for identical binaries. Pinning to the commit makes a rebuild
+    # of the same tag verifiable against the checksums already published.
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - formats: [tar.gz]
+    name_template: "lerp_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: checksums.txt
+
+# What `make snapshot` builds under. Snapshot mode has no tag to read, so
+# without this every snapshot would claim the last release's version — the
+# one number a snapshot must not be mistaken for.
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot"
+
+release:
+  # `v0.2.0-rc1` is a release candidate whether or not anyone remembers to
+  # tick the box; goreleaser reads the prerelease segment of the tag.
+  prerelease: auto
