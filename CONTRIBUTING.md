@@ -25,8 +25,9 @@ does it require lerp to speak to an API other than Linear; could it be
 config pointing at what already exists, instead of code. A "yes" to
 any of the first five without an amendment is a "no" — a much cheaper
 "no" in an issue than in a branch. A "yes" to the last one isn't a
-"no" at all: it means the change is a queue or a runner in someone's
-`lerp.toml`, and the engine already does its part.
+"no" at all: it means the change is somebody's `lerp.toml` — a queue,
+a runner, a prompt, a provision command — and the engine already does
+its part.
 
 Typo fixes, doc corrections, a clear bug with a clear fix: skip the
 ceremony and send the PR.
@@ -46,15 +47,16 @@ The same rules the agents work under (see `AGENTS.md`):
 - `make check` is the gate on the code — gofmt, vet, build, test. CI
   runs that same target rather than its own copy of the steps, so the
   two cannot drift.
-- CI runs one more job, and it is the one that goes red when your
+- CI runs one more job, and it is the one that can go red when your
   local check was green: `make demo` re-records the README's cast from
-  `docs/demo.tape`. It fails if the demo harness stops building, if
-  vhs errors, or if the GIF comes back over its size cap — nothing
-  diffs the bytes. A TUI change is the usual cause; reproduce it with
+  `docs/demo.tape`. It fails if vhs errors or if the GIF comes back
+  over its size cap — nothing diffs the bytes, so read the failure
+  message before you read your diff; the cap is the usual answer, and
+  the Makefile says what to do about it. Reproduce it locally with
   `make demo`, which needs
-  [vhs](https://github.com/charmbracelet/vhs). If your change makes
-  the cast show the wrong thing, commit the re-recorded
-  `docs/demo.gif` too — that part no job can catch for you.
+  [vhs](https://github.com/charmbracelet/vhs). Nothing checks that the
+  cast still shows the *right* thing, so if your change dates it,
+  commit the re-recorded `docs/demo.gif` too.
 - PRs go against `main`. Lerp is pre-1.0 with no tagged releases;
   `main` is what `go install ...@latest` gets.
 - One change per PR, and say in the description what it does and why.
