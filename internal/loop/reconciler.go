@@ -48,6 +48,14 @@ const DefaultResyncEvery = 20
 // is a handful on any real team, and buys back the property the full listing
 // had — that a row a lagging replica hid arrives on a later pass rather than
 // waiting for the resync.
+//
+// It covers the resync's own listings too, which lag exactly as much and get
+// to overwrite the board wholesale. A re-list that came back short drops a
+// row; one served from behind hands back a ticket a colleague has since
+// claimed, which the delta had already evicted. Both are a stale answer about
+// a change made recently — that is what makes a replica disagree in the first
+// place — so both are inside this window, and the next pass's delta puts the
+// board right rather than the mistake standing until the resync after.
 const deltaOverlap = 2 * time.Minute
 
 // EventType names what the reconciler just did.
@@ -591,6 +599,15 @@ func (r *Reconciler) refreshBoard(ctx context.Context, team, viewerID string) (*
 //     move: nothing in the loop acts on these fields (see AttentionItem), and
 //     fill still lists every queue fresh, so what a run picks up is
 //     unaffected.
+//   - A ticket moved from one served team to another leaves by a door the
+//     first team's delta cannot see: that query filters on the team, so the
+//     row it left behind is never mentioned again. The new team's delta adds
+//     it under its new identifier, and until the old team re-lists the inbox
+//     shows the same work twice.
+//
+// This read is no fresher than any other — it is served from the same
+// replicas, and can come back short or come back stale (see deltaOverlap,
+// which is what puts a board right that it got wrong).
 func (r *Reconciler) relistBoard(ctx context.Context, team, viewerID string) (*teamBoard, error) {
 	unassigned, err := r.o.Client.ListUnassignedIssues(ctx, team)
 	if err != nil {
@@ -620,7 +637,17 @@ func (r *Reconciler) relistBoard(ctx context.Context, team, viewerID string) (*t
 		// The cursor is the newest thing the listing saw, never the local
 		// clock: asked with gte, it re-reads the boundary issue on the next
 		// pass, which costs nothing, where a clock running fast would skip
-		// whatever changed in the gap.
+		// whatever changed in the gap — and would do it silently, since
+		// nothing here can tell a quiet board from a cursor set past the end
+		// of one.
+		//
+		// The price is at cold start, where there is no previous cursor to
+		// raise it: these rows are the ones the inbox can draw, so a board
+		// whose tickets have all sat still for a fortnight seeds a fortnight
+		// old cursor, and the first delta pages the team's whole churn since.
+		// That is one catch-up read per process — the delta that follows it
+		// starts from whatever it saw, which is now — and it is the same
+		// order of cost as the cold-start listing beside it.
 		if issue.UpdatedAt.After(board.since) {
 			board.since = issue.UpdatedAt
 		}

@@ -1454,8 +1454,11 @@ func TestAttentionRereadsBehindItsCursor(t *testing.T) {
 		t.Fatalf("cold start = %+v, want the one ticket", got.Attention)
 	}
 
-	// Two tickets arrive; the pass that reads them sees only the newer.
+	// Two tickets arrive a minute apart; the pass that reads them sees only
+	// the newer. The gap is what pins the window's size: an overlap trimmed
+	// to seconds would no longer reach back over it.
 	h.fake.AddIssue("LERP", linear.Issue{ID: "hidden", Identifier: "LERP-2", Status: "Backlog"})
+	h.fake.Advance(time.Minute)
 	h.fake.AddIssue("LERP", linear.Issue{ID: "newer", Identifier: "LERP-3", Status: "Backlog"})
 	h.rec.Tick(ctx)
 	got := h.waitEvents(t, EventAttention, 1)[0].Attention
@@ -1523,6 +1526,14 @@ func TestAttentionKeepsATeamPerBoard(t *testing.T) {
 	got := h.waitEvents(t, EventAttention, 1)[0].Attention
 	if len(got) != 3 {
 		t.Errorf("after the recovery = %+v, want both teams' tickets and the new one", got)
+	}
+	// Without this the assertion above proves nothing: a pass that threw
+	// every board away on any team's failure would re-list both teams here
+	// and rebuild exactly the same three rows.
+	if counting.listings.Load() != 4 {
+		t.Errorf("full listings = %d, want the cold start's pair per team and no more: "+
+			"a failed read on one team must not cost the others their boards",
+			counting.listings.Load())
 	}
 }
 
@@ -1617,6 +1628,120 @@ func TestAttentionHealsStaleBlockersOnResync(t *testing.T) {
 	got = h.waitEvents(t, EventAttention, 1)[0].Attention
 	if len(got) != 1 || len(got[0].BlockedBy) != 0 {
 		t.Errorf("resync pass = %+v, want LERP-1 unblocked", got)
+	}
+}
+
+// staleListingClient serves the two full listings from a replica that has not
+// caught up. It can hold a row back, or hand one over as it was before a
+// change the delta has already reported — the two ways the read behind a
+// resync can be wrong.
+type staleListingClient struct {
+	linear.Client
+	hide      string        // id the unassigned listing leaves out
+	resurrect *linear.Issue // row the unassigned listing hands back anyway
+}
+
+func (c *staleListingClient) ListUnassignedIssues(ctx context.Context, teamKey string) ([]linear.Issue, error) {
+	issues, err := c.Client.ListUnassignedIssues(ctx, teamKey)
+	if err != nil {
+		return nil, err
+	}
+	kept := issues[:0]
+	for _, is := range issues {
+		if is.ID != c.hide {
+			kept = append(kept, is)
+		}
+	}
+	if c.resurrect != nil {
+		kept = append(kept, *c.resurrect)
+	}
+	return kept, nil
+}
+
+// Done-when: a resync served from behind does not strand the board. The full
+// listings lag exactly as much as the delta does — they are the same replicas
+// — and this one hands back a ticket a colleague has since claimed, which the
+// delta had already evicted. Because a replica only disagrees about a change
+// made recently, that change is inside the window each delta re-reads, so the
+// next pass evicts it again rather than the mistake standing until the resync
+// after.
+func TestAttentionReEvictsWhatAStaleResyncResurrected(t *testing.T) {
+	fake := linear.NewFake()
+	stale := &staleListingClient{Client: fake}
+	h := newHarnessWith(t, 1, nil, fake, stale)
+	h.resyncEvery(1)
+	fake.AddIssue("LERP", linear.Issue{ID: "taken", Identifier: "LERP-1", Status: "Backlog"})
+	fake.AddIssue("LERP", linear.Issue{ID: "stays", Identifier: "LERP-2", Status: "Backlog"})
+	ctx := context.Background()
+
+	h.rec.Tick(ctx)
+	if got := h.waitEvents(t, EventAttention, 1)[0]; len(got.Attention) != 2 {
+		t.Fatalf("cold start = %+v, want both", got.Attention)
+	}
+	// The row as the lagging replica still holds it, before the claim.
+	before := h.issue(t, "taken")
+	if err := fake.AssignIssue(ctx, "taken", "somebody-else"); err != nil {
+		t.Fatal(err)
+	}
+	// Half a minute later the team touches something the inbox never draws,
+	// which carries the cursor past the claim. Only the window reaches back
+	// over it now.
+	fake.Advance(30 * time.Second)
+	fake.AddIssue("LERP", linear.Issue{ID: "churn", Identifier: "LERP-9", Status: "Backlog",
+		AssigneeID: "somebody-else"})
+
+	h.rec.Tick(ctx) // delta: the claim arrives and the row is evicted
+	if got := h.waitEvents(t, EventAttention, 1)[0].Attention; len(got) != 1 {
+		t.Fatalf("delta pass = %+v, want the claimed ticket gone", got)
+	}
+
+	stale.resurrect = &before
+	h.rec.Tick(ctx) // resync, from a replica that never saw the claim
+	if got := h.waitEvents(t, EventAttention, 1)[0].Attention; len(got) != 2 {
+		t.Fatalf("stale resync = %+v, want the resurrection this test is about", got)
+	}
+
+	stale.resurrect = nil
+	h.rec.Tick(ctx) // delta: the claim is inside the window, so it lands again
+	got := h.waitEvents(t, EventAttention, 1)[0].Attention
+	if len(got) != 1 || got[0].Ticket != "LERP-2" {
+		t.Errorf("pass after the stale resync = %+v, want the colleague's ticket evicted "+
+			"again; promoting it would move a ticket that is not the operator's", got)
+	}
+}
+
+// The other direction of the same lag: a re-list that comes back short drops
+// a row the inbox should still be drawing. The row is one changed recently —
+// that is what makes replicas disagree about it — so it is inside the window
+// too, and the next pass puts it back.
+func TestAttentionRestoresWhatAShortResyncDropped(t *testing.T) {
+	fake := linear.NewFake()
+	stale := &staleListingClient{Client: fake}
+	h := newHarnessWith(t, 1, nil, fake, stale)
+	h.resyncEvery(1)
+	fake.AddIssue("LERP", linear.Issue{ID: "flaps", Identifier: "LERP-1", Status: "Backlog"})
+	fake.AddIssue("LERP", linear.Issue{ID: "stays", Identifier: "LERP-2", Status: "Backlog"})
+	ctx := context.Background()
+
+	h.rec.Tick(ctx)
+	if got := h.waitEvents(t, EventAttention, 1)[0]; len(got.Attention) != 2 {
+		t.Fatalf("cold start = %+v, want both", got.Attention)
+	}
+	h.rec.Tick(ctx) // delta
+	h.waitEvents(t, EventAttention, 1)
+
+	stale.hide = "flaps"
+	h.rec.Tick(ctx) // resync, from a replica missing the row
+	if got := h.waitEvents(t, EventAttention, 1)[0].Attention; len(got) != 1 {
+		t.Fatalf("short resync = %+v, want the dropped row this test is about", got)
+	}
+
+	stale.hide = ""
+	h.rec.Tick(ctx) // delta: the row is inside the window, so it comes back
+	got := h.waitEvents(t, EventAttention, 1)[0].Attention
+	if len(got) != 2 {
+		t.Errorf("pass after the short resync = %+v, want the dropped ticket back in the "+
+			"inbox rather than waiting for the resync after", got)
 	}
 }
 
