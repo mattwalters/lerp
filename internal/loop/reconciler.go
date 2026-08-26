@@ -576,10 +576,21 @@ func (r *Reconciler) refreshBoard(ctx context.Context, team, viewerID string) (*
 }
 
 // relistBoard rebuilds a team's board from the two full listings — the cold
-// start, and the periodic heal. It is the only read that can drop an issue no
-// query mentions any more: an archived or deleted ticket changes nothing that
-// a delta could report, so without this it would sit in the inbox until lerp
-// restarted.
+// start, and the periodic heal. It is what repairs the two kinds of drift a
+// delta cannot report, both of which are a change to an issue that Linear
+// does not stamp on the issue whose row is wrong:
+//
+//   - An archived or deleted ticket changes nothing a delta could return, so
+//     without this it would sit in the inbox until lerp restarted.
+//   - A row's blocking relations are refreshed only when that row itself is
+//     touched, and completing a blocker stamps the blocker. So a ticket can
+//     read as blocked by a ticket that is already done, for as long as the
+//     resync interval — where the pass that re-listed everything had it right
+//     within one tick. It is the price of the delta, it is bounded by
+//     ResyncEvery, and it costs a stale mark on a row rather than a wrong
+//     move: nothing in the loop acts on these fields (see AttentionItem), and
+//     fill still lists every queue fresh, so what a run picks up is
+//     unaffected.
 func (r *Reconciler) relistBoard(ctx context.Context, team, viewerID string) (*teamBoard, error) {
 	unassigned, err := r.o.Client.ListUnassignedIssues(ctx, team)
 	if err != nil {
@@ -590,6 +601,16 @@ func (r *Reconciler) relistBoard(ctx context.Context, team, viewerID string) (*t
 		return nil, fmt.Errorf("attention: list claimed tickets for team %s: %w", team, err)
 	}
 	board := &teamBoard{issues: make(map[string]linear.Issue, len(unassigned)+len(assigned))}
+	// The cursor only ever moves forward, across a re-list included. Taking
+	// it from these rows alone would walk it backwards on every resync — the
+	// listings return what the inbox can draw, which on a team that churns on
+	// other people's tickets is older than the last thing the delta saw — and
+	// the next delta would then ask for every issue the team touched in
+	// between, completed ones included. That is the paging this exists to
+	// stop, arriving once every resync interval.
+	if prev := r.boards[team]; prev != nil {
+		board.since = prev.since
+	}
 	// Keyed by issue id, which also settles the case where the two listings
 	// disagree — a ticket claimed between the two reads, or the same ticket
 	// served from two replicas that do not agree about its assignee, comes

@@ -1193,6 +1193,10 @@ func TestPromoteLeavesAnotherUsersClaimAlone(t *testing.T) {
 // Tick, the way the option it stands for is set before NewReconciler.
 func (h *harness) resyncEvery(n int) { h.rec.o.ResyncEvery = n }
 
+// serveTeams replaces the teams the harness's repo config names. Call it
+// before the first Tick, as with resyncEvery.
+func (h *harness) serveTeams(teams ...string) { h.rec.o.Repo.Teams = teams }
+
 // countingBoardClient counts the reads behind the attention pass — the
 // mechanical form of "a pass costs one query per team, not the team's whole
 // backlog". listings counts both full listings together, since the pass
@@ -1202,13 +1206,29 @@ type countingBoardClient struct {
 	deltas   atomic.Int64
 	listings atomic.Int64
 	// deltaErr, when set, is returned instead of the delta read — the pass
-	// that could not see what changed.
+	// that could not see what changed. failTeam narrows it to one team,
+	// which is how a test plays one team failing while another does not.
 	deltaErr error
+	failTeam string
+
+	mu sync.Mutex
+	// sinces records every cursor the delta was asked from, in order.
+	sinces []time.Time
+}
+
+// asked returns the cursors the delta read was given, oldest call first.
+func (c *countingBoardClient) asked() []time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]time.Time(nil), c.sinces...)
 }
 
 func (c *countingBoardClient) ListTeamIssuesUpdatedSince(ctx context.Context, teamKey string, since time.Time) ([]linear.Issue, error) {
 	c.deltas.Add(1)
-	if c.deltaErr != nil {
+	c.mu.Lock()
+	c.sinces = append(c.sinces, since)
+	c.mu.Unlock()
+	if c.deltaErr != nil && (c.failTeam == "" || c.failTeam == teamKey) {
 		return nil, c.deltaErr
 	}
 	return c.Client.ListTeamIssuesUpdatedSince(ctx, teamKey, since)
@@ -1357,7 +1377,10 @@ func TestAttentionKeepsItsCursorWhenTheDeltaFails(t *testing.T) {
 	h.rec.Tick(ctx)
 	h.waitEvents(t, EventAttention, 1)
 
-	// A ticket arrives, and the pass that would have seen it fails.
+	// A ticket arrives well past the cursor — further than the trailing
+	// window a delta re-reads anyway, so only a cursor that stayed put can
+	// still be asking a question this ticket is inside of.
+	h.fake.Advance(10 * time.Minute)
 	h.fake.AddIssue("LERP", linear.Issue{ID: "new", Identifier: "LERP-2", Status: "Backlog"})
 	counting.deltaErr = errors.New("boom")
 	h.rec.Tick(ctx)
@@ -1449,6 +1472,151 @@ func TestAttentionRereadsBehindItsCursor(t *testing.T) {
 	}
 	if lagging.reads != 2 {
 		t.Errorf("delta reads = %d, want the two passes after the cold start", lagging.reads)
+	}
+}
+
+// Done-when: the cursor and the resync counter are per team, and a team whose
+// read failed does not take the others' boards down with it. The pass emits
+// nothing — a partial inbox must never read as a whole one — but the team
+// that answered keeps everything it had.
+func TestAttentionKeepsATeamPerBoard(t *testing.T) {
+	h, counting := newCountingHarness(t)
+	h.serveTeams("LERP", "PROSE")
+	h.resyncEvery(20)
+	h.fake.AddIssue("LERP", linear.Issue{ID: "ours", Identifier: "LERP-1", Status: "Backlog"})
+	h.fake.AddIssue("PROSE", linear.Issue{ID: "theirs", Identifier: "PROSE-1", Status: "Backlog"})
+	ctx := context.Background()
+
+	h.rec.Tick(ctx)
+	if got := h.waitEvents(t, EventAttention, 1)[0]; len(got.Attention) != 2 {
+		t.Fatalf("cold start = %+v, want a ticket from each team", got.Attention)
+	}
+	if counting.listings.Load() != 4 || counting.deltas.Load() != 0 {
+		t.Fatalf("cold start = %d listings, %d deltas, want the pair per team and no delta",
+			counting.listings.Load(), counting.deltas.Load())
+	}
+
+	h.rec.Tick(ctx)
+	h.waitEvents(t, EventAttention, 1)
+	if counting.deltas.Load() != 2 {
+		t.Errorf("delta reads = %d, want one per team", counting.deltas.Load())
+	}
+	if counting.listings.Load() != 4 {
+		t.Errorf("full listings = %d, want no team re-listed inside its window", counting.listings.Load())
+	}
+
+	// The second team's read fails; the first team's already succeeded.
+	counting.deltaErr, counting.failTeam = errors.New("boom"), "PROSE"
+	h.fake.AddIssue("LERP", linear.Issue{ID: "fresh", Identifier: "LERP-2", Status: "Backlog"})
+	h.rec.Tick(ctx)
+	h.waitEvents(t, EventError, 1)
+	select {
+	case ev := <-h.events:
+		if ev.Type == EventAttention {
+			t.Fatalf("a pass that lost a team emitted an inbox: %+v", ev.Attention)
+		}
+	default:
+	}
+
+	counting.deltaErr = nil
+	h.rec.Tick(ctx)
+	got := h.waitEvents(t, EventAttention, 1)[0].Attention
+	if len(got) != 3 {
+		t.Errorf("after the recovery = %+v, want both teams' tickets and the new one", got)
+	}
+}
+
+// Done-when: the cursor only ever moves forward, across a re-list included.
+// The two full listings return what the inbox can draw, which on a team that
+// churns on other people's tickets is older than the last thing the delta
+// saw — so a resync that took its cursor from them alone would walk it
+// backwards, and the next delta would ask for every issue the team touched
+// in between, completed ones included. That is the paging this exists to
+// stop, arriving once every resync interval.
+func TestAttentionCursorNeverWalksBackwards(t *testing.T) {
+	h, counting := newCountingHarness(t)
+	h.resyncEvery(1)
+	h.fake.AddIssue("LERP", linear.Issue{ID: "ours", Identifier: "LERP-1", Status: "Backlog"})
+	ctx := context.Background()
+
+	h.rec.Tick(ctx) // cold start: the cursor is the inbox ticket's stamp
+	h.waitEvents(t, EventAttention, 1)
+
+	// An hour later the team churns on a ticket the inbox never draws. The
+	// delta sees it — it filters on nothing but the team — so the cursor
+	// moves to it, while the two listings still top out an hour earlier.
+	h.fake.Advance(time.Hour)
+	h.fake.AddIssue("LERP", linear.Issue{ID: "theirs", Identifier: "LERP-9", Status: "Backlog",
+		AssigneeID: "somebody-else"})
+	h.rec.Tick(ctx) // delta
+	h.waitEvents(t, EventAttention, 1)
+	h.rec.Tick(ctx) // resync
+	h.waitEvents(t, EventAttention, 1)
+	h.rec.Tick(ctx) // delta, from wherever the resync left the cursor
+	h.waitEvents(t, EventAttention, 1)
+
+	// The delta that ran before the resync moved the cursor to the churned
+	// ticket's stamp, so the one after it must ask from there — not from the
+	// hour-older stamp the two listings top out at.
+	churned := h.issue(t, "theirs").UpdatedAt
+	asked := counting.asked()
+	if len(asked) != 2 {
+		t.Fatalf("delta reads = %d, want the two passes between the re-lists", len(asked))
+	}
+	if want := churned.Add(-deltaOverlap); asked[1].Before(want) {
+		t.Errorf("the delta after the resync asked from %s, want no earlier than %s: "+
+			"the re-list walked the cursor back, so this pass re-pages everything the "+
+			"team touched in the hour between", asked[1], want)
+	}
+}
+
+// Done-when: the drift a delta cannot report is bounded by the resync, and
+// this is the second kind of it. Linear stamps a completed blocker, not the
+// ticket it was blocking, so the blocked row's relations are refreshed by
+// nothing until the full re-list rebuilds it. Pinned rather than fixed: the
+// window is ResyncEvery passes, nothing in the loop acts on these fields, and
+// fill still lists every queue fresh, so what a run picks up is unaffected.
+func TestAttentionHealsStaleBlockersOnResync(t *testing.T) {
+	h, _ := newCountingHarness(t)
+	h.resyncEvery(1)
+	h.fake.AddIssue("LERP", linear.Issue{ID: "blocked", Identifier: "LERP-1", Status: "Backlog"})
+	// Far enough back that the trailing window a delta re-reads does not
+	// reach it. Inside that window a row is re-read every pass and its
+	// relations come back fresh by accident; the ticket sitting in the inbox
+	// untouched for days is the case this is about.
+	h.fake.Advance(time.Hour)
+	h.fake.AddIssue("LERP", linear.Issue{ID: "blocker", Identifier: "LERP-2", Status: "Backlog"})
+	h.fake.Block("blocked", "blocker")
+	ctx := context.Background()
+
+	h.rec.Tick(ctx)
+	got := h.waitEvents(t, EventAttention, 1)[0].Attention
+	if len(got) != 2 || !slices.Equal(got[0].BlockedBy, []string{"LERP-2"}) {
+		t.Fatalf("cold start = %+v, want LERP-1 blocked by LERP-2", got)
+	}
+
+	// The blocker finishes. It leaves the inbox at once, because the delta
+	// carries its own change — but nothing carries the blocked ticket's.
+	h.fake.Advance(time.Hour)
+	if err := h.fake.MoveIssue(ctx, "blocker", "Done"); err != nil {
+		t.Fatal(err)
+	}
+	h.rec.Tick(ctx)
+	got = h.waitEvents(t, EventAttention, 1)[0].Attention
+	if len(got) != 1 || got[0].Ticket != "LERP-1" {
+		t.Fatalf("delta pass = %+v, want the finished blocker gone", got)
+	}
+	if !slices.Equal(got[0].BlockedBy, []string{"LERP-2"}) {
+		t.Errorf("delta pass left LERP-1 blockedBy = %v; if this now reads empty the "+
+			"delta learned to refresh a row it was not told about, and the resync "+
+			"below is no longer the only healer", got[0].BlockedBy)
+	}
+
+	// The re-list rebuilds the row from the board, which no longer says so.
+	h.rec.Tick(ctx)
+	got = h.waitEvents(t, EventAttention, 1)[0].Attention
+	if len(got) != 1 || len(got[0].BlockedBy) != 0 {
+		t.Errorf("resync pass = %+v, want LERP-1 unblocked", got)
 	}
 }
 
