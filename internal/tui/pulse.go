@@ -118,8 +118,9 @@ func (p *pulse) read(now time.Time) {
 		//
 		// The unread span survives: it says this pulse has no counts for
 		// what came before, which a rewrite has just made true again of
-		// everything it had. Clearing it here would hand an adopted run
-		// back the short line of one that just started.
+		// everything it had. It is not a rescue — a rewrite costs the
+		// reading either way, and a short span leaves a short line — it is
+		// that the span is still the truth about the run after one.
 		p.stream, p.cells, p.head, p.seen = logfmt.Stream{}, [sparkCells]int{}, 0, 0
 		p.at = time.Time{}
 	}

@@ -1369,7 +1369,8 @@ func (m *model) readPulses() {
 			// that span would mark a slow workspace as agent history nobody
 			// read, which is the adopted-run signal fired on a run nothing
 			// was adopted from. On an inherited run the same imprecision
-			// costs a bucket or two of a span that is unread either way.
+			// marks the claim and the provision unread along with the run,
+			// which is a span this pulse was not reading either way.
 			started := now
 			if ln.state == laneAdopted {
 				started = ln.since

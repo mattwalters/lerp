@@ -318,13 +318,10 @@ func TestSparkline(t *testing.T) {
 		{"one event never reads as none", []int{1, 0, 20}, "▂▁█"},
 		{"no window, no line", nil, ""},
 		// A bucket from before the pulse attached is neither a count nor a
-		// quiet stretch, so it draws as neither: off the ramp entirely.
+		// quiet stretch, so it draws as neither: off the ramp entirely,
+		// while the buckets that were counted keep the window's own scale.
 		{"unwatched history is not a quiet stretch",
-			[]int{unreadBucket, unreadBucket, 0, 3}, "··▁█"},
-		// It takes no part in the scale either — the sentinel is a negative
-		// number, and letting it near the arithmetic would rescale the row.
-		{"the unread span does not scale the bars",
-			[]int{unreadBucket, 1, 0, 4}, "·▂▁█"},
+			[]int{unreadBucket, unreadBucket, 1, 0, 4}, "··▂▁█"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
