@@ -34,15 +34,16 @@ noClasses = false
 
 [markup.goldmark.renderer]
 # The published files are this repository's own markdown, written by the same
-# people as the templates around them, so the handful of raw HTML tags they
-# use — the <sub> caption under the README's cast — render rather than being
-# dropped. Nothing here renders markdown from anywhere else.
+# people as the templates around them, so the handful of raw HTML they use —
+# a caption, the comments marking where a cast goes — renders (or, for a
+# comment, stays out of the way) rather than being dropped. Nothing here
+# renders markdown from anywhere else.
 unsafe = true
 
 [markup.goldmark.parser]
-# The README and SCOPE are read on GitHub too, and GitHub derives heading
-# anchors this way. Keeping the same scheme keeps the in-page links those
-# files already carry — #stock-pipeline, #how-it-behaves — resolving here.
+# SCOPE is read on GitHub too, and GitHub derives heading anchors this way.
+# Keeping the same scheme keeps the in-page links the manual writes into it —
+# and the ones the manual's own pages write to each other — resolving here.
 autoHeadingIDType = "github"
 
 [params]
@@ -76,8 +77,8 @@ repo = "https://github.com/mattwalters/lerp"
 # that omits `section` does not render ungrouped; it joins whatever group is
 # above it, because nothing has changed the heading.
 #
-# `mono` marks an entry whose name is a command, and sets it in the face you
-# type it in. Nothing carries it yet; the first page named for a command will.
+# `mono` marks an entry whose name is something you type — a command, or a
+# file you edit by name — and sets it in the face you type it in.
 
 # The section index leads its own section: standing on it, the sidebar shows
 # where you are, which an entry-less landing page cannot.
@@ -95,41 +96,126 @@ weight = 20
 [menus.main.params]
 section = "Start"
 
-# README.md and SCOPE.md are pages of the manual too — mounted below rather
-# than rewritten, so there is no second copy of lerp's prose to drift out of
-# sync with the first.
 [[menus.main]]
-name = "README"
-pageRef = "/readme"
+name = "Install"
+pageRef = "/docs/install"
+weight = 30
+[menus.main.params]
+section = "Start"
+
+[[menus.main]]
+name = "Quickstart"
+pageRef = "/docs/quickstart"
+weight = 40
+[menus.main.params]
+section = "Start"
+
+# One page, because the concepts are one thing: the board is what queues,
+# lanes, the loop and the claim are all descriptions of, and splitting them
+# into five pages would mean five pages that each begin by rebuilding the
+# other four.
+[[menus.main]]
+name = "The board"
+pageRef = "/docs/the-board"
+weight = 50
+[menus.main.params]
+section = "Concepts"
+
+# One page per motion through the screen, in the order an operator meets
+# them: what the board shows, how to find a ticket in it, and then the four
+# keys that do something to the row under the cursor.
+[[menus.main]]
+name = "Reading the board"
+pageRef = "/docs/reading-the-board"
+weight = 60
+[menus.main.params]
+section = "The interface"
+
+[[menus.main]]
+name = "Finding tickets"
+pageRef = "/docs/finding-tickets"
+weight = 70
+[menus.main.params]
+section = "The interface"
+
+[[menus.main]]
+name = "Promoting"
+pageRef = "/docs/promoting"
+weight = 80
+[menus.main.params]
+section = "The interface"
+
+[[menus.main]]
+name = "Ejecting"
+pageRef = "/docs/ejecting"
+weight = 90
+[menus.main.params]
+section = "The interface"
+
+[[menus.main]]
+name = "Watching a run"
+pageRef = "/docs/watching-a-run"
 weight = 100
+[menus.main.params]
+section = "The interface"
+
+[[menus.main]]
+name = "Starting past the limit"
+pageRef = "/docs/starting-past-the-limit"
+weight = 110
+[menus.main.params]
+section = "The interface"
+
+[[menus.main]]
+name = "lerp.toml"
+pageRef = "/docs/lerp-toml"
+weight = 120
+[menus.main.params]
+section = "Reference"
+mono = true
+
+[[menus.main]]
+name = "The command line"
+pageRef = "/docs/cli"
+weight = 130
 [menus.main.params]
 section = "Reference"
 
+[[menus.main]]
+name = "Troubleshooting"
+pageRef = "/docs/troubleshooting"
+weight = 140
+[menus.main.params]
+section = "Reference"
+
+# SCOPE.md is a page of the manual too — mounted below rather than rewritten,
+# so there is no second copy of the fence to drift out of sync with the
+# first. The README is not: since the manual took over what it used to carry,
+# what is left of it is a front door — install, the cast, a pointer to here —
+# and mounting that would put a second copy of this site's home page in the
+# sidebar.
 [[menus.main]]
 name = "SCOPE"
 pageRef = "/scope"
-weight = 110
+weight = 150
 [menus.main.params]
 section = "Reference"
 
-# README.md and SCOPE.md live at the repository root and are mounted into the
-# site rather than copied: one source of truth, edited in the same PR as the
-# code it describes. Declaring any content mount replaces Hugo's default, so
-# content/ is mounted explicitly here too.
+# SCOPE.md lives at the repository root and is mounted into the site rather
+# than copied: one source of truth, edited in the same PR as the code it
+# describes. Declaring any content mount replaces Hugo's default, so content/
+# is mounted explicitly here too.
 [[module.mounts]]
 source = "content"
 target = "content"
 
 [[module.mounts]]
-source = "../README.md"
-target = "content/readme.md"
-
-[[module.mounts]]
 source = "../SCOPE.md"
 target = "content/scope.md"
 
-# The cast the README opens with, served at the path the README writes, so
-# that one image reference resolves on GitHub and on the site alike.
+# The cast the README and the home page both open with, served at the path
+# the README writes, so that one image reference resolves on GitHub and on
+# the site alike.
 [[module.mounts]]
 source = "static"
 target = "static"
@@ -138,13 +224,8 @@ target = "static"
 source = "demo.gif"
 target = "static/docs/demo.gif"
 
-# Mounted files carry no front matter, so their titles are set here. Without
-# this the site would title them from their filenames ("Readme").
-[[cascade]]
-title = "README"
-[cascade.target]
-path = "/readme"
-
+# A mounted file carries no front matter, so its title is set here. Without
+# this the site would title it from its filename ("Scope").
 [[cascade]]
 title = "SCOPE"
 [cascade.target]

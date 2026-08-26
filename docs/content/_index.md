@@ -36,9 +36,8 @@ of the manual is.
 from the other ways to put agents on a backlog. Read this one first if you
 are still deciding.
 
-**[README.md](README.md)** — the working manual: install, wiring a repo to a
-team, running the loop, the stock pipeline, and what to do when something
-looks stuck.
+**[Quickstart](docs/quickstart.md)** — `lerp init`, a first run, and a first
+promoted ticket, following only the manual.
 
 **[SCOPE.md](SCOPE.md)** — the fence around the project: five concepts, nine
 invariants, and the litmus tests every change runs through.

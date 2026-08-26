@@ -4,6 +4,8 @@ title: Documentation
 
 # Documentation
 
-Lerp's manual. It is being written a section at a time; what is here so far
-is below, and the two files the repository has always kept — the README and
-SCOPE — are published beside it, as they are written rather than rewritten.
+Lerp's manual. **Start** is install to a first promoted ticket;
+**Concepts** is the model the board is a picture of; **The interface** is one
+page per motion through the screen; **Reference** is the config file, the
+command line, and what to do when something looks stuck. SCOPE.md is
+published beside them, as it is written rather than rewritten.
