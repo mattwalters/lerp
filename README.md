@@ -440,8 +440,10 @@ shape or a word, so the screen reads on a 16-colour terminal and to a
 colour-blind operator. It is also measured — a test computes the WCAG
 contrast ratio of every colour in the palette against the light and dark
 backgrounds a terminal is likely to have, and fails below the 4.5:1 floor
-for text, so a retune can never quietly cost legibility. `NO_COLOR` turns
-the colour off entirely. Which half of the palette you get is decided by
+for text, so a retune cannot quietly cost legibility. That is measured on
+the colours as written, which is what a 24-bit terminal draws; a
+256-colour terminal draws the nearest colour it has, which can land a
+little under the floor. `NO_COLOR` turns the colour off entirely. Which half of the palette you get is decided by
 asking the terminal for its background colour, and a terminal that does
 not answer — tmux and screen among them, and plenty of ssh and CI
 terminals — is read as dark; set `LERP_BACKGROUND=light` (or `dark`) to

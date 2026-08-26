@@ -25,13 +25,15 @@ const quitWait = 30 * time.Second
 // run evidence on disk, so the next lerp adopts them (SCOPE invariant 3 —
 // everything is safe to kill, including lerp).
 func Run(ctx context.Context, o Options) error {
-	if err := o.Validate(); err != nil {
+	// Once, and before anything else this function does: the palette's
+	// light and dark variants are chosen per render from what lipgloss
+	// believes the background is, and this is the operator's say in that
+	// belief (see theme.go). A value it cannot read is a refusal, so it
+	// comes before the work — a typo should not cost a model first.
+	if err := useBackground(os.Getenv(backgroundEnv)); err != nil {
 		return err
 	}
-	// Once, before the first render: the palette's light and dark variants
-	// are chosen per render from what lipgloss believes the background is,
-	// and this is the operator's say in that belief (see theme.go).
-	if err := useBackground(os.Getenv(backgroundEnv)); err != nil {
+	if err := o.Validate(); err != nil {
 		return err
 	}
 	m := newModel(ctx, o)

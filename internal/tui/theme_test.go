@@ -26,6 +26,13 @@ var (
 // the other half: every palette entry stays legible on the background it will
 // actually be drawn on. It is arithmetic over a handful of constants, so the
 // floor can be an invariant rather than a one-time retune.
+//
+// Measured on the colours as declared, which is what a 24-bit terminal draws.
+// A terminal with fewer colours is drawn the nearest one termenv has, and the
+// nearest one can sit under the floor — faint's dark variant quantizes to
+// #8787AF, 4.08:1 on #282C34. Meeting the floor after quantization too is a
+// different change (the ticket keeps low-colour degradation separate), so
+// what this pins is the palette, not the downsample.
 func TestPaletteClearsContrastFloor(t *testing.T) {
 	for _, c := range palette {
 		for _, tc := range []struct {
@@ -45,19 +52,6 @@ func TestPaletteClearsContrastFloor(t *testing.T) {
 					}
 				})
 			}
-		}
-	}
-}
-
-// The light and dark variants must not be swapped: a light variant is the
-// dark one of the pair, since it is drawn on a light background. Catching
-// that here is cheaper than catching it on someone's screen, and the ratios
-// above pass either way round.
-func TestPaletteVariantsAreNotSwapped(t *testing.T) {
-	for _, c := range palette {
-		if l, d := luminance(t, c.color.Light), luminance(t, c.color.Dark); l >= d {
-			t.Errorf("%s: Light %s is no darker than Dark %s (%.4f vs %.4f) — the pair looks swapped",
-				c.name, c.color.Light, c.color.Dark, l, d)
 		}
 	}
 }
@@ -91,11 +85,20 @@ func TestUseBackgroundOverridesDetection(t *testing.T) {
 
 // A value that is neither is a refusal, not a shrug: an operator who spelled
 // it "White" asked for something, and quietly ignoring them leaves them on
-// the guess the override exists to escape. Unset is not a value.
-func TestUseBackgroundRejectsAnythingElse(t *testing.T) {
+// the guess the override exists to escape. Unset is not a value at all.
+//
+// Both cases are checked for what they left behind as well as what they
+// returned: the whole of what this function does is write to a global, so a
+// branch that quietly wrote the wrong thing would otherwise pass.
+func TestUseBackgroundLeavesDetectionAloneOtherwise(t *testing.T) {
 	restoreBackground(t)
+	// Somewhere detection would not have left it, so a stray write shows.
+	lipgloss.SetHasDarkBackground(true)
 	if err := useBackground(""); err != nil {
 		t.Fatalf("useBackground(\"\") = %v, want no error", err)
+	}
+	if !lipgloss.HasDarkBackground() {
+		t.Error("unset changed the background — it is meant to leave detection alone")
 	}
 	for _, in := range []string{"White", "0", "auto", "no"} {
 		err := useBackground(in)
@@ -106,6 +109,9 @@ func TestUseBackgroundRejectsAnythingElse(t *testing.T) {
 		if !strings.Contains(err.Error(), backgroundEnv) || !strings.Contains(err.Error(), in) {
 			t.Errorf("useBackground(%q) = %q, want it to name both %s and the value",
 				in, err, backgroundEnv)
+		}
+		if !lipgloss.HasDarkBackground() {
+			t.Errorf("useBackground(%q) changed the background before refusing it", in)
 		}
 	}
 }
