@@ -83,5 +83,14 @@ Sleep 4s
 Down
 Sleep 3s
 
+# What the panel has not been showing: the tickets that have not entered the
+# pipeline yet, folded to the summary line at the foot of the table. `B`
+# unfolds them in place — same panel, same table — and again folds them back,
+# which is the whole of the control.
+Type "B"
+Sleep 3500ms
+Type "B"
+Sleep 2s
+
 Type "q"
 Sleep 2s

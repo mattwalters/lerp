@@ -391,12 +391,19 @@ a Todo column has not entered the pipeline, which is the ordinary
 state of most of a board, while one moved into a status that means
 work is under way by something the pipeline knows nothing about is the
 fingerprint of a ticket that left it. `?` spells out that mark and the
-other two the table draws. Rows are grouped by
-status by default, in an order derived from the pipeline itself —
-where runs fail, then where they finish, then the statuses it never
-named the ticket into, and last the intake it never left — so the run
-to retriage and the review to read are the top rows rather than two of
-sixteen. Within a group, rows fall through to
+other two the table draws. The panel opens on what is blocked on you —
+where runs fail, where they finish, and the statuses the pipeline never
+named the ticket into — with the intake it never left folded to one line
+at the foot of the table: `28 waiting to enter the pipeline — B to
+browse`. `B` unfolds those rows in place, under their own status header,
+and folds them back; being blocked-on is an interrupt, while pulling from
+the backlog is a sit-down motion, so only one of them owns the default
+view. A ticket you have claimed resting in an intake status is never
+folded: no pass can pick it up again while the claim stands, so it is
+blocked on you wherever Linear files it. Rows are grouped by status by
+default, in an order derived from the pipeline itself — the same order —
+so the run to retriage and the review to read are the top rows rather
+than two of sixteen. Within a group, rows fall through to
 leverage: how many other listed tickets promoting this one would
 transitively unblock, then priority, then identifier — so the promote
 worth making is the top row of its group. `s` cycles that to project,
@@ -409,10 +416,13 @@ title, status and project already on the row, with the matches marked
 inside it. `enter` keeps the filter and hands the keys back to the
 list, so you can promote what you found; `esc` cancels the prompt, and
 `esc` again clears a filter the prompt already closed on. The panel
-title carries the state — `● 4/17 · /goreleaser` — so a narrowed list
-is never mistaken for an empty board. All three are session-only: no
-saved views, no filter syntax, and none of them changes which tickets
-are fetched. The list owns the screen until you ask for a
+title carries the state — `● 4/17 · /goreleaser · by status · backlog` —
+so a narrowed list is never mistaken for an empty board. Its count is
+what this panel can show under the current fold; the status bar's `● n
+in the inbox` is the other question, what is blocked on you, and does
+not move when `B` opens the fold. All four are session-only: no saved
+views, no filter syntax, and none of them changes which tickets are
+fetched. The list owns the screen until you ask for a
 ticket: selecting a row and pressing `enter` reads it into a main pane
 that opens beside the table and closes again with `esc` — its body,
 where the plan lives, and the comments on it, the verdict a run left
@@ -426,7 +436,8 @@ everything else about a ticket still happens in Linear. Keys: `1`/`2`
 choose a panel and `tab` cycles. `↑`/`↓` pick a row, `enter` opens the
 main pane on it and `esc` closes it again — both panels start closed,
 and each remembers its own answer — `s` sorts the Inbox, `P` scopes it
-to a project and `/` searches it, `o` opens the selected ticket in
+to a project, `/` searches it and `B` unfolds its backlog, `o` opens the
+selected ticket in
 Linear, `S` force-starts the selected queued ticket, `e` ejects the
 selected run, `pgup`/`pgdn` scroll the log or the ticket, `end`
 resumes following, `r` shows the raw log, `q` quits (or backs out of

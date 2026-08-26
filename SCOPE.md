@@ -163,13 +163,21 @@ alive without it. That is a display default, not a rule about process.
    — reviews to read, questions agents have raised, failed runs to
    retriage. It reads as a table, one row per ticket, and the Linear
    status is a column: the vocabulary is the operator's own, never a
-   category invented here. Sorting it (by leverage, priority, status or
-   project), scoping it to one project, and searching it (`/`, a plain
-   substring over the rows on screen) are display over the one list
-   the pass already fetched, session-only, with no saved views and no
-   filter syntax; filtering that changed *which* tickets were fetched
-   would not be. Select a ticket and press `p` to promote it: pick a
-   target from the configured queue statuses or a pipeline exit, and
+   category invented here. It opens on what is blocked on a human — a
+   failed run, a run finished at a gate, a ticket that left the pipeline
+   — with the tickets that have not entered the pipeline yet folded to a
+   summary line behind one key: being blocked-on is an interrupt, pulling
+   from the backlog is a sit-down motion. A claimed ticket resting in an
+   intake status is never folded — no pass can pick it up again while the
+   claim stands (invariant 4), so it is blocked on a human wherever
+   Linear files it. Sorting it (by leverage,
+   priority, status or project), scoping it to one project, searching it
+   (`/`, a plain substring over the rows on screen) and unfolding that
+   backlog are display over the one list the pass already fetched,
+   session-only, with no saved views and no filter syntax; filtering
+   that changed *which* tickets were fetched would not be. Select a
+   ticket and press `p` to promote it: pick a target from the configured
+   queue statuses or a pipeline exit, and
    lerp moves it there. A promote into a status some queue serves also
    releases the claim the parked ticket was holding — an assigned ticket
    is never eligible, so keeping it would strand the ticket in a queue

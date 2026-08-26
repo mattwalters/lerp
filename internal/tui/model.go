@@ -349,9 +349,9 @@ type model struct {
 	shown         []loop.AttentionItem
 	attnSel       int // index into shown; the promote target
 
-	// sortMode and project are two of the table's three session-only
+	// sortMode and project are two of the table's four session-only
 	// controls: one key cycles the order, another scopes the rows to a
-	// single Linear project ("" is every project). None of the three is
+	// single Linear project ("" is every project). None of the four is
 	// saved anywhere — they are a way to read one list the pass already
 	// fetched, not a view to keep. sortMode starts at defaultSort, so it is
 	// set in newModel rather than left to the zero value.
@@ -369,6 +369,15 @@ type model struct {
 	searchWas    string
 	searchSelWas string
 	searchInput  textinput.Model
+
+	// The fourth is the fold. backlogOpen is whether the panel is also
+	// showing the tickets that have not entered the pipeline yet; it opens
+	// closed, so what the panel says on sight is what is blocked on a
+	// human. Pulling from the backlog is a deliberate sit-down motion and
+	// can live behind a key; being blocked-on is an interrupt and owns the
+	// default view. Model state like the other three, so it survives a pass
+	// and is saved nowhere.
+	backlogOpen bool
 
 	// details is what the Reader has returned, keyed by ticket ID and kept
 	// for the process's lifetime: a stale body is a view of Linear, not
@@ -714,10 +723,20 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.cycleProject()
 			m.refreshMain()
 		}
+	case key.Matches(msg, m.keys.Backlog):
+		if m.focus == panelAttention {
+			m.backlogOpen = !m.backlogOpen
+			m.resort()
+			m.refreshMain()
+		}
 	case key.Matches(msg, m.keys.Search):
-		// Nothing to narrow is nothing to search: an empty inbox would put a
-		// prompt over the one line that says so.
-		if m.focus == panelAttention && len(m.attention) > 0 {
+		// Nothing to narrow is nothing to search: the question is whether
+		// this panel has a row on it, not whether the pass found one. An
+		// empty inbox, a fold hiding every row, and a project scope left
+		// over one all end at the same one-line panel, and a prompt opened
+		// over that line takes the keyboard for a filter with nothing to
+		// match. The way back out of each is the key that empty line names.
+		if m.focus == panelAttention && len(m.shown) > 0 {
 			m.openSearch()
 			m.refreshMain()
 		}
@@ -1209,7 +1228,14 @@ func (m *model) apply(ev loop.Event) {
 		// search is not reset the same way: a project is a category that
 		// stopped existing, where a query is text the operator typed and can
 		// see in the title — clearing it under them would be the surprise.
-		if m.project != "" && !slices.Contains(m.projects(), m.project) {
+		//
+		// Asked of the whole pass rather than of projects(), which follows
+		// the fold: a project the operator scoped to while browsing the
+		// backlog has not stopped existing when the fold closes over it, and
+		// a pass is not the place to take that choice away.
+		if m.project != "" && !slices.ContainsFunc(m.attention, func(it loop.AttentionItem) bool {
+			return it.Project == m.project
+		}) {
 			m.project = ""
 		}
 		// An inbox with nothing in it has nothing to narrow, and the title
@@ -1636,7 +1662,7 @@ func (m *model) resort() {
 	if it := m.selectedAttention(); it != nil {
 		selected = it.Ticket
 	}
-	m.shown = sortAttention(filterAttention(m.attention, m.project, m.search), m.sortMode)
+	m.shown = sortAttention(filterAttention(m.attention, m.project, m.search, m.backlogOpen), m.sortMode)
 	i := slices.IndexFunc(m.shown, func(it loop.AttentionItem) bool { return it.Ticket == selected })
 	if selected == "" || i < 0 {
 		m.attnSel = clampIndex(m.attnSel, len(m.shown))
@@ -1645,20 +1671,76 @@ func (m *model) resort() {
 	m.attnSel = i
 }
 
-// filterAttention narrows the list to one Linear project and to the rows the
-// search matches. There is no filter syntax and no second query behind
-// either: the project column matched whole, and a plain substring over the
-// facts a row already shows (see matchesSearch).
-func filterAttention(items []loop.AttentionItem, project, query string) []loop.AttentionItem {
-	if project == "" && query == "" {
+// filterAttention narrows the list to one Linear project, to the rows the
+// search matches, and — while the backlog is folded — to the tickets that
+// are actually blocked on a human. There is no filter syntax and no second
+// query behind either of the two the operator types: the project column
+// matched whole, and a plain substring over the facts a row already shows
+// (see matchesSearch).
+//
+// What the fold hides is folds(); everything else stays on screen.
+func filterAttention(items []loop.AttentionItem, project, query string, backlogOpen bool) []loop.AttentionItem {
+	if project == "" && query == "" && backlogOpen {
 		return items
 	}
 	out := make([]loop.AttentionItem, 0, len(items))
 	for _, it := range items {
-		if project != "" && it.Project != project {
+		if !backlogOpen && folds(it) {
 			continue
 		}
-		if matchesSearch(it, query) {
+		if matchesFilters(it, project, query) {
+			out = append(out, it)
+		}
+	}
+	return out
+}
+
+// folds reports whether the fold hides this row: a ticket resting where
+// Linear files work that has not started, and that nobody has claimed.
+//
+// Two readings, not one, because the tier alone cannot answer it. The
+// backlog tier is derived from Linear's status category and knows nothing
+// about who holds the ticket, and a ticket the operator has claimed resting
+// in an intake status has not failed to enter the pipeline — it fell back
+// out of one, and no pass can pick it up again while the claim stands
+// (invariant 4: an assigned ticket is never eligible). That is as blocked on
+// a human as a row gets, so it is never folded and never uncounted.
+//
+// A negative test rather than an allow-list of the tiers to keep:
+// StatusUnknown is the reconciler's bug marker, sorts first, and an
+// allow-list would silently fold it away.
+func folds(it loop.AttentionItem) bool {
+	return it.Relevance == loop.StatusBacklog && !it.Claimed
+}
+
+// matchesFilters is everything the two typed controls say about one row —
+// the project scope and the search — with no reading of the fold. The fold
+// and the summary line behind it ask the same question of the same rows, so
+// they ask it through one predicate.
+func matchesFilters(it loop.AttentionItem, project, query string) bool {
+	return (project == "" || it.Project == project) && matchesSearch(it, query)
+}
+
+// unfolded is the pass's list under the fold alone: every row the panel
+// could show before the project scope and the search narrow it. It is what
+// P cycles over, what / opens on, and the base the panel title counts
+// against — so the title's fraction is always over the rows this panel can
+// reach, and P can never stop on a project whose every row is folded away.
+func (m *model) unfolded() []loop.AttentionItem {
+	return filterAttention(m.attention, "", "", m.backlogOpen)
+}
+
+// foldedRows is what the fold is holding back: the backlog rows that pass
+// the project scope and the search already in force — exactly what pressing
+// B would put on screen, so the summary line's number can never disagree
+// with what it reveals. Nothing is folded while the backlog is open.
+func (m *model) foldedRows() []loop.AttentionItem {
+	if m.backlogOpen {
+		return nil
+	}
+	var out []loop.AttentionItem
+	for _, it := range m.attention {
+		if folds(it) && matchesFilters(it, m.project, m.search) {
 			out = append(out, it)
 		}
 	}
@@ -1739,12 +1821,14 @@ func priorityRank(p int) int {
 	return p
 }
 
-// projects lists the Linear projects present in the pass's list, in name
-// order — the filter's cycle. A ticket filed under none is not a project
-// and is not a stop on it.
+// projects lists the Linear projects present in the rows the fold lets
+// through, in name order — the filter's cycle. A ticket filed under none is
+// not a project and is not a stop on it, and neither is a project whose
+// every row is folded away: cycling to one would scope the panel to
+// "nothing in X".
 func (m *model) projects() []string {
 	var names []string
-	for _, it := range m.attention {
+	for _, it := range m.unfolded() {
 		if it.Project != "" && !slices.Contains(names, it.Project) {
 			names = append(names, it.Project)
 		}
@@ -1753,12 +1837,13 @@ func (m *model) projects() []string {
 	return names
 }
 
-// hasProjects reports whether the pass's list has any project to scope to.
+// hasProjects reports whether the rows the fold lets through have any
+// project to scope to.
 // P cycles between every project and each one present, so with none present
 // it is a key that does nothing — projects() answers the same question but
 // builds and sorts the cycle to do it.
 func (m *model) hasProjects() bool {
-	return slices.ContainsFunc(m.attention, func(it loop.AttentionItem) bool {
+	return slices.ContainsFunc(m.unfolded(), func(it loop.AttentionItem) bool {
 		return it.Project != ""
 	})
 }
@@ -1768,12 +1853,34 @@ func (m *model) hasProjects() bool {
 func (m *model) cycleProject() {
 	names := m.projects()
 	switch i := slices.Index(names, m.project); {
+	// A scope the fold has taken off the cycle — every row of that project
+	// is backlog, and the backlog just closed — has one stop from here, and
+	// it is the one the empty panel's hint promises. Not folded in with the
+	// case below, whose i is -1 for the empty scope that starts the cycle.
+	case m.project != "" && i < 0:
+		m.project = ""
 	case i+1 >= len(names):
 		m.project = ""
 	default:
 		m.project = names[i+1]
 	}
 	m.resort()
+}
+
+// blockedOnYou counts the tickets in the pass's list that are waiting on a
+// human: everything the fold does not hide. One predicate for both, so the
+// number on the status bar and the rows the panel opens on can never
+// disagree about what "blocked on you" means. Read off m.attention rather
+// than the shown rows, so neither the fold's own state nor a filter can
+// change a number that is about the whole board.
+func (m *model) blockedOnYou() int {
+	n := 0
+	for _, it := range m.attention {
+		if !folds(it) {
+			n++
+		}
+	}
+	return n
 }
 
 // geometry is the screen's arithmetic. One rule: needs-you gets the room.
@@ -2175,7 +2282,9 @@ func marker(on bool) string {
 // for the focus window. Every inbox row is one line.
 func (m *model) attentionRows(width int) ([]string, cursor) {
 	if line := m.attentionEmptyLine(); line != "" {
-		return []string{line}, cursor{at: -1}
+		// The summary draws here too: an inbox with nothing on the operator
+		// is precisely when the key that reveals the rest has to be visible.
+		return append([]string{line}, m.backlogSummary()...), cursor{at: -1}
 	}
 	focused := m.focus == panelAttention
 	cols := m.attentionColumns()
@@ -2205,29 +2314,79 @@ func (m *model) attentionRows(width int) ([]string, cursor) {
 		}
 		rows = append(rows, attentionRow(it, focused && i == m.attnSel, cols, width, m.search))
 	}
-	return rows, cursor{at: sel, span: 1}
+	return append(rows, m.backlogSummary()...), cursor{at: sel, span: 1}
+}
+
+// backlogSummary is the one line the fold leaves standing for the rows it
+// holds back: how many, why they are not on the list, and the key that puts
+// them there. The phrase is StatusBacklog's own note, so the fold and the
+// status group header the rows arrive under say the same thing, and the key
+// comes from the binding, so the line and the ? overlay can never disagree
+// about what to press.
+//
+// A row rather than a line the panel pins: geometry counts what
+// attentionRows returns, so the panel asks for it like any other row and
+// the footer keeps the last line for the key hints. The cost is that a long
+// blocked-on-you list can window it away behind "⋯ n more" — the overlay
+// carries the key in that case.
+//
+// Nothing folded is no line: a key that would reveal nothing is not worth a
+// row on a panel this tight.
+//
+// The key drops off the line while something modal has the keyboard, the
+// same rule the panel's key hints answer to (see keyHints). The prompt
+// swallows every keystroke, so a `B` pressed on this line's advice would
+// land in the search box as a letter — and an advertised key that does
+// nothing is worse than one left out. The count stays: it is the fact that
+// explains why a search found nothing here, which is exactly when the
+// prompt is open over it.
+func (m *model) backlogSummary() []string {
+	n := len(m.foldedRows())
+	if n == 0 {
+		return nil
+	}
+	line := fmt.Sprintf("%d %s", n, loop.StatusBacklog.Note())
+	if !m.modal() {
+		line += " — " + m.keys.Backlog.Help().Key + " to browse"
+	}
+	return []string{styleFaint.Render(line)}
 }
 
 // emptyNote says why an inbox that has rows is showing none of them: the
-// search, the project scope, or both. The panel never draws an empty box
-// here — a list narrowed down to nothing and a board with nothing on it are
-// the same picture, and only one of them is the goal state.
+// search, the project scope, or — with neither of them narrowing it — the
+// fold, which means everything the pass found is waiting to enter the
+// pipeline and none of it is on a human. The panel never draws an empty box
+// here: a list narrowed down to nothing and a board with nothing on it are
+// the same picture, and only one of them is the goal state — which is why
+// the fold does not get to claim "the inbox is empty".
 func (m *model) emptyNote() string {
 	switch {
 	case m.search != "" && m.project != "":
 		return fmt.Sprintf("no match for /%s in %s", m.search, m.project)
 	case m.search != "":
 		return "no match for /" + m.search
+	case m.project != "":
+		return "nothing in " + m.project
 	}
-	return "nothing in " + m.project
+	return "nothing is waiting on you"
 }
 
-// emptyHint is the key that puts those rows back.
+// emptyHint is the keys that put those rows back — the one that clears
+// whatever narrowed the list, and B where the fold is holding rows behind
+// it. Both, because either can be the reason the panel is empty and the
+// operator cannot tell which from the note alone.
 func (m *model) emptyHint() string {
-	if m.search != "" {
-		return "(esc clears the search)"
+	var hints []string
+	switch {
+	case m.search != "":
+		hints = append(hints, "(esc clears the search)")
+	case m.project != "":
+		hints = append(hints, "(P cycles the project filter back to all)")
 	}
-	return "(P cycles the project filter back to all)"
+	if len(m.foldedRows()) > 0 {
+		hints = append(hints, "(B browses the backlog)")
+	}
+	return strings.Join(hints, " ")
 }
 
 // oneGroup reports whether every shown row falls under the same header.
@@ -2469,16 +2628,27 @@ func priorityCell(p int) string {
 func (m model) attentionPanel(w, h int) string {
 	focused := m.focus == panelAttention
 	extra := ""
+	// The title counts what this panel can show under the current fold, not
+	// what the pass found: the fraction under a filter is over that same
+	// base, so the title and the rows beneath it always agree. It differs
+	// from the status bar's number on purpose while the backlog is open —
+	// the bar answers "should I look up", the title "what is in this panel".
+	base := m.unfolded()
 	if len(m.attention) > 0 {
-		// The sort mode and the project filter live in the title because
-		// they are the only two things about this panel a key changed, and
-		// a table sorted differently than the operator remembers is worse
-		// than one that says how it is sorted.
-		count := fmt.Sprintf(" ● %d", len(m.attention))
-		if m.project != "" || m.search != "" {
-			count = fmt.Sprintf(" ● %d/%d", len(m.shown), len(m.attention))
+		// The sort mode, the project filter and the fold live in the title
+		// because they are the only things about this panel a key changed,
+		// and a table sorted or folded differently than the operator
+		// remembers is worse than one that says how it is. They are not
+		// gated on the count below: a board worked down to nothing but
+		// backlog has no count to show and still answers to `s`, and a sort
+		// that changed without the title moving is a silent one.
+		if len(base) > 0 {
+			count := fmt.Sprintf(" ● %d", len(base))
+			if m.project != "" || m.search != "" {
+				count = fmt.Sprintf(" ● %d/%d", len(m.shown), len(base))
+			}
+			extra = styleAttention.Render(count)
 		}
-		extra = styleAttention.Render(count)
 		// The query sits next to the fraction, ahead of the two controls
 		// that were already here: they are the one fact that explains the
 		// other, and a title truncated by a narrow panel loses them last.
@@ -2488,6 +2658,11 @@ func (m model) attentionPanel(w, h int) string {
 		extra += styleFaint.Render(" · by " + m.sortMode.String())
 		if m.project != "" {
 			extra += styleFaint.Render(" · " + m.project)
+		}
+		// The way back from an expanded backlog: the rows below are not the
+		// panel's default, and the title is where this panel says so.
+		if m.backlogOpen {
+			extra += styleFaint.Render(" · backlog")
 		}
 	}
 	inner := padList.inner(w)
@@ -3159,8 +3334,11 @@ func (m model) statusBar() string {
 	// inbox count it shoved both of them a spinner's width sideways every
 	// time a pass started; sized into the hints below, it moved those.
 	left := brand + "  " + styleFaint.Render(m.capacityLabel())
-	if len(m.attention) > 0 {
-		left += "  " + styleAttention.Render(fmt.Sprintf("● %d in the inbox", len(m.attention)))
+	// Only the tickets blocked on a human are counted, so the number means
+	// "things that should make you look up" — and it does not move when B
+	// expands the backlog into the panel.
+	if n := m.blockedOnYou(); n > 0 {
+		left += "  " + styleAttention.Render(fmt.Sprintf("● %d in the inbox", n))
 	}
 	// The bar offers what this window and this frame actually answer to. ?
 	// draws its overlay in the main pane, so a window with no room for the
