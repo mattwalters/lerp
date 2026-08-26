@@ -22,8 +22,11 @@
 // It is one helper because it has to be every spawn site or none: a leak at
 // the site nobody remembered is the same leak, and this repository has
 // already shipped one fix that was applied at one call site and missed at
-// the other. TestNoOtherPackageReadsTheEnvironment is what stops a new spawn
-// site from quietly going back to os.Environ().
+// the other. TestNoOtherPackageReadsTheEnvironment stops a new spawn site
+// from going back to os.Environ(). It cannot see the other way to leak —
+// an exec.Command left with a nil Env inherits lerp's whole process — which
+// is why main drops the key from lerp's own environment as soon as it has
+// read it, leaving nothing for either kind of child to inherit.
 package childenv
 
 import (

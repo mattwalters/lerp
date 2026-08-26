@@ -114,8 +114,9 @@ cut the other way:
   down, and it never writes it to disk. Read that as hygiene, not
   containment: it closes the accidental path — a `provision` script
   that logs its environment into the lane log — and not a determined
-  one. An agent running as you can still read lerp's own
-  `/proc/<pid>/environ`, or the shell profile you exported the key in.
+  one. An agent running as you can still read the shell profile you
+  exported the key in — or, on Linux, lerp's own
+  `/proc/<pid>/environ`.
   Everything else in the environment does go down: your cloud tokens,
   your registry credentials, whatever else the shell you started lerp
   in was carrying. Run lerp with an environment you would hand to the

@@ -86,10 +86,19 @@ func main() {
 // engine: it drives the loop's ticks and subscribes to its events; nothing
 // runs when it is closed, and no daemon exists (SCOPE, "The interface").
 func openTUI(ctx context.Context, lanes int) error {
-	apiKey := os.Getenv("LINEAR_API_KEY")
+	apiKey := os.Getenv(childenv.LinearAPIKeyEnv)
 	if apiKey == "" {
-		return errors.New("LINEAR_API_KEY is required")
+		return errors.New(childenv.LinearAPIKeyEnv + " is required")
 	}
+	// Read once, then dropped from lerp's own environment. childenv keeps the
+	// key out of the children lerp builds an environment for, but a child
+	// spawned with a nil Env inherits this process wholesale — the ordinary
+	// way to write exec.Command, and the way the next spawn site will
+	// probably be written. Unsetting it here means there is nothing left to
+	// inherit either way. Not containment: the original block is still in
+	// /proc/<pid>/environ on Linux, and the operator's shell profile still
+	// exports it.
+	os.Unsetenv(childenv.LinearAPIKeyEnv)
 	// Up here with the other environment refusal: the TUI applies this
 	// itself, but only once everything below has run, and an operator who
 	// misspelled it should not pay for a board check and a lock first.
@@ -189,9 +198,12 @@ func initCommand(args []string) {
 		fmt.Fprintln(os.Stderr, "lerp init: --team is required")
 		os.Exit(2)
 	}
-	if os.Getenv("LINEAR_API_KEY") == "" {
-		fatal(fmt.Errorf("lerp init: LINEAR_API_KEY is required"))
+	apiKey := os.Getenv(childenv.LinearAPIKeyEnv)
+	if apiKey == "" {
+		fatal(fmt.Errorf("lerp init: %s is required", childenv.LinearAPIKeyEnv))
 	}
+	// Dropped for the same reason as in openTUI: init shells out too.
+	os.Unsetenv(childenv.LinearAPIKeyEnv)
 	repoRoot, err := gitRoot()
 	if err != nil {
 		fatal(err)
@@ -202,7 +214,7 @@ func initCommand(args []string) {
 	if !*yes && isTerminal(os.Stdin) && isTerminal(os.Stdout) {
 		answers = os.Stdin
 	}
-	created, err := initcmd.Init(context.Background(), linear.New(os.Getenv("LINEAR_API_KEY"), nil), os.Stdout, answers, filepath.Clean(repoRoot), *team, *name)
+	created, err := initcmd.Init(context.Background(), linear.New(apiKey, nil), os.Stdout, answers, filepath.Clean(repoRoot), *team, *name)
 	if err != nil {
 		fatal(fmt.Errorf("lerp init: %w", err))
 	}

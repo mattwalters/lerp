@@ -55,6 +55,13 @@ func TestInheritedDropsAnEmptyLinearAPIKey(t *testing.T) {
 // reach, and nothing about it looks wrong in review. So no package outside
 // this one reads the environment wholesale — os.Getenv for one variable is
 // untouched, and tests are their own business.
+//
+// Dot-directories are skipped, the same rule the go tool applies to a
+// package pattern, and for a sharper reason here: an operator's clone holds
+// lerp's own lane workspaces under .lerp/workspaces and any agent worktrees
+// under .claude, each a full checkout of some other branch. Walking those
+// would fail this repository's gate on files that are not in this module and
+// that no edit on this branch can reach.
 func TestNoOtherPackageReadsTheEnvironment(t *testing.T) {
 	root := filepath.Join("..", "..")
 	self, err := filepath.Abs(".")
@@ -70,7 +77,7 @@ func TestNoOtherPackageReadsTheEnvironment(t *testing.T) {
 			if err != nil {
 				return err
 			}
-			if abs == self || d.Name() == ".git" {
+			if abs == self || strings.HasPrefix(d.Name(), ".") && path != root {
 				return fs.SkipDir
 			}
 			return nil
