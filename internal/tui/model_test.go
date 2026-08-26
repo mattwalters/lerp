@@ -447,6 +447,7 @@ func TestFocusSwitching(t *testing.T) {
 // ticket, including why it will not run.
 func TestWorkPanelShowsWhatRunsNext(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("2"))
 	m = openMain(t, m)
 
@@ -1031,6 +1032,7 @@ func TestTheHelpOverlayIsNotWrittenOverByALiveLog(t *testing.T) {
 // that one screen, so being dropped back at the top of it is a real loss.
 func TestTheHelpOverlayGivesTheTicketPaneBackWhereItWas(t *testing.T) {
 	m, _, reader := newReadingTestModel(t)
+	m = pastTheSplash(t, m)
 	resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
 	m = update(t, resized.(model), keyMsg("1"))
 	m = update(t, m, keyMsg("enter")) // the inbox reads a ticket once its pane is open
@@ -1795,6 +1797,7 @@ func TestEnterOpensTheDetailAndEscCloses(t *testing.T) {
 // away: the answer is the panel's and not the screen's.
 func TestThePaneIsRememberedPerPanel(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("2"))
 	m = update(t, m, keyMsg("enter")) // work
 	m = update(t, m, keyMsg("1"))
@@ -1947,6 +1950,7 @@ func TestAClosedPaneReadsNothing(t *testing.T) {
 // keystroke or the next byte of log.
 func TestRefocusingRewrapsThePane(t *testing.T) {
 	m, _, reader := newReadingTestModel(t)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, keyMsg("enter"))
 	m = update(t, m, eventMsg{ev: threeWaiting()})
@@ -1979,6 +1983,7 @@ func TestRefocusingRewrapsThePane(t *testing.T) {
 // frame names.
 func TestAWindowTooShortForThePaneKeepsItsScreen(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	m = openMain(t, m) // the pane 12 lines cannot hold
 	resized, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 12})
 	m = resized.(model)
@@ -2304,6 +2309,7 @@ func TestShrinkingTheWindowClosesWhatTookThePane(t *testing.T) {
 // state across a resize — so without this the only way out is a guess.
 func TestTheTooSmallScreenNamesTheWayOut(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	m = openMain(t, m)
 	resized, _ := m.Update(tea.WindowSizeMsg{Width: 70, Height: 12})
 	m = resized.(model)
@@ -2332,6 +2338,7 @@ func TestTheTooSmallScreenNamesTheWayOut(t *testing.T) {
 // number the needs-you panel exists for.
 func TestTheStatusBarKeepsTheCountOverTheHint(t *testing.T) {
 	m, _, _ := newTestModel(t, 3)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("2"))
 	resized, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 30})
 	m = openMain(t, resized.(model))
@@ -2547,6 +2554,7 @@ func TestTheHeavyBoxFollowsFocus(t *testing.T) {
 // the whole reason they felt like they did not exist.
 func TestFocusedPanelCarriesItsKeys(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	m = openMain(t, update(t, m, keyMsg("1"))) // the 45-column panel below
 	m = update(t, m, eventMsg{ev: threeWaiting()})
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
@@ -2655,6 +2663,7 @@ func TestAPanelWithNothingSelectedOffersNoKeys(t *testing.T) {
 // panel offers it exactly where it does something.
 func TestRawIsOfferedOnlyWhereThereIsALog(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	m = openMain(t, update(t, m, keyMsg("2")))
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
 		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
@@ -3505,6 +3514,7 @@ func selectAndRead(t *testing.T, m model, sel int, detail linear.IssueDetail, er
 // row schedules a debounce; only the one the selection settled on reads.
 func TestTicketDetailFetchesOnceTheSelectionSettles(t *testing.T) {
 	m, _, reader := newReadingTestModel(t)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, keyMsg("enter"))
 	m = update(t, m, eventMsg{ev: threeWaiting()})
@@ -3545,6 +3555,7 @@ func TestTicketDetailFetchesOnceTheSelectionSettles(t *testing.T) {
 // the main pane, oldest comment first, without leaving lerp.
 func TestTicketDetailShowsBodyAndComments(t *testing.T) {
 	m, _, reader := newReadingTestModel(t)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, keyMsg("enter"))
 	m = update(t, m, eventMsg{ev: threeWaiting()})
@@ -3581,6 +3592,7 @@ func TestTicketDetailShowsBodyAndComments(t *testing.T) {
 // today, and still points at Linear.
 func TestTicketDetailFailureKeepsThePaneThatWorks(t *testing.T) {
 	m, _, reader := newReadingTestModel(t)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, keyMsg("enter"))
 	m = update(t, m, eventMsg{ev: threeWaiting()})
@@ -3616,6 +3628,7 @@ func TestTicketDetailFailureKeepsThePaneThatWorks(t *testing.T) {
 // A ticket with nothing on it still reads as answered, not as still loading.
 func TestTicketDetailEmptyTicket(t *testing.T) {
 	m, _, reader := newReadingTestModel(t)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, keyMsg("enter"))
 	m = update(t, m, eventMsg{ev: threeWaiting()})
@@ -3631,6 +3644,7 @@ func TestTicketDetailEmptyTicket(t *testing.T) {
 // body and the verdict in a comment render the same way, as markdown.
 func TestTicketDetailRendersMarkdown(t *testing.T) {
 	m, _, reader := newReadingTestModel(t)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, keyMsg("enter"))
 	m = update(t, m, eventMsg{ev: threeWaiting()})
@@ -3659,6 +3673,7 @@ func TestTicketDetailRendersMarkdown(t *testing.T) {
 // carrying Linear's inline issue tags renders as bare identifiers.
 func TestTicketDetailRendersHostileBodyInert(t *testing.T) {
 	m, _, reader := newReadingTestModel(t)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, keyMsg("enter"))
 	m = update(t, m, eventMsg{ev: threeWaiting()})
@@ -3685,6 +3700,7 @@ func TestTicketDetailRendersHostileBodyInert(t *testing.T) {
 // row is readable past its first line.
 func TestTicketDetailWrapsProse(t *testing.T) {
 	m, _, reader := newReadingTestModel(t)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, keyMsg("enter"))
 	m = update(t, m, eventMsg{ev: threeWaiting()})
@@ -4343,6 +4359,7 @@ func TestRunLineKeepsItsNumbersWhenNarrow(t *testing.T) {
 	// is open here: with it shut the list has the whole terminal and this
 	// row has columns to spare.
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	resized, _ := m.Update(tea.WindowSizeMsg{Width: narrowWidth, Height: 40})
 	m = openMain(t, resized.(model))
 	width := padList.inner(m.geometry().sideW)
@@ -4393,6 +4410,7 @@ func TestTheSparklineTakesTheWidthItIsGiven(t *testing.T) {
 		heard: time.Now().Add(-12*time.Minute - 30*time.Second), rate: rate}
 
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	m = resized.(model)
 

@@ -10,15 +10,39 @@ import (
 	"github.com/mattwalters/lerp/internal/loop"
 )
 
-// hasMark reports whether the large mark is on screen, every line of it: a
-// wordmark missing a row is a rendering bug, not a wordmark.
+// hasMark reports whether the large mark is on screen whole: every row of
+// it, in order, on consecutive lines, all at one indent. A wordmark missing
+// a row is a rendering bug and so is one sheared into columns, and neither
+// is caught by looking for the rows one at a time anywhere on screen — the
+// first row is " _", which is a substring of the second.
 func hasMark(view string) bool {
-	for _, line := range markLines {
-		if !strings.Contains(view, line) {
-			return false
+	block := strings.Split(markBlock, "\n")
+	lines := strings.Split(view, "\n")
+	for i := 0; i+len(block) <= len(lines); i++ {
+		// Where the figure starts, read off its first row: the centring pads
+		// every row of the block by the same amount, which is the whole of
+		// what keeps the letters lined up.
+		at := strings.Index(lines[i], strings.TrimLeft(block[0], " "))
+		if at < 0 {
+			continue
+		}
+		indent := at - (len(block[0]) - len(strings.TrimLeft(block[0], " ")))
+		if indent < 0 {
+			continue
+		}
+		whole := true
+		for j, row := range block {
+			want := strings.TrimRight(strings.Repeat(" ", indent)+row, " ")
+			if strings.TrimRight(lines[i+j], " ") != want {
+				whole = false
+				break
+			}
+		}
+		if whole {
+			return true
 		}
 	}
-	return true
+	return false
 }
 
 // The first thing anyone sees of lerp is the whole of the first Linear round

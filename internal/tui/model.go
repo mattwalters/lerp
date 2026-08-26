@@ -663,7 +663,12 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Detail):
 		// Not under the overlay: it is what is on screen, and enter behind it
 		// would open a pane nobody asked for and read a ticket nobody sees.
-		if m.roomForMain() && !m.helpOn {
+		// Nor under the splash, which is the same rule about a different
+		// screen: there is no row to detail before the first pass reports,
+		// and the pane would be open in the geometry without being on it —
+		// enough, on a short window, to turn the next resize into "window
+		// too small · esc closes the pane" about a pane never drawn.
+		if m.roomForMain() && !m.helpOn && !m.splashing() {
 			m.detailOpen[m.focus] = true
 			// Size before filling: the viewport was zero-width while the
 			// pane was closed, and refreshMain wraps to that width.
@@ -1979,10 +1984,10 @@ func (m model) View() string {
 	// spinner. Only ? can be open here today, because every other one of
 	// them is gated on a row, and a row means the pass has reported.
 	//
-	// A detail pane is not in that list, deliberately: it takes no keys of
-	// its own, it has no ticket to show before the first pass, and enter is
-	// the operator saying they want it open when there is. It opens under
-	// the splash and is there on the board that replaces it.
+	// A detail pane cannot be in that list at all: enter does not open one
+	// while the splash is up, precisely so that this guard and the
+	// too-small guard above it cannot disagree about a pane the operator
+	// never saw.
 	if m.splashing() && !m.modal() && !m.helpOn {
 		return m.splash()
 	}
