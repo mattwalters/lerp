@@ -137,7 +137,9 @@ func openTUI(ctx context.Context, lanes int) error {
 	fmt.Fprintf(loopLog, "=== lerp session started %s ===\n", time.Now().Format(time.RFC3339))
 
 	// Buffered so the loop rarely waits on a render; the model always keeps a
-	// receive pending, so the channel drains for as long as the TUI is open.
+	// receive pending, so the channel drains for as long as the TUI is open —
+	// and tui.Run keeps draining it while it waits out a pass on the way out,
+	// so a full buffer can never wedge the pass that is filling it.
 	events := make(chan loop.Event, 64)
 	rec, err := loop.NewReconciler(loop.ReconcilerOptions{
 		Client:   client,
