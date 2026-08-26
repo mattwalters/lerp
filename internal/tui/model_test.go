@@ -4451,6 +4451,37 @@ func TestAdoptedRunDoesNotDrawAFreshLine(t *testing.T) {
 	}
 }
 
+// The unread span belongs to an inherited run and to nothing else. A record's
+// StartedAt is stamped before the claim and before the workspace is
+// provisioned, so a run this lerp started — and watched from its first
+// instant — must not draw a slow provision as agent history it missed.
+func TestALocallyStartedRunDrawsNoUnreadHistory(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.log")
+	writeLog(t, path, []byte("the agent's first line\n"))
+	m, _, _ := newTestModel(t, 3)
+	resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = fillBoard(t, resized.(model), 3)
+	// Ninety seconds of claim and provision before the agent runs at all.
+	begun := time.Now().Add(-90 * time.Second)
+	for _, typ := range []loop.EventType{loop.EventProvisioning, loop.EventStarted} {
+		m = update(t, m, eventMsg{ev: loop.Event{Type: typ, RunID: "r1", Lane: 1,
+			TicketID: "t0", Ticket: "QUEUED-1", Queue: "implement", LogPath: path,
+			StartedAt: begun}})
+		m = update(t, m, pollMsg{})
+	}
+	m = update(t, m, keyMsg("2"))
+
+	g := m.geometry()
+	lines := strings.Split(ansi.Strip(m.workPanel(g.sideW, g.workH)), "\n")
+	at := slices.IndexFunc(lines, func(l string) bool { return strings.Contains(l, "QUEUED-1") })
+	if at < 0 || at+1 >= len(lines) {
+		t.Fatalf("the running row has no reading under it:\n%s", strings.Join(lines, "\n"))
+	}
+	if reading := lines[at+1]; strings.ContainsRune(reading, sparkUnread) {
+		t.Fatalf("a run this process started drew history it missed: %q", reading)
+	}
+}
+
 // A squeezed panel cuts a row's second line first, so the line that survives
 // has to carry what the row carried before this one existed: the clock.
 func TestSqueezedRunRowKeepsItsClock(t *testing.T) {

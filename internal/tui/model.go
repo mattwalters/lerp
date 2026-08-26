@@ -1362,7 +1362,16 @@ func (m *model) readPulses() {
 			continue
 		}
 		if ln.pulse == nil {
-			ln.pulse = newPulse(ln.logPath, ln.since, now)
+			// Only an inherited run has history behind it that nothing here
+			// watched. A run this process started it has watched from the
+			// beginning, and the record's StartedAt predates the claim and
+			// the provision — so handing it over would mark a slow
+			// workspace as unread agent history it never was.
+			started := now
+			if ln.state == laneAdopted {
+				started = ln.since
+			}
+			ln.pulse = newPulse(ln.logPath, started, now)
 		}
 		ln.pulse.read(now)
 	}

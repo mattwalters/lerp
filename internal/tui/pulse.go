@@ -81,11 +81,12 @@ type pulse struct {
 // times the pulse cannot know, and counting it into the bucket now filling
 // would draw a burst that never happened.
 //
-// started is when the run began, which for a run adopted from a previous
-// process is long before now. That span is history this pulse has no counts
-// for and no way to get any, so it is marked unread rather than left out: a
-// line that merely started short is the line of a run that just started,
-// which is the one thing the row must not say about an hour-old agent.
+// started is when the run began, and only a run inherited from a previous
+// process began before now (see readPulses). That span is history this pulse
+// has no counts for and no way to get any, so it is marked unread rather than
+// left out: a line that merely started short is the line of a run that just
+// started, which is the one thing the row must not say about an hour-old
+// agent.
 func newPulse(path string, started, now time.Time) *pulse {
 	p := &pulse{follower: newFollower(path, 0)}
 	if !started.IsZero() {
@@ -114,6 +115,11 @@ func (p *pulse) read(now time.Time) {
 		// log that is gone — and folding a whole new file into the bucket
 		// now filling would draw one spike and flatten every real one beside
 		// it. Start the reading over with the file.
+		//
+		// The unread span survives: it says this pulse has no counts for
+		// what came before, which a rewrite has just made true again of
+		// everything it had. Clearing it here would hand an adopted run
+		// back the short line of one that just started.
 		p.stream, p.cells, p.head, p.seen = logfmt.Stream{}, [sparkCells]int{}, 0, 0
 		p.at = time.Time{}
 	}
@@ -149,10 +155,10 @@ func (p *pulse) roll(now time.Time) {
 }
 
 // window is the counts of the buckets that have existed, oldest first, which
-// is the order a sparkline draws, with the run's unread span — the buckets
-// that passed before this pulse attached — ahead of them. It is the whole
-// history the ring holds; a
-// row too narrow for all of it draws the tail, which is the recent end. It is
+// is the order a sparkline draws, led by the run's unread span — the buckets
+// that passed before this pulse attached. It is the whole history the ring
+// holds; a row too narrow for all of it draws the tail, which is the recent
+// end. It is
 // short while a run is young: a line that has not had time to fall is not a
 // line that has fallen, and a run picked up ten seconds ago must not read
 // like one that has been quiet since the ring began.
