@@ -1288,6 +1288,14 @@ func openable(rawURL string) bool {
 	if err != nil {
 		return false
 	}
+	// Whitespace first, because Parse allows it in a path: Linear
+	// percent-encodes it, and xdg-utils honours a $BROWSER holding a %s by
+	// substituting the URL into a command line and letting the shell split
+	// it again — so a space is one of the few ways a URL on the right host
+	// still reaches something other than a browser.
+	if strings.ContainsAny(rawURL, " \t\n\r\v\f") {
+		return false
+	}
 	// Host, not Hostname: a port is not something Linear sends, and
 	// refusing one costs nothing. Parse has already lowercased the scheme;
 	// the host it leaves as it found it. Userinfo is refused rather than

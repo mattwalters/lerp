@@ -3673,6 +3673,7 @@ func TestOnlyALinearHTTPSURLReachesTheOpener(t *testing.T) {
 		{"https://linear.app@evil.test/acme", false},       // userinfo, and the host is theirs
 		{"https://attacker:secret@linear.app/acme", false}, // userinfo, and the host is Linear's
 		{"https://linear.app:8443/acme", false},            // Linear serves one port
+		{"https://linear.app/x ;id", false},                // a space is a command line to xdg-open's $BROWSER
 		{"//linear.app/acme", false},                       // right host, no scheme at all
 		{"-froot@evil.test", false},                        // parses fine; the scheme check is what stops it
 		{"https://linear.app\x00/acme", false},             // a control byte Parse refuses outright
