@@ -167,8 +167,8 @@ func TestVerifyWarnsOnMidStageAutomation(t *testing.T) {
 		// Team, trigger and target, in the operator's own vocabulary.
 		`team LERP: "On PR open" moves tickets to "In Progress", which lerp.toml never names:`,
 		// Every stage the move costs, and the hop it costs it.
-		`  a run in "Planning" will be moved there mid-stage and its on_success hop to "Plan Review" skipped`,
-		`  a run in "Todo" will be moved there mid-stage and its on_success hop to "Done" skipped`,
+		`  a run in "Planning" that opens a pull request will be moved there mid-stage, losing its on_success hop to "Plan Review"`,
+		`  a run in "Todo" that opens a pull request will be moved there mid-stage, losing its on_success hop to "Done"`,
 		// Both ways out.
 		`fix: set that automation to No action for team LERP, or point a queue at "In Progress"`,
 	} {
@@ -327,5 +327,65 @@ func TestVerifyWarnsRatherThanRefusingWhenAutomationsCannotBeRead(t *testing.T) 
 	want := "team LERP: could not read git automations"
 	if len(warnings) != 1 || !strings.Contains(warnings[0], want) {
 		t.Errorf("warnings = %v, want one line containing %q", warnings, want)
+	}
+}
+
+func TestVerifyOrdersTheBranchScopedRulesOfOneEvent(t *testing.T) {
+	fake := verifyFake()
+	// One event, the team-wide rule and two branch overrides of it, declared
+	// in the arbitrary order Linear is free to list them in.
+	fake.SetGitAutomations("LERP",
+		linear.GitAutomation{Event: linear.GitEventStart, Status: "In Progress", Branch: "release/*"},
+		linear.GitAutomation{Event: linear.GitEventStart, Status: "In Progress"},
+		linear.GitAutomation{Event: linear.GitEventStart, Status: "In Progress", Branch: "main"},
+	)
+	warnings, err := Verify(context.Background(), fake, verifyRepo())
+	if err != nil {
+		t.Fatalf("Verify = %v, want nil", err)
+	}
+	var leads []string
+	for _, line := range warnings {
+		if strings.HasPrefix(line, "team ") {
+			leads = append(leads, line)
+		}
+	}
+	// The team-wide rule first, then its overrides in branch order — a stable
+	// report whatever order the connection came back in.
+	want := []string{
+		`team LERP: "On PR open" moves tickets to "In Progress", which lerp.toml never names:`,
+		`team LERP: "On PR open" (target branch "main") moves tickets to "In Progress", which lerp.toml never names:`,
+		`team LERP: "On PR open" (target branch "release/*") moves tickets to "In Progress", which lerp.toml never names:`,
+	}
+	if !slices.Equal(leads, want) {
+		t.Errorf("lead lines =\n%s\nwant\n%s", strings.Join(leads, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+func TestVerifyWarnsPerTeam(t *testing.T) {
+	fake := verifyFake()
+	fake.SetTeamStates("DOCS", "Todo", "Planning", "Plan Review", "Done", "Needs Help", "In Progress")
+	// One served team collides; the other's automation targets a status the
+	// pipeline names, so it stays out of the report entirely.
+	fake.SetGitAutomations("DOCS", linear.GitAutomation{
+		Event: linear.GitEventStart, Status: "In Progress",
+	})
+	fake.SetGitAutomations("LERP", linear.GitAutomation{
+		Event: linear.GitEventStart, Status: "Plan Review",
+	})
+	repo := verifyRepo()
+	repo.Teams = []string{"LERP", "DOCS"}
+	warnings, err := Verify(context.Background(), fake, repo)
+	if err != nil {
+		t.Fatalf("Verify = %v, want nil", err)
+	}
+	msg := strings.Join(warnings, "\n")
+	if !strings.Contains(msg, `team DOCS: "On PR open" moves tickets to "In Progress"`) {
+		t.Errorf("warnings\n%s\ndo not name team DOCS's collision", msg)
+	}
+	if strings.Contains(msg, "team LERP") {
+		t.Errorf("warnings\n%s\nname team LERP, whose automation the pipeline understands", msg)
+	}
+	if !strings.Contains(msg, "fix: set that automation to No action for team DOCS") {
+		t.Errorf("warnings\n%s\ndo not point the fix at the team it belongs to", msg)
 	}
 }

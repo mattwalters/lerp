@@ -96,8 +96,8 @@ type Runner struct {
 // OnSuccess and OnFailure name Linear statuses, not queues — they may
 // point at a status with no queue (a human review column). That Status
 // and both targets exist on each configured team's board is verified
-// once at startup, before the first reconciler pass
-// (loop.VerifyStatuses), not here: loading config cannot see the board.
+// once at startup, before the first reconciler pass (loop.Verify), not
+// here: loading config cannot see the board.
 type Queue struct {
 	Status    string `toml:"status"`
 	Prompt    string `toml:"prompt"`

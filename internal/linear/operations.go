@@ -533,7 +533,7 @@ const teamGitAutomationsQuery = `
 query TeamGitAutomations($key: String!) {
   teams(filter: { key: { eq: $key } }, first: 1) {
     nodes {
-      gitAutomationStates(first: 50) {
+      gitAutomationStates(first: 250) {
         nodes {
           event
           state { name }
@@ -544,9 +544,12 @@ query TeamGitAutomations($key: String!) {
   }
 }`
 
-// TeamGitAutomations reads the team's git automations (see Client). Fifty is
-// past any real configuration: Linear offers five events, and the rest of the
-// connection is branch-scoped overrides of them.
+// TeamGitAutomations reads the team's git automations (see Client). The
+// connection holds five rules team-wide and five more per target-branch row,
+// so 250 — Linear's own page ceiling — is a team with fifty branch patterns,
+// past any configuration a person maintains by hand. Unpaginated for that
+// reason: a second round trip at every startup to cover a board nobody has is
+// the wrong trade.
 func (c *HTTP) TeamGitAutomations(ctx context.Context, teamKey string) ([]GitAutomation, error) {
 	var resp struct {
 		Teams struct {

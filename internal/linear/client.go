@@ -125,7 +125,7 @@ type Client interface {
 	ListUnassignedIssues(ctx context.Context, teamKey string) ([]Issue, error)
 	// TeamStates reports the names of the team's workflow states, in board
 	// order — the one read behind the startup verification that every
-	// configured status exists on its team (loop.VerifyStatuses). The loop's
+	// configured status exists on its team (loop.Verify). The loop's
 	// regular passes never call it.
 	TeamStates(ctx context.Context, teamKey string) ([]string, error)
 	// TeamGitAutomations reports the team's configured git automations —

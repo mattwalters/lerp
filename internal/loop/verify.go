@@ -170,7 +170,8 @@ func verifyGitAutomations(ctx context.Context, client linear.Client, repo *confi
 // gitAutomationWarning is one collision as the operator reads it: what the
 // automation does, what it costs each stage, and the two ways out. It names
 // every queue because lerp cannot know which stage opens the pull request
-// that trips the automation — any run the rule reaches loses its hop.
+// that trips the automation — so each line says what a run in that status
+// loses if it is the one that opens it, rather than asserting that it will.
 func gitAutomationWarning(team, label string, a linear.GitAutomation, repo *config.RepoConfig) []string {
 	trigger, scope := fmt.Sprintf("%q", label), fmt.Sprintf("for team %s", team)
 	if a.Branch != "" {
@@ -185,7 +186,7 @@ func gitAutomationWarning(team, label string, a linear.GitAutomation, repo *conf
 	for _, qname := range slices.Sorted(maps.Keys(repo.Queues)) {
 		q := repo.Queues[qname]
 		lines = append(lines, fmt.Sprintf(
-			"  a run in %q will be moved there mid-stage and its on_success hop to %q skipped",
+			"  a run in %q that opens a pull request will be moved there mid-stage, losing its on_success hop to %q",
 			q.Status, q.OnSuccess))
 	}
 	return append(lines, fmt.Sprintf(

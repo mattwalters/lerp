@@ -112,15 +112,15 @@ func openTUI(ctx context.Context, lanes int) error {
 	// spirit): a misspelled queue status would poll as a permanently empty
 	// queue, not an error, and a missing on_success target would fail only
 	// after an agent's whole run. What the same check merely warns about — a
-	// team git automation that would move a ticket mid-stage — is printed
-	// here, before the screen opens, and the run starts anyway.
+	// team git automation that would move a ticket mid-stage — is shown here
+	// and the run starts anyway.
 	client := linear.New(apiKey, nil)
 	warnings, err := loop.Verify(ctx, client, repo)
 	if err != nil {
 		return err
 	}
-	for _, line := range warnings {
-		fmt.Fprintln(os.Stderr, line)
+	if err := announce(os.Stderr, os.Stdin, warnings); err != nil {
+		return err
 	}
 
 	ev := evidence.New(repoDir)
@@ -264,6 +264,42 @@ func initCommand(args []string) {
 		fmt.Printf("wrote %s with Lerp's stock pipeline — review it and check it in\n", config.RepoConfigFile)
 	}
 	fmt.Printf("initialized %s for Linear team %s\n", repoRoot, *team)
+}
+
+// announce shows the startup warnings and waits for the operator to
+// acknowledge them. The refusal returns an error and never opens the screen,
+// so the operator reads it; a warning printed on the way up would not be read
+// at all — the TUI takes the alternate screen buffer a moment later and the
+// text is gone until they quit. So the run still starts, as the warning is
+// not a refusal, but it starts when the operator has seen the warning.
+//
+// The acknowledgement is read a byte at a time rather than through a buffered
+// reader: whatever they type after the newline belongs to the TUI, and a
+// buffered read would swallow it.
+func announce(w io.Writer, r io.Reader, warnings []string) error {
+	if len(warnings) == 0 {
+		return nil
+	}
+	for _, line := range warnings {
+		if _, err := fmt.Fprintln(w, line); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprint(w, "\npress enter to start anyway "); err != nil {
+		return err
+	}
+	var b [1]byte
+	for {
+		n, err := r.Read(b[:])
+		if err != nil {
+			// A closed or unreadable stdin is not a reason to refuse the run:
+			// the warning is on screen either way.
+			return nil
+		}
+		if n == 1 && b[0] == '\n' {
+			return nil
+		}
+	}
 }
 
 // isTerminal reports whether f is a character device — a terminal, as far as
