@@ -718,6 +718,7 @@ func TestSearchOverAHostileTitleStaysInert(t *testing.T) {
 	}
 	view := m.View()
 	escapeFree(t, "a highlighted hostile title", view)
+	bidiFree(t, "a highlighted hostile title", view)
 	for _, line := range strings.Split(view, "\n") {
 		if got := lipgloss.Width(line); got > m.width {
 			t.Fatalf("a highlighted row is %d cells wide in a %d-column window:\n%s",

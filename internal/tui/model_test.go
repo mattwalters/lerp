@@ -4240,6 +4240,7 @@ func TestTicketDetailRendersHostileBodyInert(t *testing.T) {
 
 	view := m.View()
 	escapeFree(t, "inbox detail", view)
+	bidiFree(t, "inbox detail", view)
 	if !strings.Contains(view, "blocked by LERP-36") || strings.Contains(view, "<issue") {
 		t.Fatalf("issue tags did not reduce to identifiers:\n%s", view)
 	}
@@ -4284,9 +4285,9 @@ func TestTicketDetailWrapsProse(t *testing.T) {
 }
 
 // hostile is a ticket title as an attacker would write it: an OSC title
-// write, a screen erase, a cursor home, and a carriage return to repaint the
-// row it lands on.
-const hostile = "\x1b]0;pwned\x07\x1b[2J\x1b[1;1Hpwn\rme"
+// write, a screen erase, a cursor home, a carriage return to repaint the row
+// it lands on, and a right-to-left override to reorder what is left.
+const hostile = "\x1b]0;pwned\x07\x1b[2J\x1b[1;1Hpwn\rme\u202e"
 
 // Linear-sourced text reaching the terminal is the whole finding: whatever a
 // ticket is titled, every panel and every lens renders it inert, and the
@@ -4311,6 +4312,7 @@ func TestHostileTitlesRenderInert(t *testing.T) {
 		hm := update(t, board(t, hostile), keyMsg(focus))
 		view := hm.View()
 		escapeFree(t, "panel "+focus, view)
+		bidiFree(t, "panel "+focus, view)
 
 		// Geometry is the assertion that proves the injection is inert
 		// rather than merely absent: a title that cannot add a row or shift
@@ -4331,6 +4333,7 @@ func TestHostileTitlesRenderInert(t *testing.T) {
 	// The promote picker renders the selected item's title too.
 	m := update(t, update(t, board(t, hostile), keyMsg("1")), keyMsg("p"))
 	escapeFree(t, "promote picker", m.View())
+	bidiFree(t, "promote picker", m.View())
 }
 
 // The log pane carries agent output, which is legitimately colored — so it
@@ -4367,10 +4370,13 @@ func TestHostileErrorTextCannotRepaintTheStatusBar(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventError, Err: errors.New(hostile)}})
 	escapeFree(t, "status bar", m.View())
+	bidiFree(t, "status bar", m.View())
 	m = update(t, m, openErrMsg{err: errors.New(hostile)})
 	escapeFree(t, "status bar", m.View())
+	bidiFree(t, "status bar", m.View())
 	m = update(t, m, promotedMsg{ticket: "LERP-1", status: "Planning", err: errors.New(hostile)})
 	escapeFree(t, "status bar", m.View())
+	bidiFree(t, "status bar", m.View())
 }
 
 // Running and pending rows are adjacent in one list now, so stepping past a

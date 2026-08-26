@@ -3,6 +3,7 @@ package tui
 import (
 	"strings"
 	"testing"
+	"unicode"
 
 	"github.com/mattwalters/lerp/internal/linear"
 	"github.com/mattwalters/lerp/internal/loop"
@@ -30,9 +31,27 @@ func TestCleanDefusesEscapeSequences(t *testing.T) {
 		{"tab", "a\tb", "a b"},
 		{"bell", "ring\x07ring", "ringring"},
 		{"reset charset", "\x1bcreset", "reset"},
+		// Category Cf: no glyph, no execution, but a row that reads as a
+		// different ticket than the one it names.
+		{"rtl override", "LERP-1 \u202egnitratS", "LERP-1 gnitratS"},
+		{"bidi isolates", "\u2066LERP-1\u2069 \u2068title\u2069", "LERP-1 title"},
+		{"left-to-right mark", "LERP-\u200e1", "LERP-1"},
+		{"zero-width joiner", "LERP\u200d-1", "LERP-1"},
+		{"zero-width space", "LE\u200bRP-1", "LERP-1"},
+		{"byte order mark", "\ufeffLERP-1", "LERP-1"},
+		{"soft hyphen", "LERP\u00ad-1", "LERP-1"},
+		{"tag characters", "LERP-1\U000e0074\U000e0061\U000e0067", "LERP-1"},
 		// Ordinary titles survive untouched — sanitizing must not cost the
-		// operator the em dash or the emoji their tickets are named with.
+		// operator the em dash or the single-codepoint emoji their tickets
+		// are named with. A ZWJ sequence does come apart, which is the
+		// price of dropping the category rather than curating a list.
 		{"unicode passes through", "Fix ✅ the — 日本語 test", "Fix ✅ the — 日本語 test"},
+		// Cf, not the whole of C, and not the marks next door: a variation
+		// selector decides how the emoji beside it renders, and a private-use
+		// rune is the glyph a patched font draws. These two are what fails if
+		// format() is ever widened to unicode.C or to the combining marks.
+		{"emoji variation selector survives", "warn \u26a0\ufe0f now", "warn \u26a0\ufe0f now"},
+		{"private use survives", "warn \uf05a now", "warn \uf05a now"},
 		{"empty", "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -63,6 +82,11 @@ func TestCleanTextKeepsRowsAndNothingElse(t *testing.T) {
 		{"eight-bit csi", "\x9b2Jwipe", "wipe"},
 		{"delete", "del\x7fete", "delete"},
 		{"broken utf-8", "bad\xffbytes", "badbytes"},
+		// A body is prose, and prose is where a spoofed identifier reads
+		// most like the real thing.
+		{"rtl override", "see \u202e63-PREL", "see 63-PREL"},
+		{"bidi isolate spans a line", "one\n\u2066two\u2069\nthree", "one\ntwo\nthree"},
+		{"zero-width joiner", "LERP\u200d-36", "LERP-36"},
 		{"markdown passes through", "## Plan\n\n- one — 日本語", "## Plan\n\n- one — 日本語"},
 		{"empty", "", ""},
 	} {
@@ -228,6 +252,22 @@ func escapeFree(t *testing.T, what, view string) {
 	for _, bad := range []string{"\x1b]", "\x1b[2J", "\x1b[1;1H", "\x1b_", "\x1bP", "\r", "\x07", "\x08", "\x7f"} {
 		if strings.Contains(view, bad) {
 			t.Fatalf("%s contains %q:\n%q", what, bad, view)
+		}
+	}
+}
+
+// bidiFree is escapeFree's counterpart for the spoofing half: no rendered
+// screen carries a format character, so no row can be reordered by one. Not
+// the same as a row that cannot be reordered at all — a title written in
+// Hebrew still moves the neutrals around it, because that is the bidi
+// algorithm doing its job and clean cannot strip a language. What it fixes
+// is the override a Latin title has no reason to carry. The log pane's raw
+// fallback is the deliberate exception and is not held to this.
+func bidiFree(t *testing.T, what, view string) {
+	t.Helper()
+	for _, r := range view {
+		if unicode.Is(unicode.Cf, r) {
+			t.Fatalf("%s contains format character %U:\n%q", what, r, view)
 		}
 	}
 }
