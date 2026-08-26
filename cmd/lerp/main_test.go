@@ -20,12 +20,10 @@ func TestUsageDoesNotSayLane(t *testing.T) {
 // until the operator acknowledges it.
 func TestAnnounceWaitsForTheOperator(t *testing.T) {
 	var out strings.Builder
-	// Two keystrokes the TUI wants follow the acknowledgement; announce must
-	// leave them alone.
-	in := strings.NewReader("\n2j")
-	if err := announce(&out, in, []string{"team LERP: trouble", "fix: do the thing"}); err != nil {
-		t.Fatalf("announce = %v, want nil", err)
-	}
+	// Type-ahead before the acknowledgement must not release the gate, and
+	// the two keystrokes the TUI wants after it must survive.
+	in := strings.NewReader("abc\n2j")
+	announce(&out, in, []string{"team LERP: trouble", "fix: do the thing"})
 	for _, want := range []string{"team LERP: trouble", "fix: do the thing", "press enter"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("output %q missing %q", out.String(), want)
@@ -45,9 +43,7 @@ func TestAnnounceIsSilentWithoutWarnings(t *testing.T) {
 	// Nothing is read either: a clean startup must not eat the first
 	// keystroke the operator aims at the board.
 	in := strings.NewReader("2")
-	if err := announce(&out, in, nil); err != nil {
-		t.Fatalf("announce = %v, want nil", err)
-	}
+	announce(&out, in, nil)
 	if out.String() != "" {
 		t.Errorf("output = %q, want nothing", out.String())
 	}
@@ -60,10 +56,23 @@ func TestAnnounceIsSilentWithoutWarnings(t *testing.T) {
 // and refusing here would turn a warning into the refusal it is not.
 func TestAnnounceStartsAnywayWhenStdinIsClosed(t *testing.T) {
 	var out strings.Builder
-	if err := announce(&out, strings.NewReader(""), []string{"team LERP: trouble"}); err != nil {
-		t.Fatalf("announce = %v, want nil", err)
-	}
+	announce(&out, strings.NewReader(""), []string{"team LERP: trouble"})
 	if !strings.Contains(out.String(), "team LERP: trouble") {
 		t.Errorf("output %q missing the warning", out.String())
+	}
+}
+
+// A terminal that is not translating carriage returns delivers enter as \r.
+// A gate that only knows \n would swallow it and never open.
+func TestAnnounceAcceptsACarriageReturn(t *testing.T) {
+	var out strings.Builder
+	in := strings.NewReader("\r2j")
+	announce(&out, in, []string{"team LERP: trouble"})
+	rest, err := io.ReadAll(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(rest) != "2j" {
+		t.Errorf("a carriage return left %q for the TUI, want %q", rest, "2j")
 	}
 }

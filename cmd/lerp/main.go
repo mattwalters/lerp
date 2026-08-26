@@ -119,16 +119,17 @@ func openTUI(ctx context.Context, lanes int) error {
 	if err != nil {
 		return err
 	}
-	if err := announce(os.Stderr, os.Stdin, warnings); err != nil {
-		return err
-	}
-
 	ev := evidence.New(repoDir)
 	lock, err := ev.AcquireLock()
 	if err != nil {
 		return err
 	}
 	defer lock.Close()
+
+	// After the lock, not before: a second lerp on this clone should fail on
+	// the lock rather than make the operator read and acknowledge a warning
+	// about a run it is never going to start.
+	announce(os.Stderr, os.Stdin, warnings)
 
 	// The loop's diagnostic stream — provision, dispose, and runner output —
 	// is ephemeral process detail: a local file, discarded without ceremony
@@ -273,31 +274,38 @@ func initCommand(args []string) {
 // text is gone until they quit. So the run still starts, as the warning is
 // not a refusal, but it starts when the operator has seen the warning.
 //
+// Every launch, for as long as the board and the config disagree. There is
+// nowhere to remember that an operator has already decided to live with a
+// warning: SCOPE invariant 1 keeps durable state in Linear, and lerp's own
+// board is not the place to record an opinion about the board. A keystroke
+// per launch is the price of a warning that is read, and the warning ends the
+// moment either side of the disagreement is fixed.
+//
 // The acknowledgement is read a byte at a time rather than through a buffered
 // reader: whatever they type after the newline belongs to the TUI, and a
 // buffered read would swallow it.
-func announce(w io.Writer, r io.Reader, warnings []string) error {
+func announce(w io.Writer, r io.Reader, warnings []string) {
 	if len(warnings) == 0 {
-		return nil
+		return
 	}
 	for _, line := range warnings {
-		if _, err := fmt.Fprintln(w, line); err != nil {
-			return err
-		}
+		// Write errors are dropped on purpose. A warning is not a refusal,
+		// and `lerp 2>&-` must not be the difference between a run and no
+		// run — the same reasoning as the unreadable stdin below.
+		fmt.Fprintln(w, line)
 	}
-	if _, err := fmt.Fprint(w, "\npress enter to start anyway "); err != nil {
-		return err
-	}
+	fmt.Fprint(w, "\npress enter to start anyway ")
 	var b [1]byte
 	for {
 		n, err := r.Read(b[:])
 		if err != nil {
-			// A closed or unreadable stdin is not a reason to refuse the run:
-			// the warning is on screen either way.
-			return nil
+			return
 		}
-		if n == 1 && b[0] == '\n' {
-			return nil
+		// Both line endings: a terminal that is not translating carriage
+		// returns delivers enter as \r, and a gate that only knows \n would
+		// swallow every keystroke and never open.
+		if n == 1 && (b[0] == '\n' || b[0] == '\r') {
+			return
 		}
 	}
 }

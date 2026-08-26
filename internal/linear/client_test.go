@@ -545,11 +545,13 @@ func TestTeamGitAutomations(t *testing.T) {
 		}
 		// A team-wide rule, a rule switched off (no target state), and a
 		// rule scoped to a target branch — the three shapes Linear returns.
-		writeData(t, w, `{"teams":{"nodes":[{"gitAutomationStates":{"nodes":[
-			{"event":"start","state":{"name":"In Progress"},"targetBranch":null},
-			{"event":"review","state":null,"targetBranch":null},
-			{"event":"merge","state":{"name":"Done"},"targetBranch":{"branchPattern":"main"}}
-		]}}]}}`)
+		writeData(t, w, `{"teams":{"nodes":[{"gitAutomationStates":{
+			"pageInfo":{"hasNextPage":false,"endCursor":""},
+			"nodes":[
+				{"event":"start","state":{"name":"In Progress"},"targetBranch":null},
+				{"event":"review","state":null,"targetBranch":null},
+				{"event":"merge","state":{"name":"Done"},"targetBranch":{"branchPattern":"main"}}
+			]}}]}}`)
 	})
 	automations, err := c.TeamGitAutomations(context.Background(), "LERP")
 	if err != nil {
@@ -562,6 +564,39 @@ func TestTeamGitAutomations(t *testing.T) {
 	}
 	if !reflect.DeepEqual(automations, want) {
 		t.Errorf("automations = %+v, want %+v", automations, want)
+	}
+}
+
+// A team past one page must not report the rules it did not read as absent:
+// a collision on the second page would come back as a clean board.
+func TestTeamGitAutomationsFollowsPages(t *testing.T) {
+	var cursors []any
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		req := decodeRequest(t, r)
+		cursors = append(cursors, req.Variables["after"])
+		if req.Variables["after"] == nil {
+			writeData(t, w, `{"teams":{"nodes":[{"gitAutomationStates":{
+				"pageInfo":{"hasNextPage":true,"endCursor":"page-2"},
+				"nodes":[{"event":"merge","state":{"name":"Done"},"targetBranch":null}]}}]}}`)
+			return
+		}
+		writeData(t, w, `{"teams":{"nodes":[{"gitAutomationStates":{
+			"pageInfo":{"hasNextPage":false,"endCursor":""},
+			"nodes":[{"event":"start","state":{"name":"In Progress"},"targetBranch":null}]}}]}}`)
+	})
+	automations, err := c.TeamGitAutomations(context.Background(), "LERP")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []GitAutomation{
+		{Event: GitEventMerge, Status: "Done"},
+		{Event: GitEventStart, Status: "In Progress"},
+	}
+	if !reflect.DeepEqual(automations, want) {
+		t.Errorf("automations = %+v, want %+v", automations, want)
+	}
+	if !reflect.DeepEqual(cursors, []any{nil, "page-2"}) {
+		t.Errorf("cursors = %v, want [<nil> page-2]", cursors)
 	}
 }
 

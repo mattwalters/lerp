@@ -530,10 +530,11 @@ func (c *HTTP) Viewer(ctx context.Context) (string, error) {
 }
 
 const teamGitAutomationsQuery = `
-query TeamGitAutomations($key: String!) {
+query TeamGitAutomations($key: String!, $after: String) {
   teams(filter: { key: { eq: $key } }, first: 1) {
     nodes {
-      gitAutomationStates(first: 250) {
+      gitAutomationStates(first: 50, after: $after) {
+        pageInfo { hasNextPage endCursor }
         nodes {
           event
           state { name }
@@ -544,48 +545,63 @@ query TeamGitAutomations($key: String!) {
   }
 }`
 
-// TeamGitAutomations reads the team's git automations (see Client). The
-// connection holds five rules team-wide and five more per target-branch row,
-// so 250 — Linear's own page ceiling — is a team with fifty branch patterns,
-// past any configuration a person maintains by hand. Unpaginated for that
-// reason: a second round trip at every startup to cover a board nobody has is
-// the wrong trade.
+// TeamGitAutomations reads the team's git automations (see Client). Paginated
+// like the issue listings: the connection holds five rules team-wide and five
+// more per target-branch row, so one page is almost always the whole of it —
+// but a page that stopped at the ceiling and said nothing would report a
+// collision past it as a clean board, which is the worst thing this read can
+// produce.
 func (c *HTTP) TeamGitAutomations(ctx context.Context, teamKey string) ([]GitAutomation, error) {
-	var resp struct {
-		Teams struct {
-			Nodes []struct {
-				GitAutomationStates struct {
-					Nodes []struct {
-						Event string `json:"event"`
-						// Null when the rule is set to take no action.
-						State *struct {
-							Name string `json:"name"`
-						} `json:"state"`
-						// Null for the team-wide rule.
-						TargetBranch *struct {
-							BranchPattern string `json:"branchPattern"`
-						} `json:"targetBranch"`
-					} `json:"nodes"`
-				} `json:"gitAutomationStates"`
-			} `json:"nodes"`
-		} `json:"teams"`
-	}
-	if err := c.do(ctx, teamGitAutomationsQuery, map[string]any{"key": teamKey}, &resp); err != nil {
-		return nil, fmt.Errorf("team git automations: %w", err)
-	}
-	if len(resp.Teams.Nodes) == 0 {
-		return nil, fmt.Errorf("team git automations: team %q: %w", teamKey, ErrNotFound)
-	}
 	var automations []GitAutomation
-	for _, n := range resp.Teams.Nodes[0].GitAutomationStates.Nodes {
-		a := GitAutomation{Event: n.Event}
-		if n.State != nil {
-			a.Status = n.State.Name
+	after := ""
+	for {
+		var resp struct {
+			Teams struct {
+				Nodes []struct {
+					GitAutomationStates struct {
+						PageInfo struct {
+							HasNextPage bool   `json:"hasNextPage"`
+							EndCursor   string `json:"endCursor"`
+						} `json:"pageInfo"`
+						Nodes []struct {
+							Event string `json:"event"`
+							// Null when the rule is set to take no action.
+							State *struct {
+								Name string `json:"name"`
+							} `json:"state"`
+							// Null for the team-wide rule.
+							TargetBranch *struct {
+								BranchPattern string `json:"branchPattern"`
+							} `json:"targetBranch"`
+						} `json:"nodes"`
+					} `json:"gitAutomationStates"`
+				} `json:"nodes"`
+			} `json:"teams"`
 		}
-		if n.TargetBranch != nil {
-			a.Branch = n.TargetBranch.BranchPattern
+		vars := map[string]any{"key": teamKey}
+		if after != "" {
+			vars["after"] = after
 		}
-		automations = append(automations, a)
+		if err := c.do(ctx, teamGitAutomationsQuery, vars, &resp); err != nil {
+			return nil, fmt.Errorf("team git automations: %w", err)
+		}
+		if len(resp.Teams.Nodes) == 0 {
+			return nil, fmt.Errorf("team git automations: team %q: %w", teamKey, ErrNotFound)
+		}
+		states := resp.Teams.Nodes[0].GitAutomationStates
+		for _, n := range states.Nodes {
+			a := GitAutomation{Event: n.Event}
+			if n.State != nil {
+				a.Status = n.State.Name
+			}
+			if n.TargetBranch != nil {
+				a.Branch = n.TargetBranch.BranchPattern
+			}
+			automations = append(automations, a)
+		}
+		if !states.PageInfo.HasNextPage {
+			return automations, nil
+		}
+		after = states.PageInfo.EndCursor
 	}
-	return automations, nil
 }
