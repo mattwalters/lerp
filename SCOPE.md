@@ -167,7 +167,10 @@ alive without it. That is a display default, not a rule about process.
    failed run, a run finished at a gate, a ticket that left the pipeline
    — with the tickets that have not entered the pipeline yet folded to a
    summary line behind one key: being blocked-on is an interrupt, pulling
-   from the backlog is a sit-down motion. Sorting it (by leverage,
+   from the backlog is a sit-down motion. A claimed ticket resting in an
+   intake status is never folded — no pass can pick it up again while the
+   claim stands (invariant 4), so it is blocked on a human wherever
+   Linear files it. Sorting it (by leverage,
    priority, status or project), scoping it to one project, searching it
    (`/`, a plain substring over the rows on screen) and unfolding that
    backlog are display over the one list the pass already fetched,

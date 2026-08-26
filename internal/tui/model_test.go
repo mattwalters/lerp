@@ -1477,8 +1477,12 @@ func TestProjectFilterSkipsAProjectThatIsAllBacklog(t *testing.T) {
 	if m.project != "Later" || len(m.shown) != 0 {
 		t.Fatalf("folding changed the scope: %q, %d rows", m.project, len(m.shown))
 	}
-	if got := m.emptyHint(); !strings.Contains(got, "P cycles the project filter back to all") {
-		t.Fatalf("the empty panel's hint = %q, want the promise P has to keep", got)
+	// Both keys: either one can be why the panel is empty, and the note
+	// above the hint does not say which.
+	for _, want := range []string{"P cycles the project filter back to all", "B browses the backlog"} {
+		if got := m.emptyHint(); !strings.Contains(got, want) {
+			t.Fatalf("the empty panel's hint = %q, want it to name %q", got, want)
+		}
 	}
 	m = update(t, m, keyMsg("P"))
 	if m.project != "" {
@@ -1574,6 +1578,41 @@ func TestAPassDoesNotResetTheFold(t *testing.T) {
 	}
 	if got := len(m.shown); got != 6 {
 		t.Fatalf("the list after a pass has %d rows, want the whole expanded list", got)
+	}
+}
+
+// Done-when: a ticket the operator has claimed, resting in a status Linear
+// files as intake, is never folded away and is counted on the status bar.
+// The backlog tier is derived from Linear's category alone and says nothing
+// about who holds the ticket; a claimed one there did not fail to enter the
+// pipeline, it fell back out of one, and no pass can pick it up again while
+// the claim stands. Folding it would hide the one row only a human can
+// unstick behind a key nothing tells them to press.
+func TestAClaimedTicketInIntakeIsNeverFolded(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-5", TicketID: "id-5", Title: "Dragged back to Todo", Status: "Todo",
+			Relevance: loop.StatusBacklog, Claimed: true,
+			Reason: `claimed in "Todo" — waiting to enter the pipeline`},
+		{Ticket: "LERP-6", TicketID: "id-6", Title: "Nobody has started this", Status: "Todo",
+			Relevance: loop.StatusBacklog,
+			Reason:    `unassigned in "Todo" — waiting to enter the pipeline`},
+	}}})
+
+	if got := shownTickets(m); !slices.Equal(got, []string{"LERP-5"}) {
+		t.Fatalf("the folded inbox shows %v, want the stranded claimed ticket", got)
+	}
+	if got := m.View(); !strings.Contains(got, "● 1 in the inbox") {
+		t.Fatalf("the status bar does not count the stranded claimed ticket:\n%s", got)
+	}
+	// And the one beside it, which nobody has claimed, is behind the fold.
+	panel := m.attentionPanel(96, 14)
+	if !strings.Contains(panel, "1 waiting to enter the pipeline — B to browse") {
+		t.Fatalf("the unclaimed intake row is not folded:\n%s", panel)
+	}
+	if strings.Contains(panel, "nothing is waiting on you") {
+		t.Fatalf("a panel with a stranded claimed ticket on it says nothing is:\n%s", panel)
 	}
 }
 

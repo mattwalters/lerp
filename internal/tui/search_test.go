@@ -152,6 +152,24 @@ func TestSearchIsInertBehindAFullyFoldedInbox(t *testing.T) {
 	if !m.searching {
 		t.Fatal("/ is still inert once the backlog is on screen")
 	}
+
+	// A project scope left over a folded-away project ends at the same one
+	// line, by a different road: the pass has rows and the fold base has
+	// rows, and this panel still has none for a prompt to narrow.
+	scoped, _, _ := newTestModel(t, 1)
+	scoped = update(t, scoped, keyMsg("1"))
+	scoped = update(t, scoped, eventMsg{ev: allBacklogProject()})
+	scoped = browseBacklog(t, scoped)
+	scoped = update(t, scoped, keyMsg("P")) // Later, every row of it backlog
+	scoped = update(t, scoped, keyMsg("B")) // folded away under the scope
+	if len(scoped.shown) != 0 || scoped.project != "Later" {
+		t.Fatalf("setup: %d rows scoped to %q, want none scoped to Later",
+			len(scoped.shown), scoped.project)
+	}
+	scoped = update(t, scoped, keyMsg("/"))
+	if scoped.searching {
+		t.Fatal("/ opened a prompt over a panel a project scope had emptied")
+	}
 }
 
 // Done-when: the prompt takes the keyboard while it is open. A p or a q

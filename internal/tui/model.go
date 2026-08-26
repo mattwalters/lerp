@@ -721,10 +721,13 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.refreshMain()
 		}
 	case key.Matches(msg, m.keys.Search):
-		// Nothing to narrow is nothing to search: an empty inbox — or one
-		// whose every row is behind the fold — would put a prompt over the
-		// one line that says so.
-		if m.focus == panelAttention && len(m.unfolded()) > 0 {
+		// Nothing to narrow is nothing to search: the question is whether
+		// this panel has a row on it, not whether the pass found one. An
+		// empty inbox, a fold hiding every row, and a project scope left
+		// over one all end at the same one-line panel, and a prompt opened
+		// over that line takes the keyboard for a filter with nothing to
+		// match. The way back out of each is the key that empty line names.
+		if m.focus == panelAttention && len(m.shown) > 0 {
 			m.openSearch()
 			m.refreshMain()
 		}
@@ -1665,16 +1668,14 @@ func (m *model) resort() {
 // matched whole, and a plain substring over the facts a row already shows
 // (see matchesSearch).
 //
-// The fold hides exactly the backlog tier rather than admitting a list of
-// the tiers it keeps: StatusUnknown is the reconciler's bug marker, which
-// sorts first and has to stay on screen when it appears.
+// What the fold hides is folds(); everything else stays on screen.
 func filterAttention(items []loop.AttentionItem, project, query string, backlogOpen bool) []loop.AttentionItem {
 	if project == "" && query == "" && backlogOpen {
 		return items
 	}
 	out := make([]loop.AttentionItem, 0, len(items))
 	for _, it := range items {
-		if !backlogOpen && it.Relevance == loop.StatusBacklog {
+		if !backlogOpen && folds(it) {
 			continue
 		}
 		if matchesFilters(it, project, query) {
@@ -1682,6 +1683,24 @@ func filterAttention(items []loop.AttentionItem, project, query string, backlogO
 		}
 	}
 	return out
+}
+
+// folds reports whether the fold hides this row: a ticket resting where
+// Linear files work that has not started, and that nobody has claimed.
+//
+// Two readings, not one, because the tier alone cannot answer it. The
+// backlog tier is derived from Linear's status category and knows nothing
+// about who holds the ticket, and a ticket the operator has claimed resting
+// in an intake status has not failed to enter the pipeline — it fell back
+// out of one, and no pass can pick it up again while the claim stands
+// (invariant 4: an assigned ticket is never eligible). That is as blocked on
+// a human as a row gets, so it is never folded and never uncounted.
+//
+// A negative test rather than an allow-list of the tiers to keep:
+// StatusUnknown is the reconciler's bug marker, sorts first, and an
+// allow-list would silently fold it away.
+func folds(it loop.AttentionItem) bool {
+	return it.Relevance == loop.StatusBacklog && !it.Claimed
 }
 
 // matchesFilters is everything the two typed controls say about one row —
@@ -1711,7 +1730,7 @@ func (m *model) foldedRows() []loop.AttentionItem {
 	}
 	var out []loop.AttentionItem
 	for _, it := range m.attention {
-		if it.Relevance == loop.StatusBacklog && matchesFilters(it, m.project, m.search) {
+		if folds(it) && matchesFilters(it, m.project, m.search) {
 			out = append(out, it)
 		}
 	}
@@ -1839,13 +1858,15 @@ func (m *model) cycleProject() {
 }
 
 // blockedOnYou counts the tickets in the pass's list that are waiting on a
-// human: every tier but the backlog, which is unstarted work nobody is
-// blocked on. Read off m.attention rather than the shown rows, so neither
-// the fold nor a filter can change a number that is about the whole board.
+// human: everything the fold does not hide. One predicate for both, so the
+// number on the status bar and the rows the panel opens on can never
+// disagree about what "blocked on you" means. Read off m.attention rather
+// than the shown rows, so neither the fold's own state nor a filter can
+// change a number that is about the whole board.
 func (m *model) blockedOnYou() int {
 	n := 0
 	for _, it := range m.attention {
-		if it.Relevance != loop.StatusBacklog {
+		if !folds(it) {
 			n++
 		}
 	}

@@ -167,8 +167,16 @@ type AttentionItem struct {
 	// acts on it; it is carried so the table can order and mark statuses
 	// without a second reading of the config.
 	Relevance StatusRelevance
-	Reason    string
-	URL       string
+	// Claimed is whether the ticket is assigned to the operator rather than
+	// waiting unassigned. Nothing in the loop acts on it; it is carried
+	// because Relevance cannot answer it — that is derived from Linear's
+	// status category alone, so a claimed ticket resting in an intake status
+	// reads as StatusBacklog, and only this says the difference between one
+	// that has not entered the pipeline and one that fell back out of it and
+	// is stranded there while the claim stands.
+	Claimed bool
+	Reason  string
+	URL     string
 	// Priority is Linear's own scale: 0 none, 1 urgent, 2 high, 3 medium,
 	// 4 low. It is a sort key and a column on the row; nothing in the loop
 	// acts on it.
@@ -405,11 +413,18 @@ func (r *Reconciler) attention(ctx context.Context) {
 	served := servedStatuses(r.o.Repo)
 	relevance := statusRelevance(r.o.Repo)
 	var items []AttentionItem
-	// claim is how the ticket came to rest here — the difference between the
-	// two queries, kept where it belongs: in the sentence explaining one row.
-	add := func(issue linear.Issue, claim string) {
+	// claimed is how the ticket came to rest here — the difference between
+	// the two queries. It reaches the row twice over: as the first word of
+	// the sentence explaining it, which is where it belongs, and as a fact
+	// the table can read, because a display that has to parse that sentence
+	// to know is a display coupled to its wording.
+	add := func(issue linear.Issue, claimed bool) {
 		if served[issue.Status] {
 			return
+		}
+		claim := "unassigned"
+		if claimed {
+			claim = "claimed"
 		}
 		rel := relevance(issue.Status, issue.StatusType)
 		items = append(items, AttentionItem{
@@ -419,6 +434,7 @@ func (r *Reconciler) attention(ctx context.Context) {
 			Status:    issue.Status,
 			Project:   issue.Project,
 			Relevance: rel,
+			Claimed:   claimed,
 			Reason:    fmt.Sprintf("%s in %q — %s", claim, issue.Status, rel.Note()),
 			URL:       issue.URL,
 			Priority:  issue.Priority,
@@ -433,7 +449,7 @@ func (r *Reconciler) attention(ctx context.Context) {
 			return
 		}
 		for _, issue := range unassigned {
-			add(issue, "unassigned")
+			add(issue, false)
 		}
 
 		assigned, err := r.o.Client.ListAssignedIssues(ctx, team, viewerID)
@@ -442,7 +458,7 @@ func (r *Reconciler) attention(ctx context.Context) {
 			return
 		}
 		for _, issue := range assigned {
-			add(issue, "claimed")
+			add(issue, true)
 		}
 	}
 	countUnblocks(items)
