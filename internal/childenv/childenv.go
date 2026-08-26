@@ -24,9 +24,10 @@
 // already shipped one fix that was applied at one call site and missed at
 // the other. TestNoOtherPackageReadsTheEnvironment stops a new spawn site
 // from going back to os.Environ(). It cannot see the other way to leak —
-// an exec.Command left with a nil Env inherits lerp's whole process — which
-// is why main drops the key from lerp's own environment as soon as it has
-// read it, leaving nothing for either kind of child to inherit.
+// an exec.Command left with a nil Env inherits lerp's whole process — so it
+// checks the other end instead: cmd/lerp reads the key once and drops it
+// from lerp's own environment, leaving nothing for either kind of child to
+// inherit, and the test fails any package that reads it without dropping it.
 package childenv
 
 import (

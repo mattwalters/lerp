@@ -530,9 +530,14 @@ func TestExecuteDropsTheLinearAPIKeyFromTheRunnerEnvironment(t *testing.T) {
 	if strings.Contains(string(got), "lin_api_secret") {
 		t.Error("runner environment contains the Linear API key's value")
 	}
-	// The same environment still carries what lerp does hand the runner.
+	// The same environment still carries what lerp does hand the runner, and
+	// what it inherited: an Inherited that returned only the extras would
+	// pass every assertion above and leave every real agent without a PATH.
 	if !strings.Contains(string(got), TicketEnv+"=LERP-42") {
 		t.Errorf("runner environment does not carry %s=LERP-42", TicketEnv)
+	}
+	if !slices.Contains(envNames(string(got)), "PATH") {
+		t.Error("runner environment has no PATH; it inherited nothing")
 	}
 }
 

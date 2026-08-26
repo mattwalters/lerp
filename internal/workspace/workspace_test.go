@@ -87,7 +87,7 @@ func writeScript(t *testing.T, dir, name, body string) string {
 func TestWorkspaceCommandsDropTheLinearAPIKey(t *testing.T) {
 	t.Setenv(childenv.LinearAPIKeyEnv, "lin_api_secret")
 	repoDir := t.TempDir()
-	script := writeScript(t, repoDir, "env", "env\n")
+	script := writeScript(t, repoDir, "print-env.sh", "env\n")
 
 	var log bytes.Buffer
 	id := Identity{Lane: 2, TicketID: "issue-123", Workspace: "/tmp/lerp-2"}
@@ -105,8 +105,13 @@ func TestWorkspaceCommandsDropTheLinearAPIKey(t *testing.T) {
 	if strings.Contains(got, "lin_api_secret") {
 		t.Error("workspace environment contains the Linear API key's value")
 	}
-	// The same environment still carries what lerp does hand the command.
+	// The same environment still carries what lerp does hand the command, and
+	// what it inherited: an Inherited that returned only the extras would
+	// pass every assertion above and leave provision without a PATH.
 	if !strings.Contains(got, TicketIDEnv+"=issue-123") {
 		t.Errorf("workspace environment does not carry %s=issue-123", TicketIDEnv)
+	}
+	if !strings.Contains(got, "\nPATH=") {
+		t.Error("workspace environment has no PATH; it inherited nothing")
 	}
 }
