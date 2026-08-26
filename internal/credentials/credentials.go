@@ -142,11 +142,13 @@ type oauthSource struct {
 
 	mu  sync.Mutex
 	tok token
-	// dead latches a refusal. Once Linear has rejected the refresh token,
-	// every later request returns the same error without touching the
-	// network: a dead credential must not hammer the token endpoint once
-	// per GraphQL call. Collapsing these into one surfaced failure, and
-	// stretching the loop's next tick, is LERP-110's job.
+	// dead latches a renewal that cannot come back: a refusal, or a failure
+	// after Linear had already spent the refresh token on it. Every later
+	// request returns the same error without touching the network — a dead
+	// credential must not hammer the token endpoint once per GraphQL call.
+	// Only a token file the operator has since replaced clears it (see
+	// header). Collapsing these into one surfaced failure, and stretching
+	// the loop's next tick, is LERP-110's job.
 	dead error
 }
 
