@@ -1745,6 +1745,102 @@ func TestAttentionRestoresWhatAShortResyncDropped(t *testing.T) {
 	}
 }
 
+// Done-when: a delta that keeps failing falls back to the two listings
+// instead of retrying forever. Nothing here consumes RateLimitError — that is
+// another ticket — so a 429, a gateway error or a query Linear stopped
+// accepting is a hard failure on every pass, and a counter that only counted
+// successes would never let the re-list run again. The inbox would freeze at
+// whatever the cold start saw for the life of the process.
+func TestAttentionFallsBackToListingWhenTheDeltaKeepsFailing(t *testing.T) {
+	h, counting := newCountingHarness(t)
+	h.resyncEvery(2)
+	h.fake.AddIssue("LERP", linear.Issue{ID: "first", Identifier: "LERP-1", Status: "Backlog"})
+	ctx := context.Background()
+
+	h.rec.Tick(ctx)
+	h.waitEvents(t, EventAttention, 1)
+
+	// From here the delta never works again, and a ticket arrives.
+	counting.deltaErr = errors.New("boom")
+	h.fake.AddIssue("LERP", linear.Issue{ID: "arrived", Identifier: "LERP-2", Status: "Needs Help",
+		AssigneeID: "fake-viewer"})
+
+	// Two failed attempts, then the pass gives up on the delta and re-lists.
+	var got []AttentionItem
+	attentions := 0
+	for pass := 0; pass < 3; pass++ {
+		h.rec.Tick(ctx)
+		// A pass emits everything it has to say before Tick returns, so
+		// whatever is in the channel now is the whole of this pass.
+		for drained := false; !drained; {
+			select {
+			case ev := <-h.events:
+				switch ev.Type {
+				case EventAttention:
+					got, attentions = ev.Attention, attentions+1
+				case EventError:
+					if !strings.Contains(ev.Err.Error(), "boom") {
+						t.Fatalf("error event = %v, want the delta's own failure", ev.Err)
+					}
+				}
+			default:
+				drained = true
+			}
+		}
+	}
+	if attentions != 1 {
+		t.Errorf("inboxes emitted across the three passes = %d, want only the fallback's: "+
+			"a pass whose read failed must emit nothing", attentions)
+	}
+	if len(got) != 2 {
+		t.Errorf("inbox after the fallback = %+v, want the ticket that arrived while the "+
+			"delta was down; a delta counted only when it succeeds never lets the "+
+			"re-list run again", got)
+	}
+	if counting.listings.Load() != 4 {
+		t.Errorf("full listings = %d, want the cold start's pair and the fallback's",
+			counting.listings.Load())
+	}
+	if counting.deltas.Load() != 2 {
+		t.Errorf("delta attempts = %d, want ResyncEvery of them before giving up",
+			counting.deltas.Load())
+	}
+}
+
+// Done-when: a ticket moved between two served teams is drawn twice until the
+// team it left re-lists — the third entry in relistBoard's catalogue of drift
+// only a re-list repairs. The delta filters on the team, so the row it left
+// behind is never mentioned again.
+func TestAttentionDrawsACrossTeamMoveTwiceUntilTheResync(t *testing.T) {
+	h, _ := newCountingHarness(t)
+	h.serveTeams("LERP", "PROSE")
+	h.resyncEvery(2)
+	h.fake.AddIssue("LERP", linear.Issue{ID: "moves", Identifier: "LERP-1", Status: "Backlog"})
+	ctx := context.Background()
+
+	h.rec.Tick(ctx)
+	if got := h.waitEvents(t, EventAttention, 1)[0]; len(got.Attention) != 1 {
+		t.Fatalf("cold start = %+v, want the one ticket", got.Attention)
+	}
+
+	// The same issue, now filed under the other team and renumbered.
+	h.fake.AddIssue("PROSE", linear.Issue{ID: "moves", Identifier: "PROSE-7", Status: "Backlog"})
+
+	h.rec.Tick(ctx) // delta: PROSE gains it, LERP is never told
+	got := h.waitEvents(t, EventAttention, 1)[0].Attention
+	if len(got) != 2 {
+		t.Fatalf("after the move = %+v, want the same work drawn under both identifiers", got)
+	}
+
+	h.rec.Tick(ctx) // second delta, still both
+	h.waitEvents(t, EventAttention, 1)
+	h.rec.Tick(ctx) // the re-list drops the row LERP no longer holds
+	got = h.waitEvents(t, EventAttention, 1)[0].Attention
+	if len(got) != 1 || got[0].Ticket != "PROSE-7" {
+		t.Errorf("after the re-list = %+v, want only the identifier it lives under now", got)
+	}
+}
+
 // Done-when: an empty board never sends a delta. Its cursor comes from the
 // rows the listing returned, so an empty listing leaves it at the zero time —
 // and "everything since the beginning of time", against a query filtered by

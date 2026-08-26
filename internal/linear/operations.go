@@ -30,8 +30,9 @@ type issueNode struct {
 	Project *struct {
 		Name string `json:"name"`
 	} `json:"project"`
-	// UpdatedAt is requested by the three listing queries and the delta
-	// read, and decodes as the zero time everywhere else.
+	// UpdatedAt is requested by the two inbox listings and the delta read —
+	// the three that feed the board cache — and decodes as the zero time
+	// everywhere else.
 	UpdatedAt        time.Time `json:"updatedAt"`
 	InverseRelations struct {
 		Nodes []struct {
@@ -123,7 +124,6 @@ query ListIssues($team: String!, $state: String!, $after: String) {
       identifier
       title
       url
-      updatedAt
       state { name }
       assignee { id }
       priority
@@ -402,9 +402,10 @@ query IssueDetail($id: String!) {
 
 // GetIssueDetail reads one issue's body and comments — the inbox pane's
 // read (see Client). It is deliberately its own query rather than fields on
-// issueNode: that struct is shared by the three list queries every pass
-// runs, and hanging a description or a comment connection off it would grow
-// the payload of the passes this read is meant to stay out of. Fifty
+// issueNode: that struct is shared by every listing, including the per-queue
+// read a pass runs for each queue and the delta read it runs for each team,
+// and hanging a description or a comment connection off it would grow the
+// payload of the passes this read is meant to stay out of. Fifty
 // comments is past the point where a pane is the right way to read a
 // thread; `o` is the answer to a longer one.
 func (c *HTTP) GetIssueDetail(ctx context.Context, issueID string) (IssueDetail, error) {

@@ -697,10 +697,12 @@ func TestListTeamIssuesUpdatedSince(t *testing.T) {
 	}
 }
 
-// The delta cursor is read off UpdatedAt, so a listing that did not carry it
-// would pin the cursor at the zero time — and a zero cursor asks Linear for
-// the team's entire history on every pass, which is the cost this all exists
-// to remove.
+// The delta cursor is seeded off UpdatedAt, so an inbox listing that did not
+// carry it would pin the cursor at the zero time — and a zero cursor asks
+// Linear for the team's entire history, which is the cost this all exists to
+// remove. Only these two seed it; the per-queue ListIssues has no cursor, and
+// asking it for a field nothing reads would put the bytes on the one issue
+// query a pass runs for every queue, every time.
 func TestListingsCarryUpdatedAt(t *testing.T) {
 	node := `{
 		"id":"iss-1","identifier":"LERP-1","title":"First",
@@ -712,9 +714,6 @@ func TestListingsCarryUpdatedAt(t *testing.T) {
 		name string
 		list func(*HTTP) ([]Issue, error)
 	}{
-		{"ListIssues", func(c *HTTP) ([]Issue, error) {
-			return c.ListIssues(context.Background(), "LERP", "Todo")
-		}},
 		{"ListAssignedIssues", func(c *HTTP) ([]Issue, error) {
 			return c.ListAssignedIssues(context.Background(), "LERP", "user-9")
 		}},
@@ -739,6 +738,18 @@ func TestListingsCarryUpdatedAt(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("ListIssues does not", func(t *testing.T) {
+		c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+			if req := decodeRequest(t, r); strings.Contains(req.Query, "updatedAt") {
+				t.Errorf("the per-queue read asks for a field nothing reads: %q", req.Query)
+			}
+			writeData(t, w, `{"issues":{"pageInfo":{"hasNextPage":false,"endCursor":""},"nodes":[]}}`)
+		})
+		if _, err := c.ListIssues(context.Background(), "LERP", "Todo"); err != nil {
+			t.Fatalf("ListIssues: %v", err)
+		}
+	})
 }
 
 // The viewer id is a property of the API key, which never changes for a

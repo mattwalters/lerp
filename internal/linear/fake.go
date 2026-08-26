@@ -186,23 +186,6 @@ func (f *Fake) TeamGitAutomations(_ context.Context, teamKey string) ([]GitAutom
 	return append([]GitAutomation(nil), f.automations[teamKey]...), nil
 }
 
-// SetDoneStatuses replaces the set of status names that count as complete,
-// by declaring Linear's completed category for them and taking it off the
-// ones that had it. It is SetStatusCategory said the short way; there is no
-// second set to fall out of step with.
-func (f *Fake) SetDoneStatuses(names ...string) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	for status := range f.categories {
-		if f.done(status) {
-			delete(f.categories, status)
-		}
-	}
-	for _, n := range names {
-		f.categories[n] = CategoryCompleted
-	}
-}
-
 // Comments returns the bodies of the comments posted on an issue, oldest
 // first — what the loop tests assert on. GetIssueDetail is the reading
 // counterpart, with authors and times.

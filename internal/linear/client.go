@@ -47,11 +47,12 @@ type Issue struct {
 	// little: it is the inbox table's project column, and the one field
 	// its project filter matches.
 	Project string
-	// UpdatedAt is when Linear last changed the issue. Requested by the
-	// three listing queries and by ListTeamIssuesUpdatedSince, and zero
-	// everywhere else: its only reader is the delta cursor, which advances
-	// to the newest UpdatedAt it has seen so the next read asks for what
-	// changed after it.
+	// UpdatedAt is when Linear last changed the issue. Requested by the two
+	// inbox listings and by ListTeamIssuesUpdatedSince, and zero everywhere
+	// else — including the per-queue ListIssues, which has no cursor to
+	// seed. Its only reader is the delta cursor, which advances to the
+	// newest UpdatedAt it has seen so the next read asks for what changed
+	// after it.
 	UpdatedAt time.Time
 }
 

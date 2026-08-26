@@ -28,9 +28,10 @@ const DefaultInterval = 12 * time.Second
 
 // DefaultResyncEvery is how many delta reads the attention pass makes before
 // it re-lists a team's board from scratch. At DefaultInterval that is a full
-// re-list about every four minutes, which is the healing rate for the one
-// kind of drift a delta cannot report: an issue that was archived or deleted
-// is returned by no query at all, so nothing arrives to evict it.
+// re-list about every four minutes, which is the healing rate for every kind
+// of drift a delta cannot report — the archived issue no query returns at
+// all, and the rest of the catalogue in relistBoard — and the point at which
+// a delta that keeps failing falls back to the two listings.
 const DefaultResyncEvery = 20
 
 // deltaOverlap is how far back of its own cursor each delta read asks.
@@ -542,11 +543,12 @@ func (r *Reconciler) attention(ctx context.Context) {
 // unusable, or when the delta reads since the last full re-list have reached
 // ResyncEvery; otherwise it applies one delta read.
 //
-// A failed read returns the error and changes nothing at all — not the
-// issues, not the cursor, not the counter — so the retry next pass is the
-// same read again. That is the same discipline the pass has always had: a
-// read that half happened must never reach the inbox, where it would read as
-// tickets having gone away.
+// A failed read returns the error and leaves the board exactly as it was —
+// same issues, same cursor — so the retry next pass asks the same question
+// again. That is the discipline the pass has always had: a read that half
+// happened must never reach the inbox, where it would read as tickets having
+// gone away. The attempt is still counted, so a delta that keeps failing
+// escalates to the re-list rather than retrying forever.
 func (r *Reconciler) refreshBoard(ctx context.Context, team, viewerID string) (*teamBoard, error) {
 	board := r.boards[team]
 	// A zero cursor is not a cheap delta but the most expensive query lerp
@@ -558,6 +560,17 @@ func (r *Reconciler) refreshBoard(ctx context.Context, team, viewerID string) (*
 	if board == nil || board.since.IsZero() || board.deltas >= r.o.ResyncEvery {
 		return r.relistBoard(ctx, team, viewerID)
 	}
+	// Counted before the read, so failures count too. A delta that keeps
+	// failing — a 429, a gateway error, a query Linear stopped accepting —
+	// would otherwise never let the counter reach ResyncEvery, and the
+	// re-list that is this board's only other source would never run again:
+	// the inbox would freeze at whatever the cold start saw, for the life of
+	// the process, while the pass reissued the same failing read every 12
+	// seconds. Escalating to the two listings after ResyncEvery attempts is
+	// the fallback that leaves, and they are cheaper than the delta that is
+	// failing: filtered by state and assignee, where it is filtered by
+	// neither.
+	board.deltas++
 	// Asked from behind the cursor, never from the cursor itself: see
 	// deltaOverlap. The answers are deduped by issue id, so a row this
 	// window returns again simply replaces itself.
@@ -579,14 +592,13 @@ func (r *Reconciler) refreshBoard(ctx context.Context, team, viewerID string) (*
 			board.since = issue.UpdatedAt
 		}
 	}
-	board.deltas++
 	return board, nil
 }
 
 // relistBoard rebuilds a team's board from the two full listings — the cold
-// start, and the periodic heal. It is what repairs the two kinds of drift a
-// delta cannot report, both of which are a change to an issue that Linear
-// does not stamp on the issue whose row is wrong:
+// start, and the periodic heal. It is what repairs the drift a delta cannot
+// report — every kind of change that does not arrive as a row on the issue
+// whose cached row is wrong:
 //
 //   - An archived or deleted ticket changes nothing a delta could return, so
 //     without this it would sit in the inbox until lerp restarted.
