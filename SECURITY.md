@@ -36,11 +36,11 @@ approval step, and no check on who put the ticket there.
 So anyone who can put a ticket into a served status — by creating it
 there or by moving it there — starts an unattended agent run on a
 machine running lerp against that team. Nothing narrows that to a
-machine you picked: the claim is an assignment to a Linear *user*, and
-it is scheduling rather than a lock — two lerps signed in as the same
-user both read the claim back as their own, and across users the race
-lerp accepts resolves to duplicated compute. Size the exposure as every
-machine running lerp against that team.
+machine you picked: the claim is an assignment to a Linear *user*, so
+it arbitrates between users and not between machines — two lerps signed
+in as the same user both read the claim back as their own, and across
+users the race lerp accepts resolves to duplicated compute. Size the
+exposure as every machine running lerp against that team.
 
 That reach belongs to workspace members and guests, to Linear's own
 automations, and to any integration with write access to the board — a
@@ -83,9 +83,10 @@ operator's job, and it takes both halves of the config: `provision` and
 throwaway user account instead of a worktree — and the runner
 `command` has to be the thing that *enters* it (`docker exec ...`, an
 `ssh` into the VM). Lerp always starts the runner itself with `sh -c`
-on the host, in the workspace directory, so a `provision` that builds a
-container while the `command` still reads `claude -p ...` leaves the
-container idle and the agent on your machine. Nothing in lerp's
+on the host, in the workspace directory, so the natural half-step —
+keep provisioning the worktree, add a container beside it, leave the
+`command` reading `claude -p ...` — leaves the container idle and the
+agent on your machine. Nothing in lerp's
 defaults does any of this for you.
 
 ### What lerp itself does
@@ -97,7 +98,7 @@ does not stop a run. Agents are their own process groups and keep
 working, and the next lerp adopts them. To stop one, eject it with `e`
 — or kill its process group. Values interpolated into a runner
 `command` are shell-quoted, so nothing in a ticket can alter the
-command you configured — the injection surface is the prompt the agent
+command you configured — the injection surface is the ticket the agent
 reads, not the command line lerp builds.
 
 Two details of that footprint are worth stating plainly, because both
@@ -132,15 +133,15 @@ unless you ask otherwise.
 Lerp is pre-1.0 and has no tagged releases yet: `main` is what is
 supported, fixes land there, and `go install ...@latest` gets them.
 
-**What is in scope:** anything that lets a party without board write
-access influence what an agent does, anything that escalates beyond the
-grants documented above, any path that puts the Linear API key
-somewhere this page does not say it goes, and anything in a ticket that
-escapes the TUI's sanitizing and reaches your terminal as escape
-sequences.
+**What is in scope:** anything that lets a party who can neither place
+a ticket in a served status nor write text a served ticket carries
+influence what an agent does, anything that escalates beyond the grants
+documented above, any path that puts the Linear API key somewhere this
+page does not say it goes, and anything in a ticket that escapes the
+TUI's sanitizing and reaches your terminal as escape sequences.
 
 **What is not:** the trust model on this page. An agent doing damage
-because someone with ticket-write access told it to, or because a
-`lerp.toml` was run unread, is lerp working as designed and documented.
-If you think the design itself is wrong, that is an issue, not an
-advisory — open one.
+because someone who could write into a served ticket — its description
+or its comments — told it to, or because a `lerp.toml` was run unread,
+is lerp working as designed and documented. If you think the design
+itself is wrong, that is an issue, not an advisory — open one.
