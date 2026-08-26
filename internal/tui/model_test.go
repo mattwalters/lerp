@@ -717,7 +717,7 @@ func board() loop.Event {
 	return loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
 		{Ticket: "LERP-1", TicketID: "id-1", Title: "Fix the build", Status: "Needs Attention",
 			Project: "Open-source readiness", Relevance: loop.StatusFailed, Priority: 3,
-			Reason: `claimed in "Needs Attention" — a run failed here`},
+			Claimed: true, Reason: `claimed in "Needs Attention" — a run failed here`},
 		{Ticket: "LERP-22", TicketID: "id-22", Title: "GoReleaser: tagged releases", Status: "Backlog",
 			Project: "Open-source readiness", Relevance: loop.StatusBacklog, Priority: 2,
 			Unblocks: 2, Blocks: []string{"LERP-23"}},

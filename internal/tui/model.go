@@ -2291,13 +2291,24 @@ func (m *model) attentionRows(width int) ([]string, cursor) {
 //
 // Nothing folded is no line: a key that would reveal nothing is not worth a
 // row on a panel this tight.
+//
+// The key drops off the line while something modal has the keyboard, the
+// same rule the panel's key hints answer to (see keyHints). The prompt
+// swallows every keystroke, so a `B` pressed on this line's advice would
+// land in the search box as a letter — and an advertised key that does
+// nothing is worse than one left out. The count stays: it is the fact that
+// explains why a search found nothing here, which is exactly when the
+// prompt is open over it.
 func (m *model) backlogSummary() []string {
 	n := len(m.foldedRows())
 	if n == 0 {
 		return nil
 	}
-	return []string{styleFaint.Render(fmt.Sprintf("%d %s — %s to browse",
-		n, loop.StatusBacklog.Note(), m.keys.Backlog.Help().Key))}
+	line := fmt.Sprintf("%d %s", n, loop.StatusBacklog.Note())
+	if !m.modal() {
+		line += " — " + m.keys.Backlog.Help().Key + " to browse"
+	}
+	return []string{styleFaint.Render(line)}
 }
 
 // emptyNote says why an inbox that has rows is showing none of them: the

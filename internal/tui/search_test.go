@@ -118,12 +118,21 @@ func TestSearchDoesNotReachAFoldedBacklog(t *testing.T) {
 		t.Fatalf("the search reached %v behind the fold", got)
 	}
 	// The panel says the fold is why, rather than leaving the operator to
-	// conclude the ticket is not on the board.
-	if panel := m.attentionPanel(96, 14); !strings.Contains(panel, "B to browse") {
-		t.Fatalf("a search that found nothing does not offer the fold:\n%s", panel)
+	// conclude the ticket is not on the board — but not by naming a key the
+	// prompt would swallow. A `B` typed here is a letter in the query.
+	panel := m.attentionPanel(96, 14)
+	if !strings.Contains(panel, "1 waiting to enter the pipeline") {
+		t.Fatalf("a search that found nothing does not say the fold has rows:\n%s", panel)
+	}
+	if strings.Contains(panel, "to browse") {
+		t.Fatalf("the summary offers B while the prompt owns the keyboard:\n%s", panel)
 	}
 
 	m = update(t, m, keyMsg("enter")) // keep the filter, hand the keys back
+	// The keyboard is back, and so is the key.
+	if panel := m.attentionPanel(96, 14); !strings.Contains(panel, "B to browse") {
+		t.Fatalf("the summary did not offer B once the prompt closed:\n%s", panel)
+	}
 	m = browseBacklog(t, m)
 	if got := shownTickets(m); !slices.Equal(got, []string{"LERP-23"}) {
 		t.Fatalf("shown = %v, want the backlog ticket the query matches", got)
