@@ -34,13 +34,19 @@
     <nav class="sidenav" aria-label="Manual">
       {{/* The sidebar is curated in hugo.toml rather than derived from the
            content tree: grouping and order are editorial, and a page nobody
-           listed is unreachable here by design — a half-written section can
-           sit in the repo without being published to the front of the
-           manual. A group heading is emitted whenever the section param
-           changes, so a section's entries have to be contiguous in weight. */}}
+           listed simply does not appear here (it is still published, and its
+           section index still lists it). A group heading is emitted whenever
+           the section param changes, so a section's entries have to be
+           contiguous in weight. */}}
       {{ $section := "" }}
       {{ range site.Menus.main }}
       {{ with .Params.section }}{{ if ne . $section }}{{ $section = . }}<h5>{{ . }}</h5>{{ end }}{{ end }}
+      {{/* A pageRef naming a page that does not exist leaves both of these
+           empty, and the entry would render as a link to the site root — a
+           typo in a hand-maintained menu silently bouncing the reader to the
+           splash page, with the build gate green. A url-only entry has a URL
+           and no page, and is left alone. */}}
+      {{ if and (not .Page) (not .URL) }}{{ errorf "menu entry %q resolves to nothing — does its pageRef name a page that exists?" .Name }}{{ end }}
       {{ $current := $.IsMenuCurrent "main" . }}
       {{/* Entries naming a command carry mono in hugo.toml: their names are
            things you type, and a manual sets them in the face you type them

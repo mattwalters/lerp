@@ -58,9 +58,11 @@ repo = "https://github.com/mattwalters/lerp"
 
 # The sidebar, and with the header's one Docs link the site's whole
 # navigation. It is curated rather than derived from the content tree: the
-# order is editorial, and a page that is not listed here is unreachable by
-# design — a half-written section can sit in the repo without being published
-# to the front of the manual.
+# grouping and the order are editorial, and a page that is not listed here
+# does not appear in the sidebar. It is still published, and its section
+# index still lists it (list.html reads the section's children) — a page that
+# should not be published at all is `draft = true` in its own front matter,
+# which is the only thing that keeps it out of a build.
 #
 # `section` is the group heading an entry sits under. baseof.html emits one
 # whenever the value changes as it walks this list in weight order, so a

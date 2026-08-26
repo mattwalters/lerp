@@ -18,10 +18,10 @@
          mono off the page's front matter would be two spellings of one fact
          to keep in sync by hand — with nothing to catch them disagreeing. */}}
     <dt><a href="{{ .RelPermalink }}">{{ .Title }}</a></dt>
-    {{/* No empty <dd> for a child with no summary: it draws no line box, so
-         it would read as a description someone left blank rather than one
-         the page never had. */}}
-    {{ with .Params.summary }}<dd>{{ . }}</dd>{{ end }}
+    {{/* Always a <dd>, empty or not: a <dt> with nothing after it is not a
+         definition list, and a child with no summary is a missing line, not
+         a reason to emit invalid markup. */}}
+    <dd>{{ .Params.summary }}</dd>
     {{ end }}
   </dl>
   {{ end }}

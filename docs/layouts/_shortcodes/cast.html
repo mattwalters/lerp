@@ -56,11 +56,13 @@
   <figcaption class="keys">
     {{- /* The separator is in the markup rather than drawn by CSS ::before,
            so that copying the caption — or reading it with no stylesheet —
-           still gets "p · pick a status · enter" and not one long word. It
-           is hidden from assistive tech, which has the segments already. */ -}}
+           still gets "p · pick a status · enter" and not one long word. The
+           dot itself is hidden from assistive tech, but the spaces around it
+           are outside that span: hide those too and a screen reader runs the
+           segments together, which is the thing this is here to prevent. */ -}}
     {{- range $i, $part := $parts -}}
       {{- $part = trim $part " " -}}
-      {{- if $i }}<span class="sep" aria-hidden="true"> · </span>{{ end -}}
+      {{- if $i }} <span class="sep" aria-hidden="true">·</span> {{ end -}}
       {{- if and (hasPrefix $part "[") (hasSuffix $part "]") -}}
         <kbd>{{ strings.TrimSuffix "]" (strings.TrimPrefix "[" $part) }}</kbd>
       {{- else -}}

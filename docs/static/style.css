@@ -318,8 +318,10 @@ figure.cast figcaption {
 }
 
 /* The separators are in the markup (see the cast shortcode), so they need
-   nothing here but a colour that keeps them behind the words. */
-.keys .sep { color: var(--rule); }
+   nothing here but a colour that keeps them behind the words — the soft
+   foreground, not the rule colour, which is mixed for 1px lines and is all
+   but invisible as text. */
+.keys .sep { color: var(--fg-soft); }
 
 /* Scoped to the caption, not a bare kbd: goldmark runs with unsafe = true,
    so a <kbd> written into the README would otherwise pick up keycap chrome
@@ -338,9 +340,11 @@ figure.cast figcaption {
 
 /* Two rails and a reading column need 75rem: 40rem of measure, 12 of
    sidebar, 14 of rail, and the padding and gaps between them. Below that the
-   "On this page" rail goes first — it is the one a scrollbar substitutes for
-   — rather than letting both rails eat the column, which is what left the
-   README's pipeline table in half the width it was written for. */
+   "On this page" rail goes first — it is the one a scrollbar substitutes for,
+   and the sidebar is the only way between pages. The cost is real and worth
+   naming: on a 1000px window the README and SCOPE lose a rail they used to
+   have. The alternative was both rails standing while the prose they frame
+   ran at 26rem, which is worse for the same two pages. */
 @media (max-width: 75rem) {
   .toc { display: none; }
 }
