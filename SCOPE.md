@@ -105,6 +105,21 @@ five. If that trade is unappealing, the feature is out of scope.
    remains resolves to duplicated compute, which invariant 3 already
    tolerates. No lerp server, no coordination service, ever.
 
+   Lerp has no identity of its own: it authenticates **as the
+   operator**, so "assigned to Sarah" means Sarah. Two credentials do
+   that and nothing distinguishes them past the auth header — a
+   personal API key in `LINEAR_API_KEY`, which remains supported, or a
+   token from `lerp login`: OAuth with `actor=user`, against Linear's
+   own endpoints, as a PKCE public client, so it needs no server and
+   keeps no secret. (OAuth was out while it implied a server; that
+   premise is gone, not the reasoning.) An app or agent actor — work
+   showing up as *lerp* rather than as a person — stays out: it would
+   make the claim a lock held by a bot, and the board stop reading like
+   a human team's. This changes who signs the request, not what a claim
+   means: the protocol above and the multiplayer semantics are
+   untouched. The credential is config, not a store — losing the token
+   file costs a re-login, never correctness.
+
 5. **The engine is generic; the opinion ships as config.** Lerp's stock
    config encodes planning → human plan approval → implementing → a
    human merge, and the implement stage reviews its own work before it
@@ -227,7 +242,12 @@ that wants a scheduler wants a different product.
 - Not a workflow engine: no conditionals, no DAG language, no plugin
   hooks. The board is the workflow.
 - Not a process supervisor, CI system, or deployment tool.
-- Not a server, daemon, or web service. Nothing listens on a port.
+- Not a server, daemon, or web service. Nothing listens on a port
+  while lerp works. The one exception is setup time: `lerp login`
+  opens a loopback socket for the seconds an OAuth redirect takes,
+  and closes it before anything runs — `127.0.0.1`, an ephemeral
+  port, one redirect, gone. The loop never listens, ever; that
+  separation is invariant 6.
 - Not a database. See invariant 1.
 - Not an agent framework. Runners are command templates, not SDKs.
 - Not a Linear client, with one narrow exception: the inbox lists
