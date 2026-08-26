@@ -30,6 +30,12 @@ through. Read it before proposing anything.
 
 ## Install
 
+Lerp runs on macOS and Linux. Windows is not supported and does not
+build there: the loop holds an advisory `flock` on the clone, starts
+each agent in its own process group, and reaps by killing that group —
+none of which Windows has as such. Under WSL2 it is Linux as far as
+lerp is concerned, and that is the Windows answer.
+
 ```sh
 go install github.com/mattwalters/lerp/cmd/lerp@latest
 ```

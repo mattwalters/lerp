@@ -1,3 +1,5 @@
+//go:build unix
+
 package loop
 
 // Eject (LERP-14): the one escape hatch. Stopping a lane's agent hands the
