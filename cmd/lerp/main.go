@@ -176,11 +176,7 @@ func openTUI(ctx context.Context, lanes int) error {
 	// their own process groups, with run evidence on disk — keep working. The
 	// next lerp adopts them.
 	return tui.Run(ctx, tui.Options{
-		Ticker:   rec,
-		Promoter: rec,
-		Ejector:  rec,
-		Starter:  rec,
-		Reader:   rec,
+		Engine:   rec,
 		Statuses: repo.PromoteTargets(),
 		Interval: loop.DefaultInterval,
 		Lanes:    lanes,

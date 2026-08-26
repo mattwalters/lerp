@@ -67,13 +67,34 @@ type Reader interface {
 	IssueDetail(ctx context.Context, ticketID string) (linear.IssueDetail, error)
 }
 
+// Engine is the whole of what the shell asks of the loop: the roles above,
+// in one interface. loop.Reconciler satisfies it, and both callers hand it
+// over whole rather than assigning a field per role.
+//
+// One interface rather than five fields because a struct field left unset is
+// a runtime refusal — Validate catches it when Run opens the screen, which is
+// too late for the demo harness, whose refusals vhs records as a bash error
+// and exits 0 on. That is how a missing Starter shipped a blank cast. A sixth
+// role added here instead breaks `go build ./...` at every call site, and
+// `make check` runs that.
+//
+// What the bundle gives up: Validate can only ask whether an engine is here,
+// not whether it is whole. A composite whose parts are nil is still a non-nil
+// Engine, and the panic lands on the first tick. Nothing in production can
+// build one — the reconciler satisfies this or the call site does not compile
+// — so the check that is gone was only ever protecting assembled-by-hand
+// engines, which is to say test code.
+type Engine interface {
+	Ticker
+	Promoter
+	Ejector
+	Starter
+	Reader
+}
+
 // Options wires the shell to the loop.
 type Options struct {
-	Ticker   Ticker
-	Promoter Promoter
-	Ejector  Ejector
-	Starter  Starter
-	Reader   Reader
+	Engine   Engine
 	Statuses []string      // promote targets: configured queue statuses, plus the pipeline's exits
 	Interval time.Duration // tick cadence; loop.DefaultInterval when zero
 	Lanes    int           // N: at most this many agents at once
@@ -86,16 +107,8 @@ type Options struct {
 // there can only hold them to this contract if it can call it.
 func (o Options) Validate() error {
 	switch {
-	case o.Ticker == nil:
-		return fmt.Errorf("tui: ticker is required")
-	case o.Promoter == nil:
-		return fmt.Errorf("tui: promoter is required")
-	case o.Ejector == nil:
-		return fmt.Errorf("tui: ejector is required")
-	case o.Starter == nil:
-		return fmt.Errorf("tui: starter is required")
-	case o.Reader == nil:
-		return fmt.Errorf("tui: reader is required")
+	case o.Engine == nil:
+		return fmt.Errorf("tui: engine is required")
 	case o.Lanes < 1:
 		return fmt.Errorf("tui: lanes must be at least 1")
 	case o.Events == nil:
@@ -533,7 +546,7 @@ func (m model) runTick() tea.Cmd {
 	m.passes.Add(1)
 	return func() tea.Msg {
 		defer m.passes.Done()
-		m.o.Ticker.Tick(m.ctx)
+		m.o.Engine.Tick(m.ctx)
 		return tickedMsg{}
 	}
 }
@@ -871,7 +884,7 @@ func (m *model) fetchDetail(ticketID string) tea.Cmd {
 	m.refreshMain()
 	m.layout()
 	return func() tea.Msg {
-		detail, err := m.o.Reader.IssueDetail(m.ctx, ticketID)
+		detail, err := m.o.Engine.IssueDetail(m.ctx, ticketID)
 		return detailMsg{ticketID: ticketID, detail: detail, err: err}
 	}
 }
@@ -936,7 +949,7 @@ func (m model) handlePromoteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // frame.
 func (m model) doPromote(ticketID, ticket, status string) tea.Cmd {
 	return func() tea.Msg {
-		err := m.o.Promoter.Promote(m.ctx, ticketID, status)
+		err := m.o.Engine.Promote(m.ctx, ticketID, status)
 		return promotedMsg{ticket: ticket, status: status, err: err}
 	}
 }
@@ -971,7 +984,7 @@ func (m model) handleEjectKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // status, because ejecting is taking the work over rather than dropping it.
 func (m model) doEject(ticketID, ticket string) tea.Cmd {
 	return func() tea.Msg {
-		ejection, err := m.o.Ejector.Eject(m.ctx, ticketID)
+		ejection, err := m.o.Engine.Eject(m.ctx, ticketID)
 		return ejectedMsg{ticket: ticket, ejection: ejection, err: err}
 	}
 }
@@ -989,7 +1002,7 @@ func (m *model) startEject() {
 	if r == nil || r.lane == 0 || r.state == laneProvisioning {
 		return
 	}
-	if can, why := m.o.Ejector.CanEject(r.queue); !can {
+	if can, why := m.o.Engine.CanEject(r.queue); !can {
 		m.note("cannot eject "+r.ticket+": "+clean(why), true)
 		return
 	}
@@ -1012,7 +1025,7 @@ func (m *model) canEjectSelected() bool {
 	if r == nil || r.lane == 0 || r.state == laneProvisioning {
 		return false
 	}
-	can, _ := m.o.Ejector.CanEject(r.queue)
+	can, _ := m.o.Engine.CanEject(r.queue)
 	return can
 }
 
@@ -1033,7 +1046,7 @@ func (m *model) ejectRowIsRunning() bool {
 // block a frame.
 func (m model) doForceStart(ticketID, ticket string) tea.Cmd {
 	return func() tea.Msg {
-		err := m.o.Starter.ForceStart(m.ctx, ticketID)
+		err := m.o.Engine.ForceStart(m.ctx, ticketID)
 		return forcedMsg{ticket: ticket, err: err}
 	}
 }

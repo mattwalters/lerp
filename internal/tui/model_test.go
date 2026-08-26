@@ -152,6 +152,24 @@ func (r *recordingReader) returns(detail linear.IssueDetail, err error) {
 // care which ones — two, so up/down has somewhere to go.
 var defaultTestStatuses = []string{"Planning", "Implementing"}
 
+// fakeEngine is the recording roles as the one interface the shell takes.
+// The embedded pointers are what satisfy Engine, so a role added to it fails
+// here at compile time exactly as it does at the two production call sites —
+// which is the whole point of the bundle.
+type fakeEngine struct {
+	*countingTicker
+	*recordingPromoter
+	*recordingEjector
+	*recordingStarter
+	*recordingReader
+}
+
+// newFakeEngine is a whole engine nobody is going to look at, for the tests
+// that need the shell wired but assert on none of it.
+func newFakeEngine() fakeEngine {
+	return fakeEngine{&countingTicker{}, &recordingPromoter{}, &recordingEjector{}, &recordingStarter{}, &recordingReader{}}
+}
+
 // newTestModel is the stock model at a stock window size. Lerp opens focused
 // on the inbox with the inbox's pane closed, so a test about the work panel,
 // its main pane or the geometry that pane drives presses "2" first — without
@@ -202,11 +220,7 @@ func newTestModelWith(t *testing.T, lanes int, statuses []string, promoter *reco
 	ticker := &countingTicker{}
 	events := make(chan loop.Event, 8)
 	m := newModel(context.Background(), Options{
-		Ticker:   ticker,
-		Promoter: promoter,
-		Ejector:  ejector,
-		Starter:  starter,
-		Reader:   reader,
+		Engine:   fakeEngine{ticker, promoter, ejector, starter, reader},
 		Statuses: statuses,
 		Interval: time.Millisecond,
 		Lanes:    lanes,
@@ -2627,8 +2641,7 @@ func TestAFocusMoveNeverEditsAPanelsPane(t *testing.T) {
 
 	// And a panel key before the first WindowSizeMsg — no window has room
 	// for anything yet — leaves both defaults exactly where they started.
-	early := newModel(t.Context(), Options{Ticker: &countingTicker{}, Promoter: &recordingPromoter{},
-		Starter: &recordingStarter{}, Reader: &recordingReader{}, Statuses: defaultTestStatuses,
+	early := newModel(t.Context(), Options{Engine: newFakeEngine(), Statuses: defaultTestStatuses,
 		Lanes: 1, Events: make(chan loop.Event, 1)})
 	early = update(t, early, keyMsg("2"))
 	if early.detailOpen != ([2]bool{panelAttention: false, panelWork: false}) {

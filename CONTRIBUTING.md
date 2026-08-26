@@ -54,11 +54,13 @@ The same rules the agents work under (see `AGENTS.md`):
   vulnerability, or a govulncheck release, is about the tree, not your
   diff.
 - The other is `make demo`: it re-records the README's cast from
-  `docs/demo.tape`. It fails if vhs errors or if the GIF comes back
-  over its size cap — nothing diffs the bytes, so read the failure
-  message before you read your diff; the cap is the usual answer, and
-  the Makefile says what to do about it. Reproduce it locally with
-  `make demo`, which needs
+  `docs/demo.tape`. It fails if vhs errors, if the demo harness inside
+  the recording exits non-zero — vhs would happily record a cast of
+  that error and exit 0, so the harness reports its own status in a
+  file — or if the GIF comes back over its size cap. Nothing diffs the
+  bytes, so read the failure message before you read your diff; the
+  cap is the usual answer, and the Makefile says what to do about it.
+  Reproduce it locally with `make demo`, which needs
   [vhs](https://github.com/charmbracelet/vhs). Nothing checks that the
   cast still shows the *right* thing, so if your change dates it,
   commit the re-recorded `docs/demo.gif` too.

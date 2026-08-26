@@ -105,9 +105,15 @@ jobs:
 
   # The cast rots silently: a tape whose keystrokes no longer drive the UI
   # they were written against still renders, it just renders the wrong thing.
-  # This job re-records it and checks the exit code — nothing diffs the bytes,
-  # because GIF output is not reproducible enough to compare and what is worth
-  # knowing is only whether the script still drives lerp.
+  # This job re-records it and checks that the render worked — nothing diffs
+  # the bytes, because GIF output is not reproducible enough to compare and
+  # what is worth knowing is only whether the script still drives lerp.
+  #
+  # vhs's own exit code cannot answer that: the harness runs inside the
+  # terminal being recorded, so a harness that dies at startup is a recording
+  # of a bash error that vhs writes out happily and exits 0 on. `make demo`
+  # gates on the status the harness itself reports (see the demo recipe), so
+  # this step stays the one command a local re-record runs.
   demo:
     runs-on: ubuntu-latest
     steps:
