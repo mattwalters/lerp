@@ -48,8 +48,8 @@ installs into Go's bin dir — `GOBIN` when set, else `GOPATH/bin`;
 vet, build, test — and CI runs it on Linux and macOS. Two things CI does
 are deliberately not in it: `govulncheck`, which needs the network and a
 vulnerability database that is only ever current, and re-recording the
-demo cast, which needs vhs installed. The gate stays runnable offline
-with nothing but Go.
+demo cast, which needs vhs installed. The gate needs nothing installed
+beyond Go itself.
 
 ## Getting started
 

@@ -31,9 +31,10 @@ jobs:
   # to be noticed. This gates on reachability: govulncheck fails the job only
   # for advisories lerp's own code can reach, so a red run is something to act
   # on rather than a version number to argue with. The tradeoff is real and
-  # deliberate — an advisory in a dependency lerp never calls is reported and
-  # does not gate. Its own job, not a step in `make check`, because it needs
-  # the network and the gate does not.
+  # deliberate — an advisory in a dependency lerp never calls is printed and
+  # does not gate, and Dependabot, not this job, is what carries those off the
+  # tree. Its own job, not a step in `make check`, because it needs the
+  # network and the gate does not.
   vuln:
     runs-on: ubuntu-latest
     steps:
@@ -42,19 +43,21 @@ jobs:
         with:
           # Deliberately not go.mod's `go 1.25` like the test job. govulncheck
           # scans the standard library too, and it reports against whichever
-          # toolchain runs it: pinned to an old line, this job goes red for
-          # stdlib advisories whose fix only ever ships in a newer one, and no
-          # change to this repo can clear it. `stable` asks the question worth
-          # asking — is lerp exposed when built with a current Go — and
-          # check-latest keeps the answer off the runner image's cache, which
-          # lags upstream by days after a security release.
+          # toolchain runs it: held to an old release line, this job goes red
+          # for stdlib advisories whose fix only ever ships in a newer one, and
+          # no change to this repo can clear it. `stable` asks the question
+          # worth asking — is lerp exposed when built with a current Go.
           go-version: stable
-          check-latest: true
-      # Pinned, and bumped by hand. The vulnerability database is fetched from
-      # vuln.go.dev at run time, so a pinned scanner still sees today's
-      # advisories; what the pin buys is that a new govulncheck release cannot
-      # turn an unrelated PR red on its own.
-      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
+      # Everything this job reads floats on purpose: the toolchain above, the
+      # scanner here, and the database it queries at run time. A scanner held
+      # at a version is a scanner that stops learning — it misses whatever
+      # analysis the last year of releases added, and it goes on passing while
+      # it does. The cost is that a govulncheck release can turn an unrelated
+      # PR red, which is loud, actionable, and the better of the two failures.
+      # The same is true one step up: `stable` follows the actions/go-versions
+      # manifest, so for the day or two after a Go security release this job
+      # can report an advisory whose fix has not landed there yet.
+      - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
   # The cast rots silently: a tape whose keystrokes no longer drive the UI
   # they were written against still renders, it just renders the wrong thing.
