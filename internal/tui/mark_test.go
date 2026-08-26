@@ -72,6 +72,16 @@ func TestTheBoardTakesTheScreenTheMomentThePassReports(t *testing.T) {
 	if !strings.Contains(view, "LERP-1") {
 		t.Fatalf("the board did not take the screen:\n%s", view)
 	}
+	// The real cold start: the loop reports the inbox from inside the first
+	// pass, so the first board frame anyone ever sees still has that pass in
+	// flight — and the status bar, which the splash was covering until this
+	// frame, has to pick the heartbeat up where the spinner left off.
+	if !m.inFlight {
+		t.Fatal("the first pass ended before it reported")
+	}
+	if !strings.Contains(view, "pass running") {
+		t.Fatalf("the bar the splash handed over to says nothing about the pass:\n%s", view)
+	}
 	// A later pass: in flight, then landed, then in flight again.
 	for _, msg := range []tea.Msg{tickedMsg{}, tickMsg{}, tickedMsg{}, tickMsg{}} {
 		m = update(t, m, msg)
@@ -124,19 +134,24 @@ func TestTheOverlayTakesTheScreenFromTheSplash(t *testing.T) {
 }
 
 // The mark is the one figure here with a fixed size, so it is the one that
-// can overrun its window. Below the room it needs it falls back to the small
-// mark — the same word, which is what the status bar's corner carries.
-func TestAWindowTooNarrowForTheBlockGetsTheSmallMark(t *testing.T) {
+// can overrun its window. The smallest window View will draw a board in is
+// the size it has to survive — below that the too-small screen has the frame
+// and there is no splash — and a figure that grew a column past it would go
+// out in pieces on a terminal nothing here would refuse.
+func TestTheMarkFitsTheSmallestBoard(t *testing.T) {
 	m, _, _ := newTestModel(t, 2)
-	m.width = lipgloss.Width(markBlock) - 1
-	view := m.splash()
-	if hasMark(view) {
-		t.Fatalf("the block was drawn into a window with no room for it:\n%s", view)
+	m = update(t, m, tea.WindowSizeMsg{Width: minWidth, Height: m.minHeight(false)})
+	view := m.View()
+	if !hasMark(view) {
+		t.Fatalf("the smallest board window does not draw the whole mark:\n%s", view)
 	}
-	if !strings.Contains(view, markWord) {
-		t.Fatalf("the narrow splash lost the mark altogether:\n%s", view)
+	for i, line := range strings.Split(view, "\n") {
+		if got := lipgloss.Width(line); got > minWidth {
+			t.Fatalf("line %d is %d columns wide in a %d-column window:\n%s",
+				i, got, minWidth, view)
+		}
 	}
-	if got := lipgloss.Width(view); got > m.width {
-		t.Errorf("the splash is %d columns wide in a %d-column window", got, m.width)
+	if got := lipgloss.Height(view); got > m.height {
+		t.Errorf("the splash is %d lines tall in a %d-line window", got, m.height)
 	}
 }

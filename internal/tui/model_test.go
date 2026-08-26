@@ -679,6 +679,7 @@ func TestWorkPanelCapsToItsPanel(t *testing.T) {
 // what would make items appear.
 func TestInboxListsWhatWaits(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, keyMsg("enter"))
 
@@ -2636,6 +2637,7 @@ func fullBoard() loop.Event {
 // This is the first frame a new operator sees.
 func TestAPanelWithNothingSelectedOffersNoKeys(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	for _, key := range []string{"1", "2"} {
 		m = update(t, m, keyMsg(key))
 		for _, dead := range []string{"p promote", "s sort", "P project", "r raw", "o open"} {

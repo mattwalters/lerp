@@ -2,10 +2,15 @@ package tui
 
 import "github.com/charmbracelet/lipgloss"
 
-// The lerp mark, in the two sizes the TUI draws it at. One definition, so
-// the tool has one wordmark rather than two that drift: markWord is the mark
-// small — the plain word, which is what a status bar's corner has room for —
-// and markLines is the same word large, in ASCII, for the splash below.
+// The lerp mark, in the two sizes the TUI draws it at, so the tool has one
+// wordmark rather than two that drift: markWord is the mark small — the
+// plain word, which is what a status bar's corner has room for — and
+// markLines is the same word large, in ASCII, for the splash below.
+//
+// Nothing here draws the small one yet. The status bar's corner mark is
+// LERP-102's, still in flight, and it takes this rather than spelling its
+// own; whichever of the two landed second was always going to inherit the
+// other's, and this is the half that landed first.
 const markWord = "lerp"
 
 var markLines = []string{
@@ -29,16 +34,13 @@ var markBlock = lipgloss.JoinVertical(lipgloss.Left, markLines...)
 //
 // The spinner rides the same frame counter and the same frames as the status
 // bar's heartbeat: one clock, and one shape for "lerp is working on it".
+// The figure is fixed-size, where every other view here is built to the
+// width it is given — so the block has to fit the smallest window View will
+// draw a board in at all, which is what TestTheMarkFitsTheSmallestBoard
+// holds it to. Below that size there is no splash to draw: the too-small
+// screen has already taken the frame, and it is the actionable one.
 func (m model) splash() string {
-	mark := markBlock
-	// The figure is fixed-size, where every other view here is built to the
-	// width it is given. A window with no room for it gets the small mark
-	// instead: half a wordmark reads as a rendering bug, which is the one
-	// thing this screen exists to rule out.
-	if m.width < lipgloss.Width(markBlock) || m.height < lipgloss.Height(markBlock)+2 {
-		mark = markWord
-	}
 	spinner := styleRunning.Render(heartbeatFrames[m.frame%len(heartbeatFrames)])
-	fig := lipgloss.JoinVertical(lipgloss.Center, mark, "", spinner)
+	fig := lipgloss.JoinVertical(lipgloss.Center, markBlock, "", spinner)
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, fig)
 }

@@ -1971,11 +1971,19 @@ func (m model) View() string {
 	}
 	// Below the too-small screen, which is the actionable one: a splash on a
 	// window that cannot draw a board would hide the one thing the operator
-	// can do something about behind a spinner. And above everything else,
-	// except the ? overlay — that is the operator asking a question the
-	// splash cannot answer, and a key that visibly does nothing is worse
-	// than the empty board they get to read it over.
-	if m.splashing() && !m.helpOn {
+	// can do something about behind a spinner. And above everything else
+	// except what has taken the keyboard — the ? overlay, a picker, an
+	// eject — for mainOpen's reason rather than its exact list: something
+	// that answers to keys while nothing it draws reaches the screen is a ?
+	// that does nothing, or an enter that writes to Linear from under a
+	// spinner. Only ? can be open here today, because every other one of
+	// them is gated on a row, and a row means the pass has reported.
+	//
+	// A detail pane is not in that list, deliberately: it takes no keys of
+	// its own, it has no ticket to show before the first pass, and enter is
+	// the operator saying they want it open when there is. It opens under
+	// the splash and is there on the board that replaces it.
+	if m.splashing() && !m.modal() && !m.helpOn {
 		return m.splash()
 	}
 	g := m.geometry()
