@@ -528,3 +528,84 @@ func (c *HTTP) Viewer(ctx context.Context) (string, error) {
 	}
 	return resp.Viewer.ID, nil
 }
+
+const teamGitAutomationsQuery = `
+query TeamGitAutomations($key: String!, $after: String) {
+  teams(filter: { key: { eq: $key } }, first: 1) {
+    nodes {
+      gitAutomationStates(first: 50, after: $after) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          event
+          state { name }
+          targetBranch { branchPattern }
+        }
+      }
+    }
+  }
+}`
+
+// TeamGitAutomations reads the team's git automations (see Client). Paginated
+// like the issue listings: the connection holds five rules team-wide and five
+// more per target-branch row, so one page is almost always the whole of it —
+// but a page that stopped at the ceiling and said nothing would report a
+// collision past it as a clean board, which is the worst thing this read can
+// produce.
+func (c *HTTP) TeamGitAutomations(ctx context.Context, teamKey string) ([]GitAutomation, error) {
+	var automations []GitAutomation
+	after := ""
+	for {
+		var resp struct {
+			Teams struct {
+				Nodes []struct {
+					GitAutomationStates struct {
+						PageInfo struct {
+							HasNextPage bool   `json:"hasNextPage"`
+							EndCursor   string `json:"endCursor"`
+						} `json:"pageInfo"`
+						Nodes []struct {
+							Event string `json:"event"`
+							// Null when the rule is set to take no action.
+							State *struct {
+								Name string `json:"name"`
+							} `json:"state"`
+							// Null for the team-wide rule.
+							TargetBranch *struct {
+								BranchPattern string `json:"branchPattern"`
+							} `json:"targetBranch"`
+						} `json:"nodes"`
+					} `json:"gitAutomationStates"`
+				} `json:"nodes"`
+			} `json:"teams"`
+		}
+		vars := map[string]any{"key": teamKey}
+		if after != "" {
+			vars["after"] = after
+		}
+		if err := c.do(ctx, teamGitAutomationsQuery, vars, &resp); err != nil {
+			return nil, fmt.Errorf("team git automations: %w", err)
+		}
+		if len(resp.Teams.Nodes) == 0 {
+			return nil, fmt.Errorf("team git automations: team %q: %w", teamKey, ErrNotFound)
+		}
+		states := resp.Teams.Nodes[0].GitAutomationStates
+		for _, n := range states.Nodes {
+			a := GitAutomation{Event: n.Event}
+			if n.State != nil {
+				a.Status = n.State.Name
+			}
+			if n.TargetBranch != nil {
+				a.Branch = n.TargetBranch.BranchPattern
+			}
+			automations = append(automations, a)
+		}
+		// A cursor that has not moved would fetch this page forever, and this
+		// read happens before the screen opens: the symptom would be a launch
+		// that hangs with nothing on it.
+		if !states.PageInfo.HasNextPage || states.PageInfo.EndCursor == "" ||
+			states.PageInfo.EndCursor == after {
+			return automations, nil
+		}
+		after = states.PageInfo.EndCursor
+	}
+}

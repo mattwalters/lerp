@@ -102,18 +102,25 @@ func openTUI(ctx context.Context, lanes int) error {
 	// status exists on its team (SCOPE invariant 2's refuse-at-startup
 	// spirit): a misspelled queue status would poll as a permanently empty
 	// queue, not an error, and a missing on_success target would fail only
-	// after an agent's whole run.
+	// after an agent's whole run. What the same check merely warns about — a
+	// team git automation that would move a ticket mid-stage — is shown here
+	// and the run starts anyway.
 	client := linear.New(apiKey, nil)
-	if err := loop.VerifyStatuses(ctx, client, repo); err != nil {
+	warnings, err := loop.Verify(ctx, client, repo)
+	if err != nil {
 		return err
 	}
-
 	ev := evidence.New(repoDir)
 	lock, err := ev.AcquireLock()
 	if err != nil {
 		return err
 	}
 	defer lock.Close()
+
+	// After the lock, not before: a second lerp on this clone should fail on
+	// the lock rather than make the operator read and acknowledge a warning
+	// about a run it is never going to start.
+	announce(os.Stderr, os.Stdin, warnings, isTerminal(os.Stderr))
 
 	// The loop's diagnostic stream — provision, dispose, and runner output —
 	// is ephemeral process detail: a local file, discarded without ceremony
@@ -194,6 +201,57 @@ func initCommand(args []string) {
 		fmt.Printf("wrote %s with Lerp's stock pipeline — review it and check it in\n", config.RepoConfigFile)
 	}
 	fmt.Printf("initialized %s for Linear team %s\n", repoRoot, *team)
+}
+
+// announce shows the startup warnings and waits for the operator to
+// acknowledge them. The refusal returns an error and never opens the screen,
+// so the operator reads it; a warning printed on the way up would not be read
+// at all — the TUI takes the alternate screen buffer a moment later and the
+// text is gone until they quit. So the run still starts, as the warning is
+// not a refusal, but it starts when the operator has seen the warning.
+//
+// Every launch, for as long as the board and the config disagree. There is
+// nowhere to remember that an operator has already decided to live with a
+// warning: SCOPE invariant 1 keeps durable state in Linear, and lerp's own
+// board is not the place to record an opinion about the board. A keystroke
+// per launch is the price of a warning that is read, and the warning ends the
+// moment either side of the disagreement is fixed.
+//
+// It waits only when visible says the warnings went somewhere the operator is
+// looking — a terminal. Redirected away with `lerp 2>/dev/null`, the prompt
+// lands nowhere, and waiting for an answer to a question nobody was asked
+// would hang the launch behind a blank screen.
+//
+// The acknowledgement is read a byte at a time rather than through a buffered
+// reader: whatever they type after the newline belongs to the TUI, and a
+// buffered read would swallow it.
+func announce(w io.Writer, r io.Reader, warnings []string, visible bool) {
+	if len(warnings) == 0 {
+		return
+	}
+	for _, line := range warnings {
+		// Write errors are dropped on purpose. A warning is not a refusal,
+		// and `lerp 2>&-` must not be the difference between a run and no
+		// run — the same reasoning as the unreadable stdin below.
+		fmt.Fprintln(w, line)
+	}
+	if !visible {
+		return
+	}
+	fmt.Fprint(w, "\npress enter to start anyway ")
+	var b [1]byte
+	for {
+		n, err := r.Read(b[:])
+		if err != nil {
+			return
+		}
+		// Both line endings: a terminal that is not translating carriage
+		// returns delivers enter as \r, and a gate that only knows \n would
+		// swallow every keystroke and never open.
+		if n == 1 && (b[0] == '\n' || b[0] == '\r') {
+			return
+		}
+	}
 }
 
 // isTerminal reports whether f is a character device — a terminal, as far as
