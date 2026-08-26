@@ -73,7 +73,7 @@ const (
 
 // GitAutomation is one of a team's Linear git automations: a rule that moves
 // the ticket linked to a pull request when a git event fires. Linear
-// configures these per team, under the team's git settings.
+// configures these per team, under the team's workflow settings.
 type GitAutomation struct {
 	// Event is the git event that fires the rule, as Linear's own enum
 	// spells it — one of the GitEvent constants, or a name lerp has never

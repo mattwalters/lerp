@@ -110,7 +110,9 @@ purpose (below); the cost is that it cannot tell a deliberate one from
 a rule aimed at the wrong named status. It is also silent about the
 merge trigger by construction, which is the one case above it cannot
 warn you about. So the settings screen is still worth the two minutes.
-After the fact the symptom reaches the status bar from the run itself:
+After the fact the symptom reaches the status bar from the run itself,
+where a narrow terminal will truncate it — `.lerp/loop.log` has the
+whole line:
 
 > LERP-42 left "Implementing" for "In Progress" during its run — the
 > on_success hop to "In Review" was skipped. "In Progress" is not a
@@ -602,8 +604,11 @@ the last one found — which is what keeps it from reading the same whether the
 review happened or not, and the board reads a ticket's comments into the main
 pane. A ticket resting in In Review with no verdict on it reads as unfinished
 at a glance, without opening GitHub to find out. The comment goes on before
-the PR is marked ready, since that flip is what frees a PR automation to move
-the ticket.
+the PR is marked ready: on a team configured as
+[Lerp needs the status field](#lerp-needs-the-status-field) asks, nothing is
+listening for that flip and lerp's own `on_success` makes the hop — but the
+ordering is what makes the run safe on a team that has not done it yet, where
+the flip is exactly what frees an automation to move the ticket.
 
 What reaches Needs Attention is only what three rounds could not settle, and
 that is a loop rather than the end of the line: say what you want on the pull

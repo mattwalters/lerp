@@ -551,6 +551,10 @@ func TestInitReportsStatusOwnership(t *testing.T) {
 				"lerp now drives team LERP by moving tickets between statuses",
 				"team LERP's workflow settings",
 				"No action",
+				// The merged-PR trigger is benign only for a pipeline that
+				// ends before the merge, and this clause is the copy that
+				// has to stay in step with the README's version of it.
+				"unless your pipeline has a stage that runs after the merge",
 			} {
 				if !strings.Contains(out.String(), want) {
 					t.Errorf("report %q\nmissing %q", out.String(), want)
