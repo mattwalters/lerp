@@ -218,7 +218,7 @@ type HTTP struct {
 	auth Auth
 	hc   *http.Client
 
-	// The viewer id is immutable per API key, and half a dozen call sites
+	// The viewer id is immutable per operator, and half a dozen call sites
 	// want it — every claim, every release, every attention pass. It is
 	// memoized here rather than in any of them so they all get it with no
 	// signature to thread it through. Cached on success only: a failed read

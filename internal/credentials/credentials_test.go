@@ -28,6 +28,10 @@ func tempStore(t *testing.T, tok *token) store {
 	return s
 }
 
+// testClientID stands in for the public client LERP-109 will register; the
+// shipped constant is still empty.
+const testClientID = "lerp-test-client"
+
 func liveToken() token {
 	now := time.Now()
 	return token{
@@ -129,6 +133,7 @@ func TestRefreshUnderConcurrency(t *testing.T) {
 		t.Fatalf("storedSource: %v", err)
 	}
 	source.endpoint = srv.URL
+	source.clientID = testClientID
 	src := source.header
 
 	const callers = 8
@@ -160,6 +165,13 @@ func TestRefreshUnderConcurrency(t *testing.T) {
 	}
 	if got := gotForm.Get("refresh_token"); got != "refresh-1" {
 		t.Errorf("refresh_token = %q, want refresh-1", got)
+	}
+	// A public client: the id, and no secret anywhere in the grant.
+	if got := gotForm.Get("client_id"); got != testClientID {
+		t.Errorf("client_id = %q, want %q", got, testClientID)
+	}
+	if got := gotForm.Get("client_secret"); got != "" {
+		t.Errorf("client_secret = %q, want it absent", got)
 	}
 
 	// The rotated refresh token is on disk, or the next process is holding
@@ -214,6 +226,7 @@ func TestRejectedRefreshIsLatched(t *testing.T) {
 		t.Fatalf("storedSource: %v", err)
 	}
 	source.endpoint = srv.URL
+	source.clientID = testClientID
 	src := source.header
 
 	for i := range 3 {
@@ -255,6 +268,7 @@ func TestServerErrorIsNotLatched(t *testing.T) {
 		t.Fatalf("storedSource: %v", err)
 	}
 	source.endpoint = srv.URL
+	source.clientID = testClientID
 	src := source.header
 
 	_, err = src(context.Background())
@@ -270,6 +284,127 @@ func TestServerErrorIsNotLatched(t *testing.T) {
 	}
 	if got != "Bearer access-2" {
 		t.Errorf("header = %q, want the renewed token", got)
+	}
+}
+
+// A refresh whose write fails is a failed refresh — adopting a token nobody
+// can recover is worse than not renewing — and it is latched, so a pass does
+// not keep spending rotations against a disk that cannot hold the result.
+func TestRefreshWriteFailureIsLatched(t *testing.T) {
+	t.Setenv(apiKeyEnv, "")
+	expired := liveToken()
+	expired.ExpiresAt = time.Now().Add(-time.Minute)
+	s := tempStore(t, &expired)
+
+	var exchanges int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		exchanges++
+		_, _ = w.Write([]byte(`{"access_token":"access-2","refresh_token":"refresh-2","expires_in":3600}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	source, err := storedSource(s, srv.Client())
+	if err != nil {
+		t.Fatalf("storedSource: %v", err)
+	}
+	source.endpoint = srv.URL
+	source.clientID = testClientID
+	// The token loaded, then the disk went bad underneath it. Bad in a way
+	// root cannot shrug off: the directory's parent is a regular file, so
+	// MkdirAll fails with ENOTDIR whoever is asking.
+	base := t.TempDir()
+	if err := os.WriteFile(filepath.Join(base, "wall"), nil, 0o600); err != nil {
+		t.Fatalf("write wall: %v", err)
+	}
+	source.store = store{dir: filepath.Join(base, "wall", "lerp")}
+
+	for i := range 3 {
+		_, err := source.header(context.Background())
+		if err == nil {
+			t.Fatalf("call %d: want an error", i)
+		}
+		if !strings.Contains(err.Error(), "could not be stored") {
+			t.Errorf("call %d: err = %v, want the write failure named", i, err)
+		}
+		if errors.Is(err, ErrLoginRequired) {
+			t.Errorf("call %d: a write failure reported as an expired session: %v", i, err)
+		}
+	}
+	if exchanges != 1 {
+		t.Errorf("exchanges = %d, want 1 — a failed write is rotating the refresh token once per request", exchanges)
+	}
+	// Not adopted: the retry, in the next lerp, must re-exchange with the
+	// refresh token still on disk, inside Linear's replay grace.
+	if source.tok.AccessToken != "access-1" {
+		t.Errorf("in-memory access token = %q, want the unsaved one rejected", source.tok.AccessToken)
+	}
+	if stored := readToken(t, s); stored.RefreshToken != "refresh-1" {
+		t.Errorf("stored refresh token = %q, want it untouched", stored.RefreshToken)
+	}
+}
+
+// A lifetime shorter than the renewal window is refused rather than adopted:
+// adopting it would mean an exchange per GraphQL call.
+func TestShortLifetimeIsRefused(t *testing.T) {
+	t.Setenv(apiKeyEnv, "")
+	expired := liveToken()
+	expired.ExpiresAt = time.Now().Add(-time.Minute)
+	s := tempStore(t, &expired)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"access_token":"access-2","refresh_token":"refresh-2","expires_in":60}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	source, err := storedSource(s, srv.Client())
+	if err != nil {
+		t.Fatalf("storedSource: %v", err)
+	}
+	source.endpoint = srv.URL
+	source.clientID = testClientID
+
+	if _, err := source.header(context.Background()); err == nil || !strings.Contains(err.Error(), "renewal window") {
+		t.Fatalf("err = %v, want the short lifetime refused", err)
+	}
+	if stored := readToken(t, s); stored.AccessToken != "access-1" {
+		t.Errorf("an unusable token was stored: %+v", stored)
+	}
+}
+
+// A build with no client id cannot renew anything, and says so rather than
+// sending the operator after a `lerp login` it does not have.
+func TestNoClientIDIsNotAnExpiredSession(t *testing.T) {
+	t.Setenv(apiKeyEnv, "")
+	expired := liveToken()
+	expired.ExpiresAt = time.Now().Add(-time.Minute)
+	s := tempStore(t, &expired)
+
+	var exchanges int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		exchanges++
+		http.Error(w, "unknown client", http.StatusBadRequest)
+	}))
+	t.Cleanup(srv.Close)
+
+	source, err := storedSource(s, srv.Client())
+	if err != nil {
+		t.Fatalf("storedSource: %v", err)
+	}
+	source.endpoint = srv.URL
+	// clientID left as the shipped constant, which is empty until LERP-109.
+
+	_, err = source.header(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "client id") {
+		t.Fatalf("err = %v, want the missing client id named", err)
+	}
+	if errors.Is(err, ErrLoginRequired) {
+		t.Errorf("reported as an expired session: %v", err)
+	}
+	if !strings.Contains(err.Error(), apiKeyEnv) {
+		t.Errorf("error %q does not name a remedy this build has", err)
+	}
+	if exchanges != 0 {
+		t.Errorf("exchanges = %d, want 0 — nothing should reach the endpoint", exchanges)
 	}
 }
 

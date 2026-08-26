@@ -97,7 +97,13 @@ func storedSource(s store, hc *http.Client) (*oauthSource, error) {
 	if hc == nil {
 		hc = &http.Client{Timeout: 30 * time.Second}
 	}
-	return &oauthSource{store: s, hc: hc, endpoint: defaultTokenEndpoint, tok: tok}, nil
+	return &oauthSource{
+		store:    s,
+		hc:       hc,
+		endpoint: defaultTokenEndpoint,
+		clientID: clientID,
+		tok:      tok,
+	}, nil
 }
 
 // oauthSource is a stored token that renews itself.
@@ -111,9 +117,11 @@ func storedSource(s store, hc *http.Client) (*oauthSource, error) {
 type oauthSource struct {
 	store store
 	hc    *http.Client
-	// endpoint is the token endpoint, a field so tests can point it at an
-	// httptest.Server.
+	// endpoint is the token endpoint, and clientID the public client the
+	// grant names. Fields rather than the constants directly, so tests can
+	// point one at an httptest.Server and give it a client to be.
 	endpoint string
+	clientID string
 
 	mu  sync.Mutex
 	tok token
@@ -145,7 +153,17 @@ func (s *oauthSource) header(ctx context.Context) (string, error) {
 // refresh exchanges the refresh token for a new pair. It is called with mu
 // held.
 func (s *oauthSource) refresh(ctx context.Context) error {
-	next, err := exchange(ctx, s.hc, s.endpoint, s.tok.RefreshToken)
+	if s.clientID == "" {
+		// Latched, because no request can change it: a build with no client
+		// id cannot renew a token at all, and Linear would refuse the grant
+		// as a bad client — which reads as ErrLoginRequired and sends the
+		// operator after a `lerp login` this build does not have. Reachable
+		// only from a hand-written token file until LERP-109 fills the
+		// constant in.
+		s.dead = errors.New("credentials: this lerp has no Linear OAuth client id, so a stored token cannot be renewed; set " + apiKeyEnv)
+		return s.dead
+	}
+	next, err := exchange(ctx, s.hc, s.endpoint, s.clientID, s.tok.RefreshToken)
 	if err != nil {
 		if errors.Is(err, ErrLoginRequired) {
 			s.dead = err
@@ -159,7 +177,16 @@ func (s *oauthSource) refresh(ctx context.Context) error {
 	// Linear's 30-minute replay grace still honours — the same grace that
 	// covers a crash between the exchange and the write.
 	if err := s.store.save(next); err != nil {
-		return err
+		// Latched, like a refusal, and for the same reason. The exchange
+		// Linear just honoured has already rotated the refresh token, so
+		// retrying spends another rotation against a disk that is still
+		// unwritable — and once the file's older token falls out of its
+		// grace, the operator is told their session expired when what
+		// actually failed was a write. The recovery the grace exists for is
+		// the next lerp re-exchanging from the file, not this one asking
+		// again once per GraphQL call.
+		s.dead = fmt.Errorf("credentials: the renewed Linear token could not be stored: %w — fix that and run lerp again", err)
+		return s.dead
 	}
 	s.tok = next
 	return nil
@@ -167,7 +194,7 @@ func (s *oauthSource) refresh(ctx context.Context) error {
 
 // exchange posts one refresh_token grant. The client is public: a client id,
 // no secret (SCOPE invariant 4).
-func exchange(ctx context.Context, hc *http.Client, endpoint, refreshToken string) (token, error) {
+func exchange(ctx context.Context, hc *http.Client, endpoint, clientID, refreshToken string) (token, error) {
 	form := url.Values{
 		"grant_type":    {"refresh_token"},
 		"refresh_token": {refreshToken},
@@ -204,10 +231,16 @@ func exchange(ctx context.Context, hc *http.Client, endpoint, refreshToken strin
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		return token{}, fmt.Errorf("credentials: decode refresh response: %w", err)
 	}
-	if body.AccessToken == "" || body.ExpiresIn <= 0 {
-		// A token with no lifetime would be treated as expired on the very
-		// next request, which is the one thing this source must never do.
-		return token{}, errors.New("credentials: refresh: token endpoint returned no usable token")
+	if body.AccessToken == "" {
+		return token{}, errors.New("credentials: refresh: token endpoint returned no access token")
+	}
+	if body.ExpiresIn <= int64(refreshSkew/time.Second) {
+		// A lifetime shorter than the renewal window is as unusable as no
+		// lifetime at all: the token arrives already inside the skew, so it
+		// would be treated as expired on the very next request and on every
+		// request after it — an exchange per GraphQL call, which is the one
+		// thing this source must never do.
+		return token{}, fmt.Errorf("credentials: refresh: token endpoint returned a %ds lifetime, shorter than the %s renewal window", body.ExpiresIn, refreshSkew)
 	}
 	now := time.Now()
 	next := token{
