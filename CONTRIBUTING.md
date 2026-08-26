@@ -73,9 +73,16 @@ The same rules the agents work under (see `AGENTS.md`):
   tag on origin with no release attached. Reproduce it locally with
   `make snapshot`, which needs
   [goreleaser](https://goreleaser.com/install/) v2.6 or newer.
-- The docs site publishes this repo's own markdown — the README and
-  SCOPE.md you are reading — so a PR touching either builds the site as
-  a gate. `make docs-serve` previews it locally and needs
+- The docs site is the manual under `docs/content/docs/` plus this
+  repo's own markdown — the README and SCOPE.md you are reading are
+  mounted into it rather than copied — so a PR touching any of them
+  builds the site as a gate. A new manual page reaches the sidebar
+  only once it has a `[[menus.main]]` entry in `docs/hugo.toml` — the
+  sidebar is curated, not derived — though its section index lists it
+  either way. A page not ready to be read is `draft = true`, and its
+  menu entry comes out with it — an entry pointing at a page the
+  build does not have fails the build.
+  `make docs-serve` previews it locally and needs
   [hugo](https://gohugo.io); `make hugo-version` prints the version CI
   builds and deploys with, which is also what a local build warns about
   not being.

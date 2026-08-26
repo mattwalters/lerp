@@ -10,9 +10,12 @@
 <body>
   <header>
     <a class="brand" href="{{ "" | relURL }}">lerp</a>
-    {{ range site.Menus.main }}
-    <a class="nav{{ if $.IsMenuCurrent "main" . }} here{{ end }}" href="{{ .URL | relURL }}">{{ .Name }}</a>
-    {{ end }}
+    {{/* The manual is what most people come here for, so the way into it is
+         in the header on every page — including the home page, which runs
+         without the sidebar and so has no other door to it. .here marks that
+         you are already inside the manual, which is every page but home:
+         README and SCOPE are pages of it too, mounted rather than written. */}}
+    <a class="nav{{ if not .IsHome }} here{{ end }}" href="{{ "docs/" | relURL }}">Docs</a>
     <span class="spacer"></span>
     <a class="nav" href="{{ site.Params.repo }}">GitHub</a>
     <span class="version">
@@ -20,16 +23,54 @@
       <select id="version-picker" hidden aria-label="Documentation version"></select>
     </span>
   </header>
+  {{/* The home page is a splash, not a manual page: it drops both rails and
+       carries its own links. Every other page gets the three-region shell —
+       sidebar, content, and the "On this page" rail. */}}
   <div class="wrap">
+    {{ if not .IsHome }}
+    {{/* Labelled, because the rail below is a <nav> too: unlabelled, the two
+         landmarks announce as "navigation, navigation" with nothing to tell
+         the manual's contents from this page's. */}}
+    <nav class="sidenav" aria-label="Manual">
+      {{/* The sidebar is curated in hugo.toml rather than derived from the
+           content tree: grouping and order are editorial, and a page nobody
+           listed simply does not appear here (it is still published, and its
+           section index still lists it). A group heading is emitted whenever
+           the section param changes, so a section's entries have to be
+           contiguous in weight. */}}
+      {{ $section := "" }}
+      {{ range site.Menus.main }}
+      {{ with .Params.section }}{{ if ne . $section }}{{ $section = . }}<h5>{{ . }}</h5>{{ end }}{{ end }}
+      {{/* A pageRef naming a page the build does not have leaves both of
+           these empty, and the entry would render as a link to the site root
+           — a typo in a hand-maintained menu silently bouncing the reader to
+           the splash page, with the gate green. Two ways to get there, and
+           the menu cannot tell them apart, so the message names both: the
+           ref is wrong, or the page it names is a draft and this entry
+           should have come out with it. A url-only entry has a URL and no
+           page, and is left alone. */}}
+      {{ if and (not .Page) (not .URL) }}{{ errorf "menu entry %q resolves to nothing — is its pageRef a typo, or is the page it names draft = true?" .Name }}{{ end }}
+      {{ $current := $.IsMenuCurrent "main" . }}
+      {{/* Entries naming a command carry mono in hugo.toml: their names are
+           things you type, and a manual sets them in the face you type them
+           in. Not <code> inside the link — the menu name is a plain string
+           Hugo escapes, so the face is a class on the link instead. */}}
+      {{ $classes := slice }}
+      {{ if .Params.mono }}{{ $classes = $classes | append "mono" }}{{ end }}
+      {{ if $current }}{{ $classes = $classes | append "active" }}{{ end }}
+      <a href="{{ .URL | relURL }}"{{ with $classes }} class="{{ delimit . " " }}"{{ end }}{{ if $current }} aria-current="page"{{ end }}>{{ .Name }}</a>
+      {{ end }}
+    </nav>
+    {{ end }}
     <main>
       {{ block "main" . }}{{ end }}
     </main>
     {{/* plainify strips the empty <nav> Hugo emits for a page with no
-         headings, so the rail appears only when it has somewhere to point.
-         These two pages are long — the rail is how you get around them. */}}
+         headings, so the rail appears only when it has somewhere to point:
+         a short manual page gets no rail, and the long mounted files do. */}}
     {{ $toc := .TableOfContents }}
     {{ if and (not .IsHome) (plainify $toc) }}
-    <nav class="toc">
+    <nav class="toc" aria-label="On this page">
       <h5>On this page</h5>
       {{ $toc }}
     </nav>
