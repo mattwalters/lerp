@@ -401,3 +401,28 @@ func TestPulseTracksSpendAndTheLastCall(t *testing.T) {
 		t.Fatalf("the rewritten log kept %d tokens and the call %q %q", p.tokens, p.tool, p.target)
 	}
 }
+
+// The row's figure is a sum of what the log reports, so a runner that repeats
+// one call's usage on every line of it inflates the row directly: Claude Code
+// writes a content block per line, and a thinking-then-tool call read 3x.
+func TestPulseBillsOneCallOnce(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.log")
+	appendLog(t, path, `{"type":"system","subtype":"init","model":"claude-opus-5","session_id":"abc"}`+"\n")
+	now := time.Now()
+	p := newPulse(path, now, now)
+	p.read(now) // attach at the end of what is already there
+
+	// Three lines of one call, each repeating the same 1,000-token usage.
+	const usage = `"usage":{"input_tokens":100,"output_tokens":900}`
+	appendLog(t, path,
+		`{"type":"assistant","message":{"id":"msg_01","content":[{"type":"thinking","thinking":"weighing it"}],`+usage+`}}`+"\n"+
+			`{"type":"assistant","message":{"id":"msg_01","content":[{"type":"text","text":"reading it"}],`+usage+`}}`+"\n"+
+			`{"type":"assistant","message":{"id":"msg_01","content":[{"type":"tool_use","name":"Read","input":{"file_path":"/a/b.go"}}],`+usage+`}}`+"\n")
+	p.read(now)
+	if p.tokens != 1000 {
+		t.Fatalf("one call across three lines billed %d tokens, want 1000", p.tokens)
+	}
+	if p.tool != "Read" || p.target != "b.go" {
+		t.Fatalf("the last call is %q %q, want Read b.go", p.tool, p.target)
+	}
+}

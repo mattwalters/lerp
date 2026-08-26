@@ -46,11 +46,14 @@ type Event struct {
 	// Usage is the tokens the runner says the API call behind this line
 	// spent — every kind of token it bills for, since that is the number
 	// "how much has this run used" is asking for. It is a delta, not a
-	// total: a reader sums it over the stream. Zero on a line that reports
-	// no usage, which is most of them, and on a runner that reports none at
-	// all. A line whose content decodes to nothing worth showing is dropped
-	// with its usage; the loss is one call's worth on a stream that reports
-	// per call, which the next line's arrival makes invisible.
+	// total: a reader sums it over the stream, and a runner that writes one
+	// call as several lines reports it on the first of them and zero on the
+	// rest, so that sum is per call rather than per line. Zero on a line
+	// that reports no usage, which is most of them, and on a runner that
+	// reports none at all. A line whose content decodes to nothing worth
+	// showing is dropped with its usage; the loss is one call's worth on a
+	// stream that reports per call, which the next line's arrival makes
+	// invisible.
 	Usage   int
 	IsError bool
 }
@@ -233,7 +236,7 @@ func detect(line string) (Decoder, bool) {
 	}
 	switch probe.Type {
 	case "system", "assistant", "user", "result":
-		return claude{}, true
+		return &claude{}, true
 	case "thread.started", "turn.started", "turn.completed", "item.started", "item.completed":
 		return codex{}, true
 	}

@@ -9,7 +9,24 @@ import (
 
 // claude decodes Claude Code's `--output-format stream-json --verbose`
 // stream: one JSON object per line, one assistant content block per object.
-type claude struct{}
+//
+// It is the one stateful decoder, and only to keep the token count honest:
+// see counted.
+type claude struct {
+	// counted holds the ids of the messages whose usage has already been
+	// reported, newest overwriting oldest.
+	counted [countedMessages]string
+	next    int
+}
+
+// countedMessages is how many messages the decoder remembers having billed.
+// One API call is written as several lines — one per content block — and each
+// of them repeats the call's identical usage, so a call that thought, spoke
+// and called a tool would be counted three times. Remembering only the last
+// id is not enough: parallel subagents write into one log, so two messages'
+// lines interleave. It is a fixed ring rather than a growing set because a
+// day-long run's message ids are unbounded and this is a board that stays up.
+const countedMessages = 32
 
 type claudeLine struct {
 	Type            string `json:"type"`
@@ -21,6 +38,7 @@ type claudeLine struct {
 	DurationMS      int64  `json:"duration_ms"`
 	IsError         bool   `json:"is_error"`
 	Message         struct {
+		ID      string        `json:"id"`
 		Content []claudeBlock `json:"content"`
 		Usage   claudeUsage   `json:"usage"`
 	} `json:"message"`
@@ -51,7 +69,7 @@ type claudeBlock struct {
 	IsError  bool                       `json:"is_error"`
 }
 
-func (claude) Decode(line string) (Event, bool) {
+func (c *claude) Decode(line string) (Event, bool) {
 	var l claudeLine
 	if json.Unmarshal([]byte(line), &l) != nil {
 		return Event{}, false
@@ -76,7 +94,7 @@ func (claude) Decode(line string) (Event, bool) {
 				// back from it: an assistant line reports what that call
 				// spent whatever it chose to say. A user line — a tool
 				// result — reports none, so this is zero there.
-				ev.Usage = l.Message.Usage.total()
+				ev.Usage = c.usage(l.Message.ID, l.Message.Usage)
 				return ev, true
 			}
 		}
@@ -87,6 +105,29 @@ func (claude) Decode(line string) (Event, bool) {
 		return Event{Kind: KindResult, Text: resultLine(l), IsError: l.IsError}, true
 	}
 	return Event{}, false
+}
+
+// usage is what this line adds to the run's total: what the call spent the
+// first time one of its lines is decoded, and zero on the rest of them. It is
+// called only for a line that is about to be reported, so a line dropped for
+// having nothing to show leaves its call's usage for the next line of the
+// same message to carry.
+//
+// A line naming no message is counted as it comes. Nothing identifies it as a
+// repeat, and undercounting a real call is the worse of the two errors.
+func (c *claude) usage(id string, u claudeUsage) int {
+	total := u.total()
+	if total == 0 || id == "" {
+		return total
+	}
+	for _, seen := range c.counted {
+		if seen == id {
+			return 0
+		}
+	}
+	c.counted[c.next] = id
+	c.next = (c.next + 1) % len(c.counted)
+	return total
 }
 
 func block(b claudeBlock) (Event, bool) {
