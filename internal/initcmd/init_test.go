@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -561,6 +562,46 @@ func TestInitReportsStatusOwnership(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// What init reports and what it creates are one set. stateSpecs is derived
+// from statusRoles' keys, so this holds by construction and the assertion
+// cannot fail as written — it is a tripwire against someone giving stateSpecs
+// a second walk of the queues again, because the pair drifting apart is
+// exactly the failure that survives compilation: a status created but never
+// reported, or reported but never created and failing loop.Verify on the
+// first run.
+//
+// existingConfig is the fixture worth keeping here: plan's on_success is
+// "Implementing", which queues.code watches. A watched on_success is the one
+// input two hand-written loops diverge on — statusRoles skips it as an exit
+// but must still name it as a queue's own status — so a simpler pipeline
+// would leave the interesting case untested.
+func TestStateSpecsCoverExactlyTheReportedStatuses(t *testing.T) {
+	cfg, err := config.ParseRepoConfig(existingConfig, "lerp.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var created []string
+	for _, spec := range stateSpecs(cfg) {
+		if spec.Type != "started" {
+			t.Errorf("state %q created as %q, want started", spec.Name, spec.Type)
+		}
+		created = append(created, spec.Name)
+	}
+	var reported []string
+	for name := range statusRoles(cfg) {
+		reported = append(reported, name)
+	}
+	sort.Strings(reported)
+	if !reflect.DeepEqual(created, reported) {
+		t.Errorf("stateSpecs = %v, statusRoles keys = %v", created, reported)
+	}
+	// And that set is every status the queues name, watched or exit.
+	want := []string{"Human Review", "Implementing", "Planning", "Review"}
+	if !reflect.DeepEqual(created, want) {
+		t.Errorf("stateSpecs = %v, want %v", created, want)
 	}
 }
 

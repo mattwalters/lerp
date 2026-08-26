@@ -24,17 +24,6 @@ type ExecuteFunc func(context.Context, run.Invocation) (run.Result, error)
 type ProvisionFunc func(context.Context, string, string, workspace.Identity, io.Writer) error
 type DisposeFunc func(context.Context, string, string, workspace.Identity, io.Writer)
 
-// servedStatuses is the set of Linear statuses some configured queue picks up
-// from. Two decisions turn on it: which tickets the attention view calls
-// waiting on a human, and whether a concluded run releases its claim.
-func servedStatuses(repo *config.RepoConfig) map[string]bool {
-	served := make(map[string]bool, len(repo.Queues))
-	for _, q := range repo.Queues {
-		served[q.Status] = true
-	}
-	return served
-}
-
 // statusRelevance reads the configured pipeline for what each status means
 // to a ticket resting in it: on_failure targets are where runs fail,
 // on_success targets are where they finish, a queue's own status is served,

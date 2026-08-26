@@ -487,7 +487,7 @@ func (r *Reconciler) attention(ctx context.Context) {
 		r.fail(fmt.Errorf("attention: read viewer: %w", err))
 		return
 	}
-	served := servedStatuses(r.o.Repo)
+	served := r.o.Repo.WatchedStatuses()
 	relevance := statusRelevance(r.o.Repo)
 	var items []AttentionItem
 	// claimed is how the ticket came to rest here — the difference between
@@ -746,7 +746,7 @@ func (r *Reconciler) Promote(ctx context.Context, ticketID, status string) error
 	if err := r.o.Client.MoveIssue(ctx, ticketID, status); err != nil {
 		return err
 	}
-	if !servedStatuses(r.o.Repo)[status] {
+	if !r.o.Repo.WatchedStatuses()[status] {
 		return nil
 	}
 	viewerID, err := r.o.Client.Viewer(ctx)
