@@ -3666,13 +3666,16 @@ func TestOnlyALinearHTTPSURLReachesTheOpener(t *testing.T) {
 		{"file:///etc/passwd", false},
 		{"javascript:alert(1)", false},
 		{"vscode://file/etc/passwd", false},
-		{"http://linear.app/acme/issue/LERP-1", false}, // plaintext is not the door
-		{"https://linear.app.evil.test/acme", false},   // suffix, not the host
-		{"https://evil.test/linear.app/acme", false},   // path, not the host
-		{"https://linear.app@evil.test/acme", false},   // userinfo, not the host
-		{"https://linear.app:8443/acme", false},        // Linear serves one port
-		{"-froot@evil.test", false},                    // not a URL, and not a flag either
-		{"https://linear.app\x00/acme", false},
+		{"http://linear.app/acme/issue/LERP-1", false},     // plaintext is not the door
+		{"https://linear.app.evil.test/acme", false},       // a longer host that starts with it
+		{"https://evil.linear.app/acme", false},            // a subdomain is not the host either
+		{"https://evil.test/linear.app/acme", false},       // a path that reads like the host
+		{"https://linear.app@evil.test/acme", false},       // userinfo, and the host is theirs
+		{"https://attacker:secret@linear.app/acme", false}, // userinfo, and the host is Linear's
+		{"https://linear.app:8443/acme", false},            // Linear serves one port
+		{"//linear.app/acme", false},                       // right host, no scheme at all
+		{"-froot@evil.test", false},                        // parses fine; the scheme check is what stops it
+		{"https://linear.app\x00/acme", false},             // a control byte Parse refuses outright
 	} {
 		if got := openable(tc.url); got != tc.want {
 			t.Errorf("openable(%q) = %v, want %v", tc.url, got, tc.want)
@@ -4148,6 +4151,30 @@ func TestTicketDetailFailureKeepsThePaneThatWorks(t *testing.T) {
 		if !strings.Contains(view, want) {
 			t.Fatalf("a failed read cost the pane %q:\n%s", want, view)
 		}
+	}
+}
+
+// The same failed read on a row whose URL the opener refuses: the pane has
+// nowhere to send the operator, so it does not offer to. The key line has
+// already dropped o for this row, and a pane that still said "o opens it in
+// Linear" would be the one place on the screen still promising the door.
+func TestAFailedReadOffersNoDoorItCannotOpen(t *testing.T) {
+	m, _, reader := newReadingTestModel(t)
+	m = pastTheSplash(t, m)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, keyMsg("enter"))
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-1", TicketID: "id-1", Title: "First",
+			Status: "Backlog", Reason: "unclaimed", URL: "file:///etc/passwd"},
+	}}})
+	m = selectAndRead(t, m, 0, linear.IssueDetail{}, errors.New("linear: rate limited"), reader)
+
+	view := m.View()
+	if !strings.Contains(view, "couldn't read the ticket") {
+		t.Fatalf("the pane does not say the read failed:\n%s", view)
+	}
+	if strings.Contains(view, "o opens it in Linear") {
+		t.Fatalf("the pane offers a door the opener will refuse:\n%s", view)
 	}
 }
 

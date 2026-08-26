@@ -1290,8 +1290,11 @@ func openable(rawURL string) bool {
 	}
 	// Host, not Hostname: a port is not something Linear sends, and
 	// refusing one costs nothing. Parse has already lowercased the scheme;
-	// the host it leaves as it found it.
-	return u.Scheme == "https" && strings.EqualFold(u.Host, linearHost)
+	// the host it leaves as it found it. Userinfo is refused rather than
+	// ignored — the host is still Linear's, so it redirects nobody, but
+	// https://anything-at-all@linear.app/… is a browser dialog quoting an
+	// attacker's string back at the operator.
+	return u.Scheme == "https" && u.User == nil && strings.EqualFold(u.Host, linearHost)
 }
 
 // openURL hands the URL to the OS opener. This is the TUI opening the
@@ -3376,7 +3379,7 @@ func (m model) attentionDetail(width int) string {
 		lines = append(lines, labelGutter+l)
 	}
 	lines = append(lines, styleFaint.Render("linear  ")+it.URL)
-	return strings.Join(append(lines, m.ticketLines(it.TicketID, width)...), "\n")
+	return strings.Join(append(lines, m.ticketLines(it.TicketID, width, openable(it.URL))...), "\n")
 }
 
 // ticketLines is the ticket itself, below the pass's own lines: the body,
@@ -3384,8 +3387,11 @@ func (m model) attentionDetail(width int) string {
 // the verdict that parked the ticket, is where the eye lands. Read-only and
 // flat: nothing here is selectable, no thread is followed, no other ticket
 // is reachable from it. Markdown is rendered (see markdown.go); `o` is the
-// answer to anything that wants more.
-func (m model) ticketLines(ticketID string, width int) []string {
+// answer to anything that wants more — but only where `o` has a door to
+// open, so hasDoor is the same question the key line asks. A read that
+// failed on a row whose URL the opener refuses has nowhere to send the
+// operator, and saying so twice is worse than saying nothing.
+func (m model) ticketLines(ticketID string, width int, hasDoor bool) []string {
 	d := m.details[ticketID]
 	switch {
 	case d == nil:
@@ -3393,7 +3399,11 @@ func (m model) ticketLines(ticketID string, width int) []string {
 	case d.state == detailLoading:
 		return []string{"", styleFaint.Render("reading the ticket…")}
 	case d.state == detailFailed:
-		return []string{"", styleFaint.Render("couldn't read the ticket: " + d.err), styleFaint.Render("o opens it in Linear")}
+		failed := []string{"", styleFaint.Render("couldn't read the ticket: " + d.err)}
+		if hasDoor {
+			failed = append(failed, styleFaint.Render("o opens it in Linear"))
+		}
+		return failed
 	}
 	lines := []string{""}
 	if body := strings.TrimSpace(d.body); body != "" {
