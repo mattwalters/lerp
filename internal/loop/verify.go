@@ -112,7 +112,7 @@ func verifyStatuses(ctx context.Context, client linear.Client, repo *config.Repo
 var midStageEvents = []struct{ event, label string }{
 	{linear.GitEventDraft, "On draft PR open"},
 	{linear.GitEventStart, "On PR open"},
-	{linear.GitEventReview, "On review requested"},
+	{linear.GitEventReview, "On PR review request or activity"},
 	{linear.GitEventMergeable, "On PR ready for merge"},
 }
 

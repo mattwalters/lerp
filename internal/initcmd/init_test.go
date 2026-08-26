@@ -517,6 +517,53 @@ func TestInitReportsPipelineExits(t *testing.T) {
 	}
 }
 
+// The prerequisite lerp cannot satisfy from here: the status field on the
+// team it serves. Every init says it — a fresh one and a repeat alike, since
+// a repo set up by an earlier lerp only hears it by repeating init, and the
+// team's automations can change long after setup.
+func TestInitReportsStatusOwnership(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T, dir string)
+	}{
+		{name: "fresh"},
+		{
+			name: "repeat",
+			setup: func(t *testing.T, dir string) {
+				path := filepath.Join(dir, config.RepoConfigFile)
+				if err := os.WriteFile(path, []byte(existingConfig), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if tc.setup != nil {
+				tc.setup(t, dir)
+			}
+			var out bytes.Buffer
+			board := &fakeBoard{existing: linearDefaults}
+			if _, err := Init(context.Background(), board, &out, nil, dir, "LERP", ""); err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range []string{
+				"lerp now drives team LERP by moving tickets between statuses",
+				"team LERP's workflow settings",
+				"No action",
+				// The merged-PR trigger is benign only for a pipeline that
+				// ends before the merge, and this clause is the copy that
+				// has to stay in step with the README's version of it.
+				"unless your pipeline has a stage that runs after the merge",
+			} {
+				if !strings.Contains(out.String(), want) {
+					t.Errorf("report %q\nmissing %q", out.String(), want)
+				}
+			}
+		})
+	}
+}
+
 func TestInitStopsWhenBoardFails(t *testing.T) {
 	dir := t.TempDir()
 	_, err := Init(context.Background(), &fakeBoard{err: errors.New("no access")}, nil, nil, dir, "LERP", "")
