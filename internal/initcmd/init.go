@@ -159,22 +159,21 @@ func writeRepoConfig(path, teamKey, stock string) (created bool, err error) {
 // the operator is already on the board.
 //
 // Deliberately short, and deliberately not a list of trigger names. The
-// startup check reads the team's actual automations and names each rule whose
-// target the config never mentions, what each queue loses to it and the fix;
-// repeating any of that here would be a second copy going stale against the
-// real one. What init
-// adds is the rule itself, before there is anything to detect — an operator
-// who hears "lerp owns this field" while setting the team up does not have
-// to trip the collision to learn it.
+// startup check reads the team's actual automations and names each mid-stage
+// rule whose target the config never mentions, what each queue loses to it and
+// the fix; repeating any of that here would be a second copy going stale
+// against the real one. What init adds is the rule itself, before there is
+// anything to detect — an operator who hears "lerp owns this field" while
+// setting the team up does not have to trip the collision to learn it.
 func reportStatusOwnership(out io.Writer, teamKey string) {
 	fmt.Fprintf(out, "lerp now drives team %s by moving tickets between statuses, so it needs that\n", teamKey)
 	fmt.Fprintf(out, "  field: an automation that moves a ticket while a stage is running takes the\n")
 	fmt.Fprintf(out, "  stage's own move away, and the hop it would have made never happens. Under\n")
 	fmt.Fprintf(out, "  team %s's workflow settings, set the pull-request triggers that fire while a\n", teamKey)
-	fmt.Fprintf(out, "  pull request is open to No action; the one for a merged pull request fires\n")
-	fmt.Fprintf(out, "  after the pipeline is done with the ticket and can stay. Every `lerp` start\n")
-	fmt.Fprintf(out, "  re-reads this team's automations and names the ones that point somewhere\n")
-	fmt.Fprintf(out, "  %s does not.\n", config.RepoConfigFile)
+	fmt.Fprintf(out, "  pull request is open to No action; the one for a merged pull request is the\n")
+	fmt.Fprintf(out, "  keeper, unless your pipeline has a stage that runs after the merge. Every\n")
+	fmt.Fprintf(out, "  `lerp` start re-reads this team's automations and names the mid-stage ones\n")
+	fmt.Fprintf(out, "  that point somewhere %s does not.\n", config.RepoConfigFile)
 }
 
 // gitignoreFile is the ignore list init appends to, at the repository root.

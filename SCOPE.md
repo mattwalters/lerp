@@ -59,8 +59,8 @@ defect: on a served team, the triggers that fire mid-stage are set to
 No action — or, deliberately, at a status the pipeline itself names,
 which makes the automation the next stage's trigger rather than the
 thief of the last one's hop. Lerp reads the served teams' automations
-at startup and names the ones that point somewhere the config does
-not.
+at startup and names the mid-stage ones that point somewhere the
+config does not.
 
 ## The five concepts
 

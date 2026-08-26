@@ -79,22 +79,26 @@ or to No action. On the teams lerp serves:
 - **On draft PR open**, **On PR open**, **On PR review request or
   activity** and **On PR ready for merge** all fire while a pull
   request is open, which for a ticket a queue is running is mid-stage.
-  Set every one of them to **No action**.
+  Set every one of them to **No action** — all four, not just the
+  obvious one: the stock implement prompt opens its pull request as a
+  draft and flips it to ready at the end, so a single run can trip any
+  of them.
 - **On PR merge** fires once the pull request has landed. Under the
   stock pipeline that is after lerp is finished with the ticket —
   moving a merged ticket to Done is the benign automation, and it is
-  what carries "In Review" to the end, so leave it on. If you add a
-  merge stage of your own, it is mid-stage like the rest, and the same
-  rule applies to it.
+  what carries "In Review" to the end, so leave it on. If your pipeline
+  has a stage that runs *after* the merge, that trigger is mid-stage
+  for you too: either set it to No action as well, or take the road
+  less travelled below and point that stage's `on_success` at the
+  status it moves to. This repo's own `lerp.toml` takes the second
+  road, with a merge queue whose `on_success` is the Done the
+  automation is already heading for.
 
 It is a two-minute settings change, and it is scoped: teams lerp does
 not serve are unaffected. Skip it and the failure is total rather than
 intermittent — the implement stage's whole job is to open a pull
 request, so "On PR open" moves its ticket out of Implementing before
 the run exits, and every ticket, every time, stops short of review.
-The stock implement prompt keeps its pull request a draft until the
-work is ready, which narrows the window; it does not close it, since
-the later triggers still fire on the flip to ready.
 
 Lerp says what it can about this on its own. Every `lerp` start reads
 the served teams' real automations and, before the board opens, names
@@ -103,9 +107,10 @@ what each queue would lose to it, and the fix. That check is
 deliberately quiet about an automation pointing at a status your
 config *does* name, because that is a configuration somebody chose on
 purpose (below); the cost is that it cannot tell a deliberate one from
-a rule aimed at the wrong named status, so the settings screen is
-still worth the two minutes. After the fact the symptom reaches the
-status bar from the run itself:
+a rule aimed at the wrong named status. It is also silent about the
+merge trigger by construction, which is the one case above it cannot
+warn you about. So the settings screen is still worth the two minutes.
+After the fact the symptom reaches the status bar from the run itself:
 
 > LERP-42 left "Implementing" for "In Progress" during its run — the
 > on_success hop to "In Review" was skipped. "In Progress" is not a
@@ -123,9 +128,10 @@ harder road, in three ways: it couples your pipeline to integration
 behaviour you do not control; a setting changed in Linear breaks the
 chain with no diff to read; and the queue's `on_failure` route goes
 with it, since the automation has already moved the ticket to the
-success status by the time a failing run ends — a failed run then
-lands nowhere but the success gate, with only a status-bar line to say
-so.
+success status by the time a failing run ends. A failed run then comes
+to rest at the success gate with only a status-bar line to say so —
+and if a queue watches that status, the next pass simply runs the
+following stage on the failed work.
 
 ## Getting started
 

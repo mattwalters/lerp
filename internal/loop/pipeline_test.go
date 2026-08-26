@@ -4,6 +4,9 @@ package loop
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/mattwalters/lerp/internal/config"
@@ -161,4 +164,32 @@ func claimed(t *testing.T, fake *linear.Fake, issueID, status string) (linear.Is
 		t.Fatal(err)
 	}
 	return issue, viewerID
+}
+
+// The README quotes this note as what an adopter sees on the status bar when
+// an automation has eaten a stage's hop — the string they will have in front
+// of them, and the one they grep for. A quoted string with nothing holding it
+// to its source goes stale on the first reword, with a green gate, and the
+// page a surprised adopter reads is exactly the wrong place for a line that
+// no longer matches. So it is pinned the way lerp.example.toml is pinned to
+// the stock config: bytes, not a paraphrase.
+func TestSkippedHopNoteIsWhatTheReadmeQuotes(t *testing.T) {
+	note := skippedHopNote(
+		linear.Issue{Identifier: "LERP-42"},
+		config.Queue{Status: "Implementing", OnSuccess: "In Review"},
+		"on_success", "In Review", "In Progress",
+		map[string]bool{"Implementing": true, "In Review": true},
+	)
+	readme, err := os.ReadFile(filepath.Join("..", "..", "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The README wraps the quote across blockquote lines, so compare against
+	// the page with its wrapping and "> " markers flattened away.
+	flat := strings.Join(strings.Fields(strings.ReplaceAll(string(readme), "\n>", "")), " ")
+	if !strings.Contains(flat, strings.Join(strings.Fields(note), " ")) {
+		t.Errorf("README.md does not quote what skippedHopNote produces:\n%s\n\n"+
+			"pipeline.go is the source. Change the note there, then update the\n"+
+			"blockquote under \"Lerp needs the status field\" in README.md.", note)
+	}
 }

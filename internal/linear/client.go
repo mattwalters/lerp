@@ -98,7 +98,7 @@ type GitAutomation struct {
 const (
 	GitEventDraft     = "draft"     // a draft pull request was opened
 	GitEventStart     = "start"     // a pull request was opened
-	GitEventReview    = "review"    // a review was requested on it
+	GitEventReview    = "review"    // a review was requested, or reviewed
 	GitEventMergeable = "mergeable" // it became ready for merge
 	GitEventMerge     = "merge"     // it merged
 )
