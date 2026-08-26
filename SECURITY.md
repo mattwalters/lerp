@@ -15,9 +15,12 @@ your machine.** Everything below is that sentence in detail.
 
 Lerp reads one config file, `lerp.toml` at the repo root, and that file
 contains shell commands: `provision`, `dispose`, and every runner's
-`command` and `resume`. Cloning a repository and running `lerp` in it
-executes those commands — the same trust class as running `make` in a
-strange repository.
+`command`. Cloning a repository and running `lerp` in it executes those
+commands — the same trust class as running `make` in a strange
+repository. A runner's `resume` is a fourth: lerp never runs it, it
+prints it for you to paste when you eject a run, which makes your
+paste the trigger and the file's author the one who chose the
+command.
 
 That is why the file is checked in rather than generated per machine:
 the pipeline, and the permissions it grants, are versioned and reviewed
@@ -31,10 +34,12 @@ assignee, and is not blocked. That is the whole test
 (`internal/loop/claim.go`) — there is no allowlist of authors, no
 approval step, and no check on who put the ticket there.
 
-So anyone who can create a ticket in a served team, or move one into a
-served status, can start an unattended agent run on **every** machine
-running lerp against that team. That includes workspace members and
-guests, Linear's own automations, and any integration with write access
+So anyone who can put a ticket into a served status — by creating it
+there or by moving it there — starts an unattended agent run on a
+machine running lerp against that team. The claim is an assignment, so
+exactly one machine wins the ticket; which one is not something you or
+they get to choose. That reach belongs to workspace members and guests,
+to Linear's own automations, and to any integration with write access
 to the board — a GitHub integration that moves a ticket on merge is
 triggering runs just as a person would.
 
@@ -72,14 +77,28 @@ defaults does this for you.
 
 ### What lerp itself does
 
-For completeness, lerp's own footprint is small: it speaks exactly one
-external API (Linear), listens on no port, runs no daemon, and stores
-nothing durable — `.lerp/` holds evidence of running processes, and
-losing it may cost compute but never correctness. It reads your Linear
-API key from `LINEAR_API_KEY` and never writes it to disk. Values
-interpolated into a runner `command` are shell-quoted, so nothing in a
-ticket can alter the command you configured — the injection surface is
-the prompt the agent reads, not the command line lerp builds.
+Lerp's own footprint is small: it speaks exactly one external API
+(Linear), listens on no port, and runs no daemon. Values interpolated
+into a runner `command` are shell-quoted, so nothing in a ticket can
+alter the command you configured — the injection surface is the prompt
+the agent reads, not the command line lerp builds.
+
+Two details of that footprint are worth stating plainly, because both
+cut the other way:
+
+- **Agents inherit lerp's environment.** `provision`, `dispose` and
+  every runner are started with lerp's own environment plus a few
+  `LERP_` variables. Your `LINEAR_API_KEY` is in there. Lerp never
+  writes it to disk, but an agent can read it — and a personal API key
+  is write access to your entire Linear workspace, not just the served
+  team, which is a path straight back to the paragraph above. Run lerp
+  with an environment you would hand to the agent, because you are.
+- **Run logs persist locally.** `.lerp/` holds no durable truth —
+  losing all of it may cost compute, never correctness — but it does
+  hold each run's full agent transcript, the loop's diagnostics, and
+  the lane workspaces. Those transcripts contain whatever the agent
+  read aloud. `lerp init` does not touch your `.gitignore`, so add
+  `.lerp/` to it yourself before the first run.
 
 ## Reporting a vulnerability
 
@@ -93,12 +112,13 @@ Lerp is maintained by one person, so those are honest limits rather
 than an SLA. If a report lands, you will be credited in the advisory
 unless you ask otherwise.
 
-Only the latest release is supported; fixes land on `main` and ship in
-the next tag.
+Lerp is pre-1.0 and has no tagged releases yet: `main` is what is
+supported, fixes land there, and `go install ...@latest` gets them.
 
 **What is in scope:** anything that lets a party without board write
 access influence what an agent does, anything that escalates beyond the
-grants documented above, and any leak of the Linear API key.
+grants documented above, and any path that puts the Linear API key
+somewhere this page does not say it goes.
 
 **What is not:** the trust model on this page. An agent doing damage
 because someone with ticket-write access told it to, or because a
