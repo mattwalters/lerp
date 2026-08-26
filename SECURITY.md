@@ -18,9 +18,8 @@ contains shell commands: `provision`, `dispose`, and every runner's
 `command`. Cloning a repository and running `lerp` in it executes those
 commands — the same trust class as running `make` in a strange
 repository. A runner's `resume` is a fourth: lerp never runs it, it
-prints it for you to paste when you eject a run, which makes your
-paste the trigger and the file's author the one who chose the
-command.
+prints it for you to paste when you eject a run — which makes your
+paste the trigger and the file's author the one who chose the command.
 
 That is why the file is checked in rather than generated per machine:
 the pipeline, and the permissions it grants, are versioned and reviewed
@@ -36,12 +35,17 @@ approval step, and no check on who put the ticket there.
 
 So anyone who can put a ticket into a served status — by creating it
 there or by moving it there — starts an unattended agent run on a
-machine running lerp against that team. The claim is an assignment, so
-exactly one machine wins the ticket; which one is not something you or
-they get to choose. That reach belongs to workspace members and guests,
-to Linear's own automations, and to any integration with write access
-to the board — a GitHub integration that moves a ticket on merge is
-triggering runs just as a person would.
+machine running lerp against that team. Nothing narrows that to a
+machine you picked: the claim is an assignment to a Linear *user*, and
+it is scheduling rather than a lock — two lerps signed in as the same
+user both read the claim back as their own, and across users the race
+lerp accepts resolves to duplicated compute. Size the exposure as every
+machine running lerp against that team.
+
+That reach belongs to workspace members and guests, to Linear's own
+automations, and to any integration with write access to the board — a
+GitHub integration that moves a ticket on merge is triggering runs just
+as a person would.
 
 Ticket text is a second channel. Lerp never passes ticket bodies into
 prompts — it hands the runner the queue's prompt and the ticket
@@ -62,26 +66,39 @@ writing outside its workspace.
 `--permission-mode bypassPermissions` in the stock Claude runner makes
 that concrete: the agent edits files and runs commands without asking,
 as your user. `lerp init` asks before including that flag and defaults
-to leaving it out. Declining has a cost — a headless run then fails at
-the first tool it is not allowed to use unless you curate an
-`--allowedTools` list — but it is a real grant, and the checked-in
-`lerp.toml` is where you make it deliberately.
+to leaving it out — but that is a default, not a fact about your repo:
+the shipped `lerp.example.toml`, and any config copied from another
+repo, carries the flag. Read the `command` line in your own
+`lerp.toml`; that is the only place the answer lives. Declining has a
+cost — a headless run then fails at the first tool it is not allowed to
+use unless you curate an `--allowedTools` list — but it is a real
+grant, and the checked-in `lerp.toml` is where you make it
+deliberately.
 
 ### No sandbox is provided or implied
 
 Lerp does not sandbox agents and has no plans to. Isolation is the
-operator's job, and `provision` / `dispose` are the seam for it: point
-them at a container, a VM, or a throwaway user account instead of a
-worktree, and lerp will not know the difference. Nothing in lerp's
-defaults does this for you.
+operator's job, and it takes both halves of the config: `provision` and
+`dispose` build and tear the sandbox down — a container, a VM, a
+throwaway user account instead of a worktree — and the runner
+`command` has to be the thing that *enters* it (`docker exec ...`, an
+`ssh` into the VM). Lerp always starts the runner itself with `sh -c`
+on the host, in the workspace directory, so a `provision` that builds a
+container while the `command` still reads `claude -p ...` leaves the
+container idle and the agent on your machine. Nothing in lerp's
+defaults does any of this for you.
 
 ### What lerp itself does
 
 Lerp's own footprint is small: it speaks exactly one external API
-(Linear), listens on no port, and runs no daemon. Values interpolated
-into a runner `command` are shell-quoted, so nothing in a ticket can
-alter the command you configured — the injection surface is the prompt
-the agent reads, not the command line lerp builds.
+(Linear), listens on no port, and runs no daemon. That last one cuts
+both ways, and it is worth knowing before you need it: quitting lerp
+does not stop a run. Agents are their own process groups and keep
+working, and the next lerp adopts them. To stop one, eject it with `e`
+— or kill its process group. Values interpolated into a runner
+`command` are shell-quoted, so nothing in a ticket can alter the
+command you configured — the injection surface is the prompt the agent
+reads, not the command line lerp builds.
 
 Two details of that footprint are worth stating plainly, because both
 cut the other way:
@@ -117,8 +134,10 @@ supported, fixes land there, and `go install ...@latest` gets them.
 
 **What is in scope:** anything that lets a party without board write
 access influence what an agent does, anything that escalates beyond the
-grants documented above, and any path that puts the Linear API key
-somewhere this page does not say it goes.
+grants documented above, any path that puts the Linear API key
+somewhere this page does not say it goes, and anything in a ticket that
+escapes the TUI's sanitizing and reaches your terminal as escape
+sequences.
 
 **What is not:** the trust model on this page. An agent doing damage
 because someone with ticket-write access told it to, or because a
