@@ -858,9 +858,11 @@ func (m *model) applyDetail(msg detailMsg) {
 func (m model) handlePromoteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	switch {
-	// Quit backs the picker out rather than leaving the board: the modal has
-	// the keyboard, and q here means "not this status" and not "not this
-	// session".
+	// Quit backs the picker out rather than leaving the board, which is what
+	// the raw switch did with the same two keys: the modal has the keyboard,
+	// and q here means "not this status" and not "not this session". (The
+	// eject overlay answers ctrl+c the other way, with tea.Quit. That
+	// disagreement is older than this switch and is not ours to settle.)
 	case key.Matches(msg, m.keys.Close), key.Matches(msg, m.keys.Quit):
 		m.promoting = false
 	case key.Matches(msg, m.keys.Up):
@@ -3363,8 +3365,6 @@ func (m model) statusBar() string {
 	}
 	// A modal has the keyboard, so its own instructions replace the line.
 	switch {
-	case m.promoting:
-		hint = hintLine(m.keys.promoteHelp())
 	case m.ejecting:
 		hint = "enter eject · esc cancel"
 	case m.ejection != nil:
@@ -3373,6 +3373,18 @@ func (m model) statusBar() string {
 		hint = "type to filter · enter accept · esc cancel"
 	}
 	right := styleFaint.Render(hint)
+	// The picker's line is bindings rather than a string, drawn by the same
+	// component that draws the panels' key lines — one renderer, so the
+	// separator and the faint are declared once and a rebind moves the line
+	// with the keys. On a copy at no width: bubbles only drops hints to fit
+	// when it has been given one, and a modal's instructions are not a hint
+	// the bar may thin out. What is left of them on a window too narrow to
+	// hold them is the truncation below, the same as every other line here.
+	if m.promoting {
+		h := m.help
+		h.Width = 0
+		right = h.ShortHelpView(m.keys.promoteHelp())
+	}
 
 	// The heartbeat's room is held open whether or not there is a heartbeat
 	// in it. That is what lets it come and go without moving anything: every

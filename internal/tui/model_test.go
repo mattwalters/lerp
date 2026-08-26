@@ -1956,12 +1956,12 @@ func TestPromotePickerFollowsTheKeymap(t *testing.T) {
 		t.Fatal("p did not open the promote picker")
 	}
 	view := m.View()
-	for _, want := range []string{"ctrl+n down", "enter promote", "esc cancel"} {
+	for _, want := range []string{"ctrl+p ctrl+n choose", "enter promote", "esc cancel"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("picker hint is missing %q:\n%s", want, view)
 		}
 	}
-	if strings.Contains(view, "↑/↓") {
+	if strings.Contains(view, "↑/↓") || strings.Contains(view, "↑/k") {
 		t.Fatalf("picker hint still names the stock arrows after a rebind:\n%s", view)
 	}
 
@@ -1983,6 +1983,33 @@ func TestPromotePickerFollowsTheKeymap(t *testing.T) {
 	}
 	if len(promoter.calls) != 0 {
 		t.Fatalf("the picker wrote to Linear while only moving: %+v", promoter.calls)
+	}
+}
+
+// The picker's line is built from bindings now, so its width is whatever
+// their labels add up to rather than a string somebody counted. On an
+// eighty-column window the bar must still fit it beside "● n in the inbox"
+// — the one number the truncation at the bottom of statusBar is written to
+// protect, and the first thing a line four columns too wide takes.
+func TestThePickersLineLeavesTheInboxCountWhole(t *testing.T) {
+	m, _, _, _ := newPromoteTestModel(t, 2, defaultTestStatuses)
+	resized, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 30})
+	m = resized.(model)
+	m = update(t, m, keyMsg("1"))
+	var items []loop.AttentionItem
+	for i := range 12 {
+		items = append(items, loop.AttentionItem{
+			Ticket: fmt.Sprintf("LERP-%d", i), TicketID: fmt.Sprintf("id-%d", i),
+			Title: "Nobody's routed this", Status: "Backlog"})
+	}
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: items}})
+	m = update(t, m, keyMsg("p"))
+
+	bar := m.statusBar()
+	for _, want := range []string{"● 12 in the inbox", "↑/k ↓/j choose", "esc cancel"} {
+		if !strings.Contains(bar, want) {
+			t.Fatalf("the eighty-column bar lost %q:\n%s", want, bar)
+		}
 	}
 }
 

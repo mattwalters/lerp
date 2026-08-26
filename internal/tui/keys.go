@@ -1,7 +1,7 @@
 package tui
 
 import (
-	"strings"
+	"slices"
 
 	"github.com/charmbracelet/bubbles/key"
 )
@@ -185,20 +185,21 @@ func short(b key.Binding, desc string) key.Binding {
 // alone, the way the ? overlay names q for Quit's two keys.
 func (k keymap) promoteHelp() []key.Binding {
 	return []key.Binding{
-		short(k.Up, "up"), short(k.Down, "down"),
-		short(k.Detail, "promote"), short(k.Close, "cancel"),
+		pair(k.Up, k.Down, "choose"),
+		short(k.Detail, "promote"),
+		short(k.Close, "cancel"),
 	}
 }
 
-// hintLine renders bindings the way the status bar writes its own hints —
-// "key desc" joined by the "·" the rest of the TUI separates facts with.
-// bubbles/help draws the panels' lines, which have a width to fit into; a
-// modal's instructions are never truncated away, so they need the shape and
-// not the fitting.
-func hintLine(bs []key.Binding) string {
-	parts := make([]string, len(bs))
-	for i, b := range bs {
-		parts[i] = b.Help().Key + " " + b.Help().Desc
-	}
-	return strings.Join(parts, " · ")
+// pair renders two bindings as one hint — "↑/k ↓/j choose" — where naming a
+// direction twice would cost more than the line has. The picker's
+// instructions share the status bar with "● n in the inbox", and that count
+// is what the bar's truncation takes first: spelling up and down out
+// separately is seven columns, enough to eat the number on an
+// eighty-column window. Keys from both, so the hint still says what the
+// picker answers to.
+func pair(a, b key.Binding, desc string) key.Binding {
+	return key.NewBinding(
+		key.WithKeys(slices.Concat(a.Keys(), b.Keys())...),
+		key.WithHelp(a.Help().Key+" "+b.Help().Key, desc))
 }
