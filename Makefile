@@ -36,7 +36,7 @@ uninstall: ## Remove the installed binary
 	@printf 'removed %s\n' '$(GOBIN)/lerp'
 
 .PHONY: check
-check: ## What CI runs: gofmt, vet, build, test
+check: ## The gate, on Linux and macOS in CI: gofmt, vet, build, test
 	@test -z "$$(gofmt -l .)" || { echo 'unformatted files:'; gofmt -l .; exit 1; }
 	go vet ./...
 	go build ./...

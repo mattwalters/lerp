@@ -7,15 +7,67 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # Both platforms are load-bearing: development happens on macOS, and
+    # `internal/evidence` shells out to `ps -o lstart=` and parses what comes
+    # back — exactly where BSD and GNU disagree — while the process-group and
+    # lock syscalls under it are platform-sensitive too. fail-fast is off
+    # because "does it break on one OS or both" is the whole question a red
+    # run here has to answer, and cancelling the sibling job hides it.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+          # setup-go caches GOCACHE by default, and Go's test-result cache
+          # lives there: a package whose inputs have not changed reports `ok
+          # (cached)` without running. That is fine on a machine, and wrong
+          # here, because the cache key has no runner-image component. The
+          # inputs Go tracks do not include what `ps -o lstart=` printed, so a
+          # macos-latest that rolls to an image whose BSD `ps` formats
+          # differently would replay the previous image's pass and stay green
+          # over the exact break the matrix exists to catch.
+          cache: false
       # The gate lives in the Makefile so CI and a developer's local run can
       # never drift apart.
       - run: make check
+
+  # A dependency that turns out to be vulnerable should fail a build, not wait
+  # to be noticed. This gates on reachability: govulncheck fails the job only
+  # for advisories lerp's own code can reach, so a red run is something to act
+  # on rather than a version number to argue with. The tradeoff is real and
+  # deliberate — an advisory in a dependency lerp never calls is printed and
+  # does not gate, and Dependabot, not this job, is what carries those off the
+  # tree. Its own job, not a step in `make check`, because it queries a
+  # database over the network on every single run — where the gate reaches
+  # the network only to fill a cold module cache, and never again.
+  vuln:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          # Deliberately not go.mod's `go 1.25` like the test job. govulncheck
+          # scans the standard library too, and it reports against whichever
+          # toolchain runs it: held to an old release line, this job goes red
+          # for stdlib advisories whose fix only ever ships in a newer one, and
+          # no change to this repo can clear it. `stable` asks the question
+          # worth asking — is lerp exposed when built with a current Go.
+          go-version: stable
+      # Everything this job reads floats on purpose: the toolchain above, the
+      # scanner here, and the database it queries at run time. A scanner held
+      # at a version is a scanner that stops learning — it misses whatever
+      # analysis the last year of releases added, and it goes on passing while
+      # it does. The cost is that a govulncheck release can turn an unrelated
+      # PR red, which is loud, actionable, and the better of the two failures.
+      # The same is true one step up: `stable` follows the actions/go-versions
+      # manifest, so for the day or two after a Go security release this job
+      # can report an advisory whose fix has not landed there yet.
+      - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
   # The cast rots silently: a tape whose keystrokes no longer drive the UI
   # they were written against still renders, it just renders the wrong thing.
