@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -540,17 +541,109 @@ func TestStockVariants(t *testing.T) {
 	}
 }
 
+// The shipped example is exactly what ExampleRepoConfig renders, byte for
+// byte, and this is what says so. Comparing the parsed structs would pin
+// only the decoded fields and leave the ~90 lines of operator-facing
+// commentary — the PERMISSIONS warning, the plan-gate explanation, the "no
+// review queue" rationale — free to drift: revise a paragraph in stock.toml,
+// tests stay green, and the file a new operator reads first carries stale
+// guidance. Bytes cover both, since equal text parses equal.
+//
+// The repo-root lerp.toml is deliberately not pinned: it edits the stock
+// pipeline for this repo, and pinning it would be pinning a fork.
 func TestStockMatchesExample(t *testing.T) {
-	stock, err := ParseRepoConfig(StockRepoConfig([]string{"LERP"}, true), "stock")
+	example, err := os.ReadFile(filepath.Join("..", "..", "lerp.example.toml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	example, err := LoadRepoConfig(filepath.Join("..", "..", "lerp.example.toml"))
-	if err != nil {
-		t.Fatal(err)
+	if diff := firstDiff(ExampleRepoConfig(), string(example)); diff != "" {
+		// Which side is wrong depends on which one someone just edited, so
+		// name both directions: stock.toml is the source, but the drift this
+		// test exists to catch has arrived as an edit to the example too.
+		t.Errorf("lerp.example.toml is not what ExampleRepoConfig renders:\n%s\n\n"+
+			"internal/config/stock.toml is the source. Make the change there —\n"+
+			"including any prose meant only for the example — then regenerate:\n"+
+			"    make example", diff)
 	}
-	if !reflect.DeepEqual(stock, example) {
-		t.Error("embedded stock config differs from lerp.example.toml")
+}
+
+// firstDiff describes where two texts first differ, as the line number and
+// the two lines, or "" when they are identical. A 200-line file needs a
+// failure that names the line, not one that reports two byte counts.
+func firstDiff(got, want string) string {
+	if got == want {
+		return ""
+	}
+	// A file's final newline makes Split yield a trailing "", so line counts
+	// here are counted, not len()'d — an off-by-one in a failure message
+	// sends a reader to the wrong line.
+	gotLines, wantLines := strings.Split(got, "\n"), strings.Split(want, "\n")
+	for i := 0; i < len(gotLines) && i < len(wantLines); i++ {
+		if gotLines[i] != wantLines[i] {
+			return fmt.Sprintf("first difference at line %d:\n  rendered: %q\n  example:  %q", i+1, gotLines[i], wantLines[i])
+		}
+	}
+	// One is a prefix of the other. The likeliest way that happens is a lost
+	// trailing newline, which prints as an empty extra line and reads as
+	// nothing at all unless it is named.
+	long, short, which := gotLines, wantLines, "rendered"
+	if len(wantLines) > len(gotLines) {
+		long, short, which = wantLines, gotLines, "example"
+	}
+	// ...but only when the shorter text does not already end in one, or an
+	// added blank line at EOF would be reported as a newline that is there.
+	shortText := want
+	if which == "example" {
+		shortText = got
+	}
+	if len(long) == len(short)+1 && long[len(short)] == "" && !strings.HasSuffix(shortText, "\n") {
+		return fmt.Sprintf("identical except the trailing newline: %s has one, the other does not", which)
+	}
+	// A newline-terminated text's last element is the phantom after it, not a
+	// line, so it is not counted — the number has to be one a reader can go to.
+	lines := len(short)
+	if strings.HasSuffix(shortText, "\n") {
+		lines--
+	}
+	return fmt.Sprintf("identical for %d lines, then %s continues: %q",
+		lines, which, long[len(short)])
+}
+
+// Declining the permission grant strips bypassFlag from the whole rendered
+// document, not from the runner commands alone — Render has no idea which
+// occurrence is a command and which is prose. The only thing keeping the
+// PERMISSIONS paragraph out of its way is that the paragraph writes the flag
+// inside backticks, so no space precedes it. Unquote it and the operator who
+// declined — the one whose config is the security-sensitive one — gets a
+// warning with its subject deleted, while the byte pin above, which renders
+// only the accepting case, stays green.
+//
+// Scanning the template rather than a rendering is deliberate: line numbers
+// then name the file a reader has to edit, and occupants of optional sections
+// are covered even when the rendering being checked drops them.
+func TestBypassFlagAppearsOnlyInRunnerCommands(t *testing.T) {
+	table, inPrompt := "", false
+	for i, line := range strings.Split(stockRepo, "\n") {
+		// Prompt bodies are multi-line basic strings, and a prompt that shows
+		// a config snippet contains lines that look exactly like table
+		// headers. Track the quotes first, or such a prompt could name itself
+		// [runners.claude] and take the exemption meant for real runners.
+		if quotes := strings.Count(line, `"""`); quotes%2 == 1 {
+			inPrompt = !inPrompt
+		}
+		if !inPrompt && strings.HasPrefix(line, "[") {
+			table = strings.TrimSuffix(strings.TrimPrefix(line, "["), "]")
+		}
+		// A runner's command is the one place the strip is meant to reach.
+		// Anywhere else — prose, or a prompt body that happens to show an
+		// invocation — declining would edit text nobody meant it to touch.
+		if !strings.Contains(line, bypassFlag) {
+			continue
+		}
+		if !strings.HasPrefix(table, "runners.") || !strings.HasPrefix(line, "command = ") {
+			t.Errorf("stock.toml line %d has %q outside a runner command, so declining the grant would edit it:\n  %s",
+				i+1, bypassFlag, line)
+		}
 	}
 }
 

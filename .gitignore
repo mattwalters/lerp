@@ -37,3 +37,6 @@ go.work.sum
 
 # The demo harness's build output
 /.demo/
+
+# Where `make example` stages its render
+/.lerp.example.toml.tmp

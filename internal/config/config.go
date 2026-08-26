@@ -129,6 +129,16 @@ func StockRepoConfig(teams []string, bypass bool) string {
 	return Stock{Teams: teams, Bypass: bypass, Plan: true, Review: true}.Render()
 }
 
+// ExampleRepoConfig renders the shipped lerp.example.toml: the stock
+// pipeline for one team with the permission grant accepted. The example is a
+// derived artifact, and this is what derives it — `internal/config/example`
+// writes the file and TestStockMatchesExample pins the committed bytes to
+// this output. The parameters live here, in one place, so the generator and
+// the pin cannot disagree about what the example is supposed to be.
+func ExampleRepoConfig() string {
+	return StockRepoConfig([]string{"LERP"}, true)
+}
+
 // Render assembles the stock lerp.toml text for these choices. Assembly is
 // textual, never parse-and-re-emit: the template's comments are part of the
 // product, and a TOML round-trip would strip them. Prompt bodies are
