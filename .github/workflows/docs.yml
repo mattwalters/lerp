@@ -13,6 +13,20 @@
 # main create the gh-pages branch, and Pages is then pointed at that branch by
 # hand (Settings → Pages). Until that second act the site builds and deploys
 # to a branch nobody serves.
+#
+# The custom domain is two more switches, both a human's and neither of them
+# in this repository:
+#
+#   1. At the registrar, point lerp.sh at GitHub Pages: four A records on the
+#      apex — 185.199.108.153, 185.199.109.153, 185.199.110.153 and
+#      185.199.111.153 — or, on a registrar that flattens the apex, one
+#      ALIAS/ANAME to mattwalters.github.io.
+#   2. In Settings → Pages, set the custom domain to lerp.sh, and tick
+#      Enforce HTTPS once the certificate has been issued. GitHub then serves
+#      the old mattwalters.github.io/lerp/ URL as a redirect to it.
+#
+# Flipped once. The deploy step re-asserts the CNAME file every run, so no
+# later deploy can take the domain back down.
 name: docs
 
 on:
@@ -185,6 +199,16 @@ jobs:
       # Nothing staged means nothing to publish: a run whose builds all
       # skipped — a dispatch pointed at neither main nor a tag push — stops
       # here rather than failing on a publish_dir that was never created.
+      #
+      # cname is the custom domain, written into gh-pages as a CNAME file on
+      # every deploy. That file is not in this repository — GitHub creates it
+      # when the domain is set by hand in Settings → Pages — so without this
+      # line it survives only because keep_files leaves alone what a deploy
+      # did not stage, and the domain would be one `keep_files: false` away
+      # from vanishing with no diff here to explain it. Re-asserted, it is a
+      # property of this workflow instead. It has to match what Settings →
+      # Pages says; they are one setting with two spellings, and this is the
+      # one a deploy can overwrite.
       - name: Deploy
         if: hashFiles('public/**') != ''
         uses: peaceiris/actions-gh-pages@v4
@@ -192,3 +216,4 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./public
           keep_files: true
+          cname: lerp.sh

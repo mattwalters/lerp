@@ -10,15 +10,18 @@
 # pinned dependency (or, for Docsy, a Node toolchain) to render markdown this
 # repo already has.
 
-# Deliberately the bare domain, carrying neither the /lerp/ project path the
-# site actually serves from nor a version subpath: with relativeURLs every
-# emitted link is relative, so the same build serves correctly from any host
-# and any directory — which is what a frozen /vX.Y.Z/ copy needs to still be
-# true years from now, and what path-absolute asset URLs do not survive. (A
-# baseURL with a subpath would also be mis-relativized by Hugo, which writes
-# the subpath into the relative link.) CI passes no baseURL, so this value
-# only ever serves the local preview.
-baseURL = "https://mattwalters.github.io/"
+# The site's own domain, bare and with no version subpath. Nothing published
+# is relativized against it: with relativeURLs every emitted link is relative,
+# so the same build serves correctly from any host and any directory — which
+# is what a frozen /vX.Y.Z/ copy needs to still be true years from now, and
+# what path-absolute asset URLs do not survive. That is also what carries the
+# builds cut before this line changed through the move itself: pages built for
+# mattwalters.github.io/lerp/ serve from lerp.sh untouched, which is the whole
+# reason the relative-links rule was worth its awkwardness. (A baseURL with a
+# subpath would be mis-relativized by Hugo, which writes the subpath into the
+# relative link.) CI passes no baseURL, so this value only ever serves the
+# local preview.
+baseURL = "https://lerp.sh/"
 title = "lerp"
 relativeURLs = true
 

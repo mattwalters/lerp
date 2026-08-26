@@ -8,14 +8,30 @@
   <link rel="stylesheet" href="{{ "style.css" | relURL }}">
 </head>
 <body>
+  {{/* Two pages stand outside the manual: the home splash, and the Why page,
+       which is a pitch and marked `splash` in its own front matter. They drop
+       both rails and carry their own links; everything else — README and
+       SCOPE included, mounted rather than written — is a page of the manual
+       and gets the three-region shell. */}}
+  {{ $manual := and (not .IsHome) (not .Params.splash) }}
+  {{/* Looked up rather than spelled as a path, so a header link can never
+       outlive the page it points at: with no page this fails the build,
+       where a hand-written href would quietly serve a 404 from every page on
+       the site. Same failure, and the same two causes, as a menu entry that
+       resolves to nothing. */}}
+  {{ $why := site.GetPage "/why" }}
+  {{ if not $why }}{{ errorf "the header's Why link resolves to nothing — is content/why.md missing, or draft = true?" }}{{ end }}
   <header>
     <a class="brand" href="{{ "" | relURL }}">lerp</a>
     {{/* The manual is what most people come here for, so the way into it is
-         in the header on every page — including the home page, which runs
-         without the sidebar and so has no other door to it. .here marks that
-         you are already inside the manual, which is every page but home:
-         README and SCOPE are pages of it too, mounted rather than written. */}}
-    <a class="nav{{ if not .IsHome }} here{{ end }}" href="{{ "docs/" | relURL }}">Docs</a>
+         in the header on every page — including the two that run without the
+         sidebar and so have no other door to it. .here marks the part of the
+         site you are already in. */}}
+    <a class="nav{{ if $manual }} here{{ end }}" href="{{ "docs/" | relURL }}">Docs</a>
+    {{/* Beside the manual, not inside it: somebody still deciding whether
+         lerp is the right tool has not started reading a manual yet, and the
+         sidebar is for people who have. */}}
+    <a class="nav{{ if eq .RelPermalink $why.RelPermalink }} here{{ end }}" href="{{ $why.RelPermalink }}">{{ $why.Title }}</a>
     <span class="spacer"></span>
     <a class="nav" href="{{ site.Params.repo }}">GitHub</a>
     <span class="version">
@@ -23,11 +39,8 @@
       <select id="version-picker" hidden aria-label="Documentation version"></select>
     </span>
   </header>
-  {{/* The home page is a splash, not a manual page: it drops both rails and
-       carries its own links. Every other page gets the three-region shell —
-       sidebar, content, and the "On this page" rail. */}}
   <div class="wrap">
-    {{ if not .IsHome }}
+    {{ if $manual }}
     {{/* Labelled, because the rail below is a <nav> too: unlabelled, the two
          landmarks announce as "navigation, navigation" with nothing to tell
          the manual's contents from this page's. */}}
@@ -69,7 +82,7 @@
          headings, so the rail appears only when it has somewhere to point:
          a short manual page gets no rail, and the long mounted files do. */}}
     {{ $toc := .TableOfContents }}
-    {{ if and (not .IsHome) (plainify $toc) }}
+    {{ if and $manual (plainify $toc) }}
     <nav class="toc" aria-label="On this page">
       <h5>On this page</h5>
       {{ $toc }}
