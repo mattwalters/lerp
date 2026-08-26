@@ -228,6 +228,26 @@ func TestExecuteRequiresATicket(t *testing.T) {
 	}
 }
 
+// A workspace that is gone by the time the runner starts fails the exec
+// itself, not the agent. Returning an error at all is what the loop above
+// branches on — an agent that ran and failed comes back as an exit code and
+// a nil error, and gets its ticket concluded, while this keeps the claim.
+// The message is for whoever reads the log afterwards, and names the stage
+// so a runner that never started is not mistaken for one that did.
+func TestExecuteReportsARunnerItCouldNotStart(t *testing.T) {
+	dir := t.TempDir()
+	_, err := Execute(context.Background(), Invocation{
+		Runner:  config.Runner{Command: "true"},
+		Queue:   config.Queue{Prompt: "prompt"},
+		Ticket:  "LERP-1",
+		Workdir: filepath.Join(dir, "never-provisioned"),
+		LogPath: filepath.Join(dir, "runner.log"),
+	})
+	if err == nil || !strings.Contains(err.Error(), "starting runner") {
+		t.Errorf("Execute error = %v, want a failure to start the runner", err)
+	}
+}
+
 func TestExecuteCancelsProcessGroup(t *testing.T) {
 	dir := t.TempDir()
 	childPIDPath := filepath.Join(dir, "child.pid")

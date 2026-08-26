@@ -52,8 +52,10 @@ func newHarness(t *testing.T, lanes int, execute ExecuteFunc) *harness {
 }
 
 // newHarnessWith is newHarness with the board and the reconciler's client
-// supplied by the caller — for tests that run two reconcilers against one
-// shared fake board through per-lerp client wrappers.
+// supplied by the caller: for tests that run two reconcilers against one
+// shared fake board through per-lerp client wrappers, and for tests that put
+// a fault-injecting wrapper in front of the board the assertions then read
+// directly.
 func newHarnessWith(t *testing.T, lanes int, execute ExecuteFunc, fake *linear.Fake, client linear.Client) *harness {
 	t.Helper()
 	root := t.TempDir()
@@ -544,6 +546,49 @@ func TestReapLeavesOtherPeoplesBoardStateAlone(t *testing.T) {
 	}
 }
 
+// A ticket deleted mid-run has nothing left to settle, and the reap has to
+// finish anyway: record removed, workspace disposed, terminal event emitted.
+// A reap that reported failure here would leave the record on disk and retry
+// the same vanished ticket on every pass, forever.
+func TestReapOfADeletedTicketFinishes(t *testing.T) {
+	tests := []struct {
+		name string
+		// exitCode is written to the record's exit file; empty writes none.
+		exitCode string
+	}{
+		// The run said how it ended, so the reap takes the conclude path and
+		// finds the ticket gone reading it back.
+		{name: "run recorded its exit status", exitCode: "0"},
+		// No exit status: the reap falls back to releasing the claim, and
+		// finds the ticket gone in that path instead.
+		{name: "run never said how it ended"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newHarness(t, 1, nil)
+			record, err := h.evidence.Create(evidence.Record{
+				Lane: 1, TicketID: "vanished", Queue: "todo", StartingStatus: "Todo",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tt.exitCode != "" {
+				if err := os.WriteFile(record.ExitPath, []byte(tt.exitCode), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// The ticket is on no board: it was deleted while its run was
+			// going, so every read of it comes back ErrNotFound.
+
+			h.rec.Tick(context.Background())
+			if got := h.waitEvents(t, EventReaped, 1)[0]; got.RunID != record.RunID {
+				t.Errorf("reaped event = %+v, want the vanished ticket's record", got)
+			}
+			assertReaped(t, h, record)
+		})
+	}
+}
+
 // Done-when: a claimed lane announces provisioning before its agent starts,
 // both events name the same run, and the started event carries the record's
 // start time for subscribers' elapsed clocks.
@@ -628,6 +673,147 @@ func TestRunProvisionFailureReleasesTheClaimAndDisposes(t *testing.T) {
 	}
 	if len(h.disposedIdentities()) == 0 {
 		t.Error("provision failure did not dispose the workspace")
+	}
+}
+
+// Shutdown is not failure. A run whose context is cancelled mid-agent keeps
+// both halves of its bookkeeping — the record on disk and the claim on the
+// board — so the next lerp finds a dead run and reaps it, and a deliberate
+// stop repairs exactly as a crash does. Dropping either here would orphan the
+// ticket: claimed with no record naming it, or recorded with no claim to
+// settle.
+func TestShutdownMidRunKeepsTheRecordAndTheClaim(t *testing.T) {
+	execute, release, _ := blockingExecute(t, "")
+	h := newHarness(t, 1, execute)
+	h.fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Todo"})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	h.rec.Tick(ctx)
+	started := h.waitEvents(t, EventStarted, 1)[0]
+
+	// The loop is stopping: the agent is killed along with it, so the run
+	// returns through the cancelled context rather than through conclude.
+	cancel()
+	release()
+	waitIdle(t, h.rec)
+
+	if _, err := h.evidence.Read(started.RunID); err != nil {
+		t.Errorf("read record after shutdown = %v, want it kept for the next lerp to reap", err)
+	}
+	got := h.issue(t, "one")
+	if got.AssigneeID != "fake-viewer" {
+		t.Errorf("assignee = %q, want the claim kept so the next lerp has something to settle", got.AssigneeID)
+	}
+	if got.Status != "Todo" {
+		t.Errorf("status = %q, want the ticket left where the run found it — a stop is not a hop", got.Status)
+	}
+	// A stop is not an error either: reporting one per live lane would paint
+	// the work panel and the log red every time the operator quits.
+	for _, ev := range h.drainEvents() {
+		if ev.Type == EventError {
+			t.Errorf("shutdown emitted %v, want a clean stop to report nothing", ev.Err)
+		}
+	}
+}
+
+// The two run-exit branches enumerated above have opposite record
+// dispositions — shutdown keeps the record, a runner that could not exec
+// drops it — and both hold at once in a real window: Ctrl-C while the runner
+// is starting has Execute return "starting runner: context canceled", so err
+// is non-nil and ctx is cancelled together. Shutdown has to win. Deciding it
+// the other way round drops the record while the claim stays, which is the
+// stranding this whole ticket is about: assigned so never eligible, in a
+// served status so the inbox skips it, and named by nothing on disk.
+func TestShutdownWinsOverARunnerThatCouldNotExec(t *testing.T) {
+	gate := make(chan struct{})
+	release := sync.OnceFunc(func() { close(gate) })
+	t.Cleanup(release)
+	h := newHarness(t, 1, func(ctx context.Context, _ run.Invocation) (run.Result, error) {
+		<-gate
+		// What Execute returns when the loop is torn down under it.
+		return run.Result{}, fmt.Errorf("starting runner: %w", ctx.Err())
+	})
+	h.fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Todo"})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	h.rec.Tick(ctx)
+	started := h.waitEvents(t, EventStarted, 1)[0]
+	cancel()
+	release()
+	waitIdle(t, h.rec)
+
+	if _, err := h.evidence.Read(started.RunID); err != nil {
+		t.Errorf("read record after a run that failed because of the shutdown = %v, "+
+			"want it kept: a stop is not a broken runner", err)
+	}
+	if got := h.issue(t, "one"); got.AssigneeID != "fake-viewer" {
+		t.Errorf("assignee = %q, want the claim kept alongside the record that settles it", got.AssigneeID)
+	}
+}
+
+// A runner that cannot be executed at all is the one run failure that keeps
+// its claim: releasing it would hand the ticket back to the same broken
+// runner on the very next pass, forever. The local record goes, though — it
+// never gained a process worth adopting, and a successor reaping it would
+// release the claim this deliberately kept.
+func TestRunnerThatCannotExecKeepsTheClaimAndDropsTheRecord(t *testing.T) {
+	errBoom := errors.New("agent: executable file not found in $PATH")
+	h := newHarness(t, 1, func(context.Context, run.Invocation) (run.Result, error) {
+		return run.Result{}, errBoom
+	})
+	h.fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Todo"})
+
+	h.rec.Tick(context.Background())
+	ev := h.waitEvents(t, EventError, 1)[0]
+	if !errors.Is(ev.Err, errBoom) {
+		t.Errorf("error event = %v, want wrapped %v", ev.Err, errBoom)
+	}
+	waitIdle(t, h.rec)
+
+	if _, err := h.evidence.Read(ev.RunID); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("read record after a runner that could not exec = %v, want not exist", err)
+	}
+	got := h.issue(t, "one")
+	if got.AssigneeID != "fake-viewer" {
+		t.Errorf("assignee = %q, want the claim kept so a broken runner is not retried every pass", got.AssigneeID)
+	}
+	if got.Status != "Todo" {
+		t.Errorf("status = %q, want no hop for a run that never ran", got.Status)
+	}
+}
+
+// The other half of a claim protocol that failed after its assign landed:
+// claimForQueue releases the claim best-effort, and when that release cannot
+// be made to stick the run record is what saves the ticket. Keeping it means
+// the next pass reaps a dead run and releases the claim — the same repair a
+// crash gets. Dropping it is the stranding this ticket class is named for:
+// assigned, never eligible, and named by nothing on disk.
+func TestAClaimProtocolFailureKeepsTheRecordThatRepairsIt(t *testing.T) {
+	errBoom := errors.New("Linear is down")
+	fake := linear.NewFake()
+	// Every read of the ticket fails, so the claim's read-back fails and the
+	// release that answers it cannot verify either.
+	h := newHarnessWith(t, 1, func(context.Context, run.Invocation) (run.Result, error) {
+		t.Error("the agent ran even though the claim protocol failed")
+		return run.Result{}, nil
+	}, fake, brokenGetIssue{Client: fake, err: errBoom})
+	fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Todo"})
+
+	h.rec.Tick(context.Background())
+	ev := h.waitEvents(t, EventError, 1)[0]
+	if !errors.Is(ev.Err, errBoom) {
+		t.Errorf("error event = %v, want wrapped %v", ev.Err, errBoom)
+	}
+	if ev.RunID == "" {
+		t.Errorf("error event = %+v, want it to name the run whose record now holds the repair", ev)
+	}
+	waitIdle(t, h.rec)
+
+	if _, err := h.evidence.Read(ev.RunID); err != nil {
+		t.Errorf("read record after a failed claim = %v, want it kept so the next pass reaps it", err)
+	}
+	if got := h.issue(t, "one"); got.AssigneeID != "fake-viewer" {
+		t.Errorf("assignee = %q, want the claim the release could not undo left for the reap", got.AssigneeID)
 	}
 }
 
