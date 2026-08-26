@@ -17,6 +17,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/muesli/termenv"
 
 	"github.com/mattwalters/lerp/internal/linear"
 	"github.com/mattwalters/lerp/internal/loop"
@@ -5554,10 +5555,6 @@ func TestShiftTabWalksTheCycleBackwards(t *testing.T) {
 	}
 }
 
-// bandOpen is the escape selectRow re-opens the selection background with,
-// and "" under a profile that renders no colour at all.
-func bandOpen() string { return strings.TrimSuffix(styleSelected.Render(""), ansiReset) }
-
 // unband strips the selection band back out of a rendered line, leaving the
 // row's own styling. lipgloss renders an underlined span one rune at a time,
 // so a banded row carries a re-open between the runes of a search match; an
@@ -5967,11 +5964,10 @@ func TestAnUnfocusedPanelDrawsNoBand(t *testing.T) {
 	}
 }
 
-// The band is a background and nothing else, adaptive on both counts: a
-// foreground would paint over the very colours a row uses to say what it is,
-// and one picked tint reads as a band on a dark terminal and a smudge on a
-// light one. The ▸ marker stays beside it, so a terminal that renders the
-// background weakly still has a cursor on screen.
+// The band is a background and nothing else: a foreground would paint over
+// the very colours a row uses to say what it is. Adaptive, because one
+// picked tint reads as a band on a dark terminal and a smudge on a light
+// one.
 func TestTheSelectionBandIsBackgroundOnlyAndAdaptive(t *testing.T) {
 	if colorSelected.Light == "" || colorSelected.Dark == "" || colorSelected.Light == colorSelected.Dark {
 		t.Fatalf("the selection band is not adaptive: %+v", colorSelected)
@@ -5979,13 +5975,39 @@ func TestTheSelectionBandIsBackgroundOnlyAndAdaptive(t *testing.T) {
 	if fg := styleSelected.GetForeground(); fg != lipgloss.TerminalColor(lipgloss.NoColor{}) {
 		t.Fatalf("the selection band paints a foreground %v over the row's own colours", fg)
 	}
-	// Under a profile with no colour the band renders nothing, and the row
-	// comes back padded but bare — with the marker still on it.
-	row := selectRow(marker(true)+"LERP-1 one", 40)
-	if bandOpen() != "" {
-		t.Fatalf("the test binary is rendering colour; this case is the profile that does not")
-	}
-	if !strings.HasPrefix(row, "▸ ") || lipgloss.Width(row) != 40 {
-		t.Fatalf("a colourless profile lost the marker or the width: %q", row)
+}
+
+// Done-when: legible on both terminal backgrounds — which on a profile with
+// no quiet tint to offer means no band at all. A 16-colour terminal
+// quantises this background to a solid ANSI blue or magenta: a bar across
+// the row that takes every faint cell on it to about 1.3:1. The ▸ marker is
+// the cursor there, and it is on the row whether the band is or not.
+func TestTheBandIsDrawnOnlyWhereItCanBeQuiet(t *testing.T) {
+	was := lipgloss.ColorProfile()
+	t.Cleanup(func() { lipgloss.SetColorProfile(was) })
+	for _, tc := range []struct {
+		profile termenv.Profile
+		band    bool
+	}{
+		{termenv.TrueColor, true},
+		{termenv.ANSI256, true},
+		{termenv.ANSI, false},
+		{termenv.Ascii, false},
+	} {
+		lipgloss.SetColorProfile(tc.profile)
+		plain := marker(true) + "LERP-1 one"
+		row := selectRow(plain, 40)
+		if got := bandOpen() != ""; got != tc.band {
+			t.Fatalf("%v: band drawn = %v, want %v", tc.profile, got, tc.band)
+		}
+		if !tc.band && row != padTo(plain, 40) {
+			t.Fatalf("%v: the row is not the bare padded row: %q", tc.profile, row)
+		}
+		if !strings.HasPrefix(ansi.Strip(row), "▸ ") {
+			t.Fatalf("%v: the band swallowed the marker: %q", tc.profile, row)
+		}
+		if got := lipgloss.Width(row); got != 40 {
+			t.Fatalf("%v: the row is %d columns, want 40: %q", tc.profile, got, row)
+		}
 	}
 }

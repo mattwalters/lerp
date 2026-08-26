@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/muesli/termenv"
 )
 
 // The palette: one accent, three semantic states, a faint ramp. Adaptive
@@ -34,10 +35,11 @@ var (
 	// colorSelected is the band under the row the cursor is on. It is a
 	// background, so it is not read — it is read *through*, by every colour
 	// a row already carries. The tint is therefore the quietest one that
-	// still finds itself across a panel: it costs styleFaint about a tenth
-	// of the contrast that colour has against a bare terminal, which is the
-	// combination with the least to spare. Adaptive, because the same tint
-	// that reads as a band on a dark terminal is a smudge on a light one.
+	// still finds itself across a panel, and it is priced against styleFaint,
+	// the combination with the least to spare: faint keeps 2.84:1 on the dark
+	// band against 3.86:1 on black, and 3.14:1 on the light one against
+	// 3.90:1 on white. Adaptive, because the same tint that reads as a band
+	// on a dark terminal is a smudge on a light one.
 	colorSelected = lipgloss.AdaptiveColor{Light: "#E9E4F7", Dark: "#272138"}
 )
 
@@ -225,11 +227,25 @@ func padTo(s string, w int) string {
 // it. The band is re-opened after each reset instead, which tints a string
 // that is already ANSI without rebuilding the spans that made it.
 //
-// A colourless profile renders nothing to re-open; the row comes back
-// padded but untinted, and marker's ▸ is the cursor, as it was.
+// Where bandOpen draws no band the row comes back padded but untinted, and
+// marker's ▸ is the cursor, as it was.
+// bandOpen is the sequence that turns the selection background on, and ""
+// on a profile that has no band to draw. Two of them do not: an uncoloured
+// one has nothing to turn on, and a 16-colour one has nothing quiet enough —
+// lipgloss quantises this tint to a solid ANSI blue or magenta, which is a
+// bar across the row rather than a band under it, and it takes the row's
+// faint cells down to about 1.3:1 with it. ▸ is the cursor on those, which
+// is what it is the fallback for.
+func bandOpen() string {
+	if lipgloss.ColorProfile() > termenv.ANSI256 {
+		return ""
+	}
+	return strings.TrimSuffix(styleSelected.Render(""), ansiReset)
+}
+
 func selectRow(row string, width int) string {
 	row = padTo(row, width)
-	open := strings.TrimSuffix(styleSelected.Render(""), ansiReset)
+	open := bandOpen()
 	if open == "" {
 		return row
 	}
