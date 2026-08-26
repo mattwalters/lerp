@@ -306,6 +306,12 @@ figure.cast video {
   display: block;
   width: 100%;
   height: auto;
+  /* `auto` first, so the real ratio wins the moment metadata lands; the
+     fallback is the tape size docs/demo.tape sets, which is what a cast
+     recorded by this repo's own harness comes back as. Without it a video
+     lays out at the spec's 300x150 until metadata arrives and then jumps,
+     shoving the prose under it down the page. */
+  aspect-ratio: auto 1200 / 640;
   background: var(--bg-soft);
   border: 1px solid var(--rule);
   border-radius: 6px;
@@ -353,7 +359,12 @@ figure.cast figcaption {
   /* The sidebar stays — it is the only way between pages — but folds into a
      row of links above the text, because a column beside the prose at this
      width leaves neither of them room. The group headings go with the
-     column: stacked they were signposts, in a row they are noise. */
+     column: stacked they were signposts, in a row they are noise.
+     This is a rule for a short menu. A row of twenty links is a screenful
+     of undifferentiated names before a phone reader reaches a word of
+     prose, and with the headings suppressed nothing separates the groups —
+     when the manual gets there, this is the rule to revisit, and the answer
+     is a fold, not a script. */
   .wrap {
     display: block;
     padding: 1.5rem 1.25rem 4rem;

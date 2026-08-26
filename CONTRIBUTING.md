@@ -79,7 +79,9 @@ The same rules the agents work under (see `AGENTS.md`):
   builds the site as a gate. A new manual page reaches the sidebar
   only once it has a `[[menus.main]]` entry in `docs/hugo.toml` — the
   sidebar is curated, not derived — though its section index lists it
-  either way. A page not ready to be read is `draft = true`.
+  either way. A page not ready to be read is `draft = true`, and its
+  menu entry comes out with it — an entry pointing at a page the
+  build does not have fails the build.
   `make docs-serve` previews it locally and needs
   [hugo](https://gohugo.io); `make hugo-version` prints the version CI
   builds and deploys with, which is also what a local build warns about

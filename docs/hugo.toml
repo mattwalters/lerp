@@ -62,7 +62,9 @@ repo = "https://github.com/mattwalters/lerp"
 # does not appear in the sidebar. It is still published, and its section
 # index still lists it (list.html reads the section's children) — a page that
 # should not be published at all is `draft = true` in its own front matter,
-# which is the only thing that keeps it out of a build.
+# which is the only thing that keeps it out of a build. Its entry here comes
+# out with it: an entry pointing at a page the build does not have fails the
+# build, on purpose, rather than linking to nowhere.
 #
 # `section` is the group heading an entry sits under. baseof.html emits one
 # whenever the value changes as it walks this list in weight order, so a

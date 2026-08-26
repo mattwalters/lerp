@@ -41,12 +41,15 @@
       {{ $section := "" }}
       {{ range site.Menus.main }}
       {{ with .Params.section }}{{ if ne . $section }}{{ $section = . }}<h5>{{ . }}</h5>{{ end }}{{ end }}
-      {{/* A pageRef naming a page that does not exist leaves both of these
-           empty, and the entry would render as a link to the site root — a
-           typo in a hand-maintained menu silently bouncing the reader to the
-           splash page, with the build gate green. A url-only entry has a URL
-           and no page, and is left alone. */}}
-      {{ if and (not .Page) (not .URL) }}{{ errorf "menu entry %q resolves to nothing — does its pageRef name a page that exists?" .Name }}{{ end }}
+      {{/* A pageRef naming a page the build does not have leaves both of
+           these empty, and the entry would render as a link to the site root
+           — a typo in a hand-maintained menu silently bouncing the reader to
+           the splash page, with the gate green. Two ways to get there, and
+           the menu cannot tell them apart, so the message names both: the
+           ref is wrong, or the page it names is a draft and this entry
+           should have come out with it. A url-only entry has a URL and no
+           page, and is left alone. */}}
+      {{ if and (not .Page) (not .URL) }}{{ errorf "menu entry %q resolves to nothing — is its pageRef a typo, or is the page it names draft = true?" .Name }}{{ end }}
       {{ $current := $.IsMenuCurrent "main" . }}
       {{/* Entries naming a command carry mono in hugo.toml: their names are
            things you type, and a manual sets them in the face you type them

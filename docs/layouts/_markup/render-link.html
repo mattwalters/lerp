@@ -17,8 +17,20 @@
   {{/* Cleaned and de-slashed first: ./README.md and /README.md are ordinary
        spellings on GitHub, and both would otherwise miss the page lookup and
        be sent to a blob URL — one of them a double-slashed 404. */}}
-  {{- $path := strings.TrimPrefix "/" (path.Clean $u.Path) -}}
-  {{- $page := site.GetPage (printf "/%s" (strings.TrimSuffix ".md" (lower $path))) -}}
+  {{- $clean := path.Clean $u.Path -}}
+  {{- $path := strings.TrimPrefix "/" $clean -}}
+  {{/* Asked of the page first, then of the site. The mounted files sit at
+       the site root, so for them the two are the same lookup — but a page of
+       the manual sits in a directory, and there the ordinary markdown
+       spelling of a link to its neighbour is a bare filename. Rooted first,
+       that bare name misses every page and leaves for a GitHub blob URL that
+       does not exist, because a Hugo content file is not at that repo path.
+       Nothing that resolved before stops resolving: the rooted lookup is
+       still here, one line down. */}}
+  {{- $page := .Page.GetPage (strings.TrimSuffix ".md" (lower $clean)) -}}
+  {{- if not $page -}}
+    {{- $page = site.GetPage (printf "/%s" (strings.TrimSuffix ".md" (lower $path))) -}}
+  {{- end -}}
   {{- if $page -}}
     {{- $href = $page.RelPermalink -}}
   {{- else -}}
