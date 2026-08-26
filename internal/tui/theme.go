@@ -232,15 +232,6 @@ func padTo(s string, w int) string {
 	return s + strings.Repeat(" ", max(0, w-lipgloss.Width(s)))
 }
 
-// selectRow lays the selection band under one line of the row the cursor is
-// on, out to the panel's inner width so the whole line reads as one object.
-//
-// A row is a run of styled spans and every span ends in a full reset, so a
-// background wrapped around the outside would stop at the first one — the
-// row would be tinted up to its first faint or coloured cell and bare after
-// it. The band is re-opened after each reset instead, which tints a string
-// that is already ANSI without rebuilding the spans that made it.
-//
 // bandOpen is the sequence that turns the selection band on, and "" on a
 // profile that draws no band. Which profiles those are is colorSelected's
 // own declaration to make and not a second rule here: the slots it leaves

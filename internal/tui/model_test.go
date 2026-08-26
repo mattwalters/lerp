@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -6001,6 +6002,66 @@ func TestTheSelectionBandIsBackgroundOnlyAndAdaptive(t *testing.T) {
 			t.Fatalf("the %s band names a 16-colour tint %q; there is no quiet one", c.name, c.ANSI)
 		}
 	}
+	// And which tint goes to which terminal, which is the whole of being
+	// adaptive. Swapped, the dark terminal's band is near-white and a
+	// selected row's identifier — bold, in the terminal's own text colour —
+	// vanishes into it at about 1.06:1, so the test is on the tints
+	// themselves and not on which field the renderer read: comparing the
+	// rendered band against the field it came from would pass either way
+	// round.
+	if l := brightness(t, colorSelected.Dark.TrueColor); l > 0.35 {
+		t.Fatalf("the dark terminal's band is %.2f bright: it is a light tint on a dark screen", l)
+	}
+	if l := brightness(t, colorSelected.Light.TrueColor); l < 0.65 {
+		t.Fatalf("the light terminal's band is %.2f bright: it is a dark tint on a light screen", l)
+	}
+	// The 256-colour pair rides the grey ramp, where the index is the
+	// lightness, so the same reading holds by number.
+	if index(t, colorSelected.Dark.ANSI256) >= index(t, colorSelected.Light.ANSI256) {
+		t.Fatalf("the 256-colour tints run the wrong way: dark %s, light %s",
+			colorSelected.Dark.ANSI256, colorSelected.Light.ANSI256)
+	}
+	// And the renderer reads the field that matches the terminal.
+	profile, dark := lipgloss.ColorProfile(), lipgloss.HasDarkBackground()
+	t.Cleanup(func() { lipgloss.SetColorProfile(profile); lipgloss.SetHasDarkBackground(dark) })
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	for _, tc := range []struct {
+		dark bool
+		tint string
+	}{
+		{true, colorSelected.Dark.TrueColor},
+		{false, colorSelected.Light.TrueColor},
+	} {
+		lipgloss.SetHasDarkBackground(tc.dark)
+		want := lipgloss.NewStyle().Background(lipgloss.Color(tc.tint)).Render("")
+		if got := styleSelected.Render(""); got != want {
+			t.Fatalf("on a dark=%v terminal the band renders %q, want the %s tint %q",
+				tc.dark, got, tc.tint, want)
+		}
+	}
+}
+
+// brightness is how light a #rrggbb tint reads, 0 for black and 1 for white.
+// Perceived rather than plain average, which is the difference between
+// calling a saturated blue dark and calling it light.
+func brightness(t *testing.T, hex string) float64 {
+	t.Helper()
+	v, err := strconv.ParseUint(strings.TrimPrefix(hex, "#"), 16, 32)
+	if err != nil || len(hex) != 7 {
+		t.Fatalf("%q is not a #rrggbb tint: %v", hex, err)
+	}
+	r, g, b := float64((v>>16)&0xff), float64((v>>8)&0xff), float64(v&0xff)
+	return (0.299*r + 0.587*g + 0.114*b) / 255
+}
+
+// index reads a 256-colour palette slot as the number it is.
+func index(t *testing.T, s string) int {
+	t.Helper()
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		t.Fatalf("%q is not a 256-colour index: %v", s, err)
+	}
+	return n
 }
 
 // Done-when: legible on both terminal backgrounds — which on a profile with
