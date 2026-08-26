@@ -141,12 +141,6 @@ applies the queue's move rule: `on_success` on a clean exit,
 `on_failure` otherwise, and only if the agent didn't move the ticket
 itself. [Running](#running) describes the interface.
 
-For scripts, or to watch a single run at ground level, `lerp once`
-runs one eligible ticket through the same claim → provision → run →
-move sequence and exits. It predates the loop's evidence store: its
-workspace and agent log live under a temporary directory instead, and
-the log's path is printed when the run finishes.
-
 Where a finished run leaves the ticket is the whole of the topology.
 A finished run releases the claim wherever it comes to rest — the
 assignment is the claim, and a claimed ticket is someone else's work
@@ -503,8 +497,7 @@ opens it, and the reconciling loop of the mental model — N lanes,
 adopting live runs, reaping dead ones, repairing drift — is real,
 running behavior while it is open (see [Running](#running)). Both
 panels are built, and the TUI's two write actions are the Inbox's
-promote and the Work panel's force-start. `lerp once` is the single-shot alternative: one ticket through
-its queue, no loop, no evidence store. Beyond those, `lerp version`
+promote and the Work panel's force-start. Beyond those, `lerp version`
 and `lerp init` complete the surface.
 
 **Where does state live?** In Linear — that is the first sentence of
@@ -516,8 +509,7 @@ the run records for itself as it ends), workspaces under
 `.lerp/workspaces`, an advisory lock at `.lerp/lock` that keeps it to
 one loop per clone, and the loop's diagnostics in `.lerp/loop.log`.
 Local state is evidence, never truth: losing all of it may cost
-compute, never correctness. `lerp once` predates the store and keeps
-its workspace and log under a temporary directory instead.
+compute, never correctness.
 
 **What happens on crash or kill?** Every queue run is safe to kill and
 restart from its beginning: progress is checkpointed only at queue
@@ -532,10 +524,9 @@ run's finish costs nothing, rather than a whole re-run stage. A run
 killed before it got that far records nothing, and reaping it releases
 the claim so its ticket becomes eligible again; a failed run whose queue
 has no `on_failure` route keeps its claim and waits on you, as it does
-when lerp watched it fail. One caveat: a `lerp once` killed mid-run has
-no evidence for a later loop to reap, so it leaves the ticket assigned.
-Select it in the work panel and press `S`: force-start takes back your
-own claim and runs the stage again.
+when lerp watched it fail. To run such a ticket again, select it in the
+work panel and press `S`: force-start takes back your own claim and runs
+the stage again.
 
 **Why isn't my ticket being picked up?** Check the three eligibility
 conditions from step 3 of [Getting started](#getting-started): a

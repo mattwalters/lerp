@@ -1,0 +1,162 @@
+package loop
+
+import (
+	"context"
+	"testing"
+
+	"github.com/mattwalters/lerp/internal/config"
+	"github.com/mattwalters/lerp/internal/linear"
+)
+
+// conclude is the one place that decides whether a finished run releases its
+// claim, so the rule is tested here rather than through whichever caller
+// happens to reach it. An assigned ticket is never eligible: a ticket that
+// keeps its claim through a move into a served status is stranded there
+// permanently, with nothing reporting an error (LERP-50, LERP-59, LERP-113).
+
+// A ticket that fails with nowhere to go keeps its claim, so the next pass
+// does not pick it straight back up and re-run it forever.
+func TestConcludeFailureWithoutRouteKeepsTheClaim(t *testing.T) {
+	ctx := context.Background()
+	fake := linear.NewFake()
+	fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Todo"})
+	repo := testRepo()
+	queue := repo.Queues["todo"]
+	queue.OnFailure = ""
+	repo.Queues["todo"] = queue
+
+	issue, viewerID := claimed(t, fake, "one", queue.Status)
+	if _, err := conclude(ctx, fake, issue, queue, repo, 3, viewerID, nil); err != nil {
+		t.Fatalf("conclude: %v", err)
+	}
+	got, _ := fake.GetIssue(ctx, "one")
+	if got.Status != "Todo" {
+		t.Errorf("unrouted failure status = %q, want Todo", got.Status)
+	}
+	if got.AssigneeID == "" {
+		t.Error("unrouted failure released the claim, so the ticket would be re-run immediately")
+	}
+	if Eligible(got, map[string]bool{"Todo": true}) {
+		t.Error("unrouted failure left the ticket eligible, which spins the reconciler")
+	}
+}
+
+// Finishing into a status no queue serves releases the claim. The gate is the
+// status — no queue picks up from it, so the ticket rests there either way —
+// and the inbox lists it unassigned exactly as it listed it claimed. What the
+// claim did do was strand the ticket the moment anybody moved it on (LERP-113).
+func TestConcludeReleasesTheClaimAtAGate(t *testing.T) {
+	ctx := context.Background()
+	fake := linear.NewFake()
+	fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Todo"})
+	repo := testRepo()
+	queue := repo.Queues["todo"]
+
+	issue, viewerID := claimed(t, fake, "one", queue.Status)
+	if _, err := conclude(ctx, fake, issue, queue, repo, 0, viewerID, nil); err != nil {
+		t.Fatalf("conclude: %v", err)
+	}
+	got, _ := fake.GetIssue(ctx, "one")
+	if got.Status != "Done" {
+		t.Fatalf("status = %q, want Done", got.Status)
+	}
+	if got.AssigneeID != "" {
+		t.Error("a ticket parked at a gate kept its claim: every later move into a served status is stranded")
+	}
+}
+
+// An agent that moves its own ticket into another queue's status must not
+// leave it stranded: lerp respects the move and still releases the claim, so
+// the queue serving that status can pick the ticket up.
+func TestConcludeReleasesTheClaimWhenTheAgentMovedIntoAServedStatus(t *testing.T) {
+	ctx := context.Background()
+	fake := linear.NewFake()
+	fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Planning"})
+	// The agent's destination is not where the queue's rule would have sent
+	// it: this run's clean exit routes to the "Plan Review" gate, so a
+	// conclude that forced its hop would overwrite the move rather than
+	// respect it, and the assertion below would catch it.
+	repo := gatedRepo()
+	queue := repo.Queues["plan"]
+
+	issue, viewerID := claimed(t, fake, "one", queue.Status)
+	// The agent's own move, made while the run was still going, into the
+	// status the implement queue serves.
+	if err := fake.MoveIssue(ctx, "one", "Implementing"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conclude(ctx, fake, issue, queue, repo, 0, viewerID, nil); err != nil {
+		t.Fatalf("conclude: %v", err)
+	}
+	got, _ := fake.GetIssue(ctx, "one")
+	if got.Status != "Implementing" {
+		t.Fatalf("agent move was overwritten: status = %q", got.Status)
+	}
+	if !Eligible(got, map[string]bool{"Implementing": true}) {
+		t.Errorf("ticket is stranded after the agent's move: %+v", got)
+	}
+}
+
+// LERP-113's acceptance, from the pipeline's own two halves: a plan run parks
+// its ticket at a gate, a human reads it and moves it on in Linear itself —
+// the routing the README documents, and the move `p` is not — and the next
+// pass finds it as a candidate. Before the gate released its claim the
+// listing came back empty and nothing reported why.
+func TestATicketMovedOnFromAGateIsACandidateAgain(t *testing.T) {
+	ctx := context.Background()
+	fake := linear.NewFake()
+	fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Planning"})
+	repo := gatedRepo()
+	queue := repo.Queues["plan"]
+
+	issue, viewerID := claimed(t, fake, "one", queue.Status)
+	if _, err := conclude(ctx, fake, issue, queue, repo, 0, viewerID, nil); err != nil {
+		t.Fatalf("conclude: %v", err)
+	}
+	parked, _ := fake.GetIssue(ctx, "one")
+	if parked.Status != "Plan Review" || parked.AssigneeID != "" {
+		t.Fatalf("ticket at the gate = %+v, want it resting in Plan Review unclaimed", parked)
+	}
+
+	// The human promotes it the way Linear promotes anything: by moving it.
+	if err := fake.MoveIssue(ctx, "one", "Implementing"); err != nil {
+		t.Fatal(err)
+	}
+	listings, err := listQueues(ctx, fake, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cands := candidatesFrom(listings)
+	if len(cands) != 1 || cands[0].issue.ID != "one" || cands[0].name != "implement" {
+		t.Fatalf("candidates = %+v, want the ticket picked up by the implement queue", cands)
+	}
+}
+
+// gatedRepo is chainedRepo's other shape: two stages with a gate between
+// them, as the stock pipeline has. The plan queue's clean exit rests in
+// "Plan Review", which no queue serves, and the implement queue serves only
+// what a human moves on from there.
+func gatedRepo() *config.RepoConfig {
+	repo := testRepo()
+	repo.Queues = map[string]config.Queue{
+		"plan":      {Status: "Planning", Prompt: "plan it", Runner: "agent", OnSuccess: "Plan Review", OnFailure: "Needs Help"},
+		"implement": {Status: "Implementing", Prompt: "build it", Runner: "agent", OnSuccess: "Done", OnFailure: "Needs Help"},
+	}
+	return repo
+}
+
+// claimed runs the claim protocol the way a lane does and returns the ticket
+// as the run saw it, with the operating user conclude settles against.
+func claimed(t *testing.T, fake *linear.Fake, issueID, status string) (linear.Issue, string) {
+	t.Helper()
+	ctx := context.Background()
+	viewerID, won, err := claimForQueue(ctx, fake, issueID, status)
+	if err != nil || !won {
+		t.Fatalf("claimForQueue = (%v, %v), want the claim won", won, err)
+	}
+	issue, err := fake.GetIssue(ctx, issueID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return issue, viewerID
+}

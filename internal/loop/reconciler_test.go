@@ -34,6 +34,11 @@ type harness struct {
 	alive    map[string]bool // run ID → the recorded process is "alive"
 	logs     *logBuffer      // everything the loop wrote to its Log
 
+	// provisionErr, when set, is what the stub provision command returns. It
+	// is written before the pass that reads it, so the lane goroutine's read
+	// is ordered after the write by the go statement that starts it.
+	provisionErr error
+
 	mu       sync.Mutex
 	disposed []workspace.Identity
 }
@@ -73,7 +78,7 @@ func newHarnessWith(t *testing.T, lanes int, execute ExecuteFunc, fake *linear.F
 		Log:      h.logs,
 		Execute:  execute,
 		Provision: func(context.Context, string, string, workspace.Identity, io.Writer) error {
-			return nil
+			return h.provisionErr
 		},
 		Dispose: func(_ context.Context, _ string, _ string, id workspace.Identity, _ io.Writer) {
 			h.mu.Lock()
@@ -580,8 +585,7 @@ func TestRunAnnouncesProvisioningBeforeStart(t *testing.T) {
 	}
 }
 
-// The loop applies the same move rule as the single-lane flow: a non-zero
-// exit routes to on_failure.
+// The move rule, on the live path: a non-zero exit routes to on_failure.
 func TestRunFailureRoutesToOnFailure(t *testing.T) {
 	h := newHarness(t, 1, func(context.Context, run.Invocation) (run.Result, error) {
 		return run.Result{ExitCode: 3}, nil
@@ -598,8 +602,35 @@ func TestRunFailureRoutesToOnFailure(t *testing.T) {
 	}
 }
 
+// Provisioning never starts a lane, so the claim it won has to go back:
+// an assigned ticket is never eligible, so keeping it would strand the ticket
+// in the very queue it came from. The workspace is disposed either way — a
+// provision command can fail after creating it, and the next attempt would
+// collide with what it left behind.
+func TestRunProvisionFailureReleasesTheClaimAndDisposes(t *testing.T) {
+	h := newHarness(t, 1, func(context.Context, run.Invocation) (run.Result, error) {
+		t.Error("the agent ran even though provisioning failed")
+		return run.Result{}, nil
+	})
+	h.provisionErr = errors.New("no workspace")
+	h.fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Todo"})
+
+	h.rec.Tick(context.Background())
+	if ev := h.waitEvents(t, EventError, 1)[0]; ev.TicketID != "one" {
+		t.Errorf("error event = %+v, want it to name the ticket", ev)
+	}
+	waitIdle(t, h.rec)
+	got := h.issue(t, "one")
+	if got.Status != "Todo" || got.AssigneeID != "" {
+		t.Errorf("provision failure left issue = %+v, want it queued and unclaimed", got)
+	}
+	if len(h.disposedIdentities()) == 0 {
+		t.Error("provision failure did not dispose the workspace")
+	}
+}
+
 // An agent that moved its own ticket has already decided; the loop respects
-// whatever it finds, exactly as the single-lane flow does.
+// whatever it finds.
 func TestRunRespectsAgentMove(t *testing.T) {
 	var h *harness
 	h = newHarness(t, 1, func(context.Context, run.Invocation) (run.Result, error) {
@@ -1106,10 +1137,11 @@ func TestPromoteReleasesTheClaimThatParkedTheTicket(t *testing.T) {
 	if !Eligible(back, map[string]bool{"Todo": true}) {
 		t.Fatalf("promoted ticket is not eligible, so no pass will ever run it: %+v", back)
 	}
-	cands, err := candidates(ctx, h.fake, repo)
+	listings, err := listQueues(ctx, h.fake, repo)
 	if err != nil {
 		t.Fatal(err)
 	}
+	cands := candidatesFrom(listings)
 	if len(cands) != 1 || cands[0].issue.ID != "one" {
 		t.Fatalf("candidates after the promote = %+v, want the reworked ticket", cands)
 	}

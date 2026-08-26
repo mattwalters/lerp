@@ -1155,8 +1155,8 @@ func (r *Reconciler) runLane(ctx context.Context, lr *laneRun, c candidate) {
 	}
 }
 
-// executeLane is one run: record, claim, provision, execute, move. It mirrors
-// Once's single-lane flow with run evidence added around the agent.
+// executeLane is one run: record, claim, provision, execute, move — with run
+// evidence written around the agent so a later process can adopt or reap it.
 func (r *Reconciler) executeLane(ctx context.Context, lr *laneRun, c candidate) (Event, bool) {
 	issue := c.issue
 	fail := func(err error) (Event, bool) {

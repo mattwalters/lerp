@@ -27,7 +27,6 @@ const usage = `usage:
   lerp [-concurrency N]         open the TUI; the loop runs while it is open
   lerp version                  print the version
   lerp init --team KEY [--yes]  map lerp's queues onto the team's board and write this repo's lerp.toml
-  lerp once                     run one eligible ticket through its queue
 `
 
 // defaultLanes is how many agents run at once unless -concurrency says so.
@@ -74,14 +73,6 @@ func main() {
 		fmt.Printf("lerp %s\n", version.Version)
 	case "init":
 		initCommand(args[1:])
-	case "once":
-		if len(args) != 1 {
-			fmt.Fprint(os.Stderr, "lerp once takes no arguments\n\n"+usage)
-			os.Exit(2)
-		}
-		if err := once(context.Background()); err != nil {
-			fatal(fmt.Errorf("lerp once: %w", err))
-		}
 	default:
 		// Falling through to the version here would make a typo look like a
 		// success: `lerp int --team LERP` would print a version and exit 0.
@@ -170,61 +161,6 @@ func openTUI(ctx context.Context, lanes int) error {
 		Lanes:    lanes,
 		Events:   events,
 	})
-}
-
-// once is a temporary single-lane command for exercising the first vertical
-// slice. Its workspace and log live under the system temporary directory;
-// durable run evidence will replace this path policy with the reconciler.
-func once(ctx context.Context) error {
-	apiKey := os.Getenv("LINEAR_API_KEY")
-	if apiKey == "" {
-		return errors.New("LINEAR_API_KEY is required")
-	}
-	// The repo root, not the working directory: lerp init writes lerp.toml at
-	// the root, so resolving it from the cwd would fail everywhere but there.
-	repoDir, err := gitRoot()
-	if err != nil {
-		return err
-	}
-	repo, err := config.LoadRepoConfig(filepath.Join(repoDir, config.RepoConfigFile))
-	if err != nil {
-		return err
-	}
-
-	// A fresh private directory per invocation (MkdirTemp creates it 0700).
-	// A fixed world-readable path under /tmp would let any other user on the
-	// host pre-create or symlink it and read the workspace and the agent log.
-	root, err := os.MkdirTemp("", "lerp-once-")
-	if err != nil {
-		return fmt.Errorf("create temporary run directory: %w", err)
-	}
-	var logPath string
-	ran, err := loop.Once(ctx, loop.OnceOptions{
-		Client:  linear.New(apiKey, nil),
-		Repo:    repo,
-		RepoDir: repoDir,
-		Lane:    1,
-		WorkspaceFor: func(issue linear.Issue) string {
-			return filepath.Join(root, "workspace-lane-1-"+issue.ID)
-		},
-		LogPathFor: func(issue linear.Issue) string {
-			logPath = filepath.Join(root, "run-lane-1-"+issue.ID+".log")
-			return logPath
-		},
-		Log: os.Stderr,
-	})
-	if err != nil {
-		return err
-	}
-	if !ran {
-		fmt.Println("lerp once: no eligible ticket")
-		return nil
-	}
-	fmt.Println("lerp once: completed one ticket")
-	if logPath != "" {
-		fmt.Printf("lerp once: agent log at %s\n", logPath)
-	}
-	return nil
 }
 
 func initCommand(args []string) {
