@@ -857,18 +857,21 @@ func (m *model) applyDetail(msg detailMsg) {
 // inbox panel's selected ticket, or back out without touching Linear.
 func (m model) handlePromoteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
-	switch msg.String() {
-	case "esc", "q", "ctrl+c":
+	switch {
+	// Quit backs the picker out rather than leaving the board: the modal has
+	// the keyboard, and q here means "not this status" and not "not this
+	// session".
+	case key.Matches(msg, m.keys.Close), key.Matches(msg, m.keys.Quit):
 		m.promoting = false
-	case "up", "k":
+	case key.Matches(msg, m.keys.Up):
 		if m.promoteSel > 0 {
 			m.promoteSel--
 		}
-	case "down", "j":
+	case key.Matches(msg, m.keys.Down):
 		if m.promoteSel < len(m.o.Statuses)-1 {
 			m.promoteSel++
 		}
-	case "enter":
+	case key.Matches(msg, m.keys.Detail):
 		it := m.selectedAttention()
 		m.promoting = false
 		if it != nil {
@@ -3361,7 +3364,7 @@ func (m model) statusBar() string {
 	// A modal has the keyboard, so its own instructions replace the line.
 	switch {
 	case m.promoting:
-		hint = "↑/↓ choose · enter promote · esc cancel"
+		hint = hintLine(m.keys.promoteHelp())
 	case m.ejecting:
 		hint = "enter eject · esc cancel"
 	case m.ejection != nil:

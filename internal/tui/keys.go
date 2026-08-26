@@ -1,6 +1,10 @@
 package tui
 
-import "github.com/charmbracelet/bubbles/key"
+import (
+	"strings"
+
+	"github.com/charmbracelet/bubbles/key"
+)
 
 // keymap declares every binding once; the status bar hint and the ? overlay
 // both render from it, so the help can never drift from the keys.
@@ -172,4 +176,29 @@ func (k keymap) panelHelp(p panel, live rowKeys) []key.Binding {
 // itself, so the two lines can never disagree about what to press.
 func short(b key.Binding, desc string) key.Binding {
 	return key.NewBinding(key.WithKeys(b.Keys()...), key.WithHelp(b.Help().Key, desc))
+}
+
+// promoteHelp is the promote picker's instruction line. The picker is
+// modal, so this is the whole of what it answers to, and it is built from
+// the same bindings handlePromoteKey matches — rebind Up and the picker and
+// its line move together. q and ctrl+c back out too; the line names esc
+// alone, the way the ? overlay names q for Quit's two keys.
+func (k keymap) promoteHelp() []key.Binding {
+	return []key.Binding{
+		short(k.Up, "up"), short(k.Down, "down"),
+		short(k.Detail, "promote"), short(k.Close, "cancel"),
+	}
+}
+
+// hintLine renders bindings the way the status bar writes its own hints —
+// "key desc" joined by the "·" the rest of the TUI separates facts with.
+// bubbles/help draws the panels' lines, which have a width to fit into; a
+// modal's instructions are never truncated away, so they need the shape and
+// not the fitting.
+func hintLine(bs []key.Binding) string {
+	parts := make([]string, len(bs))
+	for i, b := range bs {
+		parts[i] = b.Help().Key + " " + b.Help().Desc
+	}
+	return strings.Join(parts, " · ")
 }
