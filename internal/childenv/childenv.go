@@ -25,10 +25,17 @@
 // the other. TestNothingElsePutsTheKeyWithinReachOfAChild stops a new spawn
 // site from going back to os.Environ(). It cannot see the other way to
 // leak — an exec.Command left with a nil Env inherits lerp's whole process —
-// so it checks the other end instead: cmd/lerp reads the key once and drops
-// it from lerp's own environment, leaving nothing for either kind of child
-// to inherit, and the test fails any package that reads it without dropping
-// it.
+// so it checks the other end instead: whoever reads the key drops it from
+// lerp's own environment in the same breath, leaving nothing for either kind
+// of child to inherit, and the test fails any package that reads it without
+// dropping it. Today that reader is internal/credentials, which resolves the
+// credential lerp signs Linear requests with; the rule is written as
+// "whoever reads it" rather than naming that package because a second reader
+// is exactly the thing that would go unnoticed.
+//
+// The test counts a read through any name a file binds the key to, not only
+// the spellings this package exports — a package reading through its own
+// unexported const is how the gate was slipped once already.
 package childenv
 
 import (
