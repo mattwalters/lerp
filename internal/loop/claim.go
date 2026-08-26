@@ -1,3 +1,5 @@
+//go:build unix
+
 // Package loop contains lerp's reconciler.
 package loop
 

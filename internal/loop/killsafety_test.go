@@ -1,3 +1,5 @@
+//go:build unix
+
 package loop
 
 // Kill-safety acceptance tests (LERP-10): SCOPE invariant 3 — every queue
