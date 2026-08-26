@@ -35,9 +35,9 @@ var (
 	// background, so it is not read — it is read *through*, by every colour
 	// a row already carries. The tint is therefore the quietest one that
 	// still finds itself across a panel, and it is priced against styleFaint,
-	// the combination with the least to spare: faint keeps 2.84:1 on the dark
-	// band against 3.86:1 on black, and 3.14:1 on the light one against
-	// 3.90:1 on white. Adaptive, because the same tint that reads as a band
+	// the combination with the least to spare: faint keeps 5.01:1 on the dark
+	// band against 6.82:1 on black, and 4.25:1 on the light one against
+	// 5.28:1 on white. Adaptive, because the same tint that reads as a band
 	// on a dark terminal is a smudge on a light one.
 	//
 	// It is the one colour here spelled out per profile rather than left to
