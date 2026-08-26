@@ -1,7 +1,7 @@
 /* The whole theme. One stylesheet, no build step, no preprocessor: the site
-   is three pages of prose and the layout it needs is a header, a column of
-   text, and a rail. Colours are declared once as custom properties and
-   swapped by the reader's light/dark preference. */
+   is prose, and the layout it needs is a header, a sidebar, a column of text
+   and a rail. Colours are declared once as custom properties and swapped by
+   the reader's light/dark preference. */
 
 :root {
   color-scheme: light dark;
@@ -105,6 +105,52 @@ main {
 }
 
 .prose { overflow-wrap: break-word; }
+
+/* Sidebar ------------------------------------------------------------ */
+
+/* The curated rail (see the menu in hugo.toml). It scrolls on its own once
+   it outgrows the window, so a long manual never pushes the entry you are
+   reaching for below the fold of a sticky column. */
+.sidenav {
+  position: sticky;
+  top: 2rem;
+  flex: 0 0 12rem;
+  max-height: calc(100vh - 4rem);
+  overflow-y: auto;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.sidenav h5 {
+  margin: 1.5rem 0 0.4rem;
+  font: 600 0.7rem/1 var(--sans);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-soft);
+}
+
+.sidenav h5:first-child { margin-top: 0; }
+
+.sidenav a {
+  display: block;
+  padding: 0.18rem 0;
+  color: var(--fg);
+  text-decoration: none;
+}
+
+.sidenav a:hover { color: var(--link); }
+
+.sidenav a.active {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* Entries naming a command, marked mono in hugo.toml. Not <code>: the menu
+   name is a plain string, so the face is set here. */
+.sidenav a.mono {
+  font-family: var(--mono);
+  font-size: 0.86em;
+}
 
 .toc {
   position: sticky;
@@ -234,13 +280,111 @@ th, td {
   text-align: left;
 }
 
+/* Section indexes ---------------------------------------------------- */
+
+/* A section's children, each with the one line its summary front matter
+   gives it (see list.html). */
+.pagelist { margin: 1.6rem 0 0; }
+
+.pagelist dt { margin-top: 1.1rem; }
+
+.pagelist dt a { text-decoration: none; }
+
+.pagelist dd {
+  margin: 0.15rem 0 0;
+  color: var(--fg-soft);
+}
+
+/* Casts -------------------------------------------------------------- */
+
+/* A recording of the TUI, with the keys it presses named underneath — the
+   caption is where the keystrokes are, because VHS cannot draw them into the
+   frame (see the cast shortcode). */
+figure.cast { margin: 1.6rem 0; }
+
+figure.cast video {
+  display: block;
+  width: 100%;
+  height: auto;
+  /* `auto` first, so the real ratio wins the moment metadata lands; the
+     fallback is the tape size docs/demo.tape sets, which is what a cast
+     recorded by this repo's own harness comes back as. Without it a video
+     lays out at the spec's 300x150 until metadata arrives and then jumps,
+     shoving the prose under it down the page. */
+  aspect-ratio: auto 1200 / 640;
+  background: var(--bg-soft);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+}
+
+figure.cast figcaption {
+  margin-top: 0.55rem;
+  font-size: 0.85rem;
+  color: var(--fg-soft);
+}
+
+/* The separators are in the markup (see the cast shortcode), so they need
+   nothing here but a colour that keeps them behind the words — the soft
+   foreground, not the rule colour, which is mixed for 1px lines and is all
+   but invisible as text. */
+.keys .sep { color: var(--fg-soft); }
+
+/* Scoped to the caption, not a bare kbd: goldmark runs with unsafe = true,
+   so a <kbd> written into the README would otherwise pick up keycap chrome
+   with no cast anywhere near it. */
+.keys kbd {
+  font: 0.85em var(--mono);
+  color: var(--fg);
+  background: var(--bg-soft);
+  border: 1px solid var(--rule);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  padding: 0.1em 0.4em;
+}
+
 /* Narrow screens ----------------------------------------------------- */
 
-@media (max-width: 60rem) {
-  /* The rail is a convenience on a wide screen and a wall of links above
-     the text on a phone, where the scrollbar already does its job. */
+/* Two rails and a reading column need 75rem: 40rem of measure, 12 of
+   sidebar, 14 of rail, and the padding and gaps between them. Below that the
+   "On this page" rail goes first — it is the one a scrollbar substitutes for,
+   and the sidebar is the only way between pages. The cost is real and worth
+   naming: on a 1000px window the README and SCOPE lose a rail they used to
+   have. The alternative was both rails standing while the prose they frame
+   ran at 26rem, which is worse for the same two pages. */
+@media (max-width: 75rem) {
   .toc { display: none; }
-  .wrap { padding: 1.5rem 1.25rem 4rem; }
+}
+
+@media (max-width: 60rem) {
+  /* The sidebar stays — it is the only way between pages — but folds into a
+     row of links above the text, because a column beside the prose at this
+     width leaves neither of them room. The group headings go with the
+     column: stacked they were signposts, in a row they are noise.
+     This is a rule for a short menu. A row of twenty links is a screenful
+     of undifferentiated names before a phone reader reaches a word of
+     prose, and with the headings suppressed nothing separates the groups —
+     when the manual gets there, this is the rule to revisit, and the answer
+     is a fold, not a script. */
+  .wrap {
+    display: block;
+    padding: 1.5rem 1.25rem 4rem;
+  }
+
+  .sidenav {
+    position: static;
+    max-height: none;
+    overflow: visible;
+    margin-bottom: 1.5rem;
+    padding-bottom: 0.9rem;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  .sidenav h5 { display: none; }
+
+  .sidenav a {
+    display: inline-block;
+    margin-right: 1.1rem;
+  }
   .hero .wordmark { font-size: 2.1rem; }
   /* The README's pipeline table is three columns of prose. It is set tighter
      here to leave the widest column room, and deliberately left as a table:
