@@ -4,7 +4,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -16,6 +15,7 @@ import (
 
 	"github.com/mattwalters/lerp/internal/childenv"
 	"github.com/mattwalters/lerp/internal/config"
+	"github.com/mattwalters/lerp/internal/credentials"
 	"github.com/mattwalters/lerp/internal/evidence"
 	"github.com/mattwalters/lerp/internal/initcmd"
 	"github.com/mattwalters/lerp/internal/linear"
@@ -86,22 +86,17 @@ func main() {
 // engine: it drives the loop's ticks and subscribes to its events; nothing
 // runs when it is closed, and no daemon exists (SCOPE, "The interface").
 func openTUI(ctx context.Context, lanes int) error {
-	apiKey := os.Getenv(childenv.LinearAPIKeyEnv)
-	if apiKey == "" {
-		return errors.New(childenv.LinearAPIKeyEnv + " is required")
+	// First, before anything costs anything: an operator with no credential
+	// should not pay for a board check and a lock before being told so.
+	// Resolved once here and asked per request from then on — an API key
+	// answers with itself, a stored token renews itself underneath.
+	auth, err := credentials.Resolve(nil)
+	if err != nil {
+		return err
 	}
-	// Read once, then dropped from lerp's own environment. childenv keeps the
-	// key out of the children lerp builds an environment for, but a child
-	// spawned with a nil Env inherits this process wholesale — the ordinary
-	// way to write exec.Command, and the way the next spawn site will
-	// probably be written. Unsetting it here means there is nothing left to
-	// inherit either way. Not containment: the original block is still in
-	// /proc/<pid>/environ on Linux, and the operator's shell profile still
-	// exports it.
-	os.Unsetenv(childenv.LinearAPIKeyEnv)
-	// Up here with the other environment refusal: the TUI applies this
-	// itself, but only once everything below has run, and an operator who
-	// misspelled it should not pay for a board check and a lock first.
+	// Up here with the refusal above, for the same reason: the TUI applies
+	// this itself, but only once everything below has run, and an operator
+	// who misspelled it should not pay for a board check and a lock first.
 	if err := tui.UseBackground(); err != nil {
 		return err
 	}
@@ -121,7 +116,7 @@ func openTUI(ctx context.Context, lanes int) error {
 	// after an agent's whole run. What the same check merely warns about — a
 	// team git automation that would move a ticket mid-stage — is shown here
 	// and the run starts anyway.
-	client := linear.New(apiKey, nil)
+	client := linear.New(auth, nil)
 	warnings, err := loop.Verify(ctx, client, repo)
 	if err != nil {
 		return err
@@ -194,12 +189,10 @@ func initCommand(args []string) {
 		fmt.Fprintln(os.Stderr, "lerp init: --team is required")
 		os.Exit(2)
 	}
-	apiKey := os.Getenv(childenv.LinearAPIKeyEnv)
-	if apiKey == "" {
-		fatal(fmt.Errorf("lerp init: %s is required", childenv.LinearAPIKeyEnv))
+	auth, err := credentials.Resolve(nil)
+	if err != nil {
+		fatal(fmt.Errorf("lerp init: %w", err))
 	}
-	// Dropped for the same reason as in openTUI: init shells out too.
-	os.Unsetenv(childenv.LinearAPIKeyEnv)
 	repoRoot, err := gitRoot()
 	if err != nil {
 		fatal(err)
@@ -210,7 +203,7 @@ func initCommand(args []string) {
 	if !*yes && isTerminal(os.Stdin) && isTerminal(os.Stdout) {
 		answers = os.Stdin
 	}
-	created, err := initcmd.Init(context.Background(), linear.New(apiKey, nil), os.Stdout, answers, filepath.Clean(repoRoot), *team, *name)
+	created, err := initcmd.Init(context.Background(), linear.New(auth, nil), os.Stdout, answers, filepath.Clean(repoRoot), *team, *name)
 	if err != nil {
 		fatal(fmt.Errorf("lerp init: %w", err))
 	}

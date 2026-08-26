@@ -27,9 +27,15 @@ func testClient(t *testing.T, h http.HandlerFunc) *HTTP {
 	t.Helper()
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
-	c := New("test-key", srv.Client())
+	c := New(staticAuth("test-key"), srv.Client())
 	c.Endpoint = srv.URL
 	return c
+}
+
+// staticAuth is the source a personal API key makes: the same header value
+// on every request, forever.
+func staticAuth(header string) Auth {
+	return func(context.Context) (string, error) { return header, nil }
 }
 
 func decodeRequest(t *testing.T, r *http.Request) gqlRequest {
@@ -799,5 +805,49 @@ func TestViewerDoesNotCacheAFailure(t *testing.T) {
 	id, err := c.Viewer(context.Background())
 	if err != nil || id != "user-1" {
 		t.Fatalf("second Viewer = %q, %v, want the id once the key works", id, err)
+	}
+}
+
+// The header is asked for per request, not held from construction: an OAuth
+// access token can be renewed underneath a client that never learns of it.
+func TestAuthIsAskedPerRequest(t *testing.T) {
+	var got []string
+	var n int
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.Header.Get("Authorization"))
+		writeData(t, w, `{"team":{"issues":{"nodes":[]}}}`)
+	})
+	c.auth = func(context.Context) (string, error) {
+		n++
+		return fmt.Sprintf("Bearer access-%d", n), nil
+	}
+	for range 2 {
+		if _, err := c.ListIssues(context.Background(), "LERP", "Todo"); err != nil {
+			t.Fatalf("ListIssues: %v", err)
+		}
+	}
+	want := []string{"Bearer access-1", "Bearer access-2"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("headers = %v, want %v", got, want)
+	}
+}
+
+// A credential that cannot be resolved sends nothing: an unsigned request
+// would only come back 401, and the source's own error is the actionable one.
+func TestAuthErrorSendsNoRequest(t *testing.T) {
+	var requests int
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		writeData(t, w, `{"team":{"issues":{"nodes":[]}}}`)
+	})
+	sentinel := errors.New("no credentials")
+	c.auth = func(context.Context) (string, error) { return "", sentinel }
+
+	_, err := c.ListIssues(context.Background(), "LERP", "Todo")
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("err = %v, want the source's own error", err)
+	}
+	if requests != 0 {
+		t.Errorf("requests = %d, want 0", requests)
 	}
 }

@@ -215,8 +215,8 @@ type HTTP struct {
 	// (tests point it at an httptest.Server).
 	Endpoint string
 
-	apiKey string
-	hc     *http.Client
+	auth Auth
+	hc   *http.Client
 
 	// The viewer id is immutable per API key, and half a dozen call sites
 	// want it — every claim, every release, every attention pass. It is
@@ -229,20 +229,40 @@ type HTTP struct {
 
 var _ Client = (*HTTP)(nil)
 
-// New returns a client authenticating with apiKey (conventionally read
-// from the LINEAR_API_KEY environment variable by the caller). Personal
-// API keys go in the Authorization header as-is. A nil hc gets a default
-// client with a 30s timeout.
-func New(apiKey string, hc *http.Client) *HTTP {
+// Auth supplies the Authorization header value for one request. A plain
+// func, not an interface: a personal API key is a closure over a string and
+// there is no second method anything wants.
+//
+// Asked per request rather than held as a string because the value need not
+// be constant — an OAuth access token expires and is renewed underneath the
+// client, which never learns that happened. Who resolves it, and how, is
+// internal/credentials' business; this package stays purely GraphQL
+// (SCOPE.md invariant 8).
+type Auth func(ctx context.Context) (string, error)
+
+// New returns a client whose requests auth signs. Personal API keys go in
+// the Authorization header as-is; OAuth access tokens come back with their
+// "Bearer " prefix already on them. A nil hc gets a default client with a
+// 30s timeout.
+func New(auth Auth, hc *http.Client) *HTTP {
 	if hc == nil {
 		hc = &http.Client{Timeout: 30 * time.Second}
 	}
-	return &HTTP{Endpoint: DefaultEndpoint, apiKey: apiKey, hc: hc}
+	return &HTTP{Endpoint: DefaultEndpoint, auth: auth, hc: hc}
 }
 
 // do posts one GraphQL request and decodes data into out (which may be
 // nil when the caller only cares about errors).
 func (c *HTTP) do(ctx context.Context, query string, vars map[string]any, out any) error {
+	// First, before anything is built or sent: a credential that cannot be
+	// resolved is not a request that should go out unsigned. Returned
+	// unwrapped — these errors already name their own remedy ("run \"lerp
+	// login\""), and a "linear:" prefix in front of that reads as noise.
+	authHeader, err := c.auth(ctx)
+	if err != nil {
+		return err
+	}
+
 	body, err := json.Marshal(struct {
 		Query     string         `json:"query"`
 		Variables map[string]any `json:"variables,omitempty"`
@@ -256,7 +276,7 @@ func (c *HTTP) do(ctx context.Context, query string, vars map[string]any, out an
 		return fmt.Errorf("linear: build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", c.apiKey)
+	req.Header.Set("Authorization", authHeader)
 
 	resp, err := c.hc.Do(req)
 	if err != nil {
