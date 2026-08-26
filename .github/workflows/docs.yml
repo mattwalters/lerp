@@ -100,12 +100,16 @@ jobs:
       # them. The root is built first because the version directories are
       # staged inside it.
       #
-      # Not on a tag: the root and /latest/ track main, and a tag is a commit
-      # that main may already have moved past — rebuilding them from the tag's
-      # tree would roll the homepage back and label it "latest". A tag stages
-      # only its own frozen copy, and keep_files leaves the rest standing.
+      # Only from main, because that is what "latest" means. A tag is a commit
+      # main may already have moved past, so rebuilding these from the tag's
+      # tree would roll the homepage back and label it "latest"; a tag stages
+      # only its own frozen copy, and keep_files leaves the rest standing. The
+      # ref is tested rather than the ref type because workflow_dispatch is
+      # not subject to the branch filter on the trigger — its ref dropdown
+      # lists every branch that carries this file, and a dispatch left
+      # pointing at a spike branch would publish that branch as the homepage.
       - name: Build root
-        if: github.ref_type != 'tag'
+        if: github.ref == 'refs/heads/main'
         run: hugo --source docs --destination "$PWD/public"
         env:
           HUGO_PARAMS_VERSION: latest
@@ -113,7 +117,7 @@ jobs:
       # A level below the root, so the version picker's manifest — and the
       # other versions it points at — are one directory up from this copy.
       - name: Build latest
-        if: github.ref_type != 'tag'
+        if: github.ref == 'refs/heads/main'
         run: hugo --source docs --destination "$PWD/public/latest"
         env:
           HUGO_PARAMS_VERSION: latest
@@ -173,8 +177,16 @@ jobs:
       # keep_files is the point: a deploy adds or overwrites only what it
       # staged — the root, /latest/, and on a tag /vX.Y.Z/ and versions.json —
       # while every previously released version's directory stays frozen
-      # exactly where it was.
+      # exactly where it was. The same property in the other direction: the
+      # root can never shed a page, so a deleted or renamed content file goes
+      # on being served from its last build until someone removes it from the
+      # branch by hand.
+      #
+      # Nothing staged means nothing to publish: a run whose builds all
+      # skipped — a dispatch pointed at neither main nor a tag push — stops
+      # here rather than failing on a publish_dir that was never created.
       - name: Deploy
+        if: hashFiles('public/**') != ''
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}

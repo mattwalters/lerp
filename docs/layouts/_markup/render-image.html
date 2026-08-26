@@ -3,10 +3,12 @@
        one reference resolves on GitHub and on the site alike. Absolute URLs,
        such as the CI badge, are left as they were written. */ -}}
 {{- $src := .Destination -}}
-{{- if not (urls.Parse $src).IsAbs -}}
+{{- if and (not (urls.Parse $src).IsAbs) (not (hasPrefix $src "//")) -}}
   {{/* Cleaned and de-slashed the way render-link.html does it: /docs/demo.gif
        is an ordinary spelling on GitHub, and prefixing a second slash would
-       emit a protocol-relative URL pointing at a host called "docs". */}}
+       emit a protocol-relative URL pointing at a host called "docs". A
+       destination that already begins "//" is such a URL, and is left alone
+       above for the same reason the link hook leaves it alone. */}}
   {{- $src = printf "/%s" (strings.TrimPrefix "/" (path.Clean $src)) -}}
 {{- end -}}
 <img src="{{ $src }}" alt="{{ .PlainText }}"{{ with .Title }} title="{{ . }}"{{ end }} loading="lazy">

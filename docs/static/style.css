@@ -242,9 +242,14 @@ th, td {
   .toc { display: none; }
   .wrap { padding: 1.5rem 1.25rem 4rem; }
   .hero .wordmark { font-size: 2.1rem; }
-  /* The README's pipeline table is three columns of prose, and a phone-width
-     column of it is a paragraph one word wide. It scrolls sideways instead,
-     with cells kept wide enough to read. */
-  table { display: block; overflow-x: auto; }
-  th, td { min-width: 11rem; }
+  /* The README's pipeline table is three columns of prose. It is set tighter
+     here to leave the widest column room, and deliberately left as a table:
+     making it scroll sideways costs more than it buys — auto layout already
+     gives the prose column most of the width, and a table overridden to
+     display:block leaves the accessibility tree with no rows or columns at
+     exactly the size where the table is hardest to follow. */
+  th, td {
+    padding: 0.3rem 0.4rem;
+    font-size: 0.92rem;
+  }
 }
