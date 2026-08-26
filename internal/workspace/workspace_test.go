@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mattwalters/lerp/internal/childenv"
 )
 
 func TestProvisionPassesIdentityAndLogsOutput(t *testing.T) {
@@ -75,4 +77,36 @@ func writeScript(t *testing.T, dir, name, body string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+// Provision and dispose run whatever the repo configures, from the repo root,
+// before and after every agent — so the operator's Linear credential must be
+// as absent from their environment as it is from the runner's. The stub
+// prints its whole environment, and nothing here prints that log back: a
+// failure in CI would publish every other variable lerp was running with.
+func TestWorkspaceCommandsDropTheLinearAPIKey(t *testing.T) {
+	t.Setenv(childenv.LinearAPIKeyEnv, "lin_api_secret")
+	repoDir := t.TempDir()
+	script := writeScript(t, repoDir, "env", "env\n")
+
+	var log bytes.Buffer
+	id := Identity{Lane: 2, TicketID: "issue-123", Workspace: "/tmp/lerp-2"}
+	if err := Provision(context.Background(), repoDir, script, id, &log); err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+	Dispose(context.Background(), repoDir, script, id, &log)
+
+	got := log.String()
+	for _, line := range strings.Split(got, "\n") {
+		if name, _, ok := strings.Cut(line, "="); ok && name == childenv.LinearAPIKeyEnv {
+			t.Errorf("workspace environment contains %s, want it dropped", childenv.LinearAPIKeyEnv)
+		}
+	}
+	if strings.Contains(got, "lin_api_secret") {
+		t.Error("workspace environment contains the Linear API key's value")
+	}
+	// The same environment still carries what lerp does hand the command.
+	if !strings.Contains(got, TicketIDEnv+"=issue-123") {
+		t.Errorf("workspace environment does not carry %s=issue-123", TicketIDEnv)
+	}
 }

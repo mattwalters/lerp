@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mattwalters/lerp/internal/childenv"
 	"github.com/mattwalters/lerp/internal/config"
 	"github.com/mattwalters/lerp/internal/evidence"
 )
@@ -71,6 +72,9 @@ type Invocation struct {
 // carry the queue's own configured statuses into the prose. The ticket
 // identifier is also exported as TicketEnv.
 //
+// The command inherits lerp's environment, minus the operator's Linear API
+// key: see internal/childenv.
+//
 // A session ID is generated and returned only when the command uses
 // {{session}}, and only when inv.SessionID is empty: a caller that minted one
 // itself gets that one substituted, unchanged.
@@ -116,7 +120,7 @@ func Execute(ctx context.Context, inv Invocation) (Result, error) {
 
 	cmd := exec.CommandContext(ctx, "sh", "-c", command)
 	cmd.Dir = inv.Workdir
-	cmd.Env = append(os.Environ(), TicketEnv+"="+inv.Ticket)
+	cmd.Env = childenv.Inherited(TicketEnv + "=" + inv.Ticket)
 	cmd.Stdout = log
 	cmd.Stderr = log
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
