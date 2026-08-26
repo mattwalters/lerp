@@ -1363,10 +1363,13 @@ func (m *model) readPulses() {
 		}
 		if ln.pulse == nil {
 			// Only an inherited run has history behind it that nothing here
-			// watched. A run this process started it has watched from the
-			// beginning, and the record's StartedAt predates the claim and
-			// the provision — so handing it over would mark a slow
-			// workspace as unread agent history it never was.
+			// watched; a run this process started, it has watched from the
+			// beginning. The distinction matters because the record's
+			// StartedAt predates the claim and the provision: on a local run
+			// that span would mark a slow workspace as agent history nobody
+			// read, which is the adopted-run signal fired on a run nothing
+			// was adopted from. On an inherited run the same imprecision
+			// costs a bucket or two of a span that is unread either way.
 			started := now
 			if ln.state == laneAdopted {
 				started = ln.since

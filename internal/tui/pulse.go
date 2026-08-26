@@ -158,10 +158,9 @@ func (p *pulse) roll(now time.Time) {
 // is the order a sparkline draws, led by the run's unread span — the buckets
 // that passed before this pulse attached. It is the whole history the ring
 // holds; a row too narrow for all of it draws the tail, which is the recent
-// end. It is
-// short while a run is young: a line that has not had time to fall is not a
-// line that has fallen, and a run picked up ten seconds ago must not read
-// like one that has been quiet since the ring began.
+// end. It is short while a run is young: a line that has not had time to fall
+// is not a line that has fallen, and a run picked up ten seconds ago must not
+// read like one that has been quiet since the ring began.
 func (p *pulse) window() []int {
 	if p.heard.IsZero() {
 		// No log behind the ring: it may not exist yet, or it may have been

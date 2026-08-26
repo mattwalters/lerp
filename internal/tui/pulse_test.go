@@ -272,6 +272,36 @@ func TestPulseUnreadGivesWayToWhatItWatches(t *testing.T) {
 	}
 }
 
+// A rewrite takes the counts, never the unread span. The counts describe a
+// file that is gone; "this pulse has no reading for what came before" is what
+// the rewrite has just made true again of everything it held, and clearing it
+// alongside them would hand an adopted run back the line of one that just
+// started.
+func TestPulseKeepsItsUnreadSpanWhenTheLogIsRewritten(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.log")
+	appendLog(t, path, strings.Repeat("an hour of work\n", 200))
+	start := time.Now()
+	p := newPulse(path, start.Add(-time.Hour), start)
+	p.read(start)
+	p.read(start.Add(sparkBucket))
+
+	// Shorter than what it replaces, which is how a follower knows a file
+	// was rewritten rather than appended to.
+	writeLog(t, path, []byte("a wholly new log\n"))
+	p.read(start.Add(2 * sparkBucket))
+	got := p.window()
+	if len(got) != sparkCells {
+		t.Fatalf("after the rewrite the run draws %d buckets, want the ring's %d: %v",
+			len(got), sparkCells, got)
+	}
+	if got[0] != unreadBucket {
+		t.Fatalf("the rewrite took the unread span with the counts: %v", got)
+	}
+	if got[len(got)-1] != 1 {
+		t.Fatalf("the new log's line did not land in the bucket now filling: %v", got)
+	}
+}
+
 func TestSparkline(t *testing.T) {
 	tests := []struct {
 		name   string
