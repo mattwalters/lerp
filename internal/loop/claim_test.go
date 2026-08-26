@@ -167,7 +167,7 @@ func TestClaimForQueueReportsAReleaseItCouldNotMake(t *testing.T) {
 		t.Error("claimForQueue won = true, want false")
 	}
 	if !errors.Is(err, errBoom) {
-		t.Errorf("claimForQueue error = %v, want wrapped %v", err, errBoom)
+		t.Fatalf("claimForQueue error = %v, want wrapped %v", err, errBoom)
 	}
 	if !strings.Contains(err.Error(), "verify claim before release") {
 		t.Errorf("claimForQueue error = %v, want it to name the release it could not make", err)
@@ -196,11 +196,16 @@ func TestClaimForQueueReportsAFailedReleaseOfAMovedTicket(t *testing.T) {
 	if won {
 		t.Error("claimForQueue won = true, want false")
 	}
+	// Fatal, not Errorf: the message check below reads err, and the very
+	// regression this test names is the one that makes err nil.
 	if !errors.Is(err, errBoom) {
-		t.Errorf("claimForQueue error = %v, want wrapped %v", err, errBoom)
+		t.Fatalf("claimForQueue error = %v, want wrapped %v", err, errBoom)
 	}
 	if !strings.Contains(err.Error(), "release moved issue") {
 		t.Errorf("claimForQueue error = %v, want it to name the moved ticket it could not release", err)
+	}
+	if got, _ := f.GetIssue(ctx, "iss-1"); got.AssigneeID != "me" {
+		t.Errorf("assignee = %q, want the claim still on the ticket the error reports", got.AssigneeID)
 	}
 }
 

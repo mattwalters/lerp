@@ -52,8 +52,10 @@ func newHarness(t *testing.T, lanes int, execute ExecuteFunc) *harness {
 }
 
 // newHarnessWith is newHarness with the board and the reconciler's client
-// supplied by the caller — for tests that run two reconcilers against one
-// shared fake board through per-lerp client wrappers.
+// supplied by the caller: for tests that run two reconcilers against one
+// shared fake board through per-lerp client wrappers, and for tests that put
+// a fault-injecting wrapper in front of the board the assertions then read
+// directly.
 func newHarnessWith(t *testing.T, lanes int, execute ExecuteFunc, fake *linear.Fake, client linear.Client) *harness {
 	t.Helper()
 	root := t.TempDir()
