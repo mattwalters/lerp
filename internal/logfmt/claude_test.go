@@ -132,9 +132,9 @@ func TestClaudeCountsOneCallOnce(t *testing.T) {
 	}
 }
 
-// Parallel subagents write into one log, so the lines of two calls arrive
-// interleaved. Remembering only the last message id would bill both of them
-// once per line all over again.
+// Parallel subagents write into one log, so nothing keeps the lines of two
+// calls from arriving interleaved. Remembering only the last message id would
+// bill both of them once per line all over again.
 func TestClaudeCountsInterleavedCallsOnce(t *testing.T) {
 	dec := &claude{}
 	var total int
@@ -152,10 +152,10 @@ func TestClaudeCountsInterleavedCallsOnce(t *testing.T) {
 
 // The ring is what holds interleaved calls apart. This does not pin its size
 // — countedMessages has room to spare over what is asserted here — it pins
-// the floor: a run fans out to several subagents at once and every one of
-// them streams into this log, so a dozen calls in flight is an ordinary
-// afternoon, and a ring that could not hold that many would forget the oldest
-// and bill its next line again, which is the bug back for one call.
+// the floor: a run fans out to several subagents at once, so a dozen calls in
+// flight is the order of fan-out to hold against, and a ring that could not
+// hold that many would forget the oldest and bill its next line again, which
+// is the bug back for one call.
 func TestClaudeCountsManyCallsInFlightOnce(t *testing.T) {
 	const inFlight = 12
 	dec := &claude{}
