@@ -290,7 +290,8 @@ type workRow struct {
 	state laneState
 	since time.Time
 	// heard is when that run's log last grew, zero while it has none; rate
-	// is its recent activity per bucket, oldest first, for the sparkline.
+	// is its recent activity per bucket, oldest first, for the sparkline,
+	// led by whatever of the run predates the reading (see pulse.window).
 	heard time.Time
 	rate  []int
 	// The pickup gate, for a ticket that is not running: where it sits in
@@ -1361,7 +1362,20 @@ func (m *model) readPulses() {
 			continue
 		}
 		if ln.pulse == nil {
-			ln.pulse = newPulse(ln.logPath)
+			// Only an inherited run has history behind it that nothing here
+			// watched; a run this process started, it has watched from the
+			// beginning. The distinction matters because the record's
+			// StartedAt predates the claim and the provision: on a local run
+			// that span would mark a slow workspace as agent history nobody
+			// read, which is the adopted-run signal fired on a run nothing
+			// was adopted from. On an inherited run the same imprecision
+			// marks the claim and the provision unread along with the run,
+			// which is a span this pulse was not reading either way.
+			started := now
+			if ln.state == laneAdopted {
+				started = ln.since
+			}
+			ln.pulse = newPulse(ln.logPath, started, now)
 		}
 		ln.pulse.read(now)
 	}
