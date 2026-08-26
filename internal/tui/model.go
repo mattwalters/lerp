@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"net/url"
 	"os/exec"
 	"runtime"
 	"slices"
@@ -1271,26 +1272,56 @@ func (m *model) selectedURL() string {
 	return ""
 }
 
+// linearHost is the only host `o` opens. Linear serves one web app from
+// one name, so an allowlist of one covers every door the board has.
+const linearHost = "linear.app"
+
+// openable reports whether a URL is one the OS opener may be handed. The
+// string is Linear's own url field, so this gates nothing the operator
+// typed — it gates the endpoint that supplied it. `open` and `xdg-open`
+// launch whatever scheme the machine has a handler for, so a compromised or
+// impersonated API would otherwise reach a file:// path, or some third
+// party's URL-scheme handler, through one keystroke on a row that looks
+// like every other row.
+func openable(rawURL string) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	// Host, not Hostname: a port is not something Linear sends, and
+	// refusing one costs nothing. Parse has already lowercased the scheme;
+	// the host it leaves as it found it.
+	return u.Scheme == "https" && strings.EqualFold(u.Host, linearHost)
+}
+
 // openURL hands the URL to the OS opener. This is the TUI opening the
 // operator's browser, not lerp speaking to an API; everything beyond
 // promote still happens in Linear. The opener is a child like any other, so
 // it gets its environment from childenv: a personal `xdg-open` wrapper that
 // logs what it was given must not be logging the operator's Linear key.
-func openURL(url string) tea.Cmd {
-	if url == "" {
+func openURL(rawURL string) tea.Cmd {
+	if rawURL == "" {
 		return nil
+	}
+	// A refusal is louder than a no-op on purpose. The key line drops `o`
+	// from a row whose URL fails this, so pressing it anyway is the operator
+	// asking a question — and the status bar is where the answer goes.
+	if !openable(rawURL) {
+		return func() tea.Msg {
+			return openErrMsg{err: fmt.Errorf("refusing to open %s: not an https://%s URL", rawURL, linearHost)}
+		}
 	}
 	return func() tea.Msg {
 		var c *exec.Cmd
 		switch runtime.GOOS {
 		case "darwin":
-			c = exec.Command("open", url)
+			c = exec.Command("open", rawURL)
 		default:
-			c = exec.Command("xdg-open", url)
+			c = exec.Command("xdg-open", rawURL)
 		}
 		c.Env = childenv.Inherited()
 		if err := c.Start(); err != nil {
-			return openErrMsg{err: fmt.Errorf("open %s: %w", url, err)}
+			return openErrMsg{err: fmt.Errorf("open %s: %w", rawURL, err)}
 		}
 		go c.Wait()
 		return nil
@@ -2391,7 +2422,7 @@ func (m *model) panelKeys(p panel) []key.Binding {
 		// to open. Under the ? overlay it is the one moment the pane is
 		// certainly not showing a log, and the key is inert to match.
 		hasLog:     m.logOnScreen(),
-		hasURL:     m.selectedURL() != "",
+		hasURL:     openable(m.selectedURL()),
 		filtered:   m.search != "",
 		projects:   m.hasProjects(),
 		canPromote: len(m.o.Statuses) > 0 && m.roomForMain(),

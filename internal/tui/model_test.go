@@ -3649,6 +3649,66 @@ func TestOpenWithNothingSelected(t *testing.T) {
 	}
 }
 
+// The URL o opens is Linear's, but it arrives over the wire like every other
+// string on the board, and `open`/`xdg-open` launch whatever scheme the
+// machine has a handler for. So an endpoint that is not Linear cannot reach
+// the operator's file:// paths, or their editor's URL handler, through one
+// keystroke.
+func TestOnlyALinearHTTPSURLReachesTheOpener(t *testing.T) {
+	for _, tc := range []struct {
+		url  string
+		want bool
+	}{
+		{"https://linear.app/acme/issue/LERP-1/first", true},
+		{"https://linear.app/l/LERP-1", true},
+		{"HTTPS://LINEAR.APP/acme/issue/LERP-1", true}, // the host is case-insensitive
+		{"", false},
+		{"file:///etc/passwd", false},
+		{"javascript:alert(1)", false},
+		{"vscode://file/etc/passwd", false},
+		{"http://linear.app/acme/issue/LERP-1", false}, // plaintext is not the door
+		{"https://linear.app.evil.test/acme", false},   // suffix, not the host
+		{"https://evil.test/linear.app/acme", false},   // path, not the host
+		{"https://linear.app@evil.test/acme", false},   // userinfo, not the host
+		{"https://linear.app:8443/acme", false},        // Linear serves one port
+		{"-froot@evil.test", false},                    // not a URL, and not a flag either
+		{"https://linear.app\x00/acme", false},
+	} {
+		if got := openable(tc.url); got != tc.want {
+			t.Errorf("openable(%q) = %v, want %v", tc.url, got, tc.want)
+		}
+	}
+}
+
+// A refused URL is not a silent no-op: the panel stops offering o on that
+// row, and pressing it anyway says why on the status bar rather than
+// looking like a key that is broken.
+func TestARefusedURLIsSaidOutLoudAndNotAdvertised(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-7", TicketID: "id-7", Title: "waiting", Status: "Plan Review",
+			URL: "file:///etc/passwd"},
+	}}})
+	if view := m.View(); strings.Contains(view, "o open") {
+		t.Fatalf("the panel offers o for a URL the opener will refuse:\n%s", view)
+	}
+
+	m, cmd := updateCmd(t, m, keyMsg("o"))
+	if cmd == nil {
+		t.Fatal("o on a refused URL produced no command, so nothing tells the operator why")
+	}
+	msg, ok := cmd().(openErrMsg)
+	if !ok {
+		t.Fatalf("o on a refused URL produced %T, want an openErrMsg", cmd())
+	}
+	m = update(t, m, msg)
+	if view := m.View(); !strings.Contains(view, "refusing to open") {
+		t.Fatalf("the status bar does not carry the refusal:\n%s", view)
+	}
+}
+
 func TestQuitKey(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	_, cmd := m.Update(keyMsg("q"))
