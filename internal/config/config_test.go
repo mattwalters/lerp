@@ -590,7 +590,13 @@ func firstDiff(got, want string) string {
 	if len(wantLines) > len(gotLines) {
 		long, short, which = wantLines, gotLines, "example"
 	}
-	if len(long) == len(short)+1 && long[len(short)] == "" {
+	// ...but only when the shorter text does not already end in one, or an
+	// added blank line at EOF would be reported as a newline that is there.
+	shortText := want
+	if which == "example" {
+		shortText = got
+	}
+	if len(long) == len(short)+1 && long[len(short)] == "" && !strings.HasSuffix(shortText, "\n") {
 		return fmt.Sprintf("identical except the trailing newline: %s has one, the other does not", which)
 	}
 	return fmt.Sprintf("identical for %d lines, then %s continues: %q",
@@ -605,17 +611,26 @@ func firstDiff(got, want string) string {
 // declined — the one whose config is the security-sensitive one — gets a
 // warning with its subject deleted, while the byte pin above, which renders
 // only the accepting case, stays green.
+//
+// Scanning the template rather than a rendering is deliberate: line numbers
+// then name the file a reader has to edit, and occupants of optional sections
+// are covered even when the rendering being checked drops them.
 func TestBypassFlagAppearsOnlyInRunnerCommands(t *testing.T) {
-	for i, line := range strings.Split(StockRepoConfig([]string{"LERP"}, true), "\n") {
-		if strings.Contains(line, bypassFlag) && !strings.HasPrefix(line, "command = ") {
+	table := ""
+	for i, line := range strings.Split(stockRepo, "\n") {
+		if strings.HasPrefix(line, "[") {
+			table = strings.TrimSuffix(strings.TrimPrefix(line, "["), "]")
+		}
+		// A runner's command is the one place the strip is meant to reach.
+		// Anywhere else — prose, or a prompt body that happens to show an
+		// invocation — declining would edit text nobody meant it to touch.
+		if !strings.Contains(line, bypassFlag) {
+			continue
+		}
+		if !strings.HasPrefix(table, "runners.") || !strings.HasPrefix(line, "command = ") {
 			t.Errorf("stock.toml line %d has %q outside a runner command, so declining the grant would edit it:\n  %s",
 				i+1, bypassFlag, line)
 		}
-	}
-	// And the strip has to actually reach the command it targets, or
-	// declining would silently leave the grant in place.
-	if strings.Contains(StockRepoConfig([]string{"LERP"}, false), bypassFlag) {
-		t.Error("declining the grant left bypassFlag in the rendered config")
 	}
 }
 

@@ -46,16 +46,23 @@ check: ## The gate, on Linux and macOS in CI: gofmt, vet, build, test
 fmt: ## Format all Go source
 	gofmt -w .
 
+# Where the example generator writes before it is moved into place. Gitignored
+# and beside the target, not in TMPDIR: the move is then a same-filesystem
+# rename, and the file keeps the mode the redirect gave it. Staging through
+# `mktemp` would carry its 0600 onto the committed example, which git does not
+# track and so nobody would see.
+EXAMPLE_TMP := .lerp.example.toml.tmp
+
 .PHONY: example
 example: ## Regenerate lerp.example.toml from internal/config/stock.toml
-# Rendered to a scratch file and moved into place only once it is written, for
-# the same reason the demo recipe does it: `go run ... > lerp.example.toml`
-# truncates the committed file before the generator starts, so a package that
-# does not compile leaves an empty example behind and a deletion in the diff.
-	@tmp=$$(mktemp) && go run ./internal/config/example > $$tmp \
-	  && mv $$tmp lerp.example.toml \
+# Moved into place only once the generator has written it, for the same reason
+# the demo recipe stages its render: `go run ... > lerp.example.toml` truncates
+# the committed file before the generator starts, so a package that does not
+# compile leaves an empty example behind and a deletion in the diff.
+	@go run ./internal/config/example > '$(EXAMPLE_TMP)' \
+	  && mv '$(EXAMPLE_TMP)' lerp.example.toml \
 	  && printf 'regenerated lerp.example.toml\n' \
-	  || { rm -f $$tmp; exit 1; }
+	  || { rm -f '$(EXAMPLE_TMP)'; exit 1; }
 
 # --------------------------------------------------------------------------
 # The README cast
