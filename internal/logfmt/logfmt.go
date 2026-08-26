@@ -63,6 +63,11 @@ type Event struct {
 // does not recognize is dropped (ok false) rather than rendered as itself: a
 // formatted pane with occasional JSON lines in it is worse than either pure
 // form.
+//
+// A decoder may carry state across the lines of one stream — claude does, to
+// bill an API call once — so detect hands every Stream its own. Sharing one
+// between streams would let the log a lane is being read by twice decide what
+// the other read sees.
 type Decoder interface {
 	Decode(line string) (Event, bool)
 }

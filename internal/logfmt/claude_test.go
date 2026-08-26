@@ -150,11 +150,12 @@ func TestClaudeCountsInterleavedCallsOnce(t *testing.T) {
 	}
 }
 
-// The ring is what holds interleaved calls apart, so how many it remembers is
-// the promise. A run fans out to several subagents at once and every one of
+// The ring is what holds interleaved calls apart. This does not pin its size
+// — countedMessages has room to spare over what is asserted here — it pins
+// the floor: a run fans out to several subagents at once and every one of
 // them streams into this log, so a dozen calls in flight is an ordinary
-// afternoon rather than a worst case; a ring too small forgets the oldest and
-// bills its next line again, which is the bug back for one call.
+// afternoon, and a ring that could not hold that many would forget the oldest
+// and bill its next line again, which is the bug back for one call.
 func TestClaudeCountsManyCallsInFlightOnce(t *testing.T) {
 	const inFlight = 12
 	dec := &claude{}

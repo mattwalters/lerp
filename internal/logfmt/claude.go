@@ -22,10 +22,15 @@ type claude struct {
 // countedMessages is how many messages the decoder remembers having billed.
 // One API call is written as several lines — one per content block — and each
 // of them repeats the call's identical usage, so a call that thought, spoke
-// and called a tool would be counted three times. Remembering only the last
-// id is not enough: parallel subagents write into one log, so two messages'
-// lines interleave. It is a fixed ring rather than a growing set because a
-// day-long run's message ids are unbounded and this is a board that stays up.
+// and called a tool would be counted three times.
+//
+// It is a set rather than the last id alone because nothing promises a
+// message's lines are contiguous: parallel subagents write into one log, and
+// on the logs to hand their lines happen not to interleave, which is a
+// property of a writer rather than of the format. A fixed ring rather than a
+// growing set because a day-long run's message ids are unbounded and this is
+// a board that stays up. Past its size the oldest id is forgotten and its
+// next line bills again — one call over, on a fan-out wider than any seen.
 const countedMessages = 32
 
 type claudeLine struct {
