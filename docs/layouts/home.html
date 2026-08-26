@@ -1,0 +1,16 @@
+{{ define "main" }}
+{{/* The site root is the latest build, so this page is the front door and
+     the top of the manual at once — there is no separate marketing site to
+     keep in sync. Its words live in content/_index.md; only the arrangement
+     of the hero is here. */}}
+<section class="hero">
+  <h1 class="wordmark">{{ .Title }}</h1>
+  <p class="tagline">{{ .Params.tagline }}</p>
+  {{ with .Params.install }}
+  <pre class="hero-install"><code>{{ . }}</code></pre>
+  {{ end }}
+</section>
+<div class="prose">
+  {{ .Content }}
+</div>
+{{ end }}

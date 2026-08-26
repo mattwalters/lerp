@@ -47,7 +47,7 @@ The same rules the agents work under (see `AGENTS.md`):
 - `make check` is the gate on the code — gofmt, vet, build, test. CI
   runs that same target rather than its own copy of the steps, so the
   two cannot drift; it runs it on Linux and macOS both.
-- CI runs three more jobs, and they are the ones that can go red when
+- CI runs four more jobs, and they are the ones that can go red when
   your local check was green. `govulncheck` scans the dependency tree
   against a vulnerability database that is only ever current, so it
   can fail a PR that changed nothing — a newly published
@@ -71,6 +71,12 @@ The same rules the agents work under (see `AGENTS.md`):
   tag on origin with no release attached. Reproduce it locally with
   `make snapshot`, which needs
   [goreleaser](https://goreleaser.com/install/) v2.6 or newer.
+- The docs site publishes this repo's own markdown — the README and
+  SCOPE.md you are reading — so a PR touching either builds the site as
+  a gate. `make docs-serve` previews it locally and needs
+  [hugo](https://gohugo.io); `make hugo-version` prints the version CI
+  builds and deploys with, which is also what a local build warns about
+  not being.
 - PRs go against `main`. Lerp is pre-1.0 with no tagged releases;
   `main` is what `go install ...@latest` gets.
 - One change per PR, and say in the description what it does and why.

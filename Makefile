@@ -21,7 +21,7 @@ LDFLAGS = -X $(PKG)/internal/version.Version=$(VERSION)
 .PHONY: help
 help: ## Show this help
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) \
-	  | awk -F':.*?## ' '{printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
+	  | awk -F':.*?## ' '{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
 
 .PHONY: install
 install: ## Build and install lerp into Go's bin dir
@@ -215,3 +215,39 @@ demo: ## Re-record docs/demo.gif from docs/demo.tape (needs vhs)
 	      '$(DEMO_GIF)' "$$size" '$(DEMO_MAX_BYTES)' '$(DEMO_RENDER)'; exit 1; }; \
 	  mv $(DEMO_RENDER) $(DEMO_GIF) && \
 	  printf 'rendered %s (%s bytes)\n' '$(DEMO_GIF)' "$$size"
+
+# --------------------------------------------------------------------------
+# The docs site
+# --------------------------------------------------------------------------
+
+# The one place Hugo's version is pinned. CI reads it back out of here
+# (`make -s hugo-version` in .github/workflows/docs.yml) rather than naming a
+# version of its own: a site that builds locally and breaks on release day is
+# what two pins drifting apart looks like.
+HUGO_VERSION := 0.165.0
+
+.PHONY: hugo-version
+hugo-version: ## Print the pinned Hugo version (CI reads this)
+	@printf '%s\n' '$(HUGO_VERSION)'
+
+# A locally installed hugo is whatever the package manager last gave you, and
+# asking a contributor to hold a specific one to edit a markdown file is not
+# worth it — so a mismatch says so and builds anyway. CI is what builds on
+# the pin, and CI is what deploys.
+define hugo-preflight
+@command -v hugo >/dev/null || { \
+  printf 'docs: hugo not found — brew install hugo (CI builds with %s)\n' '$(HUGO_VERSION)'; \
+  exit 1; }
+@hugo version | grep -qF 'v$(HUGO_VERSION)' || \
+  printf 'docs: local hugo is not the pinned %s — CI builds with the pin\n' '$(HUGO_VERSION)'
+endef
+
+.PHONY: docs
+docs: ## Build the docs site into docs/public (needs hugo)
+	$(hugo-preflight)
+	hugo --source docs
+
+.PHONY: docs-serve
+docs-serve: ## Serve the docs site at http://localhost:1313/ with live reload
+	$(hugo-preflight)
+	hugo server --source docs --baseURL http://localhost:1313/

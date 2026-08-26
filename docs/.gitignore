@@ -1,0 +1,4 @@
+# Hugo's build output and its lock file. The site is built from source on
+# every deploy; nothing generated belongs in the history.
+public/
+.hugo_build.lock
