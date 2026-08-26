@@ -60,6 +60,73 @@ demo cast, which needs vhs installed —
 [CONTRIBUTING.md](CONTRIBUTING.md) describes both. The gate needs
 nothing installed beyond Go itself.
 
+## Lerp needs the status field
+
+One prerequisite lerp cannot satisfy from here, in the same class as
+the API key the next section starts with. On the teams lerp serves,
+the status field is lerp's: a queue *is* a status, and a stage
+finishes by moving the ticket to the next one. Lerp is not privileged
+— it keeps whatever move it finds, because that is how an agent
+escalates or refuses — so an automation that moves a ticket *during* a
+stage takes that stage's own move away, and the queue's `on_success`
+hop never happens.
+
+Linear's GitHub integration is the one nearly everybody has. Its
+automations are configured **per team**, under the team's workflow
+settings, as a list of pull-request triggers each mapping to a status
+or to No action. On the teams lerp serves:
+
+- **On draft PR open**, **On PR open**, **On PR review request or
+  activity** and **On PR ready for merge** all fire while a pull
+  request is open, which for a ticket a queue is running is mid-stage.
+  Set every one of them to **No action**.
+- **On PR merge** fires once the pull request has landed. Under the
+  stock pipeline that is after lerp is finished with the ticket —
+  moving a merged ticket to Done is the benign automation, and it is
+  what carries "In Review" to the end, so leave it on. If you add a
+  merge stage of your own, it is mid-stage like the rest, and the same
+  rule applies to it.
+
+It is a two-minute settings change, and it is scoped: teams lerp does
+not serve are unaffected. Skip it and the failure is total rather than
+intermittent — the implement stage's whole job is to open a pull
+request, so "On PR open" moves its ticket out of Implementing before
+the run exits, and every ticket, every time, stops short of review.
+The stock implement prompt keeps its pull request a draft until the
+work is ready, which narrows the window; it does not close it, since
+the later triggers still fire on the flip to ready.
+
+Lerp says what it can about this on its own. Every `lerp` start reads
+the served teams' real automations and, before the board opens, names
+each mid-stage one whose target status `lerp.toml` never mentions —
+what each queue would lose to it, and the fix. That check is
+deliberately quiet about an automation pointing at a status your
+config *does* name, because that is a configuration somebody chose on
+purpose (below); the cost is that it cannot tell a deliberate one from
+a rule aimed at the wrong named status, so the settings screen is
+still worth the two minutes. After the fact the symptom reaches the
+status bar from the run itself:
+
+> LERP-42 left "Implementing" for "In Progress" during its run — the
+> on_success hop to "In Review" was skipped. "In Progress" is not a
+> status your pipeline names; an external automation (e.g. Linear's
+> GitHub integration) may be moving tickets.
+
+**The road less travelled.** If you would rather keep an automation
+than turn it off, point the pipeline at what it does: give the queue
+whose runs open the pull request an `on_success` of the status the
+integration moves tickets *to*, and that automation becomes the
+trigger for the next stage rather than the thief of the last one's
+hop. That is the configuration the startup check stays quiet about,
+for exactly this reason. It is not the stock config and it is the
+harder road, in three ways: it couples your pipeline to integration
+behaviour you do not control; a setting changed in Linear breaks the
+chain with no diff to read; and the queue's `on_failure` route goes
+with it, since the automation has already moved the ticket to the
+success status by the time a failing run ends — a failed run then
+lands nowhere but the success gate, with only a status-bar line to say
+so.
+
 ## Getting started
 
 Lerp speaks exactly one external API: Linear. Every command reads the
@@ -69,55 +136,6 @@ nothing else beyond Git, but the stock pipeline shells out to `claude`
 ([Claude Code](https://docs.claude.com/en/docs/claude-code)) as its
 runner and its implementing prompt opens PRs with `gh` — install both
 before step 4.
-
-### Lerp needs the status field
-
-One more prerequisite, in the same class as the API key. On the teams
-lerp serves, the status field is lerp's: a queue *is* a status, and a
-stage finishes by moving the ticket to the next one. Lerp is not
-privileged — it keeps whatever move it finds, because that is how an
-agent escalates or refuses — so an automation that moves a ticket
-*during* a stage takes that stage's own move away, and the queue's
-`on_success` hop never happens.
-
-Linear's GitHub integration is the one nearly everybody has. Its
-automations are configured **per team**, under the team's workflow
-settings, as a list of pull-request triggers each mapping to a status
-or to No action. On the teams lerp serves:
-
-- **On draft PR open**, **On PR open**, **On review requested** and
-  **On PR ready for merge** all fire while a pull request is open,
-  which for a ticket a queue is running is mid-stage. Set every one of
-  them to **No action**.
-- **On PR merge** fires once the pull request has landed, after the
-  pipeline is finished with the ticket. Leave it on — moving a merged
-  ticket to Done is the benign automation, and it is what carries the
-  stock pipeline's "In Review" column to the end.
-
-It is a two-minute settings change, and it is scoped: teams lerp does
-not serve are unaffected. Skip it and the failure is total rather than
-intermittent — the implement stage's whole job is to open a pull
-request, so "On PR open" moves its ticket out of Implementing before
-the run exits, and every ticket, every time, stops short of review.
-
-Nothing here has to be audited by hand. Every `lerp` start reads the
-served teams' real automations and, before the board opens, names any
-mid-stage one whose target status `lerp.toml` never mentions, what
-each queue would lose to it, and the fix. After the fact the symptom
-reaches the status bar from the run itself: `LERP-42 left
-"Implementing" for "In Progress" during its run — the on_success hop
-to "In Review" was skipped.`
-
-**The road less travelled.** If you would rather keep an automation
-than turn it off, point the pipeline at what it does: give the queue
-whose runs open the pull request an `on_success` of the status the
-integration moves tickets *to*, and that automation becomes the
-trigger for the next stage rather than the thief of the last one's
-hop. Lerp stays quiet about an automation whose target the config
-names, for exactly that reason. This is not the stock config and it is
-the harder road: it couples your pipeline to integration behaviour you
-do not control, and a setting changed in Linear breaks the chain with
-no diff to read.
 
 **1. Wire the repo to a team.** From anywhere inside your Git
 repository:
@@ -172,9 +190,9 @@ instead.
 Init may also print a report about where your pipeline ends — statuses
 Linear does not yet count as completing work. Act on what it prints;
 the reasoning is under
-[How it behaves](#how-it-behaves). It closes by restating the
-status-field prerequisite above, since the team's settings are the one
-part of setup lerp will not do for you.
+[How it behaves](#how-it-behaves). It also restates the status-field
+prerequisite above, since the team's settings are the one part of
+setup lerp will not do for you.
 
 **2. Give the agent what it needs.** Lerp hands the runner a prompt and
 the ticket identifier, nothing more. The stock prompts expect the agent

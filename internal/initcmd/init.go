@@ -46,9 +46,9 @@ type Board interface {
 // it. The file lands uncommitted in the working tree, where any grant it
 // carries is reviewed and checked in like any other code.
 //
-// Every init closes by restating what lerp needs of the team — the status
-// field — since the team's automation settings are the one part of setup
-// lerp does not do itself.
+// Every init restates what lerp needs of the team — the status field — since
+// the team's automation settings are the one part of setup lerp does not do
+// itself.
 //
 // Init also makes sure the repository ignores lerp's state directory, since
 // a first run fills it with things nobody wants staged. That comes before
@@ -159,9 +159,10 @@ func writeRepoConfig(path, teamKey, stock string) (created bool, err error) {
 // the operator is already on the board.
 //
 // Deliberately short, and deliberately not a list of trigger names. The
-// startup check reads the team's actual automations and names the colliding
-// rule, its target, what each queue loses and the fix; repeating any of that
-// here would be a second copy going stale against the real one. What init
+// startup check reads the team's actual automations and names each rule whose
+// target the config never mentions, what each queue loses to it and the fix;
+// repeating any of that here would be a second copy going stale against the
+// real one. What init
 // adds is the rule itself, before there is anything to detect — an operator
 // who hears "lerp owns this field" while setting the team up does not have
 // to trip the collision to learn it.
@@ -172,7 +173,8 @@ func reportStatusOwnership(out io.Writer, teamKey string) {
 	fmt.Fprintf(out, "  team %s's workflow settings, set the pull-request triggers that fire while a\n", teamKey)
 	fmt.Fprintf(out, "  pull request is open to No action; the one for a merged pull request fires\n")
 	fmt.Fprintf(out, "  after the pipeline is done with the ticket and can stay. Every `lerp` start\n")
-	fmt.Fprintf(out, "  re-reads this team's automations and names any that collide.\n")
+	fmt.Fprintf(out, "  re-reads this team's automations and names the ones that point somewhere\n")
+	fmt.Fprintf(out, "  %s does not.\n", config.RepoConfigFile)
 }
 
 // gitignoreFile is the ignore list init appends to, at the repository root.

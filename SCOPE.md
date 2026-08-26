@@ -56,7 +56,11 @@ request is open are not, and opening a pull request is what an
 implement stage does. Nothing in lerp can resolve that collision
 without becoming privileged, so it is a condition of use rather than a
 defect: on a served team, the triggers that fire mid-stage are set to
-No action. Lerp checks at startup and says which ones collide.
+No action — or, deliberately, at a status the pipeline itself names,
+which makes the automation the next stage's trigger rather than the
+thief of the last one's hop. Lerp reads the served teams' automations
+at startup and names the ones that point somewhere the config does
+not.
 
 ## The five concepts
 
