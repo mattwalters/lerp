@@ -93,7 +93,7 @@ jobs:
       # install-only, for the reason the demo job installs vhs and stops: what
       # runs is `make snapshot`, the same command a developer runs, so the two
       # cannot drift.
-      - uses: goreleaser/goreleaser-action@v6
+      - uses: goreleaser/goreleaser-action@v7
         with:
           version: "~> v2"
           install-only: true

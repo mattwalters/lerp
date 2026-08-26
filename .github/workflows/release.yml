@@ -34,7 +34,7 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      - uses: goreleaser/goreleaser-action@v6
+      - uses: goreleaser/goreleaser-action@v7
         with:
           # A major-version constraint, not a pin: `.goreleaser.yaml` declares
           # `version: 2`, and goreleaser refuses a config whose schema version
