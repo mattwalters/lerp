@@ -26,6 +26,39 @@ import (
 // on a port.
 const DefaultInterval = 12 * time.Second
 
+// DefaultResyncEvery is how many delta reads the attention pass makes before
+// it re-lists a team's board from scratch. At DefaultInterval that is a full
+// re-list about every four minutes, which is the healing rate for every kind
+// of drift a delta cannot report — the archived issue no query returns at
+// all, and the rest of the catalogue in relistBoard — and the point at which
+// a delta that keeps failing falls back to the two listings.
+const DefaultResyncEvery = 20
+
+// deltaOverlap is how far back of its own cursor each delta read asks.
+//
+// Linear answers these reads from replicas that do not all hold the same
+// writes: the same listing, run twice a second apart, comes back several rows
+// different, and a filter on the last minute of changes can come back empty
+// and then full again. The pass that re-listed the whole backlog absorbed
+// that by rebuilding from scratch every time — one stale pass, corrected by
+// the next. A cursor cannot: a read that returns a recent row while missing
+// an older one moves the cursor past the row it missed, and nothing short of
+// the periodic re-list would go back for it.
+//
+// Re-asking for the trailing window costs the rows changed inside it, which
+// is a handful on any real team, and buys back the property the full listing
+// had — that a row a lagging replica hid arrives on a later pass rather than
+// waiting for the resync.
+//
+// It covers the resync's own listings too, which lag exactly as much and get
+// to overwrite the board wholesale. A re-list that came back short drops a
+// row; one served from behind hands back a ticket a colleague has since
+// claimed, which the delta had already evicted. Both are a stale answer about
+// a change made recently — that is what makes a replica disagree in the first
+// place — so both are inside this window, and the next pass's delta puts the
+// board right rather than the mistake standing until the resync after.
+const deltaOverlap = 2 * time.Minute
+
 // EventType names what the reconciler just did.
 type EventType string
 
@@ -229,6 +262,12 @@ type ReconcilerOptions struct {
 	Evidence *evidence.Evidence
 	Lanes    int           // N: at most this many agents at once
 	Interval time.Duration // polling interval for Run; DefaultInterval when zero
+	// ResyncEvery is how many delta reads the attention pass makes per team
+	// before re-listing that team's board in full, DefaultResyncEvery when
+	// zero. It is a knob for tests and for the pathologically large board,
+	// not a lerp.toml setting: nothing an operator configures should be able
+	// to decide how stale their inbox may get.
+	ResyncEvery int
 
 	// Events, when set, receives every Event the loop emits. It is called
 	// from the loop's goroutines and must be safe for concurrent use; a
@@ -268,6 +307,34 @@ type Reconciler struct {
 	// disposes the very workspace eject just handed over. The set is one
 	// entry per eject and never consulted after the run is gone from disk.
 	ejected map[string]bool
+
+	// boards is what the attention pass reads instead of re-listing the
+	// whole backlog every 12 seconds: one cached reading of each team's
+	// board, kept current by a delta read per pass. It is owned by the pass
+	// — attention is called only from Tick, which is the loop's own
+	// goroutine and never runs concurrently with itself — so unlike active
+	// and ejected it needs no lock. Nothing durable lives here (SCOPE.md
+	// invariant 1): losing it to a restart costs one full re-list.
+	boards map[string]*teamBoard
+}
+
+// teamBoard is the attention pass's cached reading of one team: the issues
+// the inbox could ever draw, and where the delta cursor stands.
+//
+// issues holds only what passes the inbox's own test — unassigned or the
+// operator's, and unfinished — because that is what the two full listings
+// return, and the delta's job is to keep this equal to what they would say
+// now. An issue that stops passing that test is deleted rather than kept
+// with a flag: the pass renders whatever is in here.
+type teamBoard struct {
+	issues map[string]linear.Issue // by Linear issue ID
+	// since is the delta cursor: the newest UpdatedAt this board has seen.
+	// It comes from the issues themselves rather than from a clock, so no
+	// skew between this machine and Linear can skip an update.
+	since time.Time
+	// deltas counts the delta reads made since the last full re-list, which
+	// is what ResyncEvery is compared against.
+	deltas int
 }
 
 // laneRun is one occupied lane: either a run this process started or a live
@@ -308,6 +375,9 @@ func NewReconciler(o ReconcilerOptions) (*Reconciler, error) {
 	if o.Interval <= 0 {
 		o.Interval = DefaultInterval
 	}
+	if o.ResyncEvery <= 0 {
+		o.ResyncEvery = DefaultResyncEvery
+	}
 	if o.Execute == nil {
 		o.Execute = run.Execute
 	}
@@ -326,7 +396,7 @@ func NewReconciler(o ReconcilerOptions) (*Reconciler, error) {
 	if o.Log != nil {
 		o.Log = &syncWriter{w: o.Log}
 	}
-	return &Reconciler{o: o, ejected: map[string]bool{}}, nil
+	return &Reconciler{o: o, ejected: map[string]bool{}, boards: map[string]*teamBoard{}}, nil
 }
 
 // syncWriter serializes the Log writes that arrive concurrently from the tick
@@ -401,9 +471,16 @@ const AttentionDefinition = "unclaimed tickets, and your claimed tickets, sittin
 // from, not a catch-all for anything that might want attention; resist
 // growing it further.
 //
-// A pass that could not list every team emits nothing: the failure is
+// A pass that could not read every team emits nothing: the failure is
 // reported and the subscriber keeps its last full list, because a partial
 // one could falsely read as an empty inbox.
+//
+// What the pass reads is a per-team cache (teamBoard), refreshed by one
+// delta query per team per pass and re-listed in full every ResyncEvery
+// passes — not the two full backlog listings it used to run, which on an
+// established team paged thousands of issues a minute and spent the API
+// budget the claims and moves need. The rule the inbox implements is
+// unchanged; only where the pass gets the board from is.
 func (r *Reconciler) attention(ctx context.Context) {
 	viewerID, err := r.o.Client.Viewer(ctx)
 	if err != nil {
@@ -443,27 +520,163 @@ func (r *Reconciler) attention(ctx context.Context) {
 		})
 	}
 	for _, team := range r.o.Repo.Teams {
-		unassigned, err := r.o.Client.ListUnassignedIssues(ctx, team)
+		board, err := r.refreshBoard(ctx, team, viewerID)
 		if err != nil {
-			r.fail(fmt.Errorf("attention: list unassigned tickets for team %s: %w", team, err))
+			r.fail(err)
 			return
 		}
-		for _, issue := range unassigned {
-			add(issue, false)
-		}
-
-		assigned, err := r.o.Client.ListAssignedIssues(ctx, team, viewerID)
-		if err != nil {
-			r.fail(fmt.Errorf("attention: list claimed tickets for team %s: %w", team, err))
-			return
-		}
-		for _, issue := range assigned {
-			add(issue, true)
+		for _, issue := range board.issues {
+			// The board holds only unassigned tickets and the operator's
+			// own, so an assignee at all is the operator's claim — the
+			// distinction the two listings used to draw by which one an
+			// issue arrived in.
+			add(issue, issue.AssigneeID != "")
 		}
 	}
 	countUnblocks(items)
 	sort.Slice(items, func(i, j int) bool { return items[i].Ticket < items[j].Ticket })
 	r.emit(Event{Type: EventAttention, Attention: items})
+}
+
+// refreshBoard brings one team's cached board up to date and returns it. It
+// re-lists in full when there is nothing to update, when the cursor is
+// unusable, or when the delta reads since the last full re-list have reached
+// ResyncEvery; otherwise it applies one delta read.
+//
+// A failed read returns the error and leaves the board exactly as it was —
+// same issues, same cursor — so the retry next pass asks the same question
+// again. That is the discipline the pass has always had: a read that half
+// happened must never reach the inbox, where it would read as tickets having
+// gone away. The attempt is still counted, so a delta that keeps failing
+// escalates to the re-list rather than retrying forever.
+func (r *Reconciler) refreshBoard(ctx context.Context, team, viewerID string) (*teamBoard, error) {
+	board := r.boards[team]
+	// A zero cursor is not a cheap delta but the most expensive query lerp
+	// can send: unfiltered by state, "everything since the beginning" is the
+	// team's entire history, completed issues included. It happens when the
+	// full listing came back empty — an inbox with nothing in it — and the
+	// answer is to keep asking the two listings, which for that board are
+	// two empty pages.
+	if board == nil || board.since.IsZero() || board.deltas >= r.o.ResyncEvery {
+		return r.relistBoard(ctx, team, viewerID)
+	}
+	// Counted before the read, so failures count too. A delta that keeps
+	// failing — a 429, a gateway error, a query Linear stopped accepting —
+	// would otherwise never let the counter reach ResyncEvery, and the
+	// re-list that is this board's only other source would never run again:
+	// the inbox would freeze at whatever the cold start saw, for the life of
+	// the process, while the pass reissued the same failing read every 12
+	// seconds. Escalating to the two listings after ResyncEvery attempts is
+	// the fallback that leaves, and they are cheaper than the delta that is
+	// failing: filtered by state and assignee, where it is filtered by
+	// neither.
+	board.deltas++
+	// Asked from behind the cursor, never from the cursor itself: see
+	// deltaOverlap. The answers are deduped by issue id, so a row this
+	// window returns again simply replaces itself.
+	delta, err := r.o.Client.ListTeamIssuesUpdatedSince(ctx, team, board.since.Add(-deltaOverlap))
+	if err != nil {
+		return nil, fmt.Errorf("attention: read changes for team %s: %w", team, err)
+	}
+	for _, issue := range delta {
+		if inboxCanDraw(issue, viewerID) {
+			board.issues[issue.ID] = issue
+		} else {
+			// Finished, or somebody else's now. Either way it has left the
+			// inbox, and this arriving is the only notice of that the pass
+			// gets — which is why the delta query filters on nothing but the
+			// team and the timestamp.
+			delete(board.issues, issue.ID)
+		}
+		if issue.UpdatedAt.After(board.since) {
+			board.since = issue.UpdatedAt
+		}
+	}
+	return board, nil
+}
+
+// relistBoard rebuilds a team's board from the two full listings — the cold
+// start, and the periodic heal. It is what repairs the drift a delta cannot
+// report — every kind of change that does not arrive as a row on the issue
+// whose cached row is wrong:
+//
+//   - An archived or deleted ticket changes nothing a delta could return, so
+//     without this it would sit in the inbox until lerp restarted.
+//   - A row's blocking relations are refreshed only when that row itself is
+//     touched, and completing a blocker stamps the blocker. So a ticket can
+//     read as blocked by a ticket that is already done, for as long as the
+//     resync interval — where the pass that re-listed everything had it right
+//     within one tick. It is the price of the delta, it is bounded by
+//     ResyncEvery, and it costs a stale mark on a row rather than a wrong
+//     move: nothing in the loop acts on these fields (see AttentionItem), and
+//     fill still lists every queue fresh, so what a run picks up is
+//     unaffected.
+//   - A ticket moved from one served team to another leaves by a door the
+//     first team's delta cannot see: that query filters on the team, so the
+//     row it left behind is never mentioned again. The new team's delta adds
+//     it under its new identifier, and until the old team re-lists the inbox
+//     shows the same work twice.
+//
+// This read is no fresher than any other — it is served from the same
+// replicas, and can come back short or come back stale (see deltaOverlap,
+// which is what puts a board right that it got wrong).
+func (r *Reconciler) relistBoard(ctx context.Context, team, viewerID string) (*teamBoard, error) {
+	unassigned, err := r.o.Client.ListUnassignedIssues(ctx, team)
+	if err != nil {
+		return nil, fmt.Errorf("attention: list unassigned tickets for team %s: %w", team, err)
+	}
+	assigned, err := r.o.Client.ListAssignedIssues(ctx, team, viewerID)
+	if err != nil {
+		return nil, fmt.Errorf("attention: list claimed tickets for team %s: %w", team, err)
+	}
+	board := &teamBoard{issues: make(map[string]linear.Issue, len(unassigned)+len(assigned))}
+	// The cursor only ever moves forward, across a re-list included. Taking
+	// it from these rows alone would walk it backwards on every resync — the
+	// listings return what the inbox can draw, which on a team that churns on
+	// other people's tickets is older than the last thing the delta saw — and
+	// the next delta would then ask for every issue the team touched in
+	// between, completed ones included. That is the paging this exists to
+	// stop, arriving once every resync interval.
+	if prev := r.boards[team]; prev != nil {
+		board.since = prev.since
+	}
+	// Keyed by issue id, which also settles the case where the two listings
+	// disagree — a ticket claimed between the two reads, or the same ticket
+	// served from two replicas that do not agree about its assignee, comes
+	// back in both and is one row here.
+	for _, issue := range append(unassigned, assigned...) {
+		board.issues[issue.ID] = issue
+		// The cursor is the newest thing the listing saw, never the local
+		// clock: asked with gte, it re-reads the boundary issue on the next
+		// pass, which costs nothing, where a clock running fast would skip
+		// whatever changed in the gap — and would do it silently, since
+		// nothing here can tell a quiet board from a cursor set past the end
+		// of one.
+		//
+		// The price is at cold start, where there is no previous cursor to
+		// raise it: these rows are the ones the inbox can draw, so a board
+		// whose tickets have all sat still for a fortnight seeds a fortnight
+		// old cursor, and the first delta pages the team's whole churn since.
+		// That is one catch-up read per process — the delta that follows it
+		// starts from whatever it saw, which is now — and it is the same
+		// order of cost as the cold-start listing beside it.
+		if issue.UpdatedAt.After(board.since) {
+			board.since = issue.UpdatedAt
+		}
+	}
+	r.boards[team] = board
+	return board, nil
+}
+
+// inboxCanDraw is the test the two full listings apply server-side, applied
+// here to a delta row that arrives with no filtering at all: a ticket the
+// inbox could show is unfinished, and either unclaimed or claimed by the
+// operator. Someone else's ticket, and a finished one, wait on nobody.
+func inboxCanDraw(issue linear.Issue, viewerID string) bool {
+	if issue.StatusType == linear.CategoryCompleted || issue.StatusType == linear.CategoryCanceled {
+		return false
+	}
+	return issue.AssigneeID == "" || issue.AssigneeID == viewerID
 }
 
 // countUnblocks fills in Unblocks: how many other items each one transitively

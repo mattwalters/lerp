@@ -5,6 +5,7 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func newTestFake() *Fake {
@@ -229,6 +230,107 @@ func TestFakeNotFound(t *testing.T) {
 	for name, op := range ops {
 		if err := op(); !errors.Is(err, ErrNotFound) {
 			t.Errorf("%s err = %v, want ErrNotFound", name, err)
+		}
+	}
+}
+
+// The delta read is the fake's stand-in for the real one, so it has to be
+// unfiltered in the same way: whatever the team holds, whoever it belongs
+// to and whatever state it is in, as long as it changed at or after the
+// cursor.
+func TestFakeListTeamIssuesUpdatedSince(t *testing.T) {
+	f := newTestFake()
+	ctx := context.Background()
+	all, err := f.ListTeamIssuesUpdatedSince(ctx, "LERP", fakeEpoch)
+	if err != nil {
+		t.Fatalf("ListTeamIssuesUpdatedSince: %v", err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("from the epoch = %d issues, want the team's three", len(all))
+	}
+	cursor := all[len(all)-1].UpdatedAt
+	for _, is := range all {
+		if is.UpdatedAt.After(cursor) {
+			cursor = is.UpdatedAt
+		}
+	}
+
+	// Nothing has changed since, so a cursor past the newest row is empty.
+	if got, err := f.ListTeamIssuesUpdatedSince(ctx, "LERP", cursor.Add(time.Second)); err != nil || len(got) != 0 {
+		t.Fatalf("quiet board = %v, %v, want nothing", got, err)
+	}
+	// The bound is inclusive, matching the real query's gte.
+	if got, err := f.ListTeamIssuesUpdatedSince(ctx, "LERP", cursor); err != nil || len(got) != 1 {
+		t.Fatalf("at the boundary = %v, %v, want the one issue stamped there", got, err)
+	}
+
+	// Finishing a ticket is a change like any other, and it comes back —
+	// which is the only way a caller holding a cached board learns to drop
+	// it.
+	if err := f.MoveIssue(ctx, "iss-1", "Done"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := f.ListTeamIssuesUpdatedSince(ctx, "LERP", cursor.Add(time.Second))
+	if err != nil {
+		t.Fatalf("ListTeamIssuesUpdatedSince: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != "iss-1" || got[0].StatusType != CategoryCompleted {
+		t.Errorf("after the move = %+v, want the finished LERP-1 with its completed category", got)
+	}
+}
+
+// Every write to an issue moves its updatedAt, the way Linear does — a fake
+// that left it alone would report a board on which nothing ever happened,
+// and every delta read against it would come back empty.
+func TestFakeMutationsBumpUpdatedAt(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name  string
+		write func(*Fake) error
+	}{
+		{"move", func(f *Fake) error { return f.MoveIssue(ctx, "iss-1", "Done") }},
+		{"assign", func(f *Fake) error { return f.AssignIssue(ctx, "iss-1", "user-9") }},
+		{"unassign", func(f *Fake) error { return f.UnassignIssue(ctx, "iss-1") }},
+		{"comment", func(f *Fake) error { return f.CommentOnIssue(ctx, "iss-1", "hello") }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newTestFake()
+			before, err := f.GetIssue(ctx, "iss-1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := tc.write(f); err != nil {
+				t.Fatal(err)
+			}
+			after, err := f.GetIssue(ctx, "iss-1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !after.UpdatedAt.After(before.UpdatedAt) {
+				t.Errorf("UpdatedAt after %s = %v, want it past %v", tc.name, after.UpdatedAt, before.UpdatedAt)
+			}
+		})
+	}
+}
+
+// A dropped issue is the archived or deleted one: no listing mentions it and
+// no delta reports it, because a delta reports changes to issues that still
+// exist. Only a full re-list can notice it is gone.
+func TestFakeDropIssue(t *testing.T) {
+	f := newTestFake()
+	ctx := context.Background()
+	f.DropIssue("iss-1")
+
+	if _, err := f.GetIssue(ctx, "iss-1"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("GetIssue after DropIssue = %v, want ErrNotFound", err)
+	}
+	got, err := f.ListTeamIssuesUpdatedSince(ctx, "LERP", fakeEpoch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, is := range got {
+		if is.ID == "iss-1" {
+			t.Errorf("the delta still reports the dropped issue: %+v", is)
 		}
 	}
 }

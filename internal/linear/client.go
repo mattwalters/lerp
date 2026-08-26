@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -23,10 +24,10 @@ type Issue struct {
 	Title      string
 	Status     string // workflow state name, e.g. "In Progress"
 	// StatusType is Linear's own category for that state — one of the
-	// Category constants below. Requested only by the two queries the
-	// attention pass runs, and empty everywhere else: it is what separates
-	// a ticket that has not entered the pipeline yet from one that fell
-	// out of it, and nothing else asks.
+	// Category constants below. Requested only by the reads behind the
+	// attention pass, and empty everywhere else: it is what separates a
+	// ticket that has not entered the pipeline yet from one that fell out
+	// of it, and nothing else asks.
 	StatusType string
 	AssigneeID string // empty when unassigned
 	URL        string // Linear's own web URL for the issue
@@ -46,18 +47,28 @@ type Issue struct {
 	// little: it is the inbox table's project column, and the one field
 	// its project filter matches.
 	Project string
+	// UpdatedAt is when Linear last changed the issue. Requested by the two
+	// inbox listings and by ListTeamIssuesUpdatedSince, and zero everywhere
+	// else — including the per-queue ListIssues, which has no cursor to
+	// seed. Its only reader is the delta cursor, which advances to the
+	// newest UpdatedAt it has seen so the next read asks for what changed
+	// after it.
+	UpdatedAt time.Time
 }
 
-// Linear's own workflow-state categories, as its API spells them. These
-// three are the ones a ticket sits in before any work starts on it —
-// nothing has routed it anywhere — which is a different thing from a ticket
-// resting in a status something moved it to. The categories past them,
-// started and the two finished ones, are not named here because nothing
-// reads them.
+// Linear's own workflow-state categories, as its API spells them. The first
+// three are the ones a ticket sits in before any work starts on it — nothing
+// has routed it anywhere — which is a different thing from a ticket resting
+// in a status something moved it to. The two finished ones are named because
+// a delta read is not filtered by state (see ListTeamIssuesUpdatedSince), so
+// its reader has to recognise a ticket that has finished. The remaining
+// category, started, is not named here because nothing reads it.
 const (
 	CategoryTriage    = "triage"
 	CategoryBacklog   = "backlog"
 	CategoryUnstarted = "unstarted"
+	CategoryCompleted = "completed"
+	CategoryCanceled  = "canceled"
 )
 
 // GitAutomation is one of a team's Linear git automations: a rule that moves
@@ -123,6 +134,20 @@ type Client interface {
 	// workflow state. Completed and canceled issues are excluded, same as
 	// ListAssignedIssues.
 	ListUnassignedIssues(ctx context.Context, teamKey string) ([]Issue, error)
+	// ListTeamIssuesUpdatedSince returns the team's issues Linear touched at
+	// or after since — the read that keeps the inbox current without listing
+	// the whole backlog every pass. The caller holds the previous listing and
+	// applies what comes back to it.
+	//
+	// Filtered by team and updatedAt and by nothing else, deliberately: an
+	// issue that finishes, or that a colleague claims, has left the inbox,
+	// and the only way its reader learns that is by the issue arriving here.
+	// Filtering those out server-side — the obvious economy — is exactly how
+	// a ticket would linger in the inbox until something else dislodged it.
+	//
+	// Ask with gte rather than gt: two issues can share the boundary
+	// millisecond, and re-reading one is free where missing one is not.
+	ListTeamIssuesUpdatedSince(ctx context.Context, teamKey string, since time.Time) ([]Issue, error)
 	// TeamStates reports the names of the team's workflow states, in board
 	// order — the one read behind the startup verification that every
 	// configured status exists on its team (loop.Verify). The loop's
@@ -192,6 +217,14 @@ type HTTP struct {
 
 	apiKey string
 	hc     *http.Client
+
+	// The viewer id is immutable per API key, and half a dozen call sites
+	// want it — every claim, every release, every attention pass. It is
+	// memoized here rather than in any of them so they all get it with no
+	// signature to thread it through. Cached on success only: a failed read
+	// must not pin an empty id for the process's life.
+	viewerMu sync.Mutex
+	viewerID string
 }
 
 var _ Client = (*HTTP)(nil)

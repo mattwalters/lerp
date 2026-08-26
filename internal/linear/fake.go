@@ -12,14 +12,24 @@ import (
 // mutable data behind a mutex: issues with status, assignee, and
 // blockers. It is not safe for anything but tests.
 type Fake struct {
-	mu           sync.Mutex
-	viewerID     string
-	issues       map[string]*fakeIssue
-	comments     map[string][]Comment
-	doneStatuses map[string]bool
-	categories   map[string]string
-	teamStates   map[string][]string
-	automations  map[string][]GitAutomation
+	mu       sync.Mutex
+	viewerID string
+	issues   map[string]*fakeIssue
+	comments map[string][]Comment
+	// categories is the one record of which statuses are finished: a status
+	// counts as complete exactly when Linear's category for it does, which
+	// is how a real board decides it too. Keeping a second set beside this
+	// one let the fake's listings and its state categories disagree about
+	// which statuses are done — a disagreement the real API cannot produce,
+	// and one that would show up as a ticket the delta evicts and the next
+	// full re-list resurrects.
+	categories  map[string]string
+	teamStates  map[string][]string
+	automations map[string][]GitAutomation
+	// clock is what stamps UpdatedAt, advancing a fixed step per write so
+	// that "later" is decidable in a test without sleeping and without a
+	// real clock's resolution deciding it.
+	clock time.Time
 }
 
 type fakeIssue struct {
@@ -31,20 +41,61 @@ type fakeIssue struct {
 
 var _ Client = (*Fake)(nil)
 
-// NewFake returns an empty fake whose viewer is "fake-viewer", whose
-// completed statuses are "Done" and "Canceled", and whose "Backlog" and
-// "Triage" statuses carry Linear's categories of those names — the stock
-// board every Linear team starts with.
+// NewFake returns an empty fake whose viewer is "fake-viewer" and whose
+// "Backlog", "Triage", "Done" and "Canceled" statuses carry Linear's
+// categories of those names — the stock board every Linear team starts
+// with, on which the last two are what counts as finished.
 func NewFake() *Fake {
 	return &Fake{
-		viewerID:     "fake-viewer",
-		issues:       map[string]*fakeIssue{},
-		comments:     map[string][]Comment{},
-		doneStatuses: map[string]bool{"Done": true, "Canceled": true},
-		categories:   map[string]string{"Backlog": CategoryBacklog, "Triage": CategoryTriage},
-		teamStates:   map[string][]string{},
-		automations:  map[string][]GitAutomation{},
+		viewerID: "fake-viewer",
+		issues:   map[string]*fakeIssue{},
+		comments: map[string][]Comment{},
+		categories: map[string]string{
+			"Backlog":  CategoryBacklog,
+			"Triage":   CategoryTriage,
+			"Done":     CategoryCompleted,
+			"Canceled": CategoryCanceled,
+		},
+		teamStates:  map[string][]string{},
+		automations: map[string][]GitAutomation{},
+		clock:       fakeEpoch,
 	}
+}
+
+// fakeEpoch is where the fake's clock starts — a fixed instant, so the
+// timestamps a failing test prints are the same ones every time.
+var fakeEpoch = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+// tick advances the fake's clock and returns the new time: the stamp for one
+// write. Callers hold f.mu.
+func (f *Fake) tick() time.Time {
+	f.clock = f.clock.Add(time.Second)
+	return f.clock
+}
+
+// Advance moves the fake's clock forward, so the next write is stamped that
+// much later than the last. It is how a test opens a gap wider than a
+// reader's own tolerances — a delta that re-reads a trailing window, say —
+// without waiting for one in real time.
+func (f *Fake) Advance(d time.Duration) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.clock = f.clock.Add(d)
+}
+
+// done reports whether a status counts as finished — the fake's whole
+// definition of it, read off the status's Linear category. Callers hold f.mu.
+func (f *Fake) done(status string) bool {
+	c := f.categories[status]
+	return c == CategoryCompleted || c == CategoryCanceled
+}
+
+// touch stamps an issue as changed now, the way any write to a Linear issue
+// moves its updatedAt. It is what makes the fake usable for delta reads at
+// all: a fake whose mutations left updatedAt alone would report a board on
+// which nothing ever happened. Callers hold f.mu.
+func (f *Fake) touch(fi *fakeIssue) {
+	fi.issue.UpdatedAt = f.tick()
 }
 
 // SetStatusCategory declares Linear's state category for status names, the
@@ -60,13 +111,25 @@ func (f *Fake) SetStatusCategory(category string, statuses ...string) {
 
 // AddIssue puts an issue on the fake board under the given team key.
 // The Blocked, BlockedBy and Blocks fields of is are ignored; blocking is
-// declared with Block and computed from blocker statuses.
+// declared with Block and computed from blocker statuses. An issue added
+// without an UpdatedAt is stamped with the fake's clock; supplying one sets
+// where the board's clock stands if it is later than the clock is now, so
+// that no later write to the issue can be stamped before it.
 func (f *Fake) AddIssue(teamKey string, is Issue) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	is.Blocked = false
 	is.BlockedBy = nil
 	is.Blocks = nil
+	if is.UpdatedAt.IsZero() {
+		is.UpdatedAt = f.tick()
+	} else if is.UpdatedAt.After(f.clock) {
+		// A stamp the caller chose carries the clock with it. Otherwise the
+		// next write to this issue would stamp it earlier than it is now —
+		// time running backwards on one issue, which no real board does, and
+		// which a delta reader would answer by never reporting it again.
+		f.clock = is.UpdatedAt
+	}
 	f.issues[is.ID] = &fakeIssue{issue: is, team: teamKey}
 }
 
@@ -123,17 +186,6 @@ func (f *Fake) TeamGitAutomations(_ context.Context, teamKey string) ([]GitAutom
 	return append([]GitAutomation(nil), f.automations[teamKey]...), nil
 }
 
-// SetDoneStatuses replaces the set of status names that count as
-// complete when deciding whether a blocker still blocks.
-func (f *Fake) SetDoneStatuses(names ...string) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.doneStatuses = map[string]bool{}
-	for _, n := range names {
-		f.doneStatuses[n] = true
-	}
-}
-
 // Comments returns the bodies of the comments posted on an issue, oldest
 // first — what the loop tests assert on. GetIssueDetail is the reading
 // counterpart, with authors and times.
@@ -168,7 +220,7 @@ func (f *Fake) view(fi *fakeIssue) Issue {
 	is.Blocks = nil
 	for _, id := range fi.blockers {
 		b, ok := f.issues[id]
-		if !ok || f.doneStatuses[b.issue.Status] {
+		if !ok || f.done(b.issue.Status) {
 			continue
 		}
 		is.BlockedBy = append(is.BlockedBy, b.issue.Identifier)
@@ -179,7 +231,7 @@ func (f *Fake) view(fi *fakeIssue) Issue {
 	// issue is held up by nothing, so it drops out — the mirror of the
 	// blocker rule above.
 	for _, other := range f.issues {
-		if f.doneStatuses[other.issue.Status] {
+		if f.done(other.issue.Status) {
 			continue
 		}
 		for _, id := range other.blockers {
@@ -207,14 +259,15 @@ func (f *Fake) ListIssues(_ context.Context, teamKey, statusName string) ([]Issu
 }
 
 // ListAssignedIssues mirrors the real query: the team's issues assigned to
-// the user, in any status, minus the ones whose status counts as complete
-// (the real client filters completed and canceled state types server-side).
+// the user, in any status, minus the ones whose status Linear files as
+// finished (the real client filters completed and canceled state types
+// server-side).
 func (f *Fake) ListAssignedIssues(_ context.Context, teamKey, assigneeID string) ([]Issue, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var issues []Issue
 	for _, fi := range f.issues {
-		if fi.team == teamKey && fi.issue.AssigneeID == assigneeID && !f.doneStatuses[fi.issue.Status] {
+		if fi.team == teamKey && fi.issue.AssigneeID == assigneeID && !f.done(fi.issue.Status) {
 			issues = append(issues, f.view(fi))
 		}
 	}
@@ -223,18 +276,45 @@ func (f *Fake) ListAssignedIssues(_ context.Context, teamKey, assigneeID string)
 }
 
 // ListUnassignedIssues mirrors the real query: the team's issues with no
-// assignee, minus the ones whose status counts as complete.
+// assignee, minus the ones whose status Linear files as finished.
 func (f *Fake) ListUnassignedIssues(_ context.Context, teamKey string) ([]Issue, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var issues []Issue
 	for _, fi := range f.issues {
-		if fi.team == teamKey && fi.issue.AssigneeID == "" && !f.doneStatuses[fi.issue.Status] {
+		if fi.team == teamKey && fi.issue.AssigneeID == "" && !f.done(fi.issue.Status) {
 			issues = append(issues, f.view(fi))
 		}
 	}
 	sort.Slice(issues, func(i, j int) bool { return issues[i].Identifier < issues[j].Identifier })
 	return issues, nil
+}
+
+// ListTeamIssuesUpdatedSince mirrors the real delta read: every issue of the
+// team stamped at or after since, in any status and with any assignee. The
+// bound is inclusive, as the real query's gte is.
+func (f *Fake) ListTeamIssuesUpdatedSince(_ context.Context, teamKey string, since time.Time) ([]Issue, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var issues []Issue
+	for _, fi := range f.issues {
+		if fi.team == teamKey && !fi.issue.UpdatedAt.Before(since) {
+			issues = append(issues, f.view(fi))
+		}
+	}
+	sort.Slice(issues, func(i, j int) bool { return issues[i].Identifier < issues[j].Identifier })
+	return issues, nil
+}
+
+// DropIssue removes an issue from the fake board without a trace, the way
+// archiving or deleting one in Linear does: no listing mentions it again and
+// no delta reports it, because a delta reports changes to issues that still
+// exist. It is how a test provokes the drift only a full re-list can heal.
+func (f *Fake) DropIssue(issueID string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.issues, issueID)
+	delete(f.comments, issueID)
 }
 
 func (f *Fake) GetIssue(_ context.Context, issueID string) (Issue, error) {
@@ -267,6 +347,7 @@ func (f *Fake) MoveIssue(_ context.Context, issueID, statusName string) error {
 		return fmt.Errorf("move issue %s: %w", issueID, ErrNotFound)
 	}
 	fi.issue.Status = statusName
+	f.touch(fi)
 	return nil
 }
 
@@ -278,6 +359,7 @@ func (f *Fake) AssignIssue(_ context.Context, issueID, userID string) error {
 		return fmt.Errorf("assign issue %s: %w", issueID, ErrNotFound)
 	}
 	fi.issue.AssigneeID = userID
+	f.touch(fi)
 	return nil
 }
 
@@ -289,17 +371,20 @@ func (f *Fake) UnassignIssue(_ context.Context, issueID string) error {
 		return fmt.Errorf("unassign issue %s: %w", issueID, ErrNotFound)
 	}
 	fi.issue.AssigneeID = ""
+	f.touch(fi)
 	return nil
 }
 
 func (f *Fake) CommentOnIssue(_ context.Context, issueID, bodyMarkdown string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if _, ok := f.issues[issueID]; !ok {
+	fi, ok := f.issues[issueID]
+	if !ok {
 		return fmt.Errorf("comment on issue %s: %w", issueID, ErrNotFound)
 	}
 	f.comments[issueID] = append(f.comments[issueID],
 		Comment{Author: f.viewerID, Body: bodyMarkdown, CreatedAt: time.Now()})
+	f.touch(fi)
 	return nil
 }
 
