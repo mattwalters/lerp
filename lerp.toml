@@ -54,6 +54,17 @@ dispose = 'git worktree remove --force "$LERP_WORKSPACE"'
 command = "claude -p {{prompt}} --session-id {{session}} --model claude-opus-5 --effort high --output-format stream-json --verbose --permission-mode bypassPermissions"
 resume = "cd {{workdir}} && claude --resume {{session}}"
 
+# The same runner one notch down, for the merge queue below. That queue is
+# mechanics by its own prompt — rebase, run the check, watch CI, press merge —
+# and every judgment call in it is a refusal rather than a decision, so the
+# capability it needs is the discipline to stop, not the reach to solve. Lower
+# effort should if anything make that clause easier to honour: less appetite
+# for treating a conflict as a puzzle. Planning and implementing stay on the
+# runner above; this is the only queue pointed here.
+[runners.claude-merge]
+command = "claude -p {{prompt}} --session-id {{session}} --model claude-sonnet-5 --effort medium --output-format stream-json --verbose --permission-mode bypassPermissions"
+resume = "cd {{workdir}} && claude --resume {{session}}"
+
 # The agent needs its own Linear access — lerp passes only the ticket
 # identifier, never the ticket body, and stage artifacts (the plan in the
 # ticket, the pull request, the note a run leaves behind) are written by the
@@ -155,11 +166,13 @@ notifications and its review requests name a pull request by its number and
 its title — so the title is where the identifier has to be.
 
 Now review what you built, before a human has to. Read the diff with fresh
-eyes: hand it to a subagent that gets the brief and the diff and none of
-your reasoning, if your runner has subagents — otherwise read it back
-deliberately as the reviewer rather than the author. Check it against the
-brief and against this repository's own conventions, and rate what you find
-high, medium or low. Concrete failure scenarios only — no style essays.
+eyes: hand the brief and the diff — and none of your reasoning — to the
+`reviewer` subagent this repository checks in at `.claude/agents/reviewer.md`,
+which is pinned to its own model rather than inheriting this run's. If your
+runner has no subagents, read the diff back deliberately as the reviewer
+rather than the author. Either way, check it against the brief and against
+this repository's own conventions, and rate what you find high, medium or
+low. Concrete failure scenarios only — no style essays.
 
 Post the findings on the pull request, as review comments on the lines they
 concern. Then fix them, push, and answer each thread. Review the result
@@ -211,7 +224,7 @@ If the brief turns out to be wrong or missing, move {{ticket}} to
 # one.
 [queues.merge]
 status = "To Merge"
-runner = "claude"
+runner = "claude-merge"
 on_success = "Done"
 on_failure = "Needs Attention"
 prompt = """
