@@ -23,6 +23,15 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+          # setup-go caches GOCACHE by default, and Go's test-result cache
+          # lives there: a package whose inputs have not changed reports `ok
+          # (cached)` without running. That is fine on a machine, and wrong
+          # here, because the cache key has no runner-image component. The
+          # inputs Go tracks do not include what `ps -o lstart=` printed, so a
+          # macos-latest that rolls to an image whose BSD `ps` formats
+          # differently would replay the previous image's pass and stay green
+          # over the exact break the matrix exists to catch.
+          cache: false
       # The gate lives in the Makefile so CI and a developer's local run can
       # never drift apart.
       - run: make check
@@ -33,8 +42,9 @@ jobs:
   # on rather than a version number to argue with. The tradeoff is real and
   # deliberate — an advisory in a dependency lerp never calls is printed and
   # does not gate, and Dependabot, not this job, is what carries those off the
-  # tree. Its own job, not a step in `make check`, because it needs the
-  # network and the gate does not.
+  # tree. Its own job, not a step in `make check`, because it queries a
+  # database over the network on every single run — where the gate reaches
+  # the network only to fill a cold module cache, and never again.
   vuln:
     runs-on: ubuntu-latest
     steps:
