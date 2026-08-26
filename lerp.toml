@@ -192,6 +192,146 @@ If the brief turns out to be wrong or missing, move {{ticket}} to
 {{on_failure}} and say why in a comment rather than inventing your own.
 """
 
+# Dogfooding, and only here: this block is in *this* repository's config, not
+# in the stock one lerp writes at init. Invariant 5's "a human merge" is still
+# what ships. What is being tested is whether the refusal clause below holds
+# under real conflicts; if it does for a few weeks, promoting this to the
+# stock config is a separate ticket with its own SCOPE amendment.
+#
+# The gate at "In Review" used to bundle two things: the decision (this should
+# land) and the mechanics (rebase, watch CI, resolve conflicts, click merge).
+# The decision belongs on the board and stays there — a human reads the pull
+# request and promotes the ticket here, and that promote is the merge
+# approval. The mechanics are what this queue does. Nothing in the engine
+# changed to allow it: a queue is a status with a prompt, and this is a third
+# one.
+[queues.merge]
+status = "To Merge"
+runner = "claude"
+on_success = "Done"
+on_failure = "Needs Attention"
+prompt = """
+Merge the pull request for {{ticket}}. A human has already read it and
+approved the merge by promoting the ticket here. What is left is mechanics —
+up to date with the default branch, checks green, merged — and mechanics is
+the whole of what you may do.
+
+This run ends one of exactly two ways: the pull request merged, or
+{{ticket}} moved to {{on_failure}} with a comment saying what stopped you.
+There is no third ending where you stop quietly, and any step below that
+meets something it has no instruction for takes the second one. Stopping
+without either is the worst outcome available here: lerp applies the success
+rule to a run that simply exits, so {{ticket}} would land in
+"{{on_success}}" — a completed status, dropped from the inbox — with the
+pull request still open and nothing anywhere saying the merge never
+happened.
+
+Find the pull request with `gh`: its number, its branch, its state. If
+{{ticket}} has none, or its pull request is closed without having merged, or
+it is still a draft — a draft is an implement run that never finished, so
+what the human promoted was a pull request its own author had not marked
+ready — there is nothing here to merge: say so in a comment and move
+{{ticket}} to {{on_failure}}.
+
+If it is already merged, this run has nothing to do: say so and stop,
+without commenting and without touching the branch. That is the ordinary
+shape of a re-run — nothing here is checkpointed, so a run killed anywhere
+in this prompt is safe to start again from the top: killed mid-rebase it
+redoes the rebase, and killed in the seconds after `gh pr merge` returns it
+arrives here, with nothing left to do.
+
+Your workspace is a fresh worktree sharing the operator's git directory,
+detached at whatever their clone had checked out — most often their own copy
+of main, never this pull request. Treat nothing already in it as your base:
+fetch, check the pull request's head out detached with
+`git checkout --detach origin/<branch>`, and keep the sha you got, which the
+push below needs. `git checkout <branch>` by name fails outright when
+another worktree holds that branch, which is the ordinary case for a ticket
+a human has just been reading. Skip this step and everything after it still
+appears to work: you would rebase the operator's main onto main, pass the
+check, force that over the approved branch, and merge an empty diff.
+
+Before merging, check with `gh` that the default branch is green — its
+latest CI run against main's own head, not a required-checks setting: this
+repository requires no checks of anybody, so asking after required ones
+comes back empty and proves nothing. Green means a finished, successful run
+against that exact head. One still going is not green yet, so wait for it,
+and a head GitHub has no run for at all is not green either — read that as
+red rather than reaching back to the previous head's run, which tested code
+that is no longer what you would be merging onto. Merging onto a red main
+buries somebody else's breakage inside your merge, where the next person to
+look will find it attributed to this pull request. If main is red, do not
+merge: comment on {{ticket}} saying so and move it to {{on_failure}}. Main
+is not yours to fix from here.
+
+Then bring the branch up to date with the default branch — rebase it, or
+merge the default branch into it — and resolve the conflicts textually. Run
+whatever this repository uses as its check. It has to pass before anything
+merges, whether or not this run resolved a conflict to get there; a check
+that comes back red is a stop and not something to fix — comment on
+{{ticket}} with what failed, move it to {{on_failure}}, and leave the branch
+where it is. What is in the workspace at that point is a resolution nobody
+has read which does not even build, and the one place it cannot go is on top
+of the commits a human approved.
+
+Then push, with `git push origin HEAD:<branch>` — the branch is checked out
+detached here, so the refspec is how the push names it. A rebase rewrites
+the branch's commits, so that push comes back rejected as a
+non-fast-forward. The answer is `--force-with-lease`, pinned to the sha you
+checked the branch out at — `--force-with-lease=<branch>:<sha>` — and never
+a plain `--force`. Pinned, because the unpinned form trusts your
+remote-tracking ref, and every lane on this machine shares one git
+directory: another run's `git fetch` moves `origin/<branch>` under you, and
+the lease then measures against a value that already contains the push it
+existed to protect. Nothing on this repo's branches stops a plain force
+either, and what both mistakes throw away is whatever arrived while you were
+rebasing — most likely a review fix a human pushed, which is the one thing
+this queue must not lose.
+
+Then merge, by number and by method: `gh pr merge <number> --squash`. The
+number, because a detached HEAD gives `gh` no branch to infer it from; the
+method, because this repository allows all three and `gh` will not pick one
+for you outside a terminal — and squash is what this history is made of.
+Merge only once the pull request's own checks are green against the head you
+just pushed: your local check says the code is fine, these say that what
+lands on main is. They will still be running when you get there, so watch
+them with `gh pr checks <number> --watch` — by number for the same reason as
+above. An answer of no checks reported is the window before GitHub has
+attached runs to the head you just pushed; that is a look-again, not a
+verdict. Red results are the verdict, and they are the second ending:
+comment, move {{ticket}} to {{on_failure}}, and do not set about fixing them.
+Auto-merge is not the shortcut it looks like — this repository has it
+switched off, it returns without waiting for anything, and what it waits on
+is required checks, which this repository has none of.
+
+Linear's GitHub automation will usually move {{ticket}} to "{{on_success}}"
+as the merge lands, a moment before this run would have; that race is
+harmless, since both are taking it to the same place.
+
+The refusal clause is the load-bearing part of this queue, and it is what
+earns an agent the right to touch a branch a human has already approved:
+anything that takes a judgment call is a hard stop, not a puzzle to solve.
+Stop if two changes touch the same behaviour; if resolving means writing new
+logic rather than choosing between two texts; if the tests fail after a
+resolution that was textually clean; or if your resolution diff comes out
+bigger than the conflict hunks it settles. On any of those, do not merge —
+pushing the rebase you already made is fine, except where what stopped you
+was the check going red, which the paragraph on running the check leaves
+unpushed for the reason it gives — comment on {{ticket}} naming the files
+and the two intents that collide, and move it to {{on_failure}}. If the push
+you made carried a resolution you wrote, the comment has to say so and name
+the files it touched: the branch now looks conflict-free, so whoever reads
+the comment, agrees, and promotes the ticket back here would otherwise get a
+second run that finds nothing left to resolve and merges your guess unread.
+Never guess and merge. A merge you guessed at is code that nobody reviewed,
+sitting inside two changes that each were.
+
+Everything you write stays inside a conflict hunk. The diff a human approved
+is the diff that lands: no drive-by fixes, no reformatting, no "while I was
+in here". Work the branch needs beyond its conflicts is a judgment call, and
+the paragraph above says what to do with one of those.
+"""
+
 # A status no queue watches is how this pipeline waits for a human: the
 # ticket comes to rest there and shows up in the inbox — named by the status
 # it is resting in. The run releases its claim on the way out, because the
@@ -207,9 +347,13 @@ If the brief turns out to be wrong or missing, move {{ticket}} to
 # promote is the approval. Work that needs no plan never enters "Planning"
 # and never meets this gate — routing is placement.
 #
-# "In Review" is where work leaves the automated path: a ticket that
-# lands there on success waits for a human to merge the pull request — and
-# Linear's GitHub integration moves it to Done.
+# "In Review" is the second such gate, and in this repo it is now a reading
+# gate rather than a merging one: a ticket that lands there waits for a human
+# to read the pull request and decide. Approving is promoting it to
+# "To Merge", where the merge queue above takes over the mechanics; promoting
+# it back to "Implementing" with review threads on the pull request is the
+# other answer. The decision stayed with the human — only the rebasing and
+# the merge button moved.
 #
 # "Needs Attention" is the same idea for failures: no queue watches it,
 # so a ticket that lands there waits for you rather than being retried
@@ -220,6 +364,11 @@ If the brief turns out to be wrong or missing, move {{ticket}} to
 # leaves a trail of hops nobody read, and nothing on a board can count them.
 # So "Implementing" reviews and fixes its own work inside one run,
 # where the round count is the agent's own context and costs the board
-# nothing. What reaches "Needs Attention" is only what three rounds could
-# not settle: say what you want on the pull request, promote the ticket back
-# to "Implementing", and the next run reads your threads as its brief.
+# nothing. What reaches "Needs Attention" from there is what three rounds
+# could not settle: say what you want on the pull request, promote the ticket
+# back to "Implementing", and the next run reads your threads as its brief.
+#
+# A merge refusal comes to rest in the same place and is read the same way.
+# Its comment names what stopped it, and the promote that answers it goes to
+# whichever status can act on that: back to "To Merge" once main is green
+# again, back to "Implementing" when two changes really do collide.

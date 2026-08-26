@@ -112,13 +112,6 @@ const (
 	panelWork
 )
 
-func (p panel) String() string {
-	if p == panelAttention {
-		return "inbox"
-	}
-	return "work"
-}
-
 // sortMode is the inbox table's one control. Sorting is grouping: the
 // mode picks the row order and, with it, whether the table draws headers —
 // two flat modes for working a list top-down, two grouped ones for reading
@@ -290,7 +283,8 @@ type workRow struct {
 	state laneState
 	since time.Time
 	// heard is when that run's log last grew, zero while it has none; rate
-	// is its recent activity per bucket, oldest first, for the sparkline.
+	// is its recent activity per bucket, oldest first, for the sparkline,
+	// led by whatever of the run predates the reading (see pulse.window).
 	heard time.Time
 	rate  []int
 	// The pickup gate, for a ticket that is not running: where it sits in
@@ -1371,7 +1365,20 @@ func (m *model) readPulses() {
 			continue
 		}
 		if ln.pulse == nil {
-			ln.pulse = newPulse(ln.logPath)
+			// Only an inherited run has history behind it that nothing here
+			// watched; a run this process started, it has watched from the
+			// beginning. The distinction matters because the record's
+			// StartedAt predates the claim and the provision: on a local run
+			// that span would mark a slow workspace as agent history nobody
+			// read, which is the adopted-run signal fired on a run nothing
+			// was adopted from. On an inherited run the same imprecision
+			// marks the claim and the provision unread along with the run,
+			// which is a span this pulse was not reading either way.
+			started := now
+			if ln.state == laneAdopted {
+				started = ln.since
+			}
+			ln.pulse = newPulse(ln.logPath, started, now)
 		}
 		ln.pulse.read(now)
 	}
@@ -3017,10 +3024,6 @@ func (m model) workDetail() string {
 	}, "\n")
 }
 
-// statusBar is the heartbeat line: focused panel, pass clock, capacity,
-// inbox count, keys. A pass error — or a transient note like a
-// promote's outcome — takes over the whole line; a truncated error is not
-// actionable, so nothing else competes with it for the width.
 // note is one transient report on the status bar. warn marks something that
 // went unhandled rather than something that worked, so a promote's success
 // and a run's non-zero exit never read the same.
@@ -3073,31 +3076,89 @@ func (m model) noteLine() string {
 	return strings.Join(segs, "  ")
 }
 
+// overdueAfter is how long the bar sits on a finished pass before calling
+// the board stale. Deliberately far longer than the poll: a pass is due one
+// interval after the last one landed and the tick re-arms the moment it
+// does, so a minute of nothing is a wedged loop or a slept machine, not
+// ordinary scheduling slack — and a board a few seconds behind is not news
+// to anyone reading it. A pass that is merely running long is the spinner's
+// to report, however late it is.
+const overdueAfter = time.Minute
+
+// overdue reports that nothing has run for long enough to say so. Wall clock
+// on purpose: a machine that slept stops the monotonic reading time.Since
+// would otherwise use — and stops the pending tick with it — so the one case
+// that leaves a board hours out of date is the one case a monotonic
+// comparison cannot see. Round(0) drops the monotonic reading from the copy
+// this compares.
+func (m model) overdue() bool {
+	return !m.inFlight && !m.lastPass.IsZero() && time.Since(m.lastPass.Round(0)) > overdueAfter
+}
+
+// What the heartbeat can say, and the room the bar keeps for it. The slot is
+// held open whether or not there is a heartbeat in it, so it is the widest
+// of them and not whichever one is showing — a slot sized to the line of the
+// moment would move everything beside it as the lines took turns.
+const (
+	heartRunning  = "pass running…"
+	heartOverdue  = "pass overdue"
+	heartStarting = "starting…"
+)
+
+var heartbeatSlot = func() int {
+	// Every frame, not the first one: the frames are all one column wide
+	// today, and a spinner whose were not would have the padding below going
+	// negative on the frames the slot was not measured against.
+	w := max(lipgloss.Width(heartOverdue), lipgloss.Width(heartStarting))
+	for _, frame := range heartbeatFrames {
+		w = max(w, lipgloss.Width(frame+" "+heartRunning))
+	}
+	return w
+}()
+
+// statusBar is the heartbeat line: the lerp mark, what the pass is doing
+// when that is worth saying, capacity, inbox count, keys. A pass error — or
+// a transient note like a promote's outcome — takes over the whole line; a
+// truncated error is not actionable, so nothing else competes with it for
+// the width.
 func (m model) statusBar() string {
-	if line := m.noteLine(); line != "" {
+	// A note reports on a pass and holds the line until the next pass starts.
+	// Where no next pass is coming — a wedged loop, a machine that slept —
+	// it has stopped being transient, and a two-hour-old ✓ sitting there
+	// would hide the one thing worth saying about a board in that state.
+	// Nothing competes with the note line; the note that outlived its pass
+	// just stops being one.
+	if line := m.noteLine(); line != "" && !m.overdue() {
 		return ansi.Truncate(line, m.width, "…")
 	}
-	badgeColor := colorFocus
-	if m.focus == panelAttention {
-		badgeColor = colorAttention
-	}
-	badge := lipgloss.NewStyle().Bold(true).Foreground(colorBadgeText).
-		Background(badgeColor).Render(" " + strings.ToUpper(m.focus.String()) + " ")
+	// The corner is the bar's one fixed point: same text, same weight, same
+	// width, every frame. Which panel holds the keys is already drawn by the
+	// panel borders, so the focus badge that used to sit here said it twice.
+	brand := styleMark.Render(markWord)
 
+	// The heartbeat speaks only when there is something to say. "Is the
+	// board fresh?" is the bar's real question, and yes is silence: a pass
+	// landing on schedule needs no words, where the countdown to the next
+	// one re-rendered at second precision and changed width as it went,
+	// shoving everything right of it sideways once a second.
 	var heart string
 	switch {
 	case m.inFlight:
-		heart = styleRunning.Render(heartbeatFrames[m.frame%len(heartbeatFrames)]) + " pass running…"
+		heart = styleRunning.Render(heartbeatFrames[m.frame%len(heartbeatFrames)]) + " " + heartRunning
 	case m.lastPass.IsZero():
-		heart = styleFaint.Render("starting…")
-	default:
-		ago := time.Since(m.lastPass).Truncate(time.Second)
-		next := max(0, m.o.Interval-time.Since(m.lastPass)).Truncate(time.Second)
-		heart = styleFaint.Render(fmt.Sprintf("pass %s ago · next in %s", ago, next))
+		heart = styleFaint.Render(heartStarting)
+	case m.overdue():
+		// A state, not a clock: that the board is stale is the whole fact,
+		// and how stale changes nothing the operator would do about it.
+		heart = styleAttention.Render(heartOverdue)
 	}
 
-	left := badge + " " + heart
-	left += "  " + styleFaint.Render(m.capacityLabel())
+	// The heartbeat is the only segment here that comes and goes, so the bar
+	// is laid out around the room it keeps for it rather than around the
+	// heartbeat itself — see below. Placed in front of the capacity and the
+	// inbox count it shoved both of them a spinner's width sideways every
+	// time a pass started; sized into the hints below, it moved those.
+	left := brand + "  " + styleFaint.Render(m.capacityLabel())
 	if len(m.attention) > 0 {
 		left += "  " + styleAttention.Render(fmt.Sprintf("● %d in the inbox", len(m.attention)))
 	}
@@ -3132,20 +3193,45 @@ func (m model) statusBar() string {
 	}
 	right := styleFaint.Render(hint)
 
-	// The pane's segment is the first thing the bar gives up. Below it the
-	// truncation takes the left side instead, and what it would take is
-	// "● n in the inbox" — the one number the needs-you panel exists for,
-	// spent on advertising a key. A modal's line is not a hint but its
-	// instructions, so it is not up for this.
-	if !m.modal() && m.width-lipgloss.Width(left)-lipgloss.Width(right) < 1 {
-		right = styleFaint.Render(globals)
+	// The heartbeat's room is held open whether or not there is a heartbeat
+	// in it. That is what lets it come and go without moving anything: every
+	// other segment is placed against a width that does not depend on it,
+	// where sizing the bar around the heartbeat itself would have let a pass
+	// starting decide, once an interval, whether the hints could still
+	// afford the pane's key.
+	slot := heartbeatSlot + 2
+	fits := func(slot int) bool {
+		return m.width-lipgloss.Width(left)-slot-lipgloss.Width(right) >= 1
 	}
 
-	pad := m.width - lipgloss.Width(left) - lipgloss.Width(right)
+	// The pane's segment is the first thing the bar gives up — before the
+	// heartbeat, which is the one segment here that reports something is
+	// happening rather than which key does what. Below it the truncation
+	// takes the left side instead, and what it would take is "● n in the
+	// inbox" — the one number the needs-you panel exists for, spent on
+	// advertising a key. A modal's line is not a hint but its instructions,
+	// so it is not up for this.
+	if !m.modal() && !fits(slot) {
+		right = styleFaint.Render(globals)
+	}
+	// Narrower than that and the bar carries no heartbeat at all — at every
+	// frame, so the window that cannot hold one is silent about passes the
+	// whole time rather than flickering one in and out. What decides it is
+	// the room, never which line the heartbeat would be showing, so it does
+	// not come and go under a board doing the same thing throughout; and
+	// widening a window never takes the heartbeat away.
+	if !fits(slot) {
+		slot = 0
+	}
+
+	pad := m.width - lipgloss.Width(left) - slot - lipgloss.Width(right)
 	if pad < 1 {
 		right = ansi.Truncate(right, max(0, m.width-1), "…")
 		left = ansi.Truncate(left, max(0, m.width-lipgloss.Width(right)-1), "…")
 		pad = max(1, m.width-lipgloss.Width(left)-lipgloss.Width(right))
+	}
+	if slot > 0 {
+		left += "  " + heart + strings.Repeat(" ", slot-2-lipgloss.Width(heart))
 	}
 	return left + strings.Repeat(" ", pad) + right
 }

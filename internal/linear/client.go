@@ -60,6 +60,38 @@ const (
 	CategoryUnstarted = "unstarted"
 )
 
+// GitAutomation is one of a team's Linear git automations: a rule that moves
+// the ticket linked to a pull request when a git event fires. Linear
+// configures these per team, under the team's git settings.
+type GitAutomation struct {
+	// Event is the git event that fires the rule, as Linear's own enum
+	// spells it — one of the GitEvent constants, or a name lerp has never
+	// heard of if Linear adds one.
+	Event string
+	// Status is the workflow state the rule moves the ticket into. Empty
+	// when the rule is set to take no action, which is Linear's way of
+	// switching one off.
+	Status string
+	// Branch is the target-branch pattern the rule is scoped to, empty for
+	// the team-wide rule. A branch-scoped rule overrides the team-wide one
+	// for pull requests targeting a matching branch, so the two are reported
+	// separately: an operator looking for the rule lerp warned about needs
+	// to know which of the two to open.
+	Branch string
+}
+
+// Linear's git automation events, as its API spells them. The first four fire
+// while a pull request is open — which, for a ticket lerp is running, is
+// mid-stage; the last fires on merge, after the pipeline is done with the
+// ticket (SCOPE names that one the benign case).
+const (
+	GitEventDraft     = "draft"     // a draft pull request was opened
+	GitEventStart     = "start"     // a pull request was opened
+	GitEventReview    = "review"    // a review was requested on it
+	GitEventMergeable = "mergeable" // it became ready for merge
+	GitEventMerge     = "merge"     // it merged
+)
+
 // IssueDetail is one ticket as the inbox pane reads it: the body the
 // operator has to judge, and the comments on it — which, by SCOPE.md
 // invariant 7, are lerp's own stage-boundary artifacts (the plan, the
@@ -93,9 +125,16 @@ type Client interface {
 	ListUnassignedIssues(ctx context.Context, teamKey string) ([]Issue, error)
 	// TeamStates reports the names of the team's workflow states, in board
 	// order — the one read behind the startup verification that every
-	// configured status exists on its team (loop.VerifyStatuses). The loop's
+	// configured status exists on its team (loop.Verify). The loop's
 	// regular passes never call it.
 	TeamStates(ctx context.Context, teamKey string) ([]string, error)
+	// TeamGitAutomations reports the team's configured git automations —
+	// the rules by which Linear itself moves a ticket when a pull request
+	// linked to it changes state. Read once at startup beside TeamStates,
+	// for the verification that warns when one of them would move a ticket
+	// out from under a live run (loop.Verify). The loop's regular passes
+	// never call it.
+	TeamGitAutomations(ctx context.Context, teamKey string) ([]GitAutomation, error)
 	GetIssue(ctx context.Context, issueID string) (Issue, error)
 	// GetIssueDetail reads one issue's body and its comments — the read
 	// SCOPE.md's "not a Linear client" bullet licenses for the inbox

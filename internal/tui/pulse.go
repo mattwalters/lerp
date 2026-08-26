@@ -32,6 +32,19 @@ const (
 // stretch with no activity in it reads as a flat line along the bottom.
 var sparkBars = []rune("▁▂▃▄▅▆▇█")
 
+const (
+	// unreadBucket stands in a window for a bucket that passed before this
+	// process attached to the log — history no count exists for. Counts are
+	// never negative, so it cannot collide with one.
+	unreadBucket = -1
+	// sparkUnread draws such a bucket. It sits off the ramp deliberately: a
+	// bar of any height would be a count nobody made, and the floor bar is
+	// already the reading for "watched, and nothing happened". This one says
+	// only "older than I have watched it", and a dot is distinct from every
+	// bar at a glance rather than by height.
+	sparkUnread = '·'
+)
+
 // pulse is one lane's log read for what its work row says about the run in
 // progress: when the log last grew, and how much activity it has carried
 // lately. Both come out of the log the pane already tails, so they degrade
@@ -57,13 +70,29 @@ type pulse struct {
 	head  int
 	at    time.Time
 	seen  int
+	// unread is how many buckets passed between the run starting and this
+	// pulse attaching, capped at the ring. They carry no counts — there are
+	// none to be had — and window draws them ahead of the ring, so an
+	// adopted run reads as older than the stretch it has been watched for.
+	unread int
 }
 
 // newPulse attaches at the end of the file. What is already in it happened at
 // times the pulse cannot know, and counting it into the bucket now filling
 // would draw a burst that never happened.
-func newPulse(path string) *pulse {
-	return &pulse{follower: newFollower(path, 0)}
+//
+// started is when the run began, and only a run inherited from a previous
+// process began before now (see readPulses). That span is history this pulse
+// has no counts for and no way to get any, so it is marked unread rather than
+// left out: a line that merely started short is the line of a run that just
+// started, which is the one thing the row must not say about an hour-old
+// agent.
+func newPulse(path string, started, now time.Time) *pulse {
+	p := &pulse{follower: newFollower(path, 0)}
+	if !started.IsZero() {
+		p.unread = min(sparkCells, max(0, int(now.Sub(started)/sparkBucket)))
+	}
+	return p
 }
 
 // read takes one poll's worth of log. now is passed in rather than read here
@@ -86,6 +115,12 @@ func (p *pulse) read(now time.Time) {
 		// log that is gone — and folding a whole new file into the bucket
 		// now filling would draw one spike and flatten every real one beside
 		// it. Start the reading over with the file.
+		//
+		// The unread span survives: it says this pulse has no counts for
+		// what came before, which a rewrite has just made true again of
+		// everything it had. It is not a rescue — a rewrite costs the
+		// reading either way, and a short span leaves a short line — it is
+		// that the span is still the truth about the run after one.
 		p.stream, p.cells, p.head, p.seen = logfmt.Stream{}, [sparkCells]int{}, 0, 0
 		p.at = time.Time{}
 	}
@@ -121,11 +156,12 @@ func (p *pulse) roll(now time.Time) {
 }
 
 // window is the counts of the buckets that have existed, oldest first, which
-// is the order a sparkline draws. It is the whole history the ring holds; a
-// row too narrow for all of it draws the tail, which is the recent end. It is
-// short while a run is young: a line that has not had time to fall is not a
-// line that has fallen, and a run picked up ten seconds ago must not read
-// like one that has been quiet since the ring began.
+// is the order a sparkline draws, led by the run's unread span — the buckets
+// that passed before this pulse attached. It is the whole history the ring
+// holds; a row too narrow for all of it draws the tail, which is the recent
+// end. It is short while a run is young: a line that has not had time to fall
+// is not a line that has fallen, and a run picked up ten seconds ago must not
+// read like one that has been quiet since the ring began.
 func (p *pulse) window() []int {
 	if p.heard.IsZero() {
 		// No log behind the ring: it may not exist yet, or it may have been
@@ -133,7 +169,13 @@ func (p *pulse) window() []int {
 		// run that has gone quiet, and a flat line would say it was.
 		return nil
 	}
-	out := make([]int, 0, p.seen)
+	// The unread span gives way to the ring as the ring fills: what this
+	// pulse did watch is never dropped to keep saying it was not watching.
+	u := min(p.unread, sparkCells-p.seen)
+	out := make([]int, 0, u+p.seen)
+	for i := 0; i < u; i++ {
+		out = append(out, unreadBucket)
+	}
 	for i := sparkCells - p.seen; i < sparkCells; i++ {
 		out = append(out, p.cells[(p.head+1+i)%sparkCells])
 	}
@@ -154,6 +196,11 @@ func (p *pulse) window() []int {
 // burst at the start of a run holds the scale for as long as it stays in the
 // window, and steady work under it sits on the bar above the floor. Alive
 // rather than how alive is what the row is for, with heard beside it.
+//
+// A bucket marked unread is drawn as itself and takes no part in the scale:
+// it is a span nobody counted, not a quiet one, and letting it read as either
+// a bar or the floor would be the fresh-start line the marking exists to
+// prevent.
 func sparkline(counts []int) string {
 	hi := 0
 	for _, c := range counts {
@@ -161,6 +208,10 @@ func sparkline(counts []int) string {
 	}
 	var b strings.Builder
 	for _, c := range counts {
+		if c == unreadBucket {
+			b.WriteRune(sparkUnread)
+			continue
+		}
 		bar := 0
 		if c > 0 {
 			bar = max(1, c*(len(sparkBars)-1)/hi)

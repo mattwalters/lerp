@@ -1,3 +1,5 @@
+//go:build unix
+
 package loop
 
 import (
@@ -14,115 +16,13 @@ import (
 )
 
 // ExecuteFunc runs one configured coding-agent command. It is a function type
-// so the vertical slice can be tested without starting a real agent.
+// so the loop can be tested without starting a real agent.
 type ExecuteFunc func(context.Context, run.Invocation) (run.Result, error)
-
-// PathFunc derives an ephemeral path from the issue chosen for this run.
-type PathFunc func(linear.Issue) string
 
 // ProvisionFunc and DisposeFunc create and remove a workspace. They are
 // function types for the same reason as ExecuteFunc.
 type ProvisionFunc func(context.Context, string, string, workspace.Identity, io.Writer) error
 type DisposeFunc func(context.Context, string, string, workspace.Identity, io.Writer)
-
-// OnceOptions supplies the one lane used by Once. Workspace and LogPath are
-// intentionally caller-owned: run evidence belongs to the reconciler, not
-// this vertical slice.
-type OnceOptions struct {
-	Client       linear.Client
-	Repo         *config.RepoConfig
-	RepoDir      string
-	Lane         int
-	Workspace    string
-	WorkspaceFor PathFunc
-	LogPath      string
-	LogPathFor   PathFunc
-	Log          io.Writer
-	Execute      ExecuteFunc
-	Provision    ProvisionFunc
-	Dispose      DisposeFunc
-}
-
-// Once runs at most one eligible ticket through claim, provision, execution,
-// disposal, and its configured queue transition. It is a narrow development
-// harness for the single-lane vertical slice; the reconciler owns lane
-// selection and run evidence.
-//
-// A clean runner exit moves the ticket to OnSuccess, and a non-zero exit moves
-// it to OnFailure when configured. In either case, the transition happens only
-// when the ticket remains in the queue status; an agent or human move wins.
-func Once(ctx context.Context, o OnceOptions) (bool, error) {
-	if err := o.validate(); err != nil {
-		return false, err
-	}
-	if o.Execute == nil {
-		o.Execute = run.Execute
-	}
-	if o.Provision == nil {
-		o.Provision = workspace.Provision
-	}
-	if o.Dispose == nil {
-		o.Dispose = workspace.Dispose
-	}
-
-	cands, listErr := candidates(ctx, o.Client, o.Repo)
-	if len(cands) == 0 {
-		return false, listErr
-	}
-	if listErr != nil && o.Log != nil {
-		// A ticket was found, so run it; the broken listings only narrowed
-		// the choice.
-		fmt.Fprintf(o.Log, "some queues could not be listed: %v\n", listErr)
-	}
-	issue, queue := cands[0].issue, cands[0].queue
-
-	viewerID, won, err := claimForQueue(ctx, o.Client, issue.ID, queue.Status)
-	if err != nil || !won {
-		return false, err
-	}
-
-	workdir := o.Workspace
-	if o.WorkspaceFor != nil {
-		workdir = o.WorkspaceFor(issue)
-	}
-	logPath := o.LogPath
-	if o.LogPathFor != nil {
-		logPath = o.LogPathFor(issue)
-	}
-	if workdir == "" || logPath == "" {
-		return false, fmt.Errorf("once: workspace and log path are required")
-	}
-	id := workspace.Identity{Lane: o.Lane, TicketID: issue.ID, Workspace: workdir}
-	// Registered before provisioning, not after: a provision command that
-	// created its workspace and then failed partway must still be cleaned up,
-	// or the next attempt collides with what it left behind. Dispose reports
-	// its own failures to the log and never blocks the caller, so running it
-	// against a workspace that was never created is harmless.
-	defer o.Dispose(context.WithoutCancel(ctx), o.RepoDir, o.Repo.Dispose, id, o.Log)
-	if err := o.Provision(ctx, o.RepoDir, o.Repo.Provision, id, o.Log); err != nil {
-		// Provisioning never starts a lane. Release our claim so the queued
-		// ticket remains eligible for a later attempt.
-		if releaseErr := releaseClaim(ctx, o.Client, issue.ID, viewerID); releaseErr != nil {
-			return false, fmt.Errorf("provision issue %s: %w (%v)", issue.ID, err, releaseErr)
-		}
-		return false, fmt.Errorf("provision issue %s: %w", issue.ID, err)
-	}
-
-	result, err := o.Execute(ctx, run.Invocation{
-		Runner:  o.Repo.Runners[queue.Runner],
-		Queue:   queue,
-		Ticket:  issue.Identifier,
-		Workdir: workdir,
-		LogPath: logPath,
-	})
-	if err != nil {
-		return true, fmt.Errorf("run issue %s: %w", issue.ID, err)
-	}
-	if _, err := conclude(ctx, o.Client, issue, queue, o.Repo, result.ExitCode, viewerID, o.Log); err != nil {
-		return true, err
-	}
-	return true, nil
-}
 
 // servedStatuses is the set of Linear statuses some configured queue picks up
 // from. Two decisions turn on it: which tickets the attention view calls
@@ -323,24 +223,6 @@ func takenOverNote(issue linear.Issue, rule, target string) string {
 		" and the claim left with whoever took it.", issue.Identifier, rule, target)
 }
 
-func (o OnceOptions) validate() error {
-	switch {
-	case o.Client == nil:
-		return fmt.Errorf("once: client is required")
-	case o.Repo == nil:
-		return fmt.Errorf("once: repo config is required")
-	case o.RepoDir == "":
-		return fmt.Errorf("once: repo directory is required")
-	case o.Lane < 1:
-		return fmt.Errorf("once: lane must be at least 1")
-	case o.Workspace == "" && o.WorkspaceFor == nil:
-		return fmt.Errorf("once: workspace is required")
-	case o.LogPath == "" && o.LogPathFor == nil:
-		return fmt.Errorf("once: log path is required")
-	}
-	return nil
-}
-
 // candidate is one ticket a queue could pick up right now.
 type candidate struct {
 	issue linear.Issue
@@ -386,13 +268,6 @@ func listQueues(ctx context.Context, client linear.Client, repo *config.RepoConf
 		}
 	}
 	return listings, errors.Join(errs...)
-}
-
-// candidates lists every eligible ticket across the repo's teams and queues,
-// in listQueues's deterministic order.
-func candidates(ctx context.Context, client linear.Client, repo *config.RepoConfig) ([]candidate, error) {
-	listings, err := listQueues(ctx, client, repo)
-	return candidatesFrom(listings), err
 }
 
 // candidatesFrom narrows raw listings to the tickets a queue could pick up

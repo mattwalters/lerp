@@ -30,6 +30,12 @@ through. Read it before proposing anything.
 
 ## Install
 
+Lerp runs on macOS and Linux. Windows is not supported and does not
+build there: the loop holds an advisory `flock` on the clone, starts
+each agent in its own process group, and reaps by killing that group —
+none of which Windows has as such. Under WSL2 it is Linux as far as
+lerp is concerned, and that is the Windows answer.
+
 ```sh
 go install github.com/mattwalters/lerp/cmd/lerp@latest
 ```
@@ -82,6 +88,15 @@ which statuses it creates and which it reuses before it acts. It then
 writes `lerp.toml` at the repository root, uncommitted, for you to
 review and check in.
 
+Init also appends `.lerp/` to the repository's `.gitignore`, creating
+that file if there is none — lerp's run records, logs and workspace
+worktrees live there, and none of it belongs in your history. Commit
+that change along with `lerp.toml`: a colleague who clones a repo that
+already has a `lerp.toml` never runs `lerp init`, so an uncommitted
+ignore covers only your clone. A repository whose ignore list already
+names `.lerp/` is left alone, and an ignore file lerp cannot write is
+reported, not fatal — init still writes `lerp.toml`.
+
 The conversation's last question is whether the stock Claude runner
 should include `--permission-mode bypassPermissions`. The default is no
 — saying yes is a real grant (see [Stock pipeline](#stock-pipeline)),
@@ -93,9 +108,10 @@ skips the conversation and takes the stock answers: the full pipeline,
 stock status names, no bypass grant.
 
 `lerp init` is safe to repeat: it creates only missing Linear
-structure and never replaces an existing `lerp.toml` — it verifies
-that the existing config serves the requested team, and ensures the
-statuses that config's queues name, instead.
+structure, adds nothing to `.gitignore` twice, and never replaces an
+existing `lerp.toml` — it verifies that the existing config serves the
+requested team, and ensures the statuses that config's queues name,
+instead.
 
 Init may also print a report about where your pipeline ends — statuses
 Linear does not yet count as completing work. Act on what it prints;
@@ -141,11 +157,10 @@ applies the queue's move rule: `on_success` on a clean exit,
 `on_failure` otherwise, and only if the agent didn't move the ticket
 itself. [Running](#running) describes the interface.
 
-For scripts, or to watch a single run at ground level, `lerp once`
-runs one eligible ticket through the same claim → provision → run →
-move sequence and exits. It predates the loop's evidence store: its
-workspace and agent log live under a temporary directory instead, and
-the log's path is printed when the run finishes.
+Before the first unattended run, read [SECURITY.md](SECURITY.md).
+Running lerp against a team gives everyone who can move a ticket into a
+served status the ability to start an agent on your machine; that page
+is the whole trust model in one place.
 
 Where a finished run leaves the ticket is the whole of the topology.
 A finished run releases the claim wherever it comes to rest — the
@@ -496,6 +511,11 @@ run it:
   grant lives in a checked-in `lerp.toml`, adding, reviewing, or narrowing
   it (for example with `--allowedTools`) is an ordinary code change.
 
+Both of those, and the half that is not about this config at all — who
+can trigger a run, and what a ticket's text is to the agent that reads
+it — are set out in [SECURITY.md](SECURITY.md), which is also where to
+report a vulnerability.
+
 ## How it behaves
 
 **What ships today?** The TUI is the way to run the loop: bare `lerp`
@@ -503,21 +523,20 @@ opens it, and the reconciling loop of the mental model — N lanes,
 adopting live runs, reaping dead ones, repairing drift — is real,
 running behavior while it is open (see [Running](#running)). Both
 panels are built, and the TUI's two write actions are the Inbox's
-promote and the Work panel's force-start. `lerp once` is the single-shot alternative: one ticket through
-its queue, no loop, no evidence store. Beyond those, `lerp version`
+promote and the Work panel's force-start. Beyond those, `lerp version`
 and `lerp init` complete the surface.
 
 **Where does state live?** In Linear — that is the first sentence of
 the model, and [SCOPE.md](SCOPE.md) invariant 1 holds it. Locally lerp
 keeps exactly two things: `lerp.toml` (config, checked in) and an
-evidence store, `.lerp/` at the repo root — one record per run under
-`.lerp/runs` (pid, log file, ticket, workspace path, and the exit status
-the run records for itself as it ends), workspaces under
+evidence store, `.lerp/` at the repo root (gitignored, by init) — one
+record per run under `.lerp/runs` (pid, log file, ticket, workspace
+path, and the exit status the run records for itself as it ends),
+workspaces under
 `.lerp/workspaces`, an advisory lock at `.lerp/lock` that keeps it to
 one loop per clone, and the loop's diagnostics in `.lerp/loop.log`.
 Local state is evidence, never truth: losing all of it may cost
-compute, never correctness. `lerp once` predates the store and keeps
-its workspace and log under a temporary directory instead.
+compute, never correctness.
 
 **What happens on crash or kill?** Every queue run is safe to kill and
 restart from its beginning: progress is checkpointed only at queue
@@ -532,10 +551,9 @@ run's finish costs nothing, rather than a whole re-run stage. A run
 killed before it got that far records nothing, and reaping it releases
 the claim so its ticket becomes eligible again; a failed run whose queue
 has no `on_failure` route keeps its claim and waits on you, as it does
-when lerp watched it fail. One caveat: a `lerp once` killed mid-run has
-no evidence for a later loop to reap, so it leaves the ticket assigned.
-Select it in the work panel and press `S`: force-start takes back your
-own claim and runs the stage again.
+when lerp watched it fail. To run such a ticket again, select it in the
+work panel and press `S`: force-start takes back your own claim and runs
+the stage again.
 
 **Why isn't my ticket being picked up?** Check the three eligibility
 conditions from step 3 of [Getting started](#getting-started): a

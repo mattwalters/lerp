@@ -4,13 +4,11 @@ import "github.com/charmbracelet/lipgloss"
 
 // The lerp mark, in the two sizes the TUI draws it at, so the tool has one
 // wordmark rather than two that drift: markWord is the mark small — the
-// plain word, which is what a status bar's corner has room for — and
-// markLines is the same word large, in ASCII, for the splash below.
-//
-// Nothing here draws the small one yet. The status bar's corner mark is
-// LERP-102's, still in flight, and it takes this rather than spelling its
-// own; whichever of the two landed second was always going to inherit the
-// other's, and this is the half that landed first.
+// plain word the status bar carries in its corner (see statusBar) — and
+// markLines is the same word large, in ASCII, for the splash below. The
+// corner mark landed first, as LERP-102; this is the size that came second,
+// and taking the word from here rather than spelling it again is the whole
+// of what keeps them one mark.
 const markWord = "lerp"
 
 var markLines = []string{

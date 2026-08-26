@@ -527,3 +527,164 @@ func TestInitStopsWhenBoardFails(t *testing.T) {
 		t.Fatalf("config was created: %v", statErr)
 	}
 }
+
+// A first run fills .lerp with run records, logs and a worktree per
+// workspace, so init makes the repository ignore it — appending to whatever
+// ignore list is already there, and saying so like it says everything else.
+func TestInitIgnoresStateDir(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		before  string // "" means no .gitignore at all
+		want    string
+		message string
+	}{
+		{
+			name:    "creates the file when there is none",
+			want:    stateDirBlock,
+			message: "added .lerp/ to .gitignore",
+		},
+		{
+			name:    "appends after a trailing newline",
+			before:  "*.out\ncoverage.*\n",
+			want:    "*.out\ncoverage.*\n\n" + stateDirBlock,
+			message: "added .lerp/ to .gitignore",
+		},
+		{
+			// Nothing gets appended to somebody's last line.
+			name:    "appends after a file with no trailing newline",
+			before:  "*.out",
+			want:    "*.out\n\n" + stateDirBlock,
+			message: "added .lerp/ to .gitignore",
+		},
+		{
+			// One blank line of separation, never a second.
+			name:    "appends after a file that already ends blank",
+			before:  "*.out\n\n",
+			want:    "*.out\n\n" + stateDirBlock,
+			message: "added .lerp/ to .gitignore",
+		},
+		{
+			name:    "leaves a repo that already ignores it alone",
+			before:  "*.out\n.lerp/\n",
+			want:    "*.out\n.lerp/\n",
+			message: ".gitignore already ignores .lerp/",
+		},
+		{
+			// The other spellings of the same rule at the repo root.
+			name:    "recognises the rooted spelling",
+			before:  "  /.lerp  \n",
+			want:    "  /.lerp  \n",
+			message: ".gitignore already ignores .lerp/",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, ".gitignore")
+			if tc.before != "" {
+				if err := os.WriteFile(path, []byte(tc.before), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var out bytes.Buffer
+			if _, err := Init(context.Background(), &fakeBoard{existing: linearDefaults}, &out, nil, dir, "LERP", ""); err != nil {
+				t.Fatal(err)
+			}
+			got, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != tc.want {
+				t.Errorf(".gitignore = %q, want %q", got, tc.want)
+			}
+			if !strings.Contains(out.String(), tc.message) {
+				t.Errorf("out %q\nmissing %q", out.String(), tc.message)
+			}
+		})
+	}
+}
+
+// Repeating init on a repo that already has a config still ignores the state
+// directory — that is how a repo set up by an earlier lerp picks it up — and
+// a second run adds nothing further.
+func TestInitIgnoresStateDirOnRepeat(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, config.RepoConfigFile), []byte(existingConfig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b := &fakeBoard{existing: []string{"Planning", "Implementing"}}
+	if _, err := Init(context.Background(), b, io.Discard, nil, dir, "LERP", ""); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, ".gitignore")
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != stateDirBlock {
+		t.Fatalf(".gitignore = %q, want %q", after, stateDirBlock)
+	}
+	if _, err := Init(context.Background(), b, io.Discard, nil, dir, "LERP", ""); err != nil {
+		t.Fatal(err)
+	}
+	twice, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(twice) != string(after) {
+		t.Errorf("second init changed .gitignore to %q", twice)
+	}
+}
+
+// A .gitignore lerp cannot get at is reported and survived, whether it is
+// the read that fails or the write: init still writes the config it exists
+// to write, rather than leaving a repo whose board is set up and whose
+// lerp.toml never arrived.
+func TestInitSurvivesUnusableGitignore(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T, path string)
+	}{
+		{
+			// A directory where the file goes: the read fails first.
+			name: "unreadable",
+			setup: func(t *testing.T, path string) {
+				if err := os.Mkdir(path, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			// Readable, so the failure lands on the append instead.
+			name: "unwritable",
+			setup: func(t *testing.T, path string) {
+				if os.Geteuid() == 0 {
+					t.Skip("root writes a read-only file whatever its mode says")
+				}
+				if err := os.WriteFile(path, []byte("*.out\n"), 0o444); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			tc.setup(t, filepath.Join(dir, ".gitignore"))
+			var out bytes.Buffer
+			created, err := Init(context.Background(), &fakeBoard{existing: linearDefaults}, &out, nil, dir, "LERP", "")
+			if err != nil {
+				t.Fatalf("Init error = %v", err)
+			}
+			if !created {
+				t.Error("created = false: the config was not written")
+			}
+			if _, statErr := os.Stat(filepath.Join(dir, config.RepoConfigFile)); statErr != nil {
+				t.Fatalf("config missing: %v", statErr)
+			}
+			for _, wanted := range []string{"could not ignore .lerp/", "Add .lerp/ to .gitignore yourself"} {
+				if !strings.Contains(out.String(), wanted) {
+					t.Errorf("out %q\nmissing %q", out.String(), wanted)
+				}
+			}
+		})
+	}
+}

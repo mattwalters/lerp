@@ -27,7 +27,6 @@ const usage = `usage:
   lerp [-concurrency N]         open the TUI; the loop runs while it is open
   lerp version                  print the version
   lerp init --team KEY [--yes]  map lerp's queues onto the team's board and write this repo's lerp.toml
-  lerp once                     run one eligible ticket through its queue
 `
 
 // defaultLanes is how many agents run at once unless -concurrency says so.
@@ -74,14 +73,6 @@ func main() {
 		fmt.Printf("lerp %s\n", version.Version)
 	case "init":
 		initCommand(args[1:])
-	case "once":
-		if len(args) != 1 {
-			fmt.Fprint(os.Stderr, "lerp once takes no arguments\n\n"+usage)
-			os.Exit(2)
-		}
-		if err := once(context.Background()); err != nil {
-			fatal(fmt.Errorf("lerp once: %w", err))
-		}
 	default:
 		// Falling through to the version here would make a typo look like a
 		// success: `lerp int --team LERP` would print a version and exit 0.
@@ -111,18 +102,25 @@ func openTUI(ctx context.Context, lanes int) error {
 	// status exists on its team (SCOPE invariant 2's refuse-at-startup
 	// spirit): a misspelled queue status would poll as a permanently empty
 	// queue, not an error, and a missing on_success target would fail only
-	// after an agent's whole run.
+	// after an agent's whole run. What the same check merely warns about — a
+	// team git automation that would move a ticket mid-stage — is shown here
+	// and the run starts anyway.
 	client := linear.New(apiKey, nil)
-	if err := loop.VerifyStatuses(ctx, client, repo); err != nil {
+	warnings, err := loop.Verify(ctx, client, repo)
+	if err != nil {
 		return err
 	}
-
 	ev := evidence.New(repoDir)
 	lock, err := ev.AcquireLock()
 	if err != nil {
 		return err
 	}
 	defer lock.Close()
+
+	// After the lock, not before: a second lerp on this clone should fail on
+	// the lock rather than make the operator read and acknowledge a warning
+	// about a run it is never going to start.
+	announce(os.Stderr, os.Stdin, warnings, isTerminal(os.Stderr))
 
 	// The loop's diagnostic stream — provision, dispose, and runner output —
 	// is ephemeral process detail: a local file, discarded without ceremony
@@ -172,61 +170,6 @@ func openTUI(ctx context.Context, lanes int) error {
 	})
 }
 
-// once is a temporary single-lane command for exercising the first vertical
-// slice. Its workspace and log live under the system temporary directory;
-// durable run evidence will replace this path policy with the reconciler.
-func once(ctx context.Context) error {
-	apiKey := os.Getenv("LINEAR_API_KEY")
-	if apiKey == "" {
-		return errors.New("LINEAR_API_KEY is required")
-	}
-	// The repo root, not the working directory: lerp init writes lerp.toml at
-	// the root, so resolving it from the cwd would fail everywhere but there.
-	repoDir, err := gitRoot()
-	if err != nil {
-		return err
-	}
-	repo, err := config.LoadRepoConfig(filepath.Join(repoDir, config.RepoConfigFile))
-	if err != nil {
-		return err
-	}
-
-	// A fresh private directory per invocation (MkdirTemp creates it 0700).
-	// A fixed world-readable path under /tmp would let any other user on the
-	// host pre-create or symlink it and read the workspace and the agent log.
-	root, err := os.MkdirTemp("", "lerp-once-")
-	if err != nil {
-		return fmt.Errorf("create temporary run directory: %w", err)
-	}
-	var logPath string
-	ran, err := loop.Once(ctx, loop.OnceOptions{
-		Client:  linear.New(apiKey, nil),
-		Repo:    repo,
-		RepoDir: repoDir,
-		Lane:    1,
-		WorkspaceFor: func(issue linear.Issue) string {
-			return filepath.Join(root, "workspace-lane-1-"+issue.ID)
-		},
-		LogPathFor: func(issue linear.Issue) string {
-			logPath = filepath.Join(root, "run-lane-1-"+issue.ID+".log")
-			return logPath
-		},
-		Log: os.Stderr,
-	})
-	if err != nil {
-		return err
-	}
-	if !ran {
-		fmt.Println("lerp once: no eligible ticket")
-		return nil
-	}
-	fmt.Println("lerp once: completed one ticket")
-	if logPath != "" {
-		fmt.Printf("lerp once: agent log at %s\n", logPath)
-	}
-	return nil
-}
-
 func initCommand(args []string) {
 	fs := flag.NewFlagSet("lerp init", flag.ExitOnError)
 	team := fs.String("team", "", "Linear team key to set up")
@@ -258,6 +201,57 @@ func initCommand(args []string) {
 		fmt.Printf("wrote %s with Lerp's stock pipeline — review it and check it in\n", config.RepoConfigFile)
 	}
 	fmt.Printf("initialized %s for Linear team %s\n", repoRoot, *team)
+}
+
+// announce shows the startup warnings and waits for the operator to
+// acknowledge them. The refusal returns an error and never opens the screen,
+// so the operator reads it; a warning printed on the way up would not be read
+// at all — the TUI takes the alternate screen buffer a moment later and the
+// text is gone until they quit. So the run still starts, as the warning is
+// not a refusal, but it starts when the operator has seen the warning.
+//
+// Every launch, for as long as the board and the config disagree. There is
+// nowhere to remember that an operator has already decided to live with a
+// warning: SCOPE invariant 1 keeps durable state in Linear, and lerp's own
+// board is not the place to record an opinion about the board. A keystroke
+// per launch is the price of a warning that is read, and the warning ends the
+// moment either side of the disagreement is fixed.
+//
+// It waits only when visible says the warnings went somewhere the operator is
+// looking — a terminal. Redirected away with `lerp 2>/dev/null`, the prompt
+// lands nowhere, and waiting for an answer to a question nobody was asked
+// would hang the launch behind a blank screen.
+//
+// The acknowledgement is read a byte at a time rather than through a buffered
+// reader: whatever they type after the newline belongs to the TUI, and a
+// buffered read would swallow it.
+func announce(w io.Writer, r io.Reader, warnings []string, visible bool) {
+	if len(warnings) == 0 {
+		return
+	}
+	for _, line := range warnings {
+		// Write errors are dropped on purpose. A warning is not a refusal,
+		// and `lerp 2>&-` must not be the difference between a run and no
+		// run — the same reasoning as the unreadable stdin below.
+		fmt.Fprintln(w, line)
+	}
+	if !visible {
+		return
+	}
+	fmt.Fprint(w, "\npress enter to start anyway ")
+	var b [1]byte
+	for {
+		n, err := r.Read(b[:])
+		if err != nil {
+			return
+		}
+		// Both line endings: a terminal that is not translating carriage
+		// returns delivers enter as \r, and a gate that only knows \n would
+		// swallow every keystroke and never open.
+		if n == 1 && (b[0] == '\n' || b[0] == '\r') {
+			return
+		}
+	}
 }
 
 // isTerminal reports whether f is a character device — a terminal, as far as
