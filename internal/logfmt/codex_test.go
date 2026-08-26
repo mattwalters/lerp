@@ -35,7 +35,12 @@ func TestCodexDecodesTheStream(t *testing.T) {
 			Event{Kind: KindToolResult, Text: "completed"}},
 		{"an item-level error", `{"type":"item.completed","item":{"id":"item_0","type":"error","message":"Model metadata not found."}}`,
 			Event{Kind: KindToolResult, Text: "Model metadata not found.", IsError: true}},
-		{"turn completes", codexTurn, Event{Kind: KindResult, Text: "turn complete · 119 output tokens"}},
+		// The turn is where the run's usage arrives; cached input is part of
+		// the input Codex reports, so the total is 31,101 + 119.
+		{"turn completes", codexTurn,
+			Event{Kind: KindResult, Text: "turn complete · 119 output tokens", Usage: 31220}},
+		{"a turn that reports no usage costs nothing",
+			`{"type":"turn.completed"}`, Event{Kind: KindResult, Text: "turn complete"}},
 		{"turn fails", `{"type":"turn.failed","error":{"message":"the model is not supported"}}`,
 			Event{Kind: KindResult, Text: "the model is not supported", IsError: true}},
 		{"stream error", `{"type":"error","message":"the model is not supported"}`,

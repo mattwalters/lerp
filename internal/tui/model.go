@@ -287,6 +287,13 @@ type workRow struct {
 	// led by whatever of the run predates the reading (see pulse.window).
 	heard time.Time
 	rate  []int
+	// tool and target are the last tool call the log carried, empty until it
+	// carries one; tokens is what the run has spent, and unread marks a
+	// total that begins partway through it — an adopted run's log has a
+	// stretch this process never read (see pulse.unread).
+	tool, target string
+	tokens       int
+	unread       bool
 	// The pickup gate, for a ticket that is not running: where it sits in
 	// its queue's order, and what holds it there.
 	pos, of   int
@@ -1560,6 +1567,8 @@ func (m *model) workGroups() []workGroup {
 			lane: n, state: ln.state, since: ln.since}
 		if ln.pulse != nil {
 			row.heard, row.rate = ln.pulse.heard, ln.pulse.window()
+			row.tool, row.target = ln.pulse.tool, ln.pulse.target
+			row.tokens, row.unread = ln.pulse.tokens, ln.pulse.unread > 0
 		}
 		// A running ticket normally still sits in its queue's listing,
 		// claimed and ineligible: that listing is the group, and it carries
@@ -2840,8 +2849,14 @@ func (m model) workRowLines(r workRow, selected bool, width int) []string {
 	// The elapsed clock stays on this line, where it already was: a squeezed
 	// panel keeps the first line of a row and cuts the second, and the row
 	// that survives that cut must not say less than it did before the
-	// second line existed.
-	right := state + " " + styleFaint.Render(elapsed(r.since))
+	// second line existed. What the run has spent joins it there for the
+	// same reason — it is a fact about the whole run, like its age, and not
+	// a reading of the moment.
+	totals := elapsed(r.since)
+	if r.tokens > 0 {
+		totals += " · " + tokenCount(r.tokens, r.unread)
+	}
+	right := state + " " + styleFaint.Render(totals)
 	lines := []string{splitRow(marker(selected)+dot+" "+name, right, width)}
 	if reading := runLine(r, width); reading != "" {
 		lines = append(lines, reading)
@@ -2849,14 +2864,26 @@ func (m model) workRowLines(r workRow, selected bool, width int) []string {
 	return lines
 }
 
-// runLine is the second line of a row a lane holds: how long since its log
-// last said anything, and a sparkline of the activity behind that. Beside the
+// runLine is the second line of a row a lane holds: the last thing its log
+// says the agent did, and a sparkline of the activity behind it. Beside the
 // elapsed clock on the line above, they answer what elapsed alone cannot —
-// whether a run that started four minutes ago is still doing something.
+// whether a run that started four minutes ago is still doing something, and
+// what it is doing.
+//
+// The line used to say how long since the log last grew. The sparkline was
+// already the better answer to that — a number falling behind says the same
+// thing as a line falling flat, and only the line says how long it had been
+// busy first — so the columns go to the one reading nothing else on the
+// board carries: what the agent just ran. Opening the log pane is still the
+// way to read more than one line of it; this is the line the operator would
+// have opened it for.
 //
 // It is empty for a run with no log to read, which is a lane still
 // provisioning: a blank line under the row would claim a reading that does
-// not exist, and cost the panel a row to say nothing.
+// not exist, and cost the panel a row to say nothing. A log that exists but
+// has not reached a tool call yet keeps the line and leaves the left of it
+// empty — the sparkline is still a reading, and an agent that has only been
+// thinking has done nothing to name.
 //
 // This is a reading, not a verdict. Nothing here compares the number to a
 // threshold or calls a run stuck; SCOPE defers hang detection, and this shows
@@ -2868,11 +2895,11 @@ func runLine(r workRow, width int) string {
 	}
 	// Four spaces: the cursor column and the state dot, so the line starts
 	// under the ticket identifier rather than under the cursor.
-	left := "    heard " + elapsed(r.heard) + " ago"
-	// The number is the reading; the sparkline is the shape behind it.
+	left := "    " + lastCall(r.tool, r.target)
+	// The call is what the agent did; the sparkline is the shape around it.
 	// splitRow protects its right column against a narrow panel, and here
 	// the right column is the one that can be spared — a panel too narrow
-	// for both drops the line rather than truncate the digits.
+	// for both keeps the call and drops the line.
 	//
 	// The line takes the width it is given: one cell per free column, up to
 	// the whole history the ring holds. On a wide terminal's full-width
@@ -2889,7 +2916,63 @@ func runLine(r workRow, width int) string {
 			right = styleFaint.Render(sparkline(r.rate[len(r.rate)-cells:]))
 		}
 	}
-	return splitRow(styleFaint.Render(left), right, width)
+	return splitRow(left, right, width)
+}
+
+// lastCall renders one tool call for a work row: the tool, then what it acted
+// on. Most calls are shell commands, and spelling the tool out for those
+// would spend the row's columns saying "Bash" over and over — a $ says it in
+// one, the way a prompt does, and leaves the command itself the readable part
+// of the line. Every other tool keeps its name, because "model.go" alone does
+// not say whether it was read or written.
+//
+// The target is the agent's own text and untrusted like everything else the
+// log carries (logfmt bounds its length; clean makes it inert). The line is
+// faint but for that text: the row above it is the ticket, and this is the
+// one thing on this line the eye is looking for.
+func lastCall(tool, target string) string {
+	if tool == "" {
+		return ""
+	}
+	prefix := clean(tool)
+	if strings.EqualFold(tool, "bash") || strings.EqualFold(tool, "shell") {
+		prefix = "$"
+	}
+	if target == "" {
+		return styleFaint.Render(prefix)
+	}
+	return styleFaint.Render(prefix+" ") + clean(target)
+}
+
+// tokenCount renders what a run has spent in the columns a work row can
+// spare: 1,400 is 1.4k, 847,000 is 847k, 5,200,000 is 5.2M. The decimal goes
+// where it changes the reading and not where it is noise, and the cutover to
+// M is a hair under the million so that 999,900 does not draw as 1000k.
+//
+// partial marks a total that begins partway through the run: an adopted run's
+// log has a stretch this process never read, and the tokens spent in it are
+// not recoverable from anywhere. The row says at least rather than reporting
+// a number it knows is short — the same rule the sparkline's unread dots
+// follow.
+func tokenCount(n int, partial bool) string {
+	var s string
+	switch {
+	case n >= 999_500:
+		s = fmt.Sprintf("%.1fM", float64(n)/1e6)
+	case n >= 10_000:
+		s = fmt.Sprintf("%.0fk", float64(n)/1e3)
+	case n >= 1_000:
+		s = fmt.Sprintf("%.1fk", float64(n)/1e3)
+	default:
+		s = fmt.Sprintf("%d", n)
+	}
+	// The unit stays on: a bare number beside a clock reads as another
+	// duration.
+	s += " tok"
+	if partial {
+		s = "≥" + s
+	}
+	return s
 }
 
 // mainPanel is the lens: the promote picker while it is open, the ? overlay,
