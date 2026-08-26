@@ -22,7 +22,23 @@ type claudeLine struct {
 	IsError         bool   `json:"is_error"`
 	Message         struct {
 		Content []claudeBlock `json:"content"`
+		Usage   claudeUsage   `json:"usage"`
 	} `json:"message"`
+}
+
+// claudeUsage is what one API call cost, as the assistant line reports it.
+// The four counts are disjoint — cache reads are not part of input_tokens,
+// the way Codex's cached_input_tokens are part of its input — so the total is
+// their sum.
+type claudeUsage struct {
+	InputTokens         int `json:"input_tokens"`
+	OutputTokens        int `json:"output_tokens"`
+	CacheCreationTokens int `json:"cache_creation_input_tokens"`
+	CacheReadTokens     int `json:"cache_read_input_tokens"`
+}
+
+func (u claudeUsage) total() int {
+	return u.InputTokens + u.OutputTokens + u.CacheCreationTokens + u.CacheReadTokens
 }
 
 type claudeBlock struct {
@@ -56,10 +72,18 @@ func (claude) Decode(line string) (Event, bool) {
 		// operator would have read first anyway.
 		for _, b := range l.Message.Content {
 			if ev, ok := block(b); ok {
+				// The usage belongs to the call, not to the block that came
+				// back from it: an assistant line reports what that call
+				// spent whatever it chose to say. A user line — a tool
+				// result — reports none, so this is zero there.
+				ev.Usage = l.Message.Usage.total()
 				return ev, true
 			}
 		}
 	case "result":
+		// The result line carries the run's own total, which is the sum this
+		// stream has been keeping all along. Reporting it as usage would
+		// count the whole run twice at the end of it.
 		return Event{Kind: KindResult, Text: resultLine(l), IsError: l.IsError}, true
 	}
 	return Event{}, false

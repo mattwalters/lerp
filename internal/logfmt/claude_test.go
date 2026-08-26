@@ -25,6 +25,14 @@ func TestClaudeDecodesTheStream(t *testing.T) {
 		{"thinking tokens", claudeThinking, Event{Kind: KindThinking, Tokens: 5850}},
 		{"prose", claudeText, Event{Kind: KindText, Text: "I'll start by reading the ticket."}},
 		{"tool call on a path", claudeRead, Event{Kind: KindToolCall, Tool: "Read", Text: "model.go"}},
+		// Every kind of token the call billed for, and the four counts are
+		// disjoint: 6 + 91 + 4,096 + 12,000.
+		{"an assistant line carries what its call spent",
+			`{"type":"assistant","message":{"content":[{"type":"text","text":"Reading the ticket."}],"usage":{"input_tokens":6,"output_tokens":91,"cache_creation_input_tokens":4096,"cache_read_input_tokens":12000}}}`,
+			Event{Kind: KindText, Text: "Reading the ticket.", Usage: 16193}},
+		{"the run's own total is not counted again",
+			`{"type":"result","subtype":"success","num_turns":3,"usage":{"input_tokens":6,"output_tokens":91}}`,
+			Event{Kind: KindResult, Text: "success · 3 turns"}},
 		{"tool call on a command",
 			`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"go test ./...","description":"Run the tests"}}]}}`,
 			Event{Kind: KindToolCall, Tool: "Bash", Text: "go test ./..."}},

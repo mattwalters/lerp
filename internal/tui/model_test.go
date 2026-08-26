@@ -4633,8 +4633,9 @@ func TestEjectResultKeepsTheWholeCommand(t *testing.T) {
 }
 
 // A running row's second line is the question the first one cannot answer:
-// not "did it start" but "is it still doing something". Elapsed, when the log
-// last grew, and the activity behind it.
+// not "did it start" but "is it still doing something". Elapsed and what the
+// run has spent on the first line, the last call it made and the activity
+// around it on the second.
 func TestRunningRowShowsHowTheRunIsGoing(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "run.log")
 	writeLog(t, path, []byte(
@@ -4652,11 +4653,14 @@ func TestRunningRowShowsHowTheRunIsGoing(t *testing.T) {
 	// The first poll attaches the pulse; the agent then does something.
 	m = update(t, m, pollMsg{})
 	appendLog(t, path,
-		`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"/a/b.go"}}]}}`+"\n")
+		`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"go test ./..."}}],`+
+			`"usage":{"input_tokens":52,"output_tokens":448,"cache_read_input_tokens":11500}}}`+"\n")
 	m = update(t, m, pollMsg{})
 
+	// The tool is a shell one, so the row spends its columns on the command
+	// and not on the word "Bash"; the tokens are the call's four counts.
 	view := m.View()
-	for _, want := range []string{"running", "1m30s", "heard", "ago", "█"} {
+	for _, want := range []string{"running", "1m30s", "12k tok", "$ go test ./...", "█"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("the running row is missing %q:\n%s", want, view)
 		}
@@ -4698,8 +4702,10 @@ func TestProvisioningRowClaimsNoReading(t *testing.T) {
 		TicketID: "id-9", Ticket: "LERP-9", Queue: "plan", LogPath: path, StartedAt: time.Now()}})
 	m = update(t, m, pollMsg{})
 	view := m.View()
-	if strings.Contains(view, "heard") {
-		t.Fatalf("a provisioning row reports a log it does not have:\n%s", view)
+	// One line, not two: the second line is a reading of a log, and there is
+	// no log.
+	if rows, _ := m.workListRows(40); len(rows) != 2 {
+		t.Fatalf("work list drew %d lines, want a header and a one-line row: %q", len(rows), rows)
 	}
 	if strings.ContainsAny(view, "▁█") {
 		t.Fatalf("a provisioning row draws activity for a log that does not exist:\n%s", view)
@@ -4735,10 +4741,15 @@ func TestPulseStartsWhenTheLogDoes(t *testing.T) {
 // operator is looking at; one that opens on a second line strands it under
 // whatever name happens to be above, where it reads as that ticket's.
 func TestScrolledRunKeepsRowsWhole(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "run.log")
-	writeLog(t, path, []byte("agent at work\n"))
+	// The log starts empty and the call arrives after the first poll: a
+	// pulse attaches at the end of the file it finds, so a line written
+	// before the run started is one no row would ever have read.
+	call := `{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash",` +
+		`"input":{"command":"go build ./..."}}]}}` + "\n"
 
 	for _, size := range []struct{ w, h int }{{120, 22}, {120, 25}, {120, 30}, {100, 44}} {
+		path := filepath.Join(t.TempDir(), "run.log")
+		writeLog(t, path, nil)
 		m, _, _ := newTestModel(t, 5)
 		resized, _ := m.Update(tea.WindowSizeMsg{Width: size.w, Height: size.h})
 		m = fillBoard(t, resized.(model), 40)
@@ -4748,6 +4759,8 @@ func TestScrolledRunKeepsRowsWhole(t *testing.T) {
 				TicketID: fmt.Sprintf("t%d", lane-1), Ticket: fmt.Sprintf("QUEUED-%d", lane),
 				Queue: "implement", LogPath: path}})
 		}
+		m = update(t, m, pollMsg{})
+		appendLog(t, path, call)
 		m = update(t, m, pollMsg{})
 		m = update(t, m, keyMsg("2"))
 
@@ -4766,13 +4779,13 @@ func TestScrolledRunKeepsRowsWhole(t *testing.T) {
 			if at < 0 {
 				t.Fatalf("%dx%d: the selected row %s is not on the panel:\n%s", size.w, size.h, want, panel)
 			}
-			if at+1 >= len(lines) || !strings.Contains(lines[at+1], "heard") {
+			if at+1 >= len(lines) || !strings.Contains(lines[at+1], "$ go build") {
 				t.Fatalf("%dx%d: %s lost its reading to the window:\n%s", size.w, size.h, want, panel)
 			}
 			// And no reading line is left under a name it does not belong
 			// to: every one of them follows the row that produced it.
 			for i, l := range lines {
-				if !strings.Contains(l, "heard") {
+				if !strings.Contains(l, "$ go build") {
 					continue
 				}
 				if i == 0 || !strings.Contains(lines[i-1], "●") {
@@ -4872,12 +4885,13 @@ func TestEjectSaysWhyARunnerCannotResume(t *testing.T) {
 }
 
 // The panel the wide layout starts at is the narrowest one it draws, and the
-// number is the reading: the sparkline is what yields to a narrow panel,
-// never the digits.
-func TestRunLineKeepsItsNumbersWhenNarrow(t *testing.T) {
+// call is the reading: the sparkline is what yields to a narrow panel, never
+// the command.
+func TestRunLineKeepsTheCallWhenNarrow(t *testing.T) {
 	r := workRow{lane: 1, since: time.Now().Add(-65 * time.Minute),
 		heard: time.Now().Add(-12*time.Minute - 30*time.Second),
-		rate:  []int{1, 0, 3, 0, 9, 0, 0, 0}}
+		tool:  "Bash", target: "go test ./...",
+		rate: []int{1, 0, 3, 0, 9, 0, 0, 0}}
 	// What a 100-column terminal — the wide layout's own threshold — leaves
 	// a list panel for its rows beside an open pane, asked of the geometry
 	// rather than restated. The pane is what makes the panel narrow, so it
@@ -4889,8 +4903,8 @@ func TestRunLineKeepsItsNumbersWhenNarrow(t *testing.T) {
 	width := padList.inner(m.geometry().sideW)
 
 	line := ansi.Strip(runLine(r, width))
-	if !strings.Contains(line, "heard 12m30s ago") {
-		t.Fatalf("the number did not survive a %d-column panel: %q", width, line)
+	if !strings.Contains(line, "$ go test ./...") {
+		t.Fatalf("the call did not survive a %d-column panel: %q", width, line)
 	}
 	if !strings.ContainsAny(line, "▁█") {
 		t.Fatalf("the sparkline was dropped where it fits: %q", line)
@@ -4907,15 +4921,89 @@ func TestRunLineKeepsItsNumbersWhenNarrow(t *testing.T) {
 			fits = w
 		}
 	}
-	if want := lipgloss.Width("    heard 12m30s ago") + 1 + len(r.rate); fits != want {
+	if want := lipgloss.Width("    $ go test ./...") + 1 + len(r.rate); fits != want {
 		t.Fatalf("the sparkline appears at %d columns, but the line draws in %d", fits, want)
 	}
 	tight := ansi.Strip(runLine(r, fits-1))
 	if strings.ContainsAny(tight, "▁█") {
-		t.Fatalf("a sparkline crowded out the number: %q", tight)
+		t.Fatalf("a sparkline crowded out the call: %q", tight)
 	}
-	if !strings.Contains(tight, "heard 12m30s ago") {
+	if !strings.Contains(tight, "$ go test ./...") {
 		t.Fatalf("the reading was truncated to make room for decoration: %q", tight)
+	}
+}
+
+// The first line carries the facts about the whole run — how long it has been
+// going, and what it has spent — in the columns a row can spare for them. A
+// run this process did not start has a total that begins partway through it,
+// and the row says at least rather than reporting a number it knows is short.
+func TestRunningRowCarriesWhatTheRunHasSpent(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	r := workRow{ticket: "LERP-1", title: "one", lane: 1, state: laneRunning,
+		since: time.Now().Add(-90 * time.Second), heard: time.Now(), tokens: 5_200_000}
+
+	first := ansi.Strip(m.workRowLines(r, false, 80)[0])
+	if !strings.Contains(first, "1m30s") || !strings.Contains(first, "5.2M tok") {
+		t.Fatalf("the running row does not say how long or how much: %q", first)
+	}
+	if strings.Contains(first, "≥") {
+		t.Fatalf("a run watched from the start hedges its own total: %q", first)
+	}
+
+	r.state, r.unread = laneAdopted, true
+	if got := ansi.Strip(m.workRowLines(r, false, 80)[0]); !strings.Contains(got, "≥5.2M tok") {
+		t.Fatalf("an adopted run reports a partial total as the run's: %q", got)
+	}
+
+	// A run that has not been charged for anything yet says nothing about
+	// tokens: "0 tok" is a reading nobody asked for.
+	r.tokens, r.unread = 0, false
+	if got := ansi.Strip(m.workRowLines(r, false, 80)[0]); strings.Contains(got, "tok") {
+		t.Fatalf("a run that has spent nothing still reports a total: %q", got)
+	}
+}
+
+// The counts a run reaches span four orders of magnitude, and the row has
+// about six columns for them: the decimal goes where it changes the reading
+// and not where it is noise.
+func TestSpendReadsInTheColumnsARowHas(t *testing.T) {
+	for _, tc := range []struct {
+		n    int
+		want string
+	}{
+		{940, "940 tok"},
+		{1_400, "1.4k tok"},
+		{9_990, "10.0k tok"},
+		{12_499, "12k tok"},
+		{847_000, "847k tok"},
+		{999_900, "1.0M tok"},
+		{5_200_000, "5.2M tok"},
+	} {
+		if got := tokenCount(tc.n, false); got != tc.want {
+			t.Errorf("tokenCount(%d) = %q, want %q", tc.n, got, tc.want)
+		}
+	}
+	if got := tokenCount(5_200_000, true); got != "≥5.2M tok" {
+		t.Errorf("a partial total renders as %q", got)
+	}
+}
+
+// A log that exists but has not reached a tool call keeps its second line:
+// the sparkline is still a reading, and an agent that has only been thinking
+// has done nothing to name. The line goes only when there is no log at all.
+func TestRunLineHoldsItsPlaceBeforeTheFirstCall(t *testing.T) {
+	r := workRow{lane: 1, since: time.Now(), heard: time.Now(),
+		rate: []int{0, 1, 2, 0, 1, 0, 0, 3}}
+	line := ansi.Strip(runLine(r, 60))
+	if !strings.ContainsAny(line, "▁█") {
+		t.Fatalf("a run with no call yet lost its line: %q", line)
+	}
+	if strings.Contains(line, "$") {
+		t.Fatalf("a run that has called nothing drew a call: %q", line)
+	}
+	r.heard = time.Time{}
+	if got := runLine(r, 60); got != "" {
+		t.Fatalf("a lane with no log at all drew %q", got)
 	}
 }
 

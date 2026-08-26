@@ -27,6 +27,7 @@ type codexLine struct {
 		Message string `json:"message"`
 	} `json:"error"`
 	Usage *struct {
+		InputTokens  int `json:"input_tokens"`
 		OutputTokens int `json:"output_tokens"`
 	} `json:"usage"`
 	Item struct {
@@ -56,7 +57,10 @@ func (codex) Decode(line string) (Event, bool) {
 	case "item.completed":
 		return codexItemCompleted(l)
 	case "turn.completed":
-		return Event{Kind: KindResult, Text: turnLine(l)}, true
+		// A turn is where Codex reports what it spent; exec runs are usually
+		// one turn, so this is usually the whole run's usage arriving at the
+		// end of it.
+		return Event{Kind: KindResult, Text: turnLine(l), Usage: codexUsage(l)}, true
 	case "turn.failed":
 		return Event{Kind: KindResult, Text: short(l.Error.Message, maxResult), IsError: true}, true
 	case "error":
@@ -113,6 +117,15 @@ func changed(l codexLine) string {
 		text += fmt.Sprintf(" (+%d)", n)
 	}
 	return short(text, maxTarget)
+}
+
+// codexUsage is what a finished turn cost. Input already counts the cached
+// part, which is what makes this a sum of two fields where Claude's is four.
+func codexUsage(l codexLine) int {
+	if l.Usage == nil {
+		return 0
+	}
+	return l.Usage.InputTokens + l.Usage.OutputTokens
 }
 
 func turnLine(l codexLine) string {

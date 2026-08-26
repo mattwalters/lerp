@@ -332,13 +332,16 @@ The Work view is one list of what the machine is doing with the
 board, grouped by queue: every ticket sitting in each queue's status,
 in the loop's own pickup order, with the ones running now at the top
 of their own group. A running row carries its state — provisioning
-or running — and the run's elapsed time. A run inherited from a
-previous `lerp` reads as `running` like any other, and shows its true
-age rather than the moment it was adopted. Under it, once the run
-has a log, a second line reads how that run is going: how long since
-the log last said anything, and a sparkline of the agent's recent
-activity, so a run that has fallen quiet reads as a flat line. The
-line takes the width the row is given: on a wide terminal's
+or running — the run's elapsed time, and the tokens it has spent, as
+its own log reports them. A run inherited from a previous `lerp` reads
+as `running` like any other, and shows its true age rather than the
+moment it was adopted; its total covers only the stretch this `lerp`
+has watched, and reads `≥` to say so. Under it, once the run has a
+log, a second line reads how that run is going: the last call the
+agent made — a shell command as `$ go test ./...`, anything else by
+tool and target — and a sparkline of its recent activity, so a run
+that has fallen quiet reads as a flat line. The line takes the width
+the row is given: on a wide terminal's
 full-width list it draws back about a quarter of an hour, and beside
 an open main pane it shows the recent end of that same history. A
 cell is fifteen seconds wherever it is drawn, so a narrow row reaches
