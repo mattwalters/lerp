@@ -89,6 +89,22 @@ func TestPromoteTargets(t *testing.T) {
 	}
 }
 
+// WatchedStatuses is the set some queue picks up from, and nothing else: in
+// validRepo the two queue statuses, never the on_success/on_failure targets
+// no queue watches. Those are the pipeline's exits, and the claim-release
+// rule turns on the difference.
+func TestWatchedStatuses(t *testing.T) {
+	path := writeFile(t, "lerp.toml", validRepo)
+	c, err := LoadRepoConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{"Planning": true, "Implementing": true}
+	if got := c.WatchedStatuses(); !reflect.DeepEqual(got, want) {
+		t.Errorf("WatchedStatuses = %v, want %v", got, want)
+	}
+}
+
 func TestLoadRepoConfigErrors(t *testing.T) {
 	// A minimal valid pipeline appended to team/workspace fragments, so each
 	// case isolates the error it is about.

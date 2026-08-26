@@ -482,10 +482,7 @@ func reportStatuses(out io.Writer, teamKey string, cfg *config.RepoConfig, exist
 // that runs in it, "<queue> exit" for an on_success no queue watches, and
 // "failure exit" for an on_failure no queue watches.
 func statusRoles(cfg *config.RepoConfig) map[string][]string {
-	watched := map[string]bool{}
-	for _, q := range cfg.Queues {
-		watched[q.Status] = true
-	}
+	watched := cfg.WatchedStatuses()
 	roles := map[string][]string{}
 	add := func(name, role string) {
 		if !slices.Contains(roles[name], role) {
@@ -508,7 +505,12 @@ func statusRoles(cfg *config.RepoConfig) map[string][]string {
 }
 
 // stateSpecs names every status the queues reference, all in Linear's
-// "started" category.
+// "started" category. The names are statusRoles' keys, not a second walk of
+// the queues: what init creates and what it just reported creating are then
+// the same set by construction, rather than two loops that happen to encode
+// the same rule. Grow Queue another status-valued field and the pair still
+// cannot drift apart — reporting a status init never creates, or creating
+// one it never reported and failing loop.Verify on the first run.
 //
 // "started" is deliberate, not a default: whether a status ends work is a
 // fact about the operator's process that queue topology cannot reveal. An
@@ -520,21 +522,9 @@ func statusRoles(cfg *config.RepoConfig) map[string][]string {
 // blocker that still blocks is something a human notices. reportExits
 // turns that residual risk into an explicit instruction.
 func stateSpecs(cfg *config.RepoConfig) []linear.StateSpec {
-	names := map[string]bool{}
-	for _, q := range cfg.Queues {
-		names[q.Status] = true
-		names[q.OnSuccess] = true
-		if q.OnFailure != "" {
-			names[q.OnFailure] = true
-		}
-	}
-	sorted := make([]string, 0, len(names))
-	for name := range names {
-		sorted = append(sorted, name)
-	}
-	slices.Sort(sorted)
-	specs := make([]linear.StateSpec, 0, len(sorted))
-	for _, name := range sorted {
+	names := slices.Sorted(maps.Keys(statusRoles(cfg)))
+	specs := make([]linear.StateSpec, 0, len(names))
+	for _, name := range names {
 		specs = append(specs, linear.StateSpec{Name: name, Type: "started"})
 	}
 	return specs
@@ -543,10 +533,7 @@ func stateSpecs(cfg *config.RepoConfig) []linear.StateSpec {
 // pipelineExits are the on_success targets no queue watches: the statuses
 // where work leaves the automated path.
 func pipelineExits(cfg *config.RepoConfig) []string {
-	watched := map[string]bool{}
-	for _, q := range cfg.Queues {
-		watched[q.Status] = true
-	}
+	watched := cfg.WatchedStatuses()
 	seen := map[string]bool{}
 	exits := []string{}
 	for _, q := range cfg.Queues {

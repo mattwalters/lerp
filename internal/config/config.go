@@ -195,6 +195,28 @@ func orStock(name, stock string) string {
 	return name
 }
 
+// WatchedStatuses is the set of statuses some configured queue picks up from
+// — SCOPE concept 2's `status` field, collected. It is the single spelling of
+// "a queue watches this", and three separate rules turn on it: whether a
+// finished run releases its claim (the rule LERP-50 and LERP-59 each got
+// wrong by writing it out a second time), which tickets the inbox calls
+// waiting on a human, and which of the statuses a config names init reports
+// as an exit rather than a stage. The loop's own prose calls these the
+// *served* statuses; they are the same set.
+//
+// Every other status lerp.toml names — the on_success and on_failure targets
+// no queue watches — is a pipeline exit by construction, so no method spells
+// that out separately: it is PromoteTargets minus this.
+func (c *RepoConfig) WatchedStatuses() map[string]bool {
+	// One entry per queue exactly: validate rejects two queues sharing a
+	// status.
+	watched := make(map[string]bool, len(c.Queues))
+	for _, q := range c.Queues {
+		watched[q.Status] = true
+	}
+	return watched
+}
+
 // PromoteTargets lists every status the TUI's promote action may move a
 // ticket into: each queue's own status, in queue-name order, followed by any
 // on_success/on_failure target not already a queue's status — the
