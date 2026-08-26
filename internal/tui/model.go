@@ -742,14 +742,6 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Nothing to narrow is nothing to search: an empty inbox would put a
 		// prompt over the one line that says so.
 		if m.focus == panelAttention && len(m.attention) > 0 {
-			// Searching is something the operator does to the list, in
-			// order to pick a row out of it — the prompt is drawn in the
-			// panel's own footer and enter hands the keyboard back to the
-			// list. So the keys come out of the pane here rather than
-			// returning to it when the prompt closes, where the first j
-			// after narrowing would scroll a ticket body instead of walking
-			// the matches.
-			m.keysInMain = false
 			m.openSearch()
 			m.refreshMain()
 		}
@@ -1052,27 +1044,40 @@ func (m *model) mainFocused() bool {
 	return m.keysInMain && m.paneTakesKeys(m.focus)
 }
 
-// paneTakesKeys reports whether p's pane is a surface tab can reach: open,
-// with the room to draw, on a row, and not covered by a modal that has the
-// keyboard already.
+// paneTakesKeys reports whether p's pane can hold the keys at all: open,
+// with the room to draw, and not covered by a modal that has the keyboard
+// already. It is the rule for keeping them, which is why it is this short —
+// focus moves when the operator moves it, and a pass landing is not the
+// operator.
 //
-// The row is one of those because the pane is a lens and not a panel: with
-// no row under p's cursor it is holding a state sentence — "waiting for the
-// first pass…", "the inbox is empty" — and the keys would arrive with
-// nothing to scroll and no selection left to move. Which row it is never
-// matters, so a resort under a pane the operator is reading does not take
-// its keys away.
-//
-// The ? overlay is deliberately not in that list, where a modal is. A modal
-// has the keyboard outright and draws its own instructions, and the search
-// prompt lives in the panel's own footer, which has to stay lit while it is
-// being typed into. The overlay only borrows the pane: the keys stay where
-// the operator put them, scrolling whatever the pane is holding — which is
-// the help while it is up. That is also what keeps the screen honest, since
-// a panel still lit behind the overlay is what says the keys are on the
-// list.
+// A modal is in that list and the ? overlay is not. A modal has the
+// keyboard outright and draws its own instructions, and the search prompt
+// lives in the panel's own footer, which has to stay lit while it is being
+// typed into. The overlay only borrows the pane: the keys stay where the
+// operator put them, scrolling whatever the pane is holding — which is the
+// help while it is up. That is also what keeps the screen honest, since a
+// panel still lit behind the overlay is what says the keys are on the list.
 func (m *model) paneTakesKeys(p panel) bool {
-	return m.detailOpen[p] && m.roomForMain() && !m.modal() && m.hasRow(p)
+	return m.detailOpen[p] && m.roomForMain() && !m.modal()
+}
+
+// paneJoinsCycle is the stricter rule for tab arriving: on top of holding
+// the keys, the pane has to be visible and a lens on a row.
+//
+// Not visible is the overlay drawn over it — tab behind the overlay means
+// what it always meant, the next panel, rather than moving the keys into a
+// surface the operator cannot see them arrive in. Not a row is a pane
+// holding a state sentence — "waiting for the first pass…", "the inbox is
+// empty" — where the keys would arrive with nothing to scroll and no
+// selection left to move.
+//
+// Only arriving asks: a panel that empties under a pane the operator is
+// already reading keeps its keys, because taking them back would be a
+// board's read deciding where the keyboard points. A pass whose Linear
+// calls all failed reports an empty queue exactly like an empty one, and
+// once a pass can move focus, an outage moves it every interval.
+func (m *model) paneJoinsCycle(p panel) bool {
+	return m.paneTakesKeys(p) && !m.helpOn && m.hasRow(p)
 }
 
 // hasRow reports whether p's cursor is standing on anything.
@@ -1093,7 +1098,7 @@ func (m *model) hasRow(p panel) bool {
 // stepping back off a pane lands on the panel whose row it is showing.
 func (m *model) cycleSurface(delta int) {
 	switch {
-	case delta > 0 && !m.mainFocused() && m.paneTakesKeys(m.focus):
+	case delta > 0 && !m.mainFocused() && m.paneJoinsCycle(m.focus):
 		// Into the pane the focused panel already has open. Deliberately
 		// not setFocus: the panel is not changing, and re-aiming the lens
 		// would scroll the pane the operator is moving into back to its top.
@@ -1103,7 +1108,7 @@ func (m *model) cycleSurface(delta int) {
 	default:
 		next := (m.focus + 1) % 2
 		m.setFocus(next)
-		m.keysInMain = delta < 0 && m.paneTakesKeys(next)
+		m.keysInMain = delta < 0 && m.paneJoinsCycle(next)
 	}
 }
 
@@ -1351,16 +1356,6 @@ func (m *model) apply(ev loop.Event) {
 	}
 	m.reorder()
 	m.retargetWork()
-	// A panel that empties under a pane holding the keys takes them back —
-	// and keeps them. The bit is cleared rather than left to mainFocused,
-	// which would only be loaning them: the queue refills a pass later, and
-	// the keys would jump back into a pane now aimed at a row nobody chose,
-	// with no keystroke anywhere near it. Focus moves when the operator
-	// moves it; a board that changed under them is the one exception, and
-	// it happens once.
-	if m.keysInMain && !m.hasRow(m.focus) {
-		m.keysInMain = false
-	}
 	// A run that ended while the confirm was open leaves nothing to kill, so
 	// the overlay closes rather than sending enter after a dead agent — the
 	// same care the promote picker takes when its list empties.
@@ -3289,9 +3284,10 @@ func (m model) statusBar() string {
 	case m.helpOn:
 	case m.mainFocused():
 		// The keys are somewhere they have never been before, so the bar
-		// says how to leave as well as how to close. esc still closes the
-		// pane from in here — it has not grown a second meaning — and tab
-		// carries on round the cycle it came in on.
+		// says how to leave as well as how to close: tab carries on round
+		// the cycle it came in on. esc is the same esc it was — including
+		// that a live filter is what it takes first, which the panel's own
+		// line says with "esc clear" while one is on.
 		hint = "tab next · esc close · " + hint
 	case m.detailOpen[m.focus]:
 		hint = "esc close · " + hint

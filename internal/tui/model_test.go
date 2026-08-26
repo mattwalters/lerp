@@ -5137,23 +5137,50 @@ func TestTabSkipsAPaneWithNoRowUnderIt(t *testing.T) {
 		t.Fatalf("tab did not reach the pane once it had a row to be a lens on:\n%s", m.View())
 	}
 
-	// A panel that empties under a pane holding the keys hands them back to
-	// the list that now says so — and keeps them when the queue refills. A
-	// board that changed is not a keystroke, so it moves focus once, not
-	// back and forth as passes land.
-	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
-		{Team: "LERP", Name: "implement", Status: "Todo"},
-	}}})
-	if m.mainFocused() {
-		t.Fatal("the keys stayed in a pane whose row had gone")
+	// Only arriving asks. A panel that empties under a pane the operator is
+	// already reading keeps its keys — a pass whose Linear calls all failed
+	// reports an empty queue exactly like an empty one, and a rule that let
+	// a read move the keyboard would move it every interval an outage
+	// lasted, then again on the way back, into a pane aimed at whatever
+	// queued next.
+	for _, ev := range []loop.Event{
+		{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+			{Team: "LERP", Name: "implement", Status: "Todo"}}},
+		{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+			{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
+				{ID: "id-10", Identifier: "LERP-10", Title: "queued later", Eligible: true},
+			}}}},
+	} {
+		m = update(t, m, eventMsg{ev: ev})
+		if !m.mainFocused() {
+			t.Fatalf("a pass moved the keys out of the pane the operator put them in:\n%s",
+				m.View())
+		}
 	}
-	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
-		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
-			{ID: "id-10", Identifier: "LERP-10", Title: "queued later", Eligible: true},
-		}}}}})
+}
+
+// Done-when: tab behind the ? overlay means what it always meant. The
+// overlay leaves the keys where they are — see the test above — but it
+// covers the pane, and a tab that moved them into a surface the operator
+// cannot see them arrive in would land them somewhere they never chose:
+// the overlay closes, and j scrolls a ticket body instead of walking rows.
+func TestTabBehindTheOverlayStillMeansTheNextPanel(t *testing.T) {
+	m, _, reader := newReadingTestModel(t)
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+	m = openMain(t, m)
+	m = selectAndRead(t, m, 0, linear.IssueDetail{Body: "the body of the first"}, nil, reader)
+
+	m = update(t, m, keyMsg("?"))
+	m = update(t, m, keyMsg("tab"))
 	if m.mainFocused() {
-		t.Fatal("a pass that refilled the queue put the keys back in the pane, " +
-			"aimed at a row nobody chose")
+		t.Fatal("tab behind the overlay put the keys in a pane nobody can see")
+	}
+	if m.focus != panelWork {
+		t.Fatalf("tab behind the overlay landed on %v, want the work panel", m.focus)
+	}
+	m = update(t, m, keyMsg("?"))
+	if m.mainFocused() || m.focus != panelWork {
+		t.Fatalf("closing the overlay left the keys at %v/%v", m.focus, m.mainFocused())
 	}
 }
 

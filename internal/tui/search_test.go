@@ -162,34 +162,52 @@ func TestSearchEnterKeepsTheFilterAndGivesTheKeysBack(t *testing.T) {
 	}
 }
 
-// Done-when: / takes the keys out of the main pane. Searching is something
-// the operator does to the list in order to pick a row out of it — the
-// prompt is drawn in the panel's own footer — so the first j after
-// narrowing walks the matches, where a key handed back to the pane would
-// scroll a ticket body instead.
-func TestSearchTakesTheKeysOutOfThePane(t *testing.T) {
-	m, _, _ := newTestModel(t, 1)
-	m = update(t, m, keyMsg("1"))
-	m = update(t, m, eventMsg{ev: board()})
-	m = openMain(t, m)
-	m = update(t, m, keyMsg("tab"))
-	if !m.mainFocused() {
-		t.Fatal("tab did not put the keys in the inbox pane")
+// Done-when: an accepted search takes the keys out of the main pane.
+// Narrowing is something the operator does to the list in order to pick a
+// row out of what is left — the prompt is drawn in the panel's own footer —
+// so the first j after enter walks the matches, where a key handed back to
+// the pane would scroll a ticket body instead. Cancelling puts them back
+// with the rest of the list it puts back: nothing was narrowed.
+func TestAnAcceptedSearchTakesTheKeysOutOfThePane(t *testing.T) {
+	keysInThePane := func(t *testing.T) model {
+		t.Helper()
+		m, _, _ := newTestModel(t, 1)
+		m = update(t, m, keyMsg("1"))
+		m = update(t, m, eventMsg{ev: board()})
+		m = openMain(t, m)
+		m = update(t, m, keyMsg("tab"))
+		if !m.mainFocused() {
+			t.Fatal("tab did not put the keys in the inbox pane")
+		}
+		return m
 	}
 
-	m = update(t, m, keyMsg("/"))
-	if m.mainFocused() {
-		t.Fatal("/ opened the prompt with the keys still in the pane")
+	m := typeSearch(t, update(t, keysInThePane(t), keyMsg("/")), "Backlog")
+	// The prompt has the keyboard outright, so mainFocused is false here
+	// whatever the operator's own answer is; the bit is what says where
+	// enter will hand them.
+	if !m.keysInMain {
+		t.Fatal("the prompt opening moved the keys the operator had left in the pane")
+	}
+	if len(m.shown) < 2 {
+		t.Fatalf("the query narrowed to %d rows: there is nothing to walk", len(m.shown))
 	}
 	m = update(t, m, keyMsg("enter"))
 	if m.mainFocused() {
 		t.Fatal("the accepted search handed the keys back to the pane")
 	}
-	before := m.attnSel
+	narrowed, before := len(m.shown), m.attnSel
 	m = update(t, m, keyMsg("j"))
 	if m.attnSel == before {
-		t.Fatalf("j after the search scrolled the pane instead of walking the matches: "+
-			"row %d, %d shown", m.attnSel, len(m.shown))
+		t.Fatalf("j after the search scrolled the pane instead of walking the %d matches",
+			narrowed)
+	}
+
+	// Cancelled, the list comes back as it was — rows, cursor and keys.
+	m = typeSearch(t, update(t, keysInThePane(t), keyMsg("/")), "zzz")
+	m = update(t, m, keyMsg("esc"))
+	if !m.mainFocused() {
+		t.Fatal("a cancelled search left the keys on the list it put back")
 	}
 }
 
