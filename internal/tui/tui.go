@@ -28,6 +28,12 @@ func Run(ctx context.Context, o Options) error {
 	if err := o.Validate(); err != nil {
 		return err
 	}
+	// Once, before the first render: the palette's light and dark variants
+	// are chosen per render from what lipgloss believes the background is,
+	// and this is the operator's say in that belief (see theme.go).
+	if err := useBackground(os.Getenv(backgroundEnv)); err != nil {
+		return err
+	}
 	m := newModel(ctx, o)
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	_, err := p.Run()

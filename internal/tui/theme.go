@@ -15,13 +15,71 @@ import (
 // (a filled dot against a spinner frame, "running", "provisioning"), so
 // the screen still reads on a 16-color terminal or to a color-blind
 // operator.
+//
+// Every entry clears a contrast floor against the backgrounds a terminal
+// is likely to have; theme_test.go measures it and fails when one stops.
+// Retuning a colour means re-measuring it there — the floor is the test,
+// not this comment.
+//
+// De-emphasis has a floor too: faint is faint by weight and position, not
+// by being hard to read. styleTicket is bold, so the ramp reads bold /
+// normal / faint rather than normal / nearly-invisible.
 var (
 	colorFocus        = lipgloss.AdaptiveColor{Light: "#6E4BC7", Dark: "#A78BFA"}
-	colorRunning      = lipgloss.AdaptiveColor{Light: "#14855F", Dark: "#3DDC97"}
-	colorProvisioning = lipgloss.AdaptiveColor{Light: "#A16207", Dark: "#F2B84B"}
+	colorRunning      = lipgloss.AdaptiveColor{Light: "#127A57", Dark: "#3DDC97"}
+	colorProvisioning = lipgloss.AdaptiveColor{Light: "#9A5E07", Dark: "#F2B84B"}
 	colorAttention    = lipgloss.AdaptiveColor{Light: "#C4275B", Dark: "#F2618E"}
-	colorFaint        = lipgloss.AdaptiveColor{Light: "#847E92", Dark: "#6B6684"}
+	colorFaint        = lipgloss.AdaptiveColor{Light: "#6E697C", Dark: "#9490A9"}
 )
+
+// contrastFloor is the ratio every colour here has to clear against its
+// backgrounds. WCAG asks 4.5:1 of text (1.4.3) and 3:1 of a graphic or a
+// boundary that carries meaning (1.4.11); every colour in this palette
+// renders text somewhere — faint draws the hint lines as well as the
+// sparkline and the panel borders — so the stricter floor is the only one
+// that binds, and one number covers both rules.
+const contrastFloor = 4.5
+
+// palette is every colour above in one list, so the contrast test can walk
+// them. A colour added to the block above belongs here too, or nothing
+// measures it.
+var palette = []struct {
+	name  string
+	color lipgloss.AdaptiveColor
+}{
+	{"focus", colorFocus},
+	{"running", colorRunning},
+	{"provisioning", colorProvisioning},
+	{"attention", colorAttention},
+	{"faint", colorFaint},
+}
+
+// backgroundEnv lets an operator say which background their terminal has.
+// lipgloss picks the Light or Dark variant from termenv's OSC 11 query, and
+// a terminal that does not answer it — tmux, screen, plenty of ssh and CI
+// terminals — falls back to black, so a light terminal silently gets the
+// dark variants on white. This is the way out of that.
+//
+// An environment variable rather than a config key on purpose: lerp.toml
+// describes the repo's pipeline, and this is one operator's terminal.
+const backgroundEnv = "LERP_BACKGROUND"
+
+// useBackground applies the override, read once at startup. Unset leaves
+// detection alone; a value that is neither light nor dark is an error
+// rather than a silent fall back to the guess the override exists to
+// escape.
+func useBackground(v string) error {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "":
+	case "light":
+		lipgloss.SetHasDarkBackground(false)
+	case "dark":
+		lipgloss.SetHasDarkBackground(true)
+	default:
+		return fmt.Errorf("%s=%q: want \"light\" or \"dark\"", backgroundEnv, v)
+	}
+	return nil
+}
 
 var (
 	styleTicket       = lipgloss.NewStyle().Bold(true)
