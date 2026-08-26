@@ -46,6 +46,17 @@ check: ## The gate, on Linux and macOS in CI: gofmt, vet, build, test
 fmt: ## Format all Go source
 	gofmt -w .
 
+.PHONY: example
+example: ## Regenerate lerp.example.toml from internal/config/stock.toml
+# Rendered to a scratch file and moved into place only once it is written, for
+# the same reason the demo recipe does it: `go run ... > lerp.example.toml`
+# truncates the committed file before the generator starts, so a package that
+# does not compile leaves an empty example behind and a deletion in the diff.
+	@tmp=$$(mktemp) && go run ./internal/config/example > $$tmp \
+	  && mv $$tmp lerp.example.toml \
+	  && printf 'regenerated lerp.example.toml\n' \
+	  || { rm -f $$tmp; exit 1; }
+
 # --------------------------------------------------------------------------
 # The README cast
 # --------------------------------------------------------------------------

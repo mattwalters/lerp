@@ -125,12 +125,18 @@ func (q Queue) ExpandPrompt(ticket string) string {
 // names. bypass keeps the stock runner's `--permission-mode
 // bypassPermissions` grant; declining strips the flag, leaving a runner the
 // operator must widen deliberately before unattended runs can do real work.
-//
-// This is also what the shipped lerp.example.toml is, byte for byte, for
-// teams ["LERP"] with bypass accepted: `internal/config/example` writes it
-// and TestStockMatchesExample pins it.
 func StockRepoConfig(teams []string, bypass bool) string {
 	return Stock{Teams: teams, Bypass: bypass, Plan: true, Review: true}.Render()
+}
+
+// ExampleRepoConfig renders the shipped lerp.example.toml: the stock
+// pipeline for one team with the permission grant accepted. The example is a
+// derived artifact, and this is what derives it — `internal/config/example`
+// writes the file and TestStockMatchesExample pins the committed bytes to
+// this output. The parameters live here, in one place, so the generator and
+// the pin cannot disagree about what the example is supposed to be.
+func ExampleRepoConfig() string {
+	return StockRepoConfig([]string{"LERP"}, true)
 }
 
 // Render assembles the stock lerp.toml text for these choices. Assembly is

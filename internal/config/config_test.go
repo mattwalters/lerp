@@ -541,7 +541,7 @@ func TestStockVariants(t *testing.T) {
 	}
 }
 
-// The shipped example is exactly what StockRepoConfig renders, byte for
+// The shipped example is exactly what ExampleRepoConfig renders, byte for
 // byte, and this is what says so. Comparing the parsed structs would pin
 // only the decoded fields and leave the ~90 lines of operator-facing
 // commentary — the PERMISSIONS warning, the plan-gate explanation, the "no
@@ -552,35 +552,71 @@ func TestStockVariants(t *testing.T) {
 // The repo-root lerp.toml is deliberately not pinned: it edits the stock
 // pipeline for this repo, and pinning it would be pinning a fork.
 func TestStockMatchesExample(t *testing.T) {
-	rendered := StockRepoConfig([]string{"LERP"}, true)
 	example, err := os.ReadFile(filepath.Join("..", "..", "lerp.example.toml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if diff := firstLineDiff(rendered, string(example)); diff != "" {
-		t.Errorf("lerp.example.toml is not what StockRepoConfig renders:\n%s\n\n"+
-			"Regenerate it from the template — the rendering is the source of truth:\n"+
-			"    go run ./internal/config/example > lerp.example.toml", diff)
+	if diff := firstDiff(ExampleRepoConfig(), string(example)); diff != "" {
+		// Which side is wrong depends on which one someone just edited, so
+		// name both directions: stock.toml is the source, but the drift this
+		// test exists to catch has arrived as an edit to the example too.
+		t.Errorf("lerp.example.toml is not what ExampleRepoConfig renders:\n%s\n\n"+
+			"internal/config/stock.toml is the source. Make the change there —\n"+
+			"including any prose meant only for the example — then regenerate:\n"+
+			"    make example", diff)
 	}
 }
 
-// firstLineDiff describes where two texts first differ, as the line number
-// and the two lines, or "" when they are identical. A 400-line file needs a
+// firstDiff describes where two texts first differ, as the line number and
+// the two lines, or "" when they are identical. A 200-line file needs a
 // failure that names the line, not one that reports two byte counts.
-func firstLineDiff(got, want string) string {
+func firstDiff(got, want string) string {
+	if got == want {
+		return ""
+	}
+	// A file's final newline makes Split yield a trailing "", so line counts
+	// here are counted, not len()'d — an off-by-one in a failure message
+	// sends a reader to the wrong line.
 	gotLines, wantLines := strings.Split(got, "\n"), strings.Split(want, "\n")
 	for i := 0; i < len(gotLines) && i < len(wantLines); i++ {
 		if gotLines[i] != wantLines[i] {
 			return fmt.Sprintf("first difference at line %d:\n  rendered: %q\n  example:  %q", i+1, gotLines[i], wantLines[i])
 		}
 	}
-	switch {
-	case len(gotLines) > len(wantLines):
-		return fmt.Sprintf("example ends at line %d; rendered continues: %q", len(wantLines), gotLines[len(wantLines)])
-	case len(wantLines) > len(gotLines):
-		return fmt.Sprintf("rendered ends at line %d; example continues: %q", len(gotLines), wantLines[len(gotLines)])
+	// One is a prefix of the other. The likeliest way that happens is a lost
+	// trailing newline, which prints as an empty extra line and reads as
+	// nothing at all unless it is named.
+	long, short, which := gotLines, wantLines, "rendered"
+	if len(wantLines) > len(gotLines) {
+		long, short, which = wantLines, gotLines, "example"
 	}
-	return ""
+	if len(long) == len(short)+1 && long[len(short)] == "" {
+		return fmt.Sprintf("identical except the trailing newline: %s has one, the other does not", which)
+	}
+	return fmt.Sprintf("identical for %d lines, then %s continues: %q",
+		len(short), which, long[len(short)])
+}
+
+// Declining the permission grant strips bypassFlag from the whole rendered
+// document, not from the runner commands alone — Render has no idea which
+// occurrence is a command and which is prose. The only thing keeping the
+// PERMISSIONS paragraph out of its way is that the paragraph writes the flag
+// inside backticks, so no space precedes it. Unquote it and the operator who
+// declined — the one whose config is the security-sensitive one — gets a
+// warning with its subject deleted, while the byte pin above, which renders
+// only the accepting case, stays green.
+func TestBypassFlagAppearsOnlyInRunnerCommands(t *testing.T) {
+	for i, line := range strings.Split(StockRepoConfig([]string{"LERP"}, true), "\n") {
+		if strings.Contains(line, bypassFlag) && !strings.HasPrefix(line, "command = ") {
+			t.Errorf("stock.toml line %d has %q outside a runner command, so declining the grant would edit it:\n  %s",
+				i+1, bypassFlag, line)
+		}
+	}
+	// And the strip has to actually reach the command it targets, or
+	// declining would silently leave the grant in place.
+	if strings.Contains(StockRepoConfig([]string{"LERP"}, false), bypassFlag) {
+		t.Error("declining the grant left bypassFlag in the rendered config")
+	}
 }
 
 // The shipped example is what a new operator reads first, so it has to load
