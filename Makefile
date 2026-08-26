@@ -113,10 +113,16 @@ demo: ## Re-record docs/demo.gif from docs/demo.tape (needs vhs)
 # the mv. Removed above, so a previous render's status cannot answer for this
 # one; missing means the harness never got far enough to write it, which is a
 # failure too.
+# No status at all is its own message: the file is missing for more reasons
+# than a crash, and every one of them is a render nobody should keep.
 	@status=$$(cat $(DEMO_EXIT) 2>/dev/null); \
-	  test "$$status" = 0 || { \
+	  if [ -z "$$status" ]; then \
+	    printf 'demo: the harness never reported an exit status — it crashed, it never started (is lerp on the PATH the tape exports?), or it was still shutting down when the tape ended (left at %s)\n' \
+	      '$(DEMO_RENDER)'; exit 1; \
+	  elif [ "$$status" != 0 ]; then \
 	    printf 'demo: the harness exited %s — the cast would be a recording of that, not of lerp (left at %s)\n' \
-	      "$${status:-without reporting a status}" '$(DEMO_RENDER)'; exit 1; }
+	      "$$status" '$(DEMO_RENDER)'; exit 1; \
+	  fi
 	@size=$$(wc -c < $(DEMO_RENDER) | tr -d ' '); \
 	  test "$$size" -le $(DEMO_MAX_BYTES) || { \
 	    printf 'demo: %s came back %s bytes, over the %s cap — shorten the tape or drop the framerate (left at %s)\n' \

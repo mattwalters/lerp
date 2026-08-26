@@ -30,8 +30,13 @@ Set TypingSpeed 60ms
 # startup renders a cast of a bash error and passes; `make demo` reads the
 # file and refuses. The path is .demo/exit on both sides — keep it in step
 # with the Makefile's DEMO_EXIT.
+#
+# Typed single-quoted so the expansions can carry their own double quotes: a
+# clone in a directory with a space in its name would otherwise word-split
+# both assignments, and the render would fail as a harness that never reported
+# a status rather than as the quoting bug it is.
 Hide
-Type "export PATH=$PWD/.demo:$PATH LERP_DEMO_EXIT=$PWD/.demo/exit"
+Type 'export PATH="$PWD/.demo:$PATH" LERP_DEMO_EXIT="$PWD/.demo/exit"'
 Enter
 Type "clear"
 Enter
@@ -100,3 +105,12 @@ Sleep 2s
 
 Type "q"
 Sleep 2s
+
+# Off the recording. Quitting is not instant — tui.Run waits out a
+# reconciliation pass already in flight, and the harness removes its throwaway
+# root behind that — and the exit status is written last of all. vhs tears the
+# terminal down when the tape ends, so a margin too thin turns a good render
+# into "the harness never reported a status". Frames after Hide are not
+# recorded, so this costs the cast nothing.
+Hide
+Sleep 4s
