@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ if not .IsHome }}{{ .Title }} · {{ end }}{{ site.Title }}</title>
+  <meta name="description" content="{{ site.Params.tagline | default site.Title }}">
+  <link rel="stylesheet" href="{{ "style.css" | relURL }}">
+</head>
+<body>
+  <header>
+    <a class="brand" href="{{ "" | relURL }}">lerp</a>
+    {{ range site.Menus.main }}
+    <a class="nav{{ if $.IsMenuCurrent "main" . }} here{{ end }}" href="{{ .URL | relURL }}">{{ .Name }}</a>
+    {{ end }}
+    <span class="spacer"></span>
+    <a class="nav" href="{{ site.Params.repo }}">GitHub</a>
+    <span class="version">
+      <span class="version-label">{{ site.Params.version }}</span>
+      <select id="version-picker" hidden aria-label="Documentation version"></select>
+    </span>
+  </header>
+  <div class="wrap{{ if .IsHome }} wrap-home{{ end }}">
+    <main>
+      {{ block "main" . }}{{ end }}
+    </main>
+    {{/* plainify strips the empty <nav> Hugo emits for a page with no
+         headings, so the rail appears only when it has somewhere to point.
+         These two pages are long — the rail is how you get around them. */}}
+    {{ $toc := .TableOfContents }}
+    {{ if and (not .IsHome) (plainify $toc) }}
+    <nav class="toc">
+      <h5>On this page</h5>
+      {{ $toc }}
+    </nav>
+    {{ end }}
+  </div>
+  <script>
+    // The version picker. Each release is frozen under /vX.Y.Z/ beside a
+    // moving /latest/, and versions.json sits one level above them all at the
+    // site root. A local preview has no manifest: the fetch fails and the
+    // picker simply never appears.
+    //
+    // No build-time URL appears here. Frozen builds outlive the domain and
+    // the directory they were built for, so the root is derived from where
+    // the page is actually served: the stylesheet resolves to this build's
+    // own directory, and versionroot (see hugo.toml) says how far above it
+    // the versions live.
+    (function () {
+      var here = new URL(".", document.querySelector('link[rel="stylesheet"]').href);
+      var root = new URL({{ site.Params.versionroot }} + "/", here);
+      fetch(new URL("versions.json", root))
+        .then(function (r) { if (!r.ok) { throw r; } return r.json(); })
+        .then(function (versions) {
+          var picker = document.getElementById("version-picker");
+          ["latest"].concat(versions).forEach(function (v) {
+            var option = document.createElement("option");
+            option.value = v;
+            option.textContent = v;
+            option.selected = v === {{ site.Params.version }};
+            picker.appendChild(option);
+          });
+          picker.addEventListener("change", function () {
+            window.location.href = new URL(picker.value + "/", root);
+          });
+          picker.hidden = false;
+        })
+        .catch(function () {});
+    })();
+  </script>
+</body>
+</html>

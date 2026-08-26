@@ -1,0 +1,24 @@
+{{- /* The published files are this repository's own markdown, so their links
+       are written for a reader on GitHub: relative paths to other files in
+       the tree. Left alone they would 404 here — nothing serves SCOPE.md at
+       a site path. Each one is resolved to the page the site publishes for
+       it, or, for a file the site does not publish, to that file on GitHub
+       at the ref this build documents: a frozen /vX.Y.Z/ build links into
+       vX.Y.Z, so it keeps describing the release it was cut from.
+
+       In-page anchors and absolute URLs are emitted exactly as written; the
+       site paths below start at the root and Hugo's relativeURLs pass makes
+       them relative to the page being rendered. */ -}}
+{{- $href := .Destination -}}
+{{- $u := urls.Parse $href -}}
+{{- if and (not $u.IsAbs) $u.Path -}}
+  {{- $page := site.GetPage (printf "/%s" (strings.TrimSuffix ".md" (lower $u.Path))) -}}
+  {{- if $page -}}
+    {{- $href = $page.RelPermalink -}}
+  {{- else -}}
+    {{- $ref := cond (hasPrefix site.Params.version "v") site.Params.version "main" -}}
+    {{- $href = printf "%s/blob/%s/%s" site.Params.repo $ref $u.Path -}}
+  {{- end -}}
+  {{- with $u.Fragment }}{{ $href = printf "%s#%s" $href . }}{{ end -}}
+{{- end -}}
+<a href="{{ $href }}"{{ with .Title }} title="{{ . }}"{{ end }}>{{ .Text | safeHTML }}</a>

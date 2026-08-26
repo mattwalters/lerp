@@ -1,0 +1,117 @@
+# The docs site on GitHub Pages.
+#
+# The site root is the latest build and /latest/ is that same build published
+# a second time, so the version picker's "latest" option has a URL of its own.
+# "Latest" means main, not the last release: docs change with the code in the
+# same PR, so the homepage stays editable without cutting one. A release tag
+# additionally freezes a copy under /vX.Y.Z/ that is never rebuilt and appends
+# the tag to versions.json — the same tag push that cuts the binary release
+# mints the docs describing it, so a repo pinned to lerp vX.Y.Z can read the
+# docs that match it.
+#
+# One-time setup, by hand: GitHub Pages serving the gh-pages branch
+# (Settings → Pages). The first run of this workflow creates that branch.
+name: docs
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+  pull_request:
+    paths:
+      # The site is the repo's own markdown, so a README or SCOPE edit is a
+      # content change and gets the same build gate as a template edit. The
+      # Makefile is here because it holds the Hugo pin both jobs read.
+      - "docs/**"
+      - "README.md"
+      - "SCOPE.md"
+      - "Makefile"
+      - ".github/workflows/docs.yml"
+  # A republish of main without a commit to push — after enabling Pages, say.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # A PR proves the site still builds. Nothing is deployed.
+  build:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - id: pin
+        run: printf 'version=%s\n' "$(make -s hugo-version)" >> "$GITHUB_OUTPUT"
+      - uses: peaceiris/actions-hugo@v3
+        with:
+          hugo-version: ${{ steps.pin.outputs.version }}
+      - run: hugo --source docs --destination "$PWD/public"
+
+  publish:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - id: pin
+        run: printf 'version=%s\n' "$(make -s hugo-version)" >> "$GITHUB_OUTPUT"
+      - uses: peaceiris/actions-hugo@v3
+        with:
+          hugo-version: ${{ steps.pin.outputs.version }}
+
+      # No baseURL is passed to any of these builds: every emitted link is
+      # relative (see docs/hugo.toml), so the same pages serve from any host
+      # and any directory, and only the stamped version label differs between
+      # them. The root is built first because the version directories are
+      # staged inside it.
+      - name: Build root
+        run: hugo --source docs --destination "$PWD/public"
+        env:
+          HUGO_PARAMS_VERSION: latest
+
+      # A level below the root, so the version picker's manifest — and the
+      # other versions it points at — are one directory up from this copy.
+      - name: Build latest
+        run: hugo --source docs --destination "$PWD/public/latest"
+        env:
+          HUGO_PARAMS_VERSION: latest
+          HUGO_PARAMS_VERSIONROOT: ".."
+
+      # A tag additionally publishes the frozen copy that tag owns forever.
+      - name: Build ${{ github.ref_name }}
+        if: github.ref_type == 'tag'
+        run: hugo --source docs --destination "$PWD/public/$GITHUB_REF_NAME"
+        env:
+          HUGO_PARAMS_VERSION: ${{ github.ref_name }}
+          HUGO_PARAMS_VERSIONROOT: ".."
+
+      # The manifest behind the version picker: this tag appended to whatever
+      # gh-pages already carries, deduplicated and sorted newest first. The
+      # first release finds no branch and starts from []. Non-tag runs skip
+      # this step — keep_files leaves the existing manifest in place.
+      - name: Update versions.json
+        if: github.ref_type == 'tag'
+        run: |
+          if git fetch origin gh-pages --depth=1 2>/dev/null; then
+            git show FETCH_HEAD:versions.json > versions.json || echo "[]" > versions.json
+          else
+            echo "[]" > versions.json
+          fi
+          # tonumber? keeps a tag the semver sort cannot parse — a v1.0.0-rc1
+          # — from failing the release deploy over its position in a list.
+          jq --arg v "$GITHUB_REF_NAME" \
+            '. + [$v] | unique | sort_by(ltrimstr("v") | split(".") | map(tonumber? // 0)) | reverse' \
+            versions.json > public/versions.json
+          cat public/versions.json
+
+      # keep_files is the point: a deploy adds or overwrites only what it
+      # staged — the root, /latest/, and on a tag /vX.Y.Z/ and versions.json —
+      # while every previously released version's directory stays frozen
+      # exactly where it was.
+      - name: Deploy
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./public
+          keep_files: true

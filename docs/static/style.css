@@ -1,0 +1,243 @@
+/* The whole theme. One stylesheet, no build step, no preprocessor: the site
+   is three pages of prose and the layout it needs is a header, a column of
+   text, and a rail. Colours are declared once as custom properties and
+   swapped by the reader's light/dark preference. */
+
+:root {
+  color-scheme: light dark;
+
+  --bg: #fdfdfc;
+  --bg-soft: #f2f1ee;
+  --fg: #1f1f1d;
+  --fg-soft: #5c5b56;
+  --rule: #e0deda;
+  --link: #1b5e8a;
+  --accent: #b7541a;
+
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  /* One column width, shared by the header and the prose, so the page has a
+     single left edge from the wordmark down. */
+  --measure: 40rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16171a;
+    --bg-soft: #1e2024;
+    --fg: #e6e5e1;
+    --fg-soft: #a3a29c;
+    --rule: #2e3136;
+    --link: #79b8dd;
+    --accent: #e0904f;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 16px/1.6 var(--sans);
+}
+
+a { color: var(--link); }
+
+/* Header ------------------------------------------------------------- */
+
+header {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0 1rem;
+  padding: 0.9rem 1.5rem;
+  border-bottom: 1px solid var(--rule);
+}
+
+header .brand {
+  font: 600 1.1rem/1 var(--mono);
+  color: var(--fg);
+  text-decoration: none;
+}
+
+header .nav {
+  font: 0.85rem/1 var(--mono);
+  text-decoration: none;
+}
+
+header .nav.here { color: var(--accent); }
+
+header .spacer { flex: 1; }
+
+header .version {
+  font: 0.8rem/1 var(--mono);
+  color: var(--fg-soft);
+}
+
+header .version select {
+  font: inherit;
+  color: inherit;
+  background: var(--bg-soft);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 0.1rem 0.2rem;
+}
+
+/* The picker replaces the static label once versions.json has loaded, so the
+   two are never both on screen. */
+header .version:has(select:not([hidden])) .version-label { display: none; }
+
+/* Page shell --------------------------------------------------------- */
+
+.wrap {
+  display: flex;
+  gap: 3rem;
+  align-items: flex-start;
+  padding: 2rem 1.5rem 6rem;
+}
+
+main {
+  min-width: 0;
+  max-width: var(--measure);
+}
+
+.prose { overflow-wrap: break-word; }
+
+.toc {
+  position: sticky;
+  top: 2rem;
+  flex: 0 0 14rem;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: var(--fg-soft);
+}
+
+.toc h5 {
+  margin: 0 0 0.5rem;
+  font: 600 0.7rem/1 var(--sans);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-soft);
+}
+
+.toc ul {
+  margin: 0;
+  padding-left: 1rem;
+  list-style: none;
+}
+
+.toc > ul { padding-left: 0; }
+
+.toc a {
+  display: block;
+  padding: 0.15rem 0;
+  color: var(--fg-soft);
+  text-decoration: none;
+}
+
+.toc a:hover { color: var(--link); }
+
+/* Home --------------------------------------------------------------- */
+
+.hero {
+  max-width: var(--measure);
+  margin-bottom: 2.5rem;
+}
+
+.hero .wordmark {
+  margin: 0;
+  font: 700 2.6rem/1 var(--mono);
+  letter-spacing: -0.02em;
+}
+
+.hero .tagline {
+  margin: 0.6rem 0 1.4rem;
+  font-size: 1.15rem;
+  color: var(--fg-soft);
+}
+
+.hero-install { margin: 0; }
+
+/* Prose -------------------------------------------------------------- */
+
+h1, h2, h3, h4 {
+  line-height: 1.25;
+  margin: 2.2rem 0 0.8rem;
+}
+
+h1 { font-size: 1.9rem; }
+h2 { font-size: 1.35rem; }
+h3 { font-size: 1.1rem; }
+
+/* The first heading of a published file is its own title; it should sit
+   where a page title sits, not two lines below the header. */
+.prose > h1:first-child { margin-top: 0; }
+
+p, ul, ol, blockquote { margin: 0 0 1rem; }
+
+blockquote {
+  margin-left: 0;
+  padding-left: 1rem;
+  border-left: 3px solid var(--rule);
+  color: var(--fg-soft);
+}
+
+img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+}
+
+sub { color: var(--fg-soft); }
+
+hr {
+  border: 0;
+  border-top: 1px solid var(--rule);
+  margin: 2rem 0;
+}
+
+code {
+  font-family: var(--mono);
+  font-size: 0.87em;
+  background: var(--bg-soft);
+  border-radius: 4px;
+  padding: 0.1em 0.3em;
+}
+
+pre {
+  background: var(--bg-soft);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 0.9rem 1rem;
+  overflow-x: auto;
+}
+
+pre code {
+  background: none;
+  padding: 0;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin-bottom: 1rem;
+}
+
+th, td {
+  border: 1px solid var(--rule);
+  padding: 0.4rem 0.6rem;
+  text-align: left;
+}
+
+/* Narrow screens ----------------------------------------------------- */
+
+@media (max-width: 60rem) {
+  /* The rail is a convenience on a wide screen and a wall of links above
+     the text on a phone, where the scrollbar already does its job. */
+  .toc { display: none; }
+  .wrap { padding: 1.5rem 1.25rem 4rem; }
+  .hero .wordmark { font-size: 2.1rem; }
+}

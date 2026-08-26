@@ -1,0 +1,107 @@
+# The docs site, published to GitHub Pages by .github/workflows/docs.yml.
+#
+# The site root is the latest build — it tracks main, not the last release —
+# and /latest/ is that same build published a second time so the version
+# picker's own "latest" option has somewhere to point. Every release tag
+# additionally freezes a copy under /vX.Y.Z/ that is never rebuilt.
+#
+# The layout is hand-rolled in layouts/ and one stylesheet: the site is three
+# pages, and a theme module would be a pinned dependency (or, for Docsy, a
+# Node toolchain) to render markdown this repo already has.
+
+# Deliberately the bare domain, carrying neither the /lerp/ project path the
+# site actually serves from nor a version subpath: with relativeURLs every
+# emitted link is relative, so the same build serves correctly from any host
+# and any directory — which is what a frozen /vX.Y.Z/ copy needs to still be
+# true years from now, and what path-absolute asset URLs do not survive. (A
+# baseURL with a subpath would also be mis-relativized by Hugo, which writes
+# the subpath into the relative link.) CI passes no baseURL, so this value
+# only ever serves the local preview.
+baseURL = "https://mattwalters.github.io/"
+title = "lerp"
+relativeURLs = true
+
+disableKinds = ["taxonomy", "term", "rss", "sitemap"]
+
+[markup.highlight]
+# Classes, not inline styles: no chroma stylesheet ships, so code renders on
+# style.css's own block, which follows the reader's light/dark preference.
+noClasses = false
+
+[markup.goldmark.renderer]
+# The published files are this repository's own markdown, written by the same
+# people as the templates around them, so the handful of raw HTML tags they
+# use — the <sub> caption under the README's cast — render rather than being
+# dropped. Nothing here renders markdown from anywhere else.
+unsafe = true
+
+[markup.goldmark.parser]
+# The README and SCOPE are read on GitHub too, and GitHub derives heading
+# anchors this way. Keeping the same scheme keeps the in-page links those
+# files already carry — #stock-pipeline, #how-it-behaves — resolving here.
+autoHeadingIDType = "github"
+
+[params]
+# The version this build documents: CI sets HUGO_PARAMS_VERSION to the tag,
+# or to "latest" for a build of main. "dev" means a local preview.
+version = "dev"
+# Where the directory holding every version — and versions.json with it — sits
+# relative to this build. The copy published at the site root is at that
+# directory already ("."); the /latest/ and /vX.Y.Z/ copies are one level below
+# it, and CI sets HUGO_PARAMS_VERSIONROOT to ".." when it stages those. The
+# depth cannot be guessed from the page's own URL: the root copy and the
+# /latest/ copy are byte-identical builds published at different depths.
+versionroot = "."
+# Where render-link.html sends the repo files the site does not publish.
+repo = "https://github.com/mattwalters/lerp"
+
+# The site's whole navigation. Three pages: the landing page, and the two
+# markdown files the repo already keeps — published, not rewritten, so there
+# is no second copy of lerp's prose to drift out of sync with the first.
+[[menus.main]]
+name = "README"
+pageRef = "/readme"
+weight = 10
+
+[[menus.main]]
+name = "SCOPE"
+pageRef = "/scope"
+weight = 20
+
+# README.md and SCOPE.md live at the repository root and are mounted into the
+# site rather than copied: one source of truth, edited in the same PR as the
+# code it describes. Declaring any content mount replaces Hugo's default, so
+# content/ is mounted explicitly here too.
+[[module.mounts]]
+source = "content"
+target = "content"
+
+[[module.mounts]]
+source = "../README.md"
+target = "content/readme.md"
+
+[[module.mounts]]
+source = "../SCOPE.md"
+target = "content/scope.md"
+
+# The cast the README opens with, served at the path the README writes, so
+# that one image reference resolves on GitHub and on the site alike.
+[[module.mounts]]
+source = "static"
+target = "static"
+
+[[module.mounts]]
+source = "demo.gif"
+target = "static/docs/demo.gif"
+
+# Mounted files carry no front matter, so their titles are set here. Without
+# this the site would title them from their filenames ("Readme").
+[[cascade]]
+title = "README"
+[cascade.target]
+path = "/readme"
+
+[[cascade]]
+title = "SCOPE"
+[cascade.target]
+path = "/scope"

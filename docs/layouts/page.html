@@ -1,0 +1,7 @@
+{{ define "main" }}
+{{/* No <h1> here: these pages are the repository's own markdown files, and
+     each one opens with its own title as a first-level heading. */}}
+<div class="prose">
+  {{ .Content }}
+</div>
+{{ end }}

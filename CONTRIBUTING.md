@@ -62,6 +62,11 @@ The same rules the agents work under (see `AGENTS.md`):
   [vhs](https://github.com/charmbracelet/vhs). Nothing checks that the
   cast still shows the *right* thing, so if your change dates it,
   commit the re-recorded `docs/demo.gif` too.
+- The docs site publishes this repo's own markdown — the README and
+  SCOPE.md you are reading — so a PR touching either builds the site as
+  a gate. `make docs-serve` previews it locally and needs
+  [hugo](https://gohugo.io); `make hugo-version` prints the one version
+  CI and your machine share.
 - PRs go against `main`. Lerp is pre-1.0 with no tagged releases;
   `main` is what `go install ...@latest` gets.
 - One change per PR, and say in the description what it does and why.
