@@ -427,12 +427,12 @@ choose a panel and `tab` cycles — an open main pane is a surface in
 that cycle, and while it holds the keys its border says so and
 `↑`/`↓` scroll it a line at a time. `↑`/`↓` pick a row, `enter` opens
 the main pane on it and `esc` closes it again — both panels start
-closed, and each remembers its own answer — `s` sorts the Inbox, `P` scopes it
-to a project and `/` searches it, `o` opens the selected ticket in
-Linear, `S` force-starts the selected queued ticket, `e` ejects the
-selected run, `pgup`/`pgdn` scroll the log or the ticket, `end`
-resumes following, `r` shows the raw log, `q` quits (or backs out of
-the promote picker or an eject). With a filter on, `esc` clears it
+closed, and each remembers its own answer — `s` sorts the Inbox, `P`
+scopes it to a project and `/` searches it, `o` opens the selected
+ticket in Linear, `S` force-starts the selected queued ticket, `e`
+ejects the selected run, `pgup`/`pgdn` scroll the log or the ticket,
+`end` resumes following, `r` shows the raw log, `q` quits (or backs
+out of the promote picker or an eject). With a filter on, `esc` clears it
 before it closes the pane. While the search prompt is open it has the
 keyboard — a `p` or a `q` typed into it is text — and `ctrl+c` still
 quits.

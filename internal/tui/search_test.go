@@ -162,6 +162,37 @@ func TestSearchEnterKeepsTheFilterAndGivesTheKeysBack(t *testing.T) {
 	}
 }
 
+// Done-when: / takes the keys out of the main pane. Searching is something
+// the operator does to the list in order to pick a row out of it — the
+// prompt is drawn in the panel's own footer — so the first j after
+// narrowing walks the matches, where a key handed back to the pane would
+// scroll a ticket body instead.
+func TestSearchTakesTheKeysOutOfThePane(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: board()})
+	m = openMain(t, m)
+	m = update(t, m, keyMsg("tab"))
+	if !m.mainFocused() {
+		t.Fatal("tab did not put the keys in the inbox pane")
+	}
+
+	m = update(t, m, keyMsg("/"))
+	if m.mainFocused() {
+		t.Fatal("/ opened the prompt with the keys still in the pane")
+	}
+	m = update(t, m, keyMsg("enter"))
+	if m.mainFocused() {
+		t.Fatal("the accepted search handed the keys back to the pane")
+	}
+	before := m.attnSel
+	m = update(t, m, keyMsg("j"))
+	if m.attnSel == before {
+		t.Fatalf("j after the search scrolled the pane instead of walking the matches: "+
+			"row %d, %d shown", m.attnSel, len(m.shown))
+	}
+}
+
 // Done-when: esc from the prompt puts back the list it opened over, and esc
 // with a filter applied and no prompt open clears the filter.
 func TestSearchEscCancelsThenClears(t *testing.T) {

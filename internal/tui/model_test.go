@@ -5039,48 +5039,66 @@ func TestClosingThePaneHandsTheKeysBack(t *testing.T) {
 	}
 }
 
-// Done-when: the pane holds the keys only while the operator's own detail is
-// what is in it. The ? overlay is drawn in that same pane and has esc and
-// its own scrolling, so it takes them back for as long as it is up — and
-// hands them straight back on the way out, the way an open pane survives
-// anything else that borrows the room.
+// Done-when: the ? overlay borrows the pane, not the keys in it. It draws
+// in that same viewport, so the keys stay where the operator put them and
+// move what the pane is holding — which is the help while it is up. The
+// panel still lit behind the overlay is what says the keys are on the list,
+// so the two states are not the same screen.
 //
-// While it is up, j and k are inert rather than falling through to the list
-// behind it. A pane the operator put the keys in, walked three rows down by
-// a list they could not see, would come back reading a ticket they never
-// chose — and at the top of it.
-func TestTheOverlayTakesTheKeysBackFromThePane(t *testing.T) {
+// The alternative — falling through to the list while the overlay covers it
+// — walks a selection nobody can see, and the pane comes back reading a
+// ticket the operator never chose.
+func TestTheOverlayBorrowsThePaneNotItsKeys(t *testing.T) {
 	m, _, reader := newReadingTestModel(t)
 	m = update(t, m, eventMsg{ev: threeWaiting()})
 	m = openMain(t, m)
 	m = selectAndRead(t, m, 0, linear.IssueDetail{Body: "the body of the first"}, nil, reader)
 	m = update(t, m, keyMsg("tab"))
+	// Short enough that the overlay is longer than the pane, so scrolling it
+	// is a fact and not an accident of how many bindings there are.
+	m = update(t, m, tea.WindowSizeMsg{Width: 100, Height: 18})
 
 	m = update(t, m, keyMsg("?"))
-	if m.mainFocused() {
-		t.Fatal("the keys stayed in a pane the overlay had taken")
+	if !m.mainFocused() {
+		t.Fatal("the overlay took the pane's keys as well as its room")
 	}
+	top := strings.Split(m.View(), "\n")[0]
+	if !strings.HasPrefix(top, "╭") {
+		t.Fatalf("the inbox is lit behind the overlay while the keys are in the pane: %q", top)
+	}
+	if m.vp.TotalLineCount() <= m.vp.Height {
+		t.Fatalf("the overlay fits its pane (%d lines in %d rows): nothing here scrolls",
+			m.vp.TotalLineCount(), m.vp.Height)
+	}
+
 	m = update(t, m, keyMsg("j"))
-	m = update(t, m, keyMsg("j"))
+	if m.vp.YOffset != 1 {
+		t.Fatalf("j behind the overlay moved the pane to %d, want one line into the help",
+			m.vp.YOffset)
+	}
 	if m.attnSel != 0 {
 		t.Fatalf("j behind the overlay walked the hidden list to row %d, "+
 			"re-aiming the pane the keys were in", m.attnSel)
 	}
+
 	m = update(t, m, keyMsg("?"))
 	if !m.mainFocused() {
-		t.Fatal("closing the overlay did not give the pane its keys back")
+		t.Fatal("closing the overlay moved the keys the operator had left in the pane")
 	}
 	if !strings.Contains(m.View(), "the body of the first") {
 		t.Fatalf("the pane came back on another row:\n%s", m.View())
 	}
 
-	// The list still has them when they were never in the pane: this is the
-	// keys the operator put there, not a new rule about the overlay.
+	// And with the keys on the list, the overlay is what it always was: the
+	// selection moves behind it, and the pane comes back on the new row.
 	m = update(t, m, keyMsg("shift+tab"))
 	if m.focus != panelAttention || m.mainFocused() {
 		t.Fatalf("the keys are not back on the inbox list: %v/%v", m.focus, m.mainFocused())
 	}
 	m = update(t, m, keyMsg("?"))
+	if got := strings.Split(m.View(), "\n")[0]; !strings.HasPrefix(got, "┏") {
+		t.Fatalf("the inbox is dark behind the overlay while the keys are on it: %q", got)
+	}
 	m = update(t, m, keyMsg("j"))
 	if m.attnSel != 1 {
 		t.Fatalf("j behind the overlay from the list moved to row %d, want the second row: "+
@@ -5120,11 +5138,40 @@ func TestTabSkipsAPaneWithNoRowUnderIt(t *testing.T) {
 	}
 
 	// A panel that empties under a pane holding the keys hands them back to
-	// the list that now says so.
+	// the list that now says so — and keeps them when the queue refills. A
+	// board that changed is not a keystroke, so it moves focus once, not
+	// back and forth as passes land.
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
 		{Team: "LERP", Name: "implement", Status: "Todo"},
 	}}})
 	if m.mainFocused() {
 		t.Fatal("the keys stayed in a pane whose row had gone")
+	}
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
+			{ID: "id-10", Identifier: "LERP-10", Title: "queued later", Eligible: true},
+		}}}}})
+	if m.mainFocused() {
+		t.Fatal("a pass that refilled the queue put the keys back in the pane, " +
+			"aimed at a row nobody chose")
+	}
+}
+
+// Done-when: the bar names the way out of the surface the keys have just
+// landed in — and esc still says "close", because from in the pane it still
+// closes rather than having grown a second meaning.
+func TestTheBarNamesTheWayOutOfThePane(t *testing.T) {
+	m, _, reader := newReadingTestModel(t)
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+	m = openMain(t, m)
+	m = selectAndRead(t, m, 0, linear.IssueDetail{Body: "the body of the first"}, nil, reader)
+	if got := m.statusBar(); !strings.Contains(got, "esc close") || strings.Contains(got, "tab next") {
+		t.Fatalf("the bar offers the pane's own keys before the pane has them:\n%s", got)
+	}
+
+	m = update(t, m, keyMsg("tab"))
+	got := m.statusBar()
+	if !strings.Contains(got, "tab next") || !strings.Contains(got, "esc close") {
+		t.Fatalf("the bar does not name the way out of the pane:\n%s", got)
 	}
 }
