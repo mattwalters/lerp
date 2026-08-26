@@ -157,6 +157,33 @@ func TestTheOverlayTakesTheScreenFromTheSplash(t *testing.T) {
 	}
 }
 
+// enter is the key that would otherwise open something under the splash.
+// The pane it opens draws nothing there — but it is in the geometry, and a
+// window narrowed after that invisible keystroke comes back as "window too
+// small · esc closes the pane" about a pane that has never been on screen.
+func TestEnterDoesNotOpenAPaneUnderTheSplash(t *testing.T) {
+	m, _, _ := newTestModel(t, 2)
+	m, cmd := updateCmd(t, m, keyMsg("enter"))
+	if m.detailOpen[panelAttention] {
+		t.Error("enter opened a pane the splash is covering")
+	}
+	if m.mainOpen() {
+		t.Error("the splash is up with the main pane in the geometry")
+	}
+	if cmd != nil {
+		t.Error("enter under the splash scheduled a read")
+	}
+	if !hasMark(m.View()) {
+		t.Fatalf("enter took the screen from the splash:\n%s", m.View())
+	}
+	// And it is the splash holding it back, not the key: the same press on
+	// the board it hands over to opens the pane.
+	m = update(t, pastTheSplash(t, m), keyMsg("enter"))
+	if !m.detailOpen[panelAttention] {
+		t.Error("enter on the board opened nothing")
+	}
+}
+
 // The mark is the one figure here with a fixed size, so it is the one that
 // can overrun its window. The smallest window View will draw a board in is
 // the size it has to survive — below that the too-small screen has the frame

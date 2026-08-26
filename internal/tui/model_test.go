@@ -2421,6 +2421,7 @@ func TestTheOverlayTakesEscAndEnter(t *testing.T) {
 // debounce is a quarter of a second, which is time enough to shut it.
 func TestADebounceDoesNotOutliveThePane(t *testing.T) {
 	m, _, reader := newReadingTestModel(t)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, keyMsg("enter"))
 	m = update(t, m, eventMsg{ev: threeWaiting()})
