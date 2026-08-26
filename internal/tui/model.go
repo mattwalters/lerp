@@ -3022,14 +3022,22 @@ func (m model) noteLine() string {
 }
 
 // overdueAfter is how long the bar sits on a finished pass before calling
-// the board stale. A pass is due one interval after the last one landed and
-// the tick re-arms the moment it does, so overshooting a whole extra
-// interval means the loop is wedged or the machine slept — not that a pass
-// ran long, which the spinner covers. The floor is what keeps a board
-// polled every second or two from crying stale over ordinary scheduling
-// slack: a board a few seconds behind is not news to anyone reading it.
-func (m model) overdueAfter() time.Duration {
-	return max(2*m.o.Interval, time.Minute)
+// the board stale. Deliberately far longer than the poll: a pass is due one
+// interval after the last one landed and the tick re-arms the moment it
+// does, so a minute of nothing is a wedged loop or a slept machine, not
+// ordinary scheduling slack — and a board a few seconds behind is not news
+// to anyone reading it. A pass that is merely running long is the spinner's
+// to report, however late it is.
+const overdueAfter = time.Minute
+
+// overdue reports that nothing has run for long enough to say so. Wall clock
+// on purpose: a machine that slept stops the monotonic reading time.Since
+// would otherwise use — and stops the pending tick with it — so the one case
+// that leaves a board hours out of date is the one case a monotonic
+// comparison cannot see. Round(0) drops the monotonic reading from the copy
+// this compares.
+func (m model) overdue() bool {
+	return !m.inFlight && !m.lastPass.IsZero() && time.Since(m.lastPass.Round(0)) > overdueAfter
 }
 
 // What the heartbeat can say, and the room the bar keeps for it. The slot is
@@ -3042,11 +3050,16 @@ const (
 	heartStarting = "starting…"
 )
 
-var heartbeatSlot = max(
-	lipgloss.Width(heartbeatFrames[0]+" "+heartRunning),
-	lipgloss.Width(heartOverdue),
-	lipgloss.Width(heartStarting),
-)
+var heartbeatSlot = func() int {
+	// Every frame, not the first one: the frames are all one column wide
+	// today, and a spinner whose were not would have the padding below going
+	// negative on the frames the slot was not measured against.
+	w := max(lipgloss.Width(heartOverdue), lipgloss.Width(heartStarting))
+	for _, frame := range heartbeatFrames {
+		w = max(w, lipgloss.Width(frame+" "+heartRunning))
+	}
+	return w
+}()
 
 // statusBar is the heartbeat line: the lerp mark, what the pass is doing
 // when that is worth saying, capacity, inbox count, keys. A pass error — or
@@ -3054,7 +3067,13 @@ var heartbeatSlot = max(
 // truncated error is not actionable, so nothing else competes with it for
 // the width.
 func (m model) statusBar() string {
-	if line := m.noteLine(); line != "" {
+	// A note reports on a pass and holds the line until the next pass starts.
+	// Where no next pass is coming — a wedged loop, a machine that slept —
+	// it has stopped being transient, and a two-hour-old ✓ sitting there
+	// would hide the one thing worth saying about a board in that state.
+	// Nothing competes with the note line; the note that outlived its pass
+	// just stops being one.
+	if line := m.noteLine(); line != "" && !m.overdue() {
 		return ansi.Truncate(line, m.width, "…")
 	}
 	// The corner is the bar's one fixed point: same text, same weight, same
@@ -3073,12 +3092,7 @@ func (m model) statusBar() string {
 		heart = styleRunning.Render(heartbeatFrames[m.frame%len(heartbeatFrames)]) + " " + heartRunning
 	case m.lastPass.IsZero():
 		heart = styleFaint.Render(heartStarting)
-	// Wall clock on purpose. A machine that slept stops the monotonic
-	// reading time.Since would otherwise use — and stops the pending tick
-	// with it — so the one case that leaves a board hours out of date is the
-	// one case a monotonic comparison cannot see. Round(0) drops the
-	// monotonic reading from the copy this compares.
-	case time.Since(m.lastPass.Round(0)) > m.overdueAfter():
+	case m.overdue():
 		// A state, not a clock: that the board is stale is the whole fact,
 		// and how stale changes nothing the operator would do about it.
 		heart = styleAttention.Render(heartOverdue)

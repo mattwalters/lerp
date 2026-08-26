@@ -3942,7 +3942,7 @@ func TestTheHeartbeatIsWholeOrAbsent(t *testing.T) {
 		m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: attn}})
 		sized, _ := m.Update(tea.WindowSizeMsg{Width: w, Height: 30})
 		settled := update(t, sized.(model), tickedMsg{})
-		settled.lastPass = time.Now().Add(-settled.overdueAfter() - time.Second)
+		settled.lastPass = time.Now().Add(-overdueAfter - time.Second)
 		return ansi.Strip(sized.(model).statusBar()), ansi.Strip(settled.statusBar())
 	}
 
@@ -3984,7 +3984,7 @@ func TestTheHeartbeatIsWholeOrAbsent(t *testing.T) {
 func TestStatusBarSaysWhenAPassIsOverdue(t *testing.T) {
 	m, _, _ := newTestModel(t, 2)
 	m = update(t, m, tickedMsg{})
-	m.lastPass = time.Now().Add(-m.overdueAfter() - time.Second)
+	m.lastPass = time.Now().Add(-overdueAfter - time.Second)
 
 	bar := m.statusBar()
 	if !strings.Contains(bar, "pass overdue") {
@@ -4003,10 +4003,11 @@ func TestStatusBarSaysWhenAPassIsOverdue(t *testing.T) {
 	}
 }
 
-// Twice the interval alone would make a board polled every second or two
-// call itself stale over ordinary scheduling slack, so a floor sits under
-// it — and a floor no test names is a floor the next edit drops.
-func TestAFastIntervalDoesNotCryStale(t *testing.T) {
+// The threshold does not follow the poll. A board polled every second or two
+// missing a tick or three is ordinary scheduling slack, not news, and a
+// threshold that tracked the interval would have such a board crying stale
+// over it — a minute of nothing means something else went wrong.
+func TestTheStaleThresholdDoesNotFollowTheInterval(t *testing.T) {
 	m, _, _ := newTestModel(t, 2)
 	m.o.Interval = time.Second
 	m = update(t, m, tickedMsg{})
@@ -4021,21 +4022,22 @@ func TestAFastIntervalDoesNotCryStale(t *testing.T) {
 	}
 }
 
-// The other half of the same rule: a board polled slowly is not overdue a
-// minute after a pass — it is one interval late by then, which is what a
-// pass taking a while looks like. Two of its own intervals is the line.
-func TestASlowIntervalGetsTwoOfItsOwn(t *testing.T) {
+// The notes are cleared by the next pass starting, so on a board where no
+// pass is starting the last one sits there for as long as the wedge lasts —
+// holding the width, and reading like a board that just did some work.
+func TestAStaleNoteDoesNotHoldTheLineAgainstTheAlarm(t *testing.T) {
 	m, _, _ := newTestModel(t, 2)
-	m.o.Interval = 10 * time.Minute
 	m = update(t, m, tickedMsg{})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventExited, RunID: "r1", Lane: 1,
+		TicketID: "id-42", Ticket: "LERP-42", Queue: "implement", ExitCode: 0}})
 
-	m.lastPass = time.Now().Add(-19 * time.Minute)
-	if strings.Contains(m.statusBar(), "pass overdue") {
-		t.Errorf("a board 19m behind a 10m interval already reads as stale:\n%s", m.statusBar())
+	// While the board is keeping up the note is exactly what the bar is for.
+	if bar := m.statusBar(); !strings.Contains(bar, "LERP-42 exited 0") {
+		t.Fatalf("the bar dropped a fresh note:\n%s", bar)
 	}
-	m.lastPass = time.Now().Add(-21 * time.Minute)
-	if !strings.Contains(m.statusBar(), "pass overdue") {
-		t.Errorf("a board two intervals behind still reads as fresh:\n%s", m.statusBar())
+	m.lastPass = time.Now().Add(-2 * time.Hour)
+	if bar := m.statusBar(); !strings.Contains(bar, "pass overdue") {
+		t.Errorf("a two-hour-old note still reads as the news:\n%s", bar)
 	}
 }
 
