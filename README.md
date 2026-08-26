@@ -26,7 +26,9 @@ The whole ontology is five concepts — ticket, queue, runner, lane, the
 loop — where a lane is the concurrency unit: lerp runs at most N
 agents at once, one per lane. [SCOPE.md](SCOPE.md) is the fence around
 all five: nine invariants and the litmus tests every change runs
-through. Read it before proposing anything.
+through. Read it before proposing anything —
+[CONTRIBUTING.md](CONTRIBUTING.md) is how a proposal gets made, and
+what will and won't be accepted here.
 
 ## Install
 
