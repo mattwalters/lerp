@@ -3099,10 +3099,10 @@ func (m model) statusBar() string {
 	}
 
 	// The heartbeat is the only segment here that comes and goes, so the bar
-	// is laid out without it and it is fitted into the gap at the end — see
-	// below. In front of the capacity and the inbox count it shoved both of
-	// them a spinner's width sideways every time a pass started, and
-	// counting its width against the hints below moved those instead.
+	// is laid out around the room it keeps for it rather than around the
+	// heartbeat itself — see below. Placed in front of the capacity and the
+	// inbox count it shoved both of them a spinner's width sideways every
+	// time a pass started; sized into the hints below, it moved those.
 	left := brand + "  " + styleFaint.Render(m.capacityLabel())
 	if len(m.attention) > 0 {
 		left += "  " + styleAttention.Render(fmt.Sprintf("● %d in the inbox", len(m.attention)))
@@ -3161,9 +3161,10 @@ func (m model) statusBar() string {
 	}
 	// Narrower than that and the bar carries no heartbeat at all — at every
 	// frame, so the window that cannot hold one is silent about passes the
-	// whole time rather than flickering one in and out. Width alone decides
-	// it, which keeps the answer monotonic: widening a window never takes
-	// the heartbeat away.
+	// whole time rather than flickering one in and out. What decides it is
+	// the room, never which line the heartbeat would be showing, so it does
+	// not come and go under a board doing the same thing throughout; and
+	// widening a window never takes the heartbeat away.
 	if !fits(slot) {
 		slot = 0
 	}
