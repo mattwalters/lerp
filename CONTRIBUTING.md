@@ -46,9 +46,14 @@ The same rules the agents work under (see `AGENTS.md`):
 
 - `make check` is the gate on the code — gofmt, vet, build, test. CI
   runs that same target rather than its own copy of the steps, so the
-  two cannot drift.
-- CI runs one more job, and it is the one that can go red when your
-  local check was green: `make demo` re-records the README's cast from
+  two cannot drift; it runs it on Linux and macOS both.
+- CI runs two more jobs, and they are the ones that can go red when
+  your local check was green. `govulncheck` scans the dependency tree
+  against a vulnerability database that is only ever current, so it
+  can fail a PR that changed nothing — a newly published
+  vulnerability, or a govulncheck release, is about the tree, not your
+  diff.
+- The other is `make demo`: it re-records the README's cast from
   `docs/demo.tape`. It fails if vhs errors or if the GIF comes back
   over its size cap — nothing diffs the bytes, so read the failure
   message before you read your diff; the cap is the usual answer, and
