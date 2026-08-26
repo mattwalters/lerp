@@ -5,6 +5,7 @@ package loop
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/mattwalters/lerp/internal/linear"
@@ -112,6 +113,97 @@ func TestClaimForQueueLeavesAColleaguesClaimOnAMovedTicket(t *testing.T) {
 	}
 }
 
+// A protocol error after the assign landed must not leave the ticket
+// claimed: an assigned ticket is never eligible, so it would sit in its
+// queue invisible to every later pass, with no error anywhere saying so.
+// The read-back is the failure Linear actually hands out here — the assign
+// succeeded, the confirming GetIssue did not.
+func TestClaimForQueueReleasesTheClaimWhenTheReadBackFails(t *testing.T) {
+	ctx := context.Background()
+	errBoom := errors.New("temporary Linear failure")
+	f := linear.NewFake()
+	f.SetViewer("me")
+	f.AddIssue("LERP", linear.Issue{ID: "iss-1", Identifier: "LERP-1", Status: "Todo"})
+
+	// Only the read-back fails; the verify inside releaseClaim gets through,
+	// which is what a transient failure looks like.
+	client := &failOnceGetIssue{Client: f, err: errBoom}
+	viewerID, won, err := claimForQueue(ctx, client, "iss-1", "Todo")
+	if won {
+		t.Error("claimForQueue won = true, want false")
+	}
+	if !errors.Is(err, errBoom) {
+		t.Errorf("claimForQueue error = %v, want wrapped %v", err, errBoom)
+	}
+	if viewerID != "me" {
+		t.Errorf("viewerID = %q, want the operating user for later claim bookkeeping", viewerID)
+	}
+	got, getErr := f.GetIssue(ctx, "iss-1")
+	if getErr != nil {
+		t.Fatal(getErr)
+	}
+	if got.AssigneeID != "" {
+		t.Errorf("assignee = %q, want the claim released so the ticket stays eligible", got.AssigneeID)
+	}
+	if got.Status != "Todo" {
+		t.Errorf("status = %q, want the ticket left in its queue", got.Status)
+	}
+}
+
+// When the release cannot be made to stick either, the protocol error still
+// comes back — carrying the release failure — rather than being swallowed
+// into a silent success. The ticket really is stranded at that point, and the
+// error is the only thing that says so.
+func TestClaimForQueueReportsAReleaseItCouldNotMake(t *testing.T) {
+	ctx := context.Background()
+	errBoom := errors.New("Linear is down")
+	f := linear.NewFake()
+	f.SetViewer("me")
+	f.AddIssue("LERP", linear.Issue{ID: "iss-1", Identifier: "LERP-1", Status: "Todo"})
+
+	client := brokenGetIssue{Client: f, err: errBoom}
+	_, won, err := claimForQueue(ctx, client, "iss-1", "Todo")
+	if won {
+		t.Error("claimForQueue won = true, want false")
+	}
+	if !errors.Is(err, errBoom) {
+		t.Errorf("claimForQueue error = %v, want wrapped %v", err, errBoom)
+	}
+	if !strings.Contains(err.Error(), "verify claim before release") {
+		t.Errorf("claimForQueue error = %v, want it to name the release it could not make", err)
+	}
+	if got, _ := f.GetIssue(ctx, "iss-1"); got.AssigneeID != "me" {
+		t.Errorf("assignee = %q, want the claim still stuck on the ticket the error reports", got.AssigneeID)
+	}
+}
+
+// The other half of the moved-ticket release: when the unassign itself fails,
+// the ticket is left claimed in a status no queue serves, and the caller has
+// to hear about it.
+func TestClaimForQueueReportsAFailedReleaseOfAMovedTicket(t *testing.T) {
+	ctx := context.Background()
+	errBoom := errors.New("unassign refused")
+	f := linear.NewFake()
+	f.SetViewer("me")
+	f.AddIssue("LERP", linear.Issue{ID: "iss-1", Identifier: "LERP-1", Status: "Todo"})
+
+	moved := movedOnAssign{Client: f, move: func(issueID string) {
+		if err := f.MoveIssue(ctx, issueID, "Escalated"); err != nil {
+			t.Error(err)
+		}
+	}}
+	_, won, err := claimForQueue(ctx, brokenUnassign{Client: moved, err: errBoom}, "iss-1", "Todo")
+	if won {
+		t.Error("claimForQueue won = true, want false")
+	}
+	if !errors.Is(err, errBoom) {
+		t.Errorf("claimForQueue error = %v, want wrapped %v", err, errBoom)
+	}
+	if !strings.Contains(err.Error(), "release moved issue") {
+		t.Errorf("claimForQueue error = %v, want it to name the moved ticket it could not release", err)
+	}
+}
+
 func TestEligible(t *testing.T) {
 	statuses := map[string]bool{"Todo": true}
 	tests := []struct {
@@ -188,3 +280,38 @@ type failingClient struct {
 }
 
 func (c failingClient) Viewer(context.Context) (string, error) { return "", c.viewerErr }
+
+// failOnceGetIssue fails the first GetIssue and serves every later one from
+// the board, standing in for a transient read failure mid-protocol.
+type failOnceGetIssue struct {
+	linear.Client
+	err    error
+	failed bool
+}
+
+func (c *failOnceGetIssue) GetIssue(ctx context.Context, issueID string) (linear.Issue, error) {
+	if !c.failed {
+		c.failed = true
+		return linear.Issue{}, c.err
+	}
+	return c.Client.GetIssue(ctx, issueID)
+}
+
+// brokenGetIssue fails every GetIssue, so the claim's read-back and the
+// release that answers it both fail.
+type brokenGetIssue struct {
+	linear.Client
+	err error
+}
+
+func (c brokenGetIssue) GetIssue(context.Context, string) (linear.Issue, error) {
+	return linear.Issue{}, c.err
+}
+
+// brokenUnassign is a Client that can take a claim but never give one back.
+type brokenUnassign struct {
+	linear.Client
+	err error
+}
+
+func (c brokenUnassign) UnassignIssue(context.Context, string) error { return c.err }
