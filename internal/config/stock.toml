@@ -56,7 +56,11 @@ resume = "cd {{workdir}} && claude --resume {{session}}"
 # identifier, never the ticket body, and stage artifacts (the plan in the
 # ticket, the pull request, the note a run leaves behind) are written by the
 # agent, not by lerp. Configure the Linear MCP server in Claude Code before
-# expecting these prompts to work.
+# expecting these prompts to work. Lerp's own LINEAR_API_KEY is not a
+# fallback: lerp drops it once it has read it, so nothing it starts inherits
+# it. That is hygiene, not containment — a command that reaches a login
+# shell, and a session you resume yourself with the command above, both pick
+# the key back up from wherever you exported it.
 
 # --------------------------------------------------------------------------
 # Queues

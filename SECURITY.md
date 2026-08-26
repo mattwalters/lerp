@@ -104,13 +104,23 @@ reads, not the command line lerp builds.
 Two details of that footprint are worth stating plainly, because both
 cut the other way:
 
-- **Agents inherit lerp's environment.** `provision`, `dispose` and
-  every runner are started with lerp's own environment plus a few
-  `LERP_` variables. Your `LINEAR_API_KEY` is in there. Lerp never
-  writes it to disk, but an agent can read it — and a personal API key
-  is write access to your entire Linear workspace, not just the served
-  team, which is a path straight back to the paragraph above. Run lerp
-  with an environment you would hand to the agent, because you are.
+- **Agents inherit lerp's environment, minus one variable.**
+  `provision`, `dispose` and every runner are started with lerp's own
+  environment plus a few `LERP_` variables — with `LINEAR_API_KEY`
+  removed. That key is lerp's own credential and a personal API key is
+  write access to your entire Linear workspace, not just the served
+  team; the agent's Linear access is meant to arrive through its own
+  authorization, under its own identity, so lerp does not hand its key
+  down, and it never writes it to disk. Read that as hygiene, not
+  containment: it closes the accidental path — a `provision` script
+  that logs its environment into the lane log — and not a determined
+  one. An agent running as you can still read the shell profile you
+  exported the key in — or, on Linux, lerp's own
+  `/proc/<pid>/environ`.
+  Everything else in the environment does go down: your cloud tokens,
+  your registry credentials, whatever else the shell you started lerp
+  in was carrying. Run lerp with an environment you would hand to the
+  agent, because you are.
 - **Run logs persist locally.** `.lerp/` holds no durable truth —
   losing all of it may cost compute, never correctness — but it does
   hold each run's full agent transcript, the loop's diagnostics, and

@@ -8,12 +8,14 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 
+	"github.com/mattwalters/lerp/internal/childenv"
 	"github.com/mattwalters/lerp/internal/config"
 	"github.com/mattwalters/lerp/internal/evidence"
 )
@@ -495,4 +497,58 @@ func TestResumeCommandIsEmptyWithoutATemplate(t *testing.T) {
 	if got != "" {
 		t.Errorf("ResumeCommand = %q for a runner with no resume, want empty", got)
 	}
+}
+
+// The Linear API key is lerp's own credential; an agent's Linear access is
+// meant to come through its own authorization. What the child process can
+// actually see is the only proof it was dropped, so the stub prints its whole
+// environment — and nothing here ever prints that log back, since a failure
+// in CI would publish every other variable the operator was running with.
+func TestExecuteDropsTheLinearAPIKeyFromTheRunnerEnvironment(t *testing.T) {
+	t.Setenv(childenv.LinearAPIKeyEnv, "lin_api_secret")
+	dir := t.TempDir()
+	script := writeScript(t, dir, "runner.sh", "env")
+	logPath := filepath.Join(dir, "runner.log")
+
+	if _, err := Execute(context.Background(), Invocation{
+		Runner:  config.Runner{Command: shellQuote(script)},
+		Queue:   config.Queue{Prompt: "prompt"},
+		Ticket:  "LERP-42",
+		Workdir: dir,
+		LogPath: logPath,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if names := envNames(string(got)); slices.Contains(names, childenv.LinearAPIKeyEnv) {
+		t.Errorf("runner environment contains %s, want it dropped", childenv.LinearAPIKeyEnv)
+	}
+	if strings.Contains(string(got), "lin_api_secret") {
+		t.Error("runner environment contains the Linear API key's value")
+	}
+	// The same environment still carries what lerp does hand the runner, and
+	// what it inherited: an Inherited that returned only the extras would
+	// pass every assertion above and leave every real agent without a PATH.
+	if !strings.Contains(string(got), TicketEnv+"=LERP-42") {
+		t.Errorf("runner environment does not carry %s=LERP-42", TicketEnv)
+	}
+	if !slices.Contains(envNames(string(got)), "PATH") {
+		t.Error("runner environment has no PATH; it inherited nothing")
+	}
+}
+
+// envNames reads the variable names out of `env` output. Only names: a test
+// that reports what it found must not report the values beside them.
+func envNames(output string) []string {
+	var names []string
+	for _, line := range strings.Split(output, "\n") {
+		if name, _, ok := strings.Cut(line, "="); ok {
+			names = append(names, name)
+		}
+	}
+	return names
 }
