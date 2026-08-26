@@ -210,9 +210,13 @@ func control(r rune) bool {
 // category goes rather than the bidi set alone, because the difference is
 // a hand-maintained list against the next Unicode release.
 //
-// Only Linear-sourced text goes through this. cleanLog keeps its own rule:
-// the log pane renders what an agent printed, and a joined emoji there is
-// output, not a claim about which ticket is which.
+// Linear text and an agent's decoded log fields both go through clean, so
+// this is the rule for both — a lane pane names which ticket a run is on,
+// and the run's own output must not be able to reorder that either. The
+// cost is display fidelity in text that meant them: a ZWJ emoji comes apart
+// into its components, an Arabic word loses the joiner that shaped it.
+// cleanLog is the one path that keeps them, because the raw stream it
+// renders is the fallback that reproduces what a runner printed verbatim.
 func format(r rune) bool {
 	return unicode.Is(unicode.Cf, r)
 }

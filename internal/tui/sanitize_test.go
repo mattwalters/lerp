@@ -3,6 +3,7 @@ package tui
 import (
 	"strings"
 	"testing"
+	"unicode"
 
 	"github.com/mattwalters/lerp/internal/linear"
 	"github.com/mattwalters/lerp/internal/loop"
@@ -41,10 +42,13 @@ func TestCleanDefusesEscapeSequences(t *testing.T) {
 		{"soft hyphen", "LERP\u00ad-1", "LERP-1"},
 		{"tag characters", "LERP-1\U000e0074\U000e0061\U000e0067", "LERP-1"},
 		// Ordinary titles survive untouched — sanitizing must not cost the
-		// operator the em dash or the emoji their tickets are named with.
+		// operator the em dash or the single-codepoint emoji their tickets
+		// are named with. A ZWJ sequence does come apart, which is the
+		// price of dropping the category rather than curating a list.
 		{"unicode passes through", "Fix ✅ the — 日本語 test", "Fix ✅ the — 日本語 test"},
-		// A variation selector is a combining mark, not a format character:
-		// dropping it would change how the emoji beside it renders.
+		// A variation selector is a combining mark, not a format character.
+		// Dropping it would change how the emoji beside it renders, so a
+		// reach for unicode.C rather than unicode.Cf fails here.
 		{"emoji variation selector survives", "warn \u26a0\ufe0f now", "warn \u26a0\ufe0f now"},
 		{"empty", "", ""},
 	} {
@@ -246,6 +250,19 @@ func escapeFree(t *testing.T, what, view string) {
 	for _, bad := range []string{"\x1b]", "\x1b[2J", "\x1b[1;1H", "\x1b_", "\x1bP", "\r", "\x07", "\x08", "\x7f"} {
 		if strings.Contains(view, bad) {
 			t.Fatalf("%s contains %q:\n%q", what, bad, view)
+		}
+	}
+}
+
+// bidiFree is escapeFree's counterpart for the spoofing half: a rendered
+// screen carries no format character, so no row can be reordered into
+// naming a ticket other than its own. The log pane's raw fallback is the
+// deliberate exception and is not held to this.
+func bidiFree(t *testing.T, what, view string) {
+	t.Helper()
+	for _, r := range view {
+		if unicode.Is(unicode.Cf, r) {
+			t.Fatalf("%s contains format character %U:\n%q", what, r, view)
 		}
 	}
 }
