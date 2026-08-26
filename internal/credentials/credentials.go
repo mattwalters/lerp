@@ -106,6 +106,16 @@ func storedSource(s store, hc *http.Client) (*oauthSource, error) {
 	}, nil
 }
 
+// spentError marks a failure that happened after Linear had already honoured
+// the exchange. The refresh token that bought it is rotated and gone, so the
+// failure is not one a retry can get past.
+type spentError struct{ err error }
+
+func (e *spentError) Error() string { return e.err.Error() }
+func (e *spentError) Unwrap() error { return e.err }
+
+func spent(err error) error { return &spentError{err: err} }
+
 // snippet reads the head of an error response, for a message that says what
 // the endpoint actually complained about.
 func snippet(resp *http.Response) string {
@@ -146,7 +156,17 @@ func (s *oauthSource) header(ctx context.Context) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.dead != nil {
-		return "", s.dead
+		// One thing gets past the latch: the operator re-authorizing in
+		// another terminal. The file is the record and memory is a cache of
+		// it, and that has to hold for the latch as well, or a fresh
+		// token.json sits on disk while this lerp goes on reporting an
+		// expired session until it is restarted. A small file read, only
+		// while dead; the token endpoint is still never touched.
+		stored, err := s.store.load()
+		if err != nil || stored.AccessToken == s.tok.AccessToken {
+			return "", s.dead
+		}
+		s.tok, s.dead = stored, nil
 	}
 	if s.fresh() {
 		return "Bearer " + s.tok.AccessToken, nil
@@ -191,7 +211,14 @@ func (s *oauthSource) refresh(ctx context.Context) error {
 	}
 	next, err := exchange(ctx, s.hc, s.endpoint, s.clientID, s.tok.RefreshToken)
 	if err != nil {
-		if errors.Is(err, ErrLoginRequired) {
+		// Latched on two grounds: a refusal, which asking again cannot get
+		// past, and a failure after Linear honoured the exchange, where the
+		// refresh token in memory has already been rotated away. Both would
+		// otherwise re-exchange once per GraphQL call, and the second would
+		// burn the file's replay grace doing it — leaving a live session
+		// looking expired half an hour later.
+		var afterTheFact *spentError
+		if errors.Is(err, ErrLoginRequired) || errors.As(err, &afterTheFact) {
 			s.dead = err
 		}
 		return err
@@ -240,20 +267,23 @@ func exchange(ctx context.Context, hc *http.Client, endpoint, clientID, refreshT
 
 	switch {
 	case resp.StatusCode == http.StatusOK:
-	case resp.StatusCode == http.StatusTooManyRequests, resp.StatusCode == http.StatusRequestTimeout:
-		// Declined to answer, not a refused grant — the same distinction
-		// the GraphQL side draws between ErrRateLimited and ErrAuth. It
-		// matters because the caller latches a refusal: an operator behind
-		// a shared egress IP would lose a live credential for the life of
-		// the process, and `lerp login` — unauthenticated from the same
-		// address — is the one remedy that could not help.
-		return token{}, fmt.Errorf("credentials: refresh: %s: %s", resp.Status, snippet(resp))
-	case resp.StatusCode >= 400 && resp.StatusCode < 500:
-		// The grant was refused, not fumbled: a revoked token, or a
-		// rotated one past its grace. Asking again cannot help.
-		return token{}, ErrLoginRequired
+	case resp.StatusCode == http.StatusBadRequest, resp.StatusCode == http.StatusUnauthorized:
+		// The grant was refused, not fumbled: RFC 6749 §5.2 puts a revoked
+		// or replayed refresh token at 400, and a client Linear will not
+		// accept at 401. Asking again cannot help, so the caller latches
+		// this — which is why the status and the body come along. A
+		// disabled client id and an expired session read identically
+		// otherwise, and only one of them is fixed by logging in again.
+		return token{}, fmt.Errorf("%w (%s: %s)", ErrLoginRequired, resp.Status, snippet(resp))
 	default:
-		return token{}, fmt.Errorf("credentials: refresh: unexpected status %d: %s", resp.StatusCode, snippet(resp))
+		// Everything else is the endpoint declining to answer rather than
+		// refusing the grant: a 429 behind a shared egress IP, a 403 from a
+		// WAF rule, a 404 if the path moves, any 5xx. Latching those would
+		// lose a live credential for the life of the process, and offer
+		// `lerp login` — unauthenticated from the same address — as the one
+		// remedy that could not help. The GraphQL side draws the same line
+		// between ErrRateLimited and ErrAuth.
+		return token{}, fmt.Errorf("credentials: refresh: %s: %s", resp.Status, snippet(resp))
 	}
 
 	var body struct {
@@ -261,11 +291,16 @@ func exchange(ctx context.Context, hc *http.Client, endpoint, clientID, refreshT
 		RefreshToken string `json:"refresh_token"`
 		ExpiresIn    int64  `json:"expires_in"`
 	}
+	// Past this point Linear has honoured the exchange: the refresh token
+	// this call sent is rotated and gone, so every failure below is spent —
+	// asking again with the one still in memory can only fail, and would
+	// spend the file's replay grace doing it. See refresh, which latches
+	// them for exactly that reason.
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		return token{}, fmt.Errorf("credentials: decode refresh response: %w", err)
+		return token{}, spent(fmt.Errorf("credentials: decode refresh response: %w", err))
 	}
 	if body.AccessToken == "" {
-		return token{}, errors.New("credentials: refresh: token endpoint returned no access token")
+		return token{}, spent(errors.New("credentials: refresh: token endpoint returned no access token"))
 	}
 	if body.ExpiresIn <= int64(refreshSkew/time.Second) {
 		// A lifetime shorter than the renewal window is as unusable as no
@@ -273,7 +308,7 @@ func exchange(ctx context.Context, hc *http.Client, endpoint, clientID, refreshT
 		// would be treated as expired on the very next request and on every
 		// request after it — an exchange per GraphQL call, which is the one
 		// thing this source must never do.
-		return token{}, fmt.Errorf("credentials: refresh: token endpoint returned a %ds lifetime, shorter than the %s renewal window", body.ExpiresIn, refreshSkew)
+		return token{}, spent(fmt.Errorf("credentials: refresh: token endpoint returned a %ds lifetime, shorter than the %s renewal window", body.ExpiresIn, refreshSkew))
 	}
 	now := time.Now()
 	next := token{

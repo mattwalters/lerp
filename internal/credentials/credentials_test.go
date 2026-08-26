@@ -42,6 +42,31 @@ func liveToken() token {
 	}
 }
 
+// expiredSource is a source whose stored access token has already expired,
+// with its token endpoint pointed at a server running h. The returned
+// counter holds how many exchanges h has answered.
+func expiredSource(t *testing.T, h http.HandlerFunc) (*oauthSource, store, *int) {
+	t.Helper()
+	expired := liveToken()
+	expired.ExpiresAt = time.Now().Add(-time.Minute)
+	s := tempStore(t, &expired)
+
+	exchanges := new(int)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*exchanges++
+		h(w, r)
+	}))
+	t.Cleanup(srv.Close)
+
+	source, err := storedSource(s, srv.Client())
+	if err != nil {
+		t.Fatalf("storedSource: %v", err)
+	}
+	source.endpoint = srv.URL
+	source.clientID = testClientID
+	return source, s, exchanges
+}
+
 func readToken(t *testing.T, s store) token {
 	t.Helper()
 	tok, err := s.load()
@@ -437,27 +462,129 @@ func TestRefreshWriteFailureIsLatched(t *testing.T) {
 // adopting it would mean an exchange per GraphQL call.
 func TestShortLifetimeIsRefused(t *testing.T) {
 	t.Setenv(apiKeyEnv, "")
-	expired := liveToken()
-	expired.ExpiresAt = time.Now().Add(-time.Minute)
-	s := tempStore(t, &expired)
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	source, s, exchanges := expiredSource(t, func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"access_token":"access-2","refresh_token":"refresh-2","expires_in":60}`))
-	}))
-	t.Cleanup(srv.Close)
-
-	source, err := storedSource(s, srv.Client())
-	if err != nil {
-		t.Fatalf("storedSource: %v", err)
+	})
+	for i := range 3 {
+		_, err := source.header(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "renewal window") {
+			t.Fatalf("call %d: err = %v, want the short lifetime refused", i, err)
+		}
 	}
-	source.endpoint = srv.URL
-	source.clientID = testClientID
-
-	if _, err := source.header(context.Background()); err == nil || !strings.Contains(err.Error(), "renewal window") {
-		t.Fatalf("err = %v, want the short lifetime refused", err)
+	// Latched, and asked exactly once: Linear honoured that exchange, so the
+	// refresh token this source still holds is already rotated away. Asking
+	// again could only fail, and would spend the file's replay grace doing
+	// it — the very "exchange per GraphQL call" this guard exists to stop.
+	if *exchanges != 1 {
+		t.Errorf("exchanges = %d, want 1", *exchanges)
 	}
 	if stored := readToken(t, s); stored.AccessToken != "access-1" {
 		t.Errorf("an unusable token was stored: %+v", stored)
+	}
+}
+
+// A response that arrives after Linear honoured the exchange but cannot be
+// used — a proxy's HTML error page where the token pair should be — is
+// latched for the same reason: the rotation has already been spent.
+func TestUndecodableExchangeIsLatched(t *testing.T) {
+	t.Setenv(apiKeyEnv, "")
+	source, s, exchanges := expiredSource(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("<html>gateway timeout</html>"))
+	})
+	for i := range 3 {
+		if _, err := source.header(context.Background()); err == nil {
+			t.Fatalf("call %d: want an error", i)
+		}
+	}
+	if *exchanges != 1 {
+		t.Errorf("exchanges = %d, want 1", *exchanges)
+	}
+	if stored := readToken(t, s); stored.AccessToken != "access-1" {
+		t.Errorf("stored token = %+v, want it untouched", stored)
+	}
+}
+
+// A 403 is not a refused grant — a WAF rule, not a revoked session — so it
+// must not latch. Same for the 404 an endpoint that moved would give.
+func TestNonGrantRefusalsAreNotLatched(t *testing.T) {
+	for _, status := range []int{http.StatusForbidden, http.StatusNotFound, http.StatusMethodNotAllowed} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			t.Setenv(apiKeyEnv, "")
+			var calls int
+			source, _, exchanges := expiredSource(t, func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				if calls == 1 {
+					http.Error(w, "not today", status)
+					return
+				}
+				_, _ = w.Write([]byte(`{"access_token":"access-2","refresh_token":"refresh-2","expires_in":3600}`))
+			})
+			_, err := source.header(context.Background())
+			if err == nil {
+				t.Fatal("first call: want an error")
+			}
+			if errors.Is(err, ErrLoginRequired) {
+				t.Errorf("a %d latched as an expired session: %v", status, err)
+			}
+			got, err := source.header(context.Background())
+			if err != nil {
+				t.Fatalf("second call: %v", err)
+			}
+			if got != "Bearer access-2" {
+				t.Errorf("header = %q, want the renewed token", got)
+			}
+			if *exchanges != 2 {
+				t.Errorf("exchanges = %d, want 2", *exchanges)
+			}
+		})
+	}
+}
+
+// A refusal names what came back, so a disabled client id does not read as
+// an expired session an operator can log their way out of.
+func TestRefusalCarriesTheEndpointsAnswer(t *testing.T) {
+	t.Setenv(apiKeyEnv, "")
+	source, _, _ := expiredSource(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":"invalid_client"}`, http.StatusBadRequest)
+	})
+	_, err := source.header(context.Background())
+	if !errors.Is(err, ErrLoginRequired) {
+		t.Fatalf("err = %v, want ErrLoginRequired", err)
+	}
+	if !strings.Contains(err.Error(), "invalid_client") {
+		t.Errorf("error %q does not say what the endpoint answered", err)
+	}
+}
+
+// The latch is memory too, and the file outranks memory: an operator who
+// re-authorizes in another terminal does not have to restart this lerp.
+func TestReloginOnDiskClearsTheLatch(t *testing.T) {
+	t.Setenv(apiKeyEnv, "")
+	source, s, exchanges := expiredSource(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":"invalid_grant"}`, http.StatusBadRequest)
+	})
+	if _, err := source.header(context.Background()); !errors.Is(err, ErrLoginRequired) {
+		t.Fatalf("err = %v, want ErrLoginRequired", err)
+	}
+	// Still latched while the file holds the token that died.
+	if _, err := source.header(context.Background()); !errors.Is(err, ErrLoginRequired) {
+		t.Fatalf("err = %v, want the latch to hold", err)
+	}
+
+	relogin := liveToken()
+	relogin.AccessToken, relogin.RefreshToken = "access-9", "refresh-9"
+	if err := s.save(relogin); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	got, err := source.header(context.Background())
+	if err != nil {
+		t.Fatalf("after re-login: %v", err)
+	}
+	if got != "Bearer access-9" {
+		t.Errorf("header = %q, want the re-authorized token", got)
+	}
+	if *exchanges != 1 {
+		t.Errorf("exchanges = %d, want 1 — the latch let a request through", *exchanges)
 	}
 }
 

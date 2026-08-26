@@ -175,7 +175,7 @@ type Client interface {
 
 // Sentinel errors, matchable with errors.Is.
 var (
-	// ErrAuth means Linear rejected the API key (HTTP 401).
+	// ErrAuth means Linear rejected the credential (HTTP 401).
 	ErrAuth = errors.New("linear: authentication failed")
 	// ErrNotFound means the referenced entity does not exist.
 	ErrNotFound = errors.New("linear: not found")
