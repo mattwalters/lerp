@@ -709,6 +709,41 @@ func TestShutdownMidRunKeepsTheRecordAndTheClaim(t *testing.T) {
 	}
 }
 
+// The two run-exit branches enumerated above have opposite record
+// dispositions — shutdown keeps the record, a runner that could not exec
+// drops it — and both hold at once in a real window: Ctrl-C while the runner
+// is starting has Execute return "starting runner: context canceled", so err
+// is non-nil and ctx is cancelled together. Shutdown has to win. Deciding it
+// the other way round drops the record while the claim stays, which is the
+// stranding this whole ticket is about: assigned so never eligible, in a
+// served status so the inbox skips it, and named by nothing on disk.
+func TestShutdownWinsOverARunnerThatCouldNotExec(t *testing.T) {
+	gate := make(chan struct{})
+	release := sync.OnceFunc(func() { close(gate) })
+	t.Cleanup(release)
+	h := newHarness(t, 1, func(ctx context.Context, _ run.Invocation) (run.Result, error) {
+		<-gate
+		// What Execute returns when the loop is torn down under it.
+		return run.Result{}, fmt.Errorf("starting runner: %w", ctx.Err())
+	})
+	h.fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Todo"})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	h.rec.Tick(ctx)
+	started := h.waitEvents(t, EventStarted, 1)[0]
+	cancel()
+	release()
+	waitIdle(t, h.rec)
+
+	if _, err := h.evidence.Read(started.RunID); err != nil {
+		t.Errorf("read record after a run that failed because of the shutdown = %v, "+
+			"want it kept: a stop is not a broken runner", err)
+	}
+	if got := h.issue(t, "one"); got.AssigneeID != "fake-viewer" {
+		t.Errorf("assignee = %q, want the claim kept alongside the record that settles it", got.AssigneeID)
+	}
+}
+
 // A runner that cannot be executed at all is the one run failure that keeps
 // its claim: releasing it would hand the ticket back to the same broken
 // runner on the very next pass, forever. The local record goes, though — it

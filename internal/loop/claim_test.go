@@ -209,6 +209,39 @@ func TestClaimForQueueReportsAFailedReleaseOfAMovedTicket(t *testing.T) {
 	}
 }
 
+// The unassign half of the same property: a release that was attempted, and
+// failed, must say so. Only the read-back fails here, so releaseClaim gets
+// past its verify and reaches the unassign it cannot make.
+func TestClaimForQueueReportsAnUnassignThatFailed(t *testing.T) {
+	ctx := context.Background()
+	errRead := errors.New("temporary Linear failure")
+	errUnassign := errors.New("unassign refused")
+	f := linear.NewFake()
+	f.SetViewer("me")
+	f.AddIssue("LERP", linear.Issue{ID: "iss-1", Identifier: "LERP-1", Status: "Todo"})
+
+	client := brokenUnassign{
+		Client: &failOnceGetIssue{Client: f, err: errRead},
+		err:    errUnassign,
+	}
+	_, won, err := claimForQueue(ctx, client, "iss-1", "Todo")
+	if won {
+		t.Error("claimForQueue won = true, want false")
+	}
+	if err == nil {
+		t.Fatal("claimForQueue error = nil, want the read-back failure and the release it could not make")
+	}
+	if !errors.Is(err, errRead) {
+		t.Errorf("claimForQueue error = %v, want wrapped %v", err, errRead)
+	}
+	if !strings.Contains(err.Error(), "release claim") {
+		t.Errorf("claimForQueue error = %v, want it to report the unassign that failed", err)
+	}
+	if got, _ := f.GetIssue(ctx, "iss-1"); got.AssigneeID != "me" {
+		t.Errorf("assignee = %q, want the claim still on the ticket the error reports", got.AssigneeID)
+	}
+}
+
 func TestEligible(t *testing.T) {
 	statuses := map[string]bool{"Todo": true}
 	tests := []struct {
