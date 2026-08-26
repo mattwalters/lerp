@@ -59,7 +59,12 @@ func awaitPasses(passes *sync.WaitGroup, events <-chan loop.Event) {
 		select {
 		case <-done:
 			return
-		case <-events:
+		case _, ok := <-events:
+			// A closed channel is ready forever; nil it out so the select
+			// blocks on the wait instead of spinning a core through it.
+			if !ok {
+				events = nil
+			}
 		case <-deadline:
 			fmt.Fprintf(os.Stderr, "lerp: gave up waiting for the in-flight pass after %s\n", quitWait)
 			return
