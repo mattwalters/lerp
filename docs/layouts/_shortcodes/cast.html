@@ -44,11 +44,23 @@
     {{- end }}
   </video>
   {{- with .Get "keys" }}
-  {{/* The separators are drawn by the stylesheet, so the spacing around them
-       is the same whichever segment they fall between. */}}
+  {{- $parts := split . "·" -}}
+  {{- /* A caption whose every segment is prose is one someone wrote without
+         the brackets. The keys are the whole point of the line, so losing
+         them is a build failure and not a quiet re-render as a sentence. */ -}}
+  {{- $keyed := false -}}
+  {{- range $parts }}{{ $p := trim . " " }}{{ if and (hasPrefix $p "[") (hasSuffix $p "]") }}{{ $keyed = true }}{{ end }}{{ end -}}
+  {{- if not $keyed -}}
+    {{- errorf "cast: %s has keys with no key in them — a keycap is written [enter]" $.Position -}}
+  {{- end }}
   <figcaption class="keys">
-    {{- range $part := split . "·" -}}
+    {{- /* The separator is in the markup rather than drawn by CSS ::before,
+           so that copying the caption — or reading it with no stylesheet —
+           still gets "p · pick a status · enter" and not one long word. It
+           is hidden from assistive tech, which has the segments already. */ -}}
+    {{- range $i, $part := $parts -}}
       {{- $part = trim $part " " -}}
+      {{- if $i }}<span class="sep" aria-hidden="true"> · </span>{{ end -}}
       {{- if and (hasPrefix $part "[") (hasSuffix $part "]") -}}
         <kbd>{{ strings.TrimSuffix "]" (strings.TrimPrefix "[" $part) }}</kbd>
       {{- else -}}

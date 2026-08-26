@@ -65,15 +65,26 @@ repo = "https://github.com/mattwalters/lerp"
 # `section` is the group heading an entry sits under. baseof.html emits one
 # whenever the value changes as it walks this list in weight order, so a
 # section's entries have to be contiguous in weight — hence the gaps, which
-# leave room to insert a page without renumbering the ones after it.
+# leave room to insert a page without renumbering the ones after it. An entry
+# that omits `section` does not render ungrouped; it joins whatever group is
+# above it, because nothing has changed the heading.
 #
 # `mono` marks an entry whose name is a command, and sets it in the face you
 # type it in. Nothing carries it yet; the first page named for a command will.
 
+# The section index leads its own section: standing on it, the sidebar shows
+# where you are, which an entry-less landing page cannot.
+[[menus.main]]
+name = "Documentation"
+pageRef = "/docs"
+weight = 10
+[menus.main.params]
+section = "Start"
+
 [[menus.main]]
 name = "Overview"
 pageRef = "/docs/overview"
-weight = 10
+weight = 20
 [menus.main.params]
 section = "Start"
 

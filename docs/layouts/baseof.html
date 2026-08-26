@@ -28,7 +28,10 @@
        sidebar, content, and the "On this page" rail. */}}
   <div class="wrap">
     {{ if not .IsHome }}
-    <nav class="sidenav">
+    {{/* Labelled, because the rail below is a <nav> too: unlabelled, the two
+         landmarks announce as "navigation, navigation" with nothing to tell
+         the manual's contents from this page's. */}}
+    <nav class="sidenav" aria-label="Manual">
       {{/* The sidebar is curated in hugo.toml rather than derived from the
            content tree: grouping and order are editorial, and a page nobody
            listed is unreachable here by design — a half-written section can
@@ -58,7 +61,7 @@
          a short manual page gets no rail, and the long mounted files do. */}}
     {{ $toc := .TableOfContents }}
     {{ if and (not .IsHome) (plainify $toc) }}
-    <nav class="toc">
+    <nav class="toc" aria-label="On this page">
       <h5>On this page</h5>
       {{ $toc }}
     </nav>

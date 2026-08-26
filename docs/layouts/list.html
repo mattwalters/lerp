@@ -4,8 +4,7 @@
      second list to forget to update, and unlike the sidebar this one carries
      no editorial grouping. Order is each child's weight, which is where the
      curation lives, and the line under each name is its `summary` front
-     matter. A child with no summary lists as a bare name — deliberately
-     plain, so the gap shows.
+     matter. A child that has none lists as a bare name.
 
      No <h1> here: the heading is the first line of _index.md, the way it is
      on every other page the site serves. */}}
@@ -14,12 +13,15 @@
   {{ with .Pages.ByWeight }}
   <dl class="pagelist">
     {{ range . }}
-    <dt><a href="{{ .RelPermalink }}">
-      {{- /* Same rule as the sidebar's mono entries: a page titled with a
-             command is set in the face you type it in. */ -}}
-      {{- if .Params.mono }}<code>{{ .Title }}</code>{{ else }}{{ .Title }}{{ end -}}
-    </a></dt>
-    <dd>{{ .Params.summary }}</dd>
+    {{/* Plain titles, including a page the sidebar sets in monospace: mono
+         is a property of a menu entry (see hugo.toml), and reading a second
+         mono off the page's front matter would be two spellings of one fact
+         to keep in sync by hand — with nothing to catch them disagreeing. */}}
+    <dt><a href="{{ .RelPermalink }}">{{ .Title }}</a></dt>
+    {{/* No empty <dd> for a child with no summary: it draws no line box, so
+         it would read as a description someone left blank rather than one
+         the page never had. */}}
+    {{ with .Params.summary }}<dd>{{ . }}</dd>{{ end }}
     {{ end }}
   </dl>
   {{ end }}

@@ -317,16 +317,14 @@ figure.cast figcaption {
   color: var(--fg-soft);
 }
 
-/* The separator is drawn here rather than written into the caption, so the
-   space around it is the same wherever it falls. */
-.keys > * + * { margin-left: 0.5rem; }
+/* The separators are in the markup (see the cast shortcode), so they need
+   nothing here but a colour that keeps them behind the words. */
+.keys .sep { color: var(--rule); }
 
-.keys > * + *::before {
-  content: "\00b7";
-  margin-right: 0.5rem;
-}
-
-kbd {
+/* Scoped to the caption, not a bare kbd: goldmark runs with unsafe = true,
+   so a <kbd> written into the README would otherwise pick up keycap chrome
+   with no cast anywhere near it. */
+.keys kbd {
   font: 0.85em var(--mono);
   color: var(--fg);
   background: var(--bg-soft);
@@ -338,10 +336,16 @@ kbd {
 
 /* Narrow screens ----------------------------------------------------- */
 
-@media (max-width: 60rem) {
-  /* The rail is a convenience on a wide screen and a wall of links above
-     the text on a phone, where the scrollbar already does its job. */
+/* Two rails and a reading column need 75rem: 40rem of measure, 12 of
+   sidebar, 14 of rail, and the padding and gaps between them. Below that the
+   "On this page" rail goes first — it is the one a scrollbar substitutes for
+   — rather than letting both rails eat the column, which is what left the
+   README's pipeline table in half the width it was written for. */
+@media (max-width: 75rem) {
   .toc { display: none; }
+}
+
+@media (max-width: 60rem) {
   /* The sidebar stays — it is the only way between pages — but folds into a
      row of links above the text, because a column beside the prose at this
      width leaves neither of them room. The group headings go with the
