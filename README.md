@@ -26,7 +26,9 @@ The whole ontology is five concepts — ticket, queue, runner, lane, the
 loop — where a lane is the concurrency unit: lerp runs at most N
 agents at once, one per lane. [SCOPE.md](SCOPE.md) is the fence around
 all five: nine invariants and the litmus tests every change runs
-through. Read it before proposing anything.
+through. Read it before proposing anything —
+[CONTRIBUTING.md](CONTRIBUTING.md) is how a proposal gets made, and
+what will and won't be accepted here.
 
 ## Install
 
@@ -54,8 +56,9 @@ installs into Go's bin dir — `GOBIN` when set, else `GOPATH/bin`;
 vet, build, test — and CI runs it on Linux and macOS. Two things CI does
 are deliberately not in it: `govulncheck`, which needs the network and a
 vulnerability database that is only ever current, and re-recording the
-demo cast, which needs vhs installed. The gate needs nothing installed
-beyond Go itself.
+demo cast, which needs vhs installed —
+[CONTRIBUTING.md](CONTRIBUTING.md) describes both. The gate needs
+nothing installed beyond Go itself.
 
 ## Getting started
 
