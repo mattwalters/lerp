@@ -4,6 +4,9 @@
        such as the CI badge, are left as they were written. */ -}}
 {{- $src := .Destination -}}
 {{- if not (urls.Parse $src).IsAbs -}}
-  {{- $src = printf "/%s" $src -}}
+  {{/* Cleaned and de-slashed the way render-link.html does it: /docs/demo.gif
+       is an ordinary spelling on GitHub, and prefixing a second slash would
+       emit a protocol-relative URL pointing at a host called "docs". */}}
+  {{- $src = printf "/%s" (strings.TrimPrefix "/" (path.Clean $src)) -}}
 {{- end -}}
 <img src="{{ $src }}" alt="{{ .PlainText }}"{{ with .Title }} title="{{ . }}"{{ end }} loading="lazy">

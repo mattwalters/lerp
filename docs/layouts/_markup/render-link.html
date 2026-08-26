@@ -11,7 +11,9 @@
        them relative to the page being rendered. */ -}}
 {{- $href := .Destination -}}
 {{- $u := urls.Parse $href -}}
-{{- if and (not $u.IsAbs) $u.Path -}}
+{{/* A destination beginning "//" is a URL with the scheme left off, not a
+     path into this repository. */}}
+{{- if and (not $u.IsAbs) $u.Path (not (hasPrefix $href "//")) -}}
   {{/* Cleaned and de-slashed first: ./README.md and /README.md are ordinary
        spellings on GitHub, and both would otherwise miss the page lookup and
        be sent to a blob URL — one of them a double-slashed 404. */}}
@@ -23,6 +25,7 @@
     {{- $ref := cond (hasPrefix site.Params.version "v") site.Params.version "main" -}}
     {{- $href = printf "%s/blob/%s/%s" site.Params.repo $ref $path -}}
   {{- end -}}
+  {{- with $u.RawQuery }}{{ $href = printf "%s?%s" $href . }}{{ end -}}
   {{- with $u.Fragment }}{{ $href = printf "%s#%s" $href . }}{{ end -}}
 {{- end -}}
 <a href="{{ $href }}"{{ with .Title }} title="{{ . }}"{{ end }}>{{ .Text | safeHTML }}</a>

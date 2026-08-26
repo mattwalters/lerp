@@ -242,4 +242,9 @@ th, td {
   .toc { display: none; }
   .wrap { padding: 1.5rem 1.25rem 4rem; }
   .hero .wordmark { font-size: 2.1rem; }
+  /* The README's pipeline table is three columns of prose, and a phone-width
+     column of it is a paragraph one word wide. It scrolls sideways instead,
+     with cells kept wide enough to read. */
+  table { display: block; overflow-x: auto; }
+  th, td { min-width: 11rem; }
 }

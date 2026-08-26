@@ -43,28 +43,53 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - id: pin
-        run: printf 'version=%s\n' "$(make -s hugo-version)" >> "$GITHUB_OUTPUT"
+        # Assigned first, so a make that fails takes the step down with it:
+        # inside printf's arguments its exit status is discarded, and the
+        # empty input that follows fails two steps later on a download URL
+        # that says nothing about the pin.
+        run: |
+          version="$(make -s hugo-version)"
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
       - uses: peaceiris/actions-hugo@v3
         with:
           hugo-version: ${{ steps.pin.outputs.version }}
       - run: hugo --source docs --destination "$PWD/public"
+      # The other shape the templates take. A frozen build stamps a version,
+      # links into that tag on GitHub and looks a directory further up for
+      # the manifest — a layout that otherwise first runs on a tag push, the
+      # one run that cannot be repeated without moving the tag.
+      - run: hugo --source docs --destination "$PWD/public-frozen"
+        env:
+          HUGO_PARAMS_VERSION: v0.0.0
+          HUGO_PARAMS_VERSIONROOT: ".."
 
   publish:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    # One deploy at a time. Each run clones gh-pages, stages onto it and
-    # pushes, so a merge to main and the tag pushed a second later would race
-    # and the loser's push is rejected. Deliberately not cancel-in-progress:
-    # the run cancelled could be the tag run, and the frozen version and
-    # manifest entry it carries cannot be re-cut without moving the tag.
+    # Each run clones gh-pages, stages onto it and pushes, so two overlapping
+    # publishes race and the loser's push is rejected. Grouped per ref rather
+    # than globally, because GitHub cancels a *pending* run when a newer one
+    # joins its group, whatever cancel-in-progress says: one shared group
+    # would let a second merge to main cancel the queued tag run, and the
+    # frozen copy and manifest entry that run carries are what nobody can
+    # re-cut. Two pushes to main superseding each other is harmless — the
+    # newer one publishes newer content — and a tag, in a group of its own,
+    # is never superseded. What is left is a tag and a main run pushing at
+    # the same moment: that fails the job loudly and re-runs cleanly.
     concurrency:
-      group: docs-publish
+      group: docs-publish-${{ github.ref }}
     steps:
       - uses: actions/checkout@v7
       - id: pin
-        run: printf 'version=%s\n' "$(make -s hugo-version)" >> "$GITHUB_OUTPUT"
+        # Assigned first, so a make that fails takes the step down with it:
+        # inside printf's arguments its exit status is discarded, and the
+        # empty input that follows fails two steps later on a download URL
+        # that says nothing about the pin.
+        run: |
+          version="$(make -s hugo-version)"
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
       - uses: peaceiris/actions-hugo@v3
         with:
           hugo-version: ${{ steps.pin.outputs.version }}
@@ -94,9 +119,12 @@ jobs:
           HUGO_PARAMS_VERSION: latest
           HUGO_PARAMS_VERSIONROOT: ".."
 
-      # A tag additionally publishes the frozen copy that tag owns forever.
+      # A tag push additionally publishes the frozen copy that tag owns
+      # forever. Only a push: workflow_dispatch can be aimed at a tag ref
+      # too, and a frozen version is never rebuilt — dispatch republishes
+      # main, and aimed anywhere else it deploys nothing.
       - name: Build ${{ github.ref_name }}
-        if: github.ref_type == 'tag'
+        if: github.event_name == 'push' && github.ref_type == 'tag'
         run: hugo --source docs --destination "$PWD/public/$GITHUB_REF_NAME"
         env:
           HUGO_PARAMS_VERSION: ${{ github.ref_name }}
@@ -104,10 +132,10 @@ jobs:
 
       # The manifest behind the version picker: this tag appended to whatever
       # gh-pages already carries, deduplicated and sorted newest first. The
-      # first release finds no branch and starts from []. Non-tag runs skip
-      # this step — keep_files leaves the existing manifest in place.
+      # first release finds no branch and starts from []. Every other run
+      # skips this step — keep_files leaves the existing manifest in place.
       - name: Update versions.json
-        if: github.ref_type == 'tag'
+        if: github.event_name == 'push' && github.ref_type == 'tag'
         run: |
           # Only a branch that genuinely is not there yet starts from []. A
           # fetch that failed for any other reason — a blip, an auth failure —
@@ -128,10 +156,17 @@ jobs:
             echo "gh-pages lookup failed (exit $status) — refusing to publish a manifest built from nothing"
             exit 1
           fi
-          # tonumber? keeps a tag the semver sort cannot parse — a v1.0.0-rc1
-          # — from failing the release deploy over its position in a list.
+          # Sorted on the numbers, with a release ranked above the
+          # prereleases leading to it: the tag glob matches v1.0.0-rc1, and
+          # both tonumber? (which keeps an unparseable segment from failing
+          # the deploy) and a plain numeric key would tie it with v1.0.0 and
+          # leave the picker to list them in whichever order it liked.
           jq --arg v "$GITHUB_REF_NAME" \
-            '. + [$v] | unique | sort_by(ltrimstr("v") | split(".") | map(tonumber? // 0)) | reverse' \
+            '. + [$v] | unique | sort_by(
+               (ltrimstr("v") | split("-")) as $p
+               | ($p[0] | split(".") | map(tonumber? // 0))
+                 + [if ($p | length) > 1 then 0 else 1 end]
+             ) | reverse' \
             versions.json > public/versions.json
           cat public/versions.json
 
