@@ -75,6 +75,13 @@ type Reader interface {
 // and exits 0 on. That is how a missing Starter shipped a blank cast. A sixth
 // role added here instead breaks `go build ./...` at every call site, and
 // `make check` runs that.
+//
+// What the bundle gives up: Validate can only ask whether an engine is here,
+// not whether it is whole. A composite whose parts are nil is still a non-nil
+// Engine, and the panic lands on the first tick. Nothing in production can
+// build one — the reconciler satisfies this or the call site does not compile
+// — so the check that is gone was only ever protecting assembled-by-hand
+// engines, which is to say test code.
 type Engine interface {
 	Ticker
 	Promoter
