@@ -21,7 +21,6 @@ var (
 	colorProvisioning = lipgloss.AdaptiveColor{Light: "#A16207", Dark: "#F2B84B"}
 	colorAttention    = lipgloss.AdaptiveColor{Light: "#C4275B", Dark: "#F2618E"}
 	colorFaint        = lipgloss.AdaptiveColor{Light: "#847E92", Dark: "#6B6684"}
-	colorBadgeText    = lipgloss.AdaptiveColor{Light: "#FFFFFF", Dark: "#1A1725"}
 )
 
 var (
@@ -40,6 +39,11 @@ var (
 	// stylePlain is a row's unstyled text — what highlight renders the spans
 	// it did not match with, where the cell carries no style of its own.
 	stylePlain = lipgloss.NewStyle()
+
+	// styleMark is the lerp mark in the status bar's corner. Weight, no
+	// colour: the palette marks state, and the mark is the one thing on the
+	// bar that reports nothing.
+	styleMark = lipgloss.NewStyle().Bold(true)
 
 	styleBorder      = lipgloss.NewStyle().Foreground(colorFaint)
 	styleBorderFocus = lipgloss.NewStyle().Foreground(colorFocus)
