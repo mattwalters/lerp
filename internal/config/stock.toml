@@ -156,11 +156,11 @@ its title — so the title is where the identifier has to be.
 #{{review}}
 
 Now review what you built, before a human has to. Read the diff with fresh
-eyes: hand it to a subagent that gets the brief and the diff and none of
-your reasoning, if your runner has subagents — otherwise read it back
-deliberately as the reviewer rather than the author. Check it against the
-brief and against this repository's own conventions, and rate what you find
-high, medium or low. Concrete failure scenarios only — no style essays.
+eyes: hand it to the reviewer agent if your runner provides one, or any
+subagent that gets the brief and the diff and none of your reasoning;
+otherwise read it back yourself. Check it against the brief and against this
+repository's own conventions, and rate what you find high, medium or low.
+Concrete failure scenarios only — no style essays.
 
 Post the findings on the pull request, as review comments on the lines they
 concern. Then fix them, push, and answer each thread. Review the result
