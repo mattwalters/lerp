@@ -3649,6 +3649,70 @@ func TestOpenWithNothingSelected(t *testing.T) {
 	}
 }
 
+// The URL o opens is Linear's, but it arrives over the wire like every other
+// string on the board, and `open`/`xdg-open` launch whatever scheme the
+// machine has a handler for. So an endpoint that is not Linear cannot reach
+// the operator's file:// paths, or their editor's URL handler, through one
+// keystroke.
+func TestOnlyALinearHTTPSURLReachesTheOpener(t *testing.T) {
+	for _, tc := range []struct {
+		url  string
+		want bool
+	}{
+		{"https://linear.app/acme/issue/LERP-1/first", true},
+		{"https://linear.app/l/LERP-1", true},
+		{"HTTPS://LINEAR.APP/acme/issue/LERP-1", true}, // the host is case-insensitive
+		{"", false},
+		{"file:///etc/passwd", false},
+		{"javascript:alert(1)", false},
+		{"vscode://file/etc/passwd", false},
+		{"http://linear.app/acme/issue/LERP-1", false},     // plaintext is not the door
+		{"https://linear.app.evil.test/acme", false},       // a longer host that starts with it
+		{"https://evil.linear.app/acme", false},            // a subdomain is not the host either
+		{"https://evil.test/linear.app/acme", false},       // a path that reads like the host
+		{"https://linear.app@evil.test/acme", false},       // userinfo, and the host is theirs
+		{"https://attacker:secret@linear.app/acme", false}, // userinfo, and the host is Linear's
+		{"https://linear.app:8443/acme", false},            // Linear serves one port
+		{"https://linear.app/x ;id", false},                // a space is a command line to xdg-open's $BROWSER
+		{"//linear.app/acme", false},                       // right host, no scheme at all
+		{"-froot@evil.test", false},                        // parses fine; the scheme check is what stops it
+		{"https://linear.app\x00/acme", false},             // a control byte Parse refuses outright
+	} {
+		if got := openable(tc.url); got != tc.want {
+			t.Errorf("openable(%q) = %v, want %v", tc.url, got, tc.want)
+		}
+	}
+}
+
+// A refused URL is not a silent no-op: the panel stops offering o on that
+// row, and pressing it anyway says why on the status bar rather than
+// looking like a key that is broken.
+func TestARefusedURLIsSaidOutLoudAndNotAdvertised(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-7", TicketID: "id-7", Title: "waiting", Status: "Plan Review",
+			URL: "file:///etc/passwd"},
+	}}})
+	if view := m.View(); strings.Contains(view, "o open") {
+		t.Fatalf("the panel offers o for a URL the opener will refuse:\n%s", view)
+	}
+
+	m, cmd := updateCmd(t, m, keyMsg("o"))
+	if cmd == nil {
+		t.Fatal("o on a refused URL produced no command, so nothing tells the operator why")
+	}
+	msg, ok := cmd().(openErrMsg)
+	if !ok {
+		t.Fatalf("o on a refused URL produced %T, want an openErrMsg", cmd())
+	}
+	m = update(t, m, msg)
+	if view := m.View(); !strings.Contains(view, "refusing to open") {
+		t.Fatalf("the status bar does not carry the refusal:\n%s", view)
+	}
+}
+
 func TestQuitKey(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	_, cmd := m.Update(keyMsg("q"))
@@ -4091,6 +4155,30 @@ func TestTicketDetailFailureKeepsThePaneThatWorks(t *testing.T) {
 	}
 }
 
+// The same failed read on a row whose URL the opener refuses: the pane has
+// nowhere to send the operator, so it does not offer to. The key line has
+// already dropped o for this row, and a pane that still said "o opens it in
+// Linear" would be the one place on the screen still promising the door.
+func TestAFailedReadOffersNoDoorItCannotOpen(t *testing.T) {
+	m, _, reader := newReadingTestModel(t)
+	m = pastTheSplash(t, m)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, keyMsg("enter"))
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-1", TicketID: "id-1", Title: "First",
+			Status: "Backlog", Reason: "unclaimed", URL: "file:///etc/passwd"},
+	}}})
+	m = selectAndRead(t, m, 0, linear.IssueDetail{}, errors.New("linear: rate limited"), reader)
+
+	view := m.View()
+	if !strings.Contains(view, "couldn't read the ticket") {
+		t.Fatalf("the pane does not say the read failed:\n%s", view)
+	}
+	if strings.Contains(view, "o opens it in Linear") {
+		t.Fatalf("the pane offers a door the opener will refuse:\n%s", view)
+	}
+}
+
 // A ticket with nothing on it still reads as answered, not as still loading.
 func TestTicketDetailEmptyTicket(t *testing.T) {
 	m, _, reader := newReadingTestModel(t)
@@ -4152,6 +4240,7 @@ func TestTicketDetailRendersHostileBodyInert(t *testing.T) {
 
 	view := m.View()
 	escapeFree(t, "inbox detail", view)
+	bidiFree(t, "inbox detail", view)
 	if !strings.Contains(view, "blocked by LERP-36") || strings.Contains(view, "<issue") {
 		t.Fatalf("issue tags did not reduce to identifiers:\n%s", view)
 	}
@@ -4196,9 +4285,9 @@ func TestTicketDetailWrapsProse(t *testing.T) {
 }
 
 // hostile is a ticket title as an attacker would write it: an OSC title
-// write, a screen erase, a cursor home, and a carriage return to repaint the
-// row it lands on.
-const hostile = "\x1b]0;pwned\x07\x1b[2J\x1b[1;1Hpwn\rme"
+// write, a screen erase, a cursor home, a carriage return to repaint the row
+// it lands on, and a right-to-left override to reorder what is left.
+const hostile = "\x1b]0;pwned\x07\x1b[2J\x1b[1;1Hpwn\rme\u202e"
 
 // Linear-sourced text reaching the terminal is the whole finding: whatever a
 // ticket is titled, every panel and every lens renders it inert, and the
@@ -4223,6 +4312,7 @@ func TestHostileTitlesRenderInert(t *testing.T) {
 		hm := update(t, board(t, hostile), keyMsg(focus))
 		view := hm.View()
 		escapeFree(t, "panel "+focus, view)
+		bidiFree(t, "panel "+focus, view)
 
 		// Geometry is the assertion that proves the injection is inert
 		// rather than merely absent: a title that cannot add a row or shift
@@ -4243,6 +4333,7 @@ func TestHostileTitlesRenderInert(t *testing.T) {
 	// The promote picker renders the selected item's title too.
 	m := update(t, update(t, board(t, hostile), keyMsg("1")), keyMsg("p"))
 	escapeFree(t, "promote picker", m.View())
+	bidiFree(t, "promote picker", m.View())
 }
 
 // The log pane carries agent output, which is legitimately colored — so it
@@ -4279,10 +4370,13 @@ func TestHostileErrorTextCannotRepaintTheStatusBar(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventError, Err: errors.New(hostile)}})
 	escapeFree(t, "status bar", m.View())
+	bidiFree(t, "status bar", m.View())
 	m = update(t, m, openErrMsg{err: errors.New(hostile)})
 	escapeFree(t, "status bar", m.View())
+	bidiFree(t, "status bar", m.View())
 	m = update(t, m, promotedMsg{ticket: "LERP-1", status: "Planning", err: errors.New(hostile)})
 	escapeFree(t, "status bar", m.View())
+	bidiFree(t, "status bar", m.View())
 }
 
 // Running and pending rows are adjacent in one list now, so stepping past a

@@ -4,6 +4,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/charmbracelet/x/ansi"
@@ -31,9 +32,10 @@ func clean(s string) string {
 			// A one-line field stays one line: whitespace that would add
 			// rows the layout never budgeted for becomes a plain space.
 			b.WriteRune(' ')
-		case control(r) || r == utf8.RuneError:
-			// Dropped: C0, DEL, the 8-bit C1 introducers, and the bytes of
-			// a broken UTF-8 sequence.
+		case control(r) || format(r) || r == utf8.RuneError:
+			// Dropped: C0, DEL, the 8-bit C1 introducers, the format
+			// characters that reorder or hide the text around them, and the
+			// bytes of a broken UTF-8 sequence.
 		default:
 			b.WriteRune(r)
 		}
@@ -59,9 +61,10 @@ func cleanText(s string) string {
 			// Rows the layout budgeted for stay budgeted for: the whitespace
 			// that would move the cursor becomes a plain space.
 			b.WriteRune(' ')
-		case control(r) || r == utf8.RuneError:
-			// Dropped: C0, DEL, the 8-bit C1 introducers, and the bytes of
-			// a broken UTF-8 sequence.
+		case control(r) || format(r) || r == utf8.RuneError:
+			// Dropped: C0, DEL, the 8-bit C1 introducers, the format
+			// characters that reorder or hide the text around them, and the
+			// bytes of a broken UTF-8 sequence.
 		default:
 			b.WriteRune(r)
 		}
@@ -195,6 +198,32 @@ func printable(seq string) bool {
 // range that carries the 8-bit forms of the escape introducers.
 func control(r rune) bool {
 	return r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f)
+}
+
+// format reports whether r is a Unicode format character (category Cf).
+// These carry no glyph and execute nothing; what they do is rearrange and
+// hide the text they sit in, which is enough to make a row lie about the
+// ticket it names. U+202E RIGHT-TO-LEFT OVERRIDE and the U+2066-2069
+// isolates reverse the identifier, status and title an inbox row puts in a
+// fixed order; the zero-width joiners and the tag characters hide runes
+// inside a word that the operator then reads as a shorter one. The whole
+// category goes rather than the bidi set alone, because the difference is
+// a hand-maintained list against the next Unicode release.
+//
+// Linear text and an agent's decoded log fields both go through clean, so
+// this is the rule for both — a lane pane names which ticket a run is on,
+// and the run's own output must not be able to reorder that either. The
+// cost is display fidelity in text that meant them: a ZWJ emoji comes apart
+// into its components, an Arabic word loses the joiner that shaped it.
+// cleanLog is the one path that keeps them, because the raw stream it
+// renders is the fallback that reproduces what a runner printed verbatim.
+// That is a real residual: an override written into a raw log line can
+// reorder the rest of that row, the pane's border included, the way an
+// unterminated SGR would. Unlike the SGR, closing it needs the nesting
+// tracked rather than a reset appended, and the row it can spoil names no
+// ticket — so the exemption stands and this is what it costs.
+func format(r rune) bool {
+	return unicode.Is(unicode.Cf, r)
 }
 
 // cleanEvent returns ev with every Linear-sourced string cleaned. apply

@@ -4,6 +4,9 @@ package loop
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/mattwalters/lerp/internal/config"
@@ -161,4 +164,85 @@ func claimed(t *testing.T, fake *linear.Fake, issueID, status string) (linear.Is
 		t.Fatal(err)
 	}
 	return issue, viewerID
+}
+
+// The README quotes this note as what an adopter sees when an automation has
+// eaten a stage's hop — the string they will have in front of them, and the
+// one they grep for. A quoted string with nothing holding it to its source
+// goes stale on the first reword, with a green gate, and the page a surprised
+// adopter reads is exactly the wrong place for a line that no longer matches.
+// So it is pinned the way lerp.example.toml is pinned to the stock config: the
+// whole quote, both ways.
+//
+// Both ways matters. Containment alone would catch a README that drifted from
+// the code and miss the note losing its second sentence — the "an external
+// automation may be moving tickets" hint, which is the whole diagnostic this
+// section of the README exists to explain — while the page went on quoting it.
+func TestSkippedHopNoteIsWhatTheReadmeQuotes(t *testing.T) {
+	note := skippedHopNote(
+		linear.Issue{Identifier: "LERP-42"},
+		config.Queue{Status: "Implementing", OnSuccess: "In Review"},
+		"on_success", "In Review", "In Progress",
+		map[string]bool{"Implementing": true, "In Review": true},
+	)
+	quote := readmeBlockquote(t)
+	if quote != flatten(note) {
+		t.Errorf("README.md's blockquote is not what skippedHopNote produces.\ncode:   %s\nREADME: %s\n\n"+
+			"pipeline.go is the source. Change the note there, then update the\n"+
+			"blockquote under \"Lerp needs the status field\" in README.md.", flatten(note), quote)
+	}
+}
+
+// The four trigger names the README tells an adopter to look for are the same
+// four the startup warning prints. They were wrong once already, in the code
+// (LERP-55), and a rename that fixes one side and not the other sends the
+// adopter to a settings row under a name the screen does not use.
+func TestReadmeNamesTheMidStageTriggers(t *testing.T) {
+	readme := flatten(string(readFile(t, "README.md")))
+	for _, ev := range midStageEvents {
+		if !strings.Contains(readme, ev.label) {
+			t.Errorf("README.md never names the %q trigger the startup warning prints —\n"+
+				"the settings row an adopter is sent to find must carry one name, not two", ev.label)
+		}
+	}
+}
+
+// readmeBlockquote returns the README's one blockquote — the quoted status-bar
+// line — flattened onto a single line, with its "> " markers and wrapping
+// removed. A README with no blockquote, or more than one, fails here rather
+// than passing vacuously.
+func readmeBlockquote(t *testing.T) string {
+	t.Helper()
+	var quoted []string
+	var blocks []string
+	for _, line := range strings.Split(string(readFile(t, "README.md")), "\n") {
+		if after, ok := strings.CutPrefix(line, "> "); ok {
+			quoted = append(quoted, after)
+			continue
+		}
+		if len(quoted) > 0 {
+			blocks = append(blocks, flatten(strings.Join(quoted, " ")))
+			quoted = nil
+		}
+	}
+	if len(quoted) > 0 {
+		blocks = append(blocks, flatten(strings.Join(quoted, " ")))
+	}
+	if len(blocks) != 1 {
+		t.Fatalf("README.md has %d blockquotes, want the one holding the skipped-hop line", len(blocks))
+	}
+	return blocks[0]
+}
+
+// flatten collapses wrapping so a comparison is about words, not line breaks:
+// the README wraps its prose and the code does not.
+func flatten(s string) string { return strings.Join(strings.Fields(s), " ") }
+
+func readFile(t *testing.T, name string) []byte {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("..", "..", name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
 }

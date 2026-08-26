@@ -47,7 +47,7 @@ The same rules the agents work under (see `AGENTS.md`):
 - `make check` is the gate on the code — gofmt, vet, build, test. CI
   runs that same target rather than its own copy of the steps, so the
   two cannot drift; it runs it on Linux and macOS both.
-- CI runs two more jobs, and they are the ones that can go red when
+- CI runs four more jobs, and they are the ones that can go red when
   your local check was green. `govulncheck` scans the dependency tree
   against a vulnerability database that is only ever current, so it
   can fail a PR that changed nothing — a newly published
@@ -62,6 +62,15 @@ The same rules the agents work under (see `AGENTS.md`):
   [vhs](https://github.com/charmbracelet/vhs). Nothing checks that the
   cast still shows the *right* thing, so if your change dates it,
   commit the re-recorded `docs/demo.gif` too.
+- The third is `release-config`: `goreleaser check` and then `make
+  snapshot`, which cross-builds the release binaries for macOS and
+  Linux without publishing anything. It exists because `.goreleaser.yaml`
+  is otherwise only ever executed by a tag push, which is after the
+  irreversible step — so a dependency that quietly needs cgo, or a
+  schema rule a later goreleaser tightens, is a red PR here instead of a
+  tag on origin with no release attached. Reproduce it locally with
+  `make snapshot`, which needs
+  [goreleaser](https://goreleaser.com/install/) v2.6 or newer.
 - The docs site publishes this repo's own markdown — the README and
   SCOPE.md you are reading — so a PR touching either builds the site as
   a gate. `make docs-serve` previews it locally and needs

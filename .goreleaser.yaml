@@ -1,0 +1,69 @@
+# Prebuilt binaries for people who do not have a Go toolchain. `go install`
+# stays the documented path (see README); this exists so that a tagged release
+# is also a download.
+#
+# Nothing here is a build system either — the same two facts the Makefile
+# stamps, an import path and a version, expressed for four platforms at once.
+version: 2
+
+builds:
+  - id: lerp
+    main: ./cmd/lerp
+    binary: lerp
+    # Lerp shells out to git, gh and a runner CLI; it links no C. Static
+    # binaries cross-compile from one runner and run on any libc.
+    env:
+      - CGO_ENABLED=0
+    # macOS and Linux only, because that is what lerp supports: the loop
+    # holds an advisory flock, starts agents in their own process groups and
+    # reaps by killing the group, none of which Windows has as such.
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    # The same -X target `make install` uses, so a downloaded binary and a
+    # locally built one report their version through the same hook. `v` is
+    # prepended rather than left to goreleaser, whose .Version drops it: a
+    # release stamped `0.1.0` while `make install` stamps `v0.1.0-3-gabc1234`
+    # would make the two impossible to compare at a glance, and the tag it
+    # came from is the thing a user wants to match.
+    ldflags:
+      - -s -w -X github.com/mattwalters/lerp/internal/version.Version=v{{ .Version }}
+    # The binary's mtime comes from the commit rather than from whenever the
+    # runner happened to build it, so rebuilding a tag does not churn that one
+    # byte. Worth the line, but not more than it is worth: this does not make
+    # the archives reproducible. The README and LICENSE inside them still
+    # carry checkout times, and tar records the builder's uid/gid names, so
+    # two builds of the same tag produce different checksums even when the
+    # binaries inside are identical. checksums.txt says what shipped; it is
+    # not a thing to reproduce independently.
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  # Bare `.Version` here, no `v`, unlike the stamp above — the two are read by
+  # different things. The stamp is read by a person comparing `lerp version`
+  # against a tag, so it matches the tag. A filename is read by installers and
+  # fetch scripts, which expect goreleaser's convention, so it keeps it.
+  # `formats`, plural, is the key that replaced `format` — goreleaser v2.6 and
+  # up. `make snapshot` names that floor in its not-installed message.
+  - formats: [tar.gz]
+    name_template: "lerp_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: checksums.txt
+
+# What `make snapshot` builds under. Snapshot mode has no tag to read, so
+# without this every snapshot would claim the last release's version — the
+# one number a snapshot must not be mistaken for.
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot"
+
+release:
+  # `v0.2.0-rc1` is a release candidate whether or not anyone remembers to
+  # tick the box; goreleaser reads the prerelease segment of the tag.
+  prerelease: auto

@@ -247,7 +247,7 @@ func TestVerifyWarnsOncePerMidStageEvent(t *testing.T) {
 	// them in, and merge is not among them.
 	want := []string{
 		`team LERP: "On draft PR open" moves tickets to "In Progress", which lerp.toml never names:`,
-		`team LERP: "On review requested" moves tickets to "In Progress", which lerp.toml never names:`,
+		`team LERP: "On PR review request or activity" moves tickets to "In Progress", which lerp.toml never names:`,
 		`team LERP: "On PR ready for merge" moves tickets to "In Progress", which lerp.toml never names:`,
 	}
 	if !slices.Equal(leads, want) {

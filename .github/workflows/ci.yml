@@ -69,6 +69,40 @@ jobs:
       # can report an advisory whose fix has not landed there yet.
       - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
+  # `.goreleaser.yaml` is otherwise executed exactly once in anger — by
+  # release.yml, on a tag push, which is to say *after* the one step in the
+  # Makefile that cannot be undone. A config error, a schema rule a later
+  # goreleaser tightens, or a dependency bump that quietly needs cgo would all
+  # surface there: tag already on origin, no release attached, and the next
+  # version number burnt. The four cross-builds themselves take seconds; the
+  # job around them — depth-0 checkout, setup-go, installing goreleaser, then
+  # archives and checksums — is closer to a minute per PR. Worth paying, to
+  # ask the question here where the answer is only a red PR.
+  release-config:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # goreleaser reads tag history to work out a version, and warns its
+          # way through a shallow clone. Same depth release.yml uses, so this
+          # job builds under the same conditions the real one does.
+          fetch-depth: 0
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      # install-only, for the reason the demo job installs vhs and stops: what
+      # runs is `make snapshot`, the same command a developer runs, so the two
+      # cannot drift.
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          version: "~> v2"
+          install-only: true
+      # Cheap and specific: `check` fails on a config the running goreleaser
+      # will not accept, and says which key, where `release` would fail on it
+      # halfway through a build.
+      - run: goreleaser check
+      - run: make snapshot
+
   # The cast rots silently: a tape whose keystrokes no longer drive the UI
   # they were written against still renders, it just renders the wrong thing.
   # This job re-records it and checks the exit code — nothing diffs the bytes,

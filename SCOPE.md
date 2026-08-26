@@ -45,6 +45,23 @@ Lerp is not privileged. Humans, agents, and Linear's own automations
 (a merged PR advancing a ticket) may all move tickets; the loop
 reconciles whatever board it finds, without caring who changed it.
 
+That neutrality has a price, and it is the one thing lerp requires of
+a board: **lerp needs the status field on the teams it serves.** A
+stage finishes by moving the ticket, so an automation that moves it
+*during* a stage takes that move away — the loop respects what it
+finds, and the stage's `on_success` hop simply never happens. The
+merged-PR case above is benign because it fires after the pipeline is
+done with the ticket; Linear's git automations that fire while a pull
+request is open are not, and opening a pull request is what an
+implement stage does. Nothing in lerp can resolve that collision
+without becoming privileged, so it is a condition of use rather than a
+defect: on a served team, the triggers that fire mid-stage are set to
+No action — or, deliberately, at a status the pipeline itself names,
+which makes the automation the next stage's trigger rather than the
+thief of the last one's hop. Lerp reads the served teams' automations
+at startup and names the mid-stage ones that point somewhere the
+config does not.
+
 ## The five concepts
 
 Lerp's entire ontology. Each is a noun a new reader can learn in a
