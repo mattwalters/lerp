@@ -19,6 +19,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/mattwalters/lerp/internal/childenv"
 	"github.com/mattwalters/lerp/internal/linear"
 	"github.com/mattwalters/lerp/internal/loop"
 )
@@ -1272,7 +1273,9 @@ func (m *model) selectedURL() string {
 
 // openURL hands the URL to the OS opener. This is the TUI opening the
 // operator's browser, not lerp speaking to an API; everything beyond
-// promote still happens in Linear.
+// promote still happens in Linear. The opener is a child like any other, so
+// it gets its environment from childenv: a personal `xdg-open` wrapper that
+// logs what it was given must not be logging the operator's Linear key.
 func openURL(url string) tea.Cmd {
 	if url == "" {
 		return nil
@@ -1285,6 +1288,7 @@ func openURL(url string) tea.Cmd {
 		default:
 			c = exec.Command("xdg-open", url)
 		}
+		c.Env = childenv.Inherited()
 		if err := c.Start(); err != nil {
 			return openErrMsg{err: fmt.Errorf("open %s: %w", url, err)}
 		}

@@ -16,6 +16,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/mattwalters/lerp/internal/childenv"
 )
 
 const (
@@ -413,10 +415,13 @@ func ExitStatus(record Record) (int, bool) {
 //
 // LC_ALL and TZ are pinned so `ps` renders a format this can parse and a value
 // that means the same thing to every reader; without that, the same live
-// process yields different answers to callers in different timezones.
+// process yields different answers to callers in different timezones. The
+// environment is built by childenv like every other child lerp spawns: `ps`
+// is resolved through PATH, and an agent that can write earlier on that PATH
+// must not find the operator's Linear key in what it inherits.
 func ProcessStart(pid int) (int64, error) {
 	cmd := exec.Command("ps", "-o", "lstart=", "-p", strconv.Itoa(pid))
-	cmd.Env = append(os.Environ(), "LC_ALL=C", "TZ=UTC")
+	cmd.Env = childenv.Inherited("LC_ALL=C", "TZ=UTC")
 	out, err := cmd.Output()
 	if err != nil {
 		return 0, fmt.Errorf("reading start time of process %d: %w", pid, err)

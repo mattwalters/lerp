@@ -1,7 +1,9 @@
 package childenv
 
 import (
+	"io/fs"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -45,5 +47,46 @@ func TestInheritedDropsAnEmptyLinearAPIKey(t *testing.T) {
 
 	if slices.Contains(Inherited(), LinearAPIKeyEnv+"=") {
 		t.Error("Inherited kept an empty Linear API key")
+	}
+}
+
+// The scrub is only worth as much as its coverage: a spawn site added later
+// that builds its own environment from os.Environ() puts the key back in
+// reach, and nothing about it looks wrong in review. So no package outside
+// this one reads the environment wholesale — os.Getenv for one variable is
+// untouched, and tests are their own business.
+func TestNoOtherPackageReadsTheEnvironment(t *testing.T) {
+	root := filepath.Join("..", "..")
+	self, err := filepath.Abs(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		switch {
+		case err != nil:
+			return err
+		case d.IsDir():
+			abs, err := filepath.Abs(path)
+			if err != nil {
+				return err
+			}
+			if abs == self || d.Name() == ".git" {
+				return fs.SkipDir
+			}
+			return nil
+		case !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go"):
+			return nil
+		}
+		src, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if strings.Contains(string(src), "os.Environ()") {
+			t.Errorf("%s calls os.Environ(); a child's environment comes from childenv.Inherited, which drops %s", path, LinearAPIKeyEnv)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }

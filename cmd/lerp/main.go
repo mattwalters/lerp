@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mattwalters/lerp/internal/childenv"
 	"github.com/mattwalters/lerp/internal/config"
 	"github.com/mattwalters/lerp/internal/evidence"
 	"github.com/mattwalters/lerp/internal/initcmd"
@@ -274,7 +275,9 @@ func isTerminal(f *os.File) bool {
 }
 
 func gitRoot() (string, error) {
-	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
+	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
+	cmd.Env = childenv.Inherited()
+	out, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("find repository root (lerp runs inside a Git repository): %w", err)
 	}

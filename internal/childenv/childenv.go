@@ -1,8 +1,9 @@
-// Package childenv builds the environment lerp hands to the commands it
-// spawns on the operator's behalf: runners, and the provision and dispose
-// commands around them.
+// Package childenv builds the environment for every process lerp spawns: the
+// runners and the provision and dispose commands around them, and lerp's own
+// helpers — `ps`, `git`, the OS URL opener — which are resolved through the
+// same PATH an agent can write to.
 //
-// Those commands inherit lerp's environment because they need it — PATH,
+// Those processes inherit lerp's environment because they need it — PATH,
 // HOME, whatever credentials the agent itself was configured with — with one
 // deliberate hole in it. Lerp's own Linear credential is a personal API key:
 // write access to every team the operator's account can see, not just the
@@ -14,7 +15,15 @@
 //
 // Nothing else is filtered. The rest of the environment reaching the agent is
 // documented and accepted in SECURITY.md, alongside the larger fact that an
-// agent runs as the operator's user and lerp does not sandbox it.
+// agent runs as the operator's user and lerp does not sandbox it — which is
+// also why this is hygiene rather than containment. It closes the accidental
+// path, not a determined one.
+//
+// It is one helper because it has to be every spawn site or none: a leak at
+// the site nobody remembered is the same leak, and this repository has
+// already shipped one fix that was applied at one call site and missed at
+// the other. TestNoOtherPackageReadsTheEnvironment is what stops a new spawn
+// site from quietly going back to os.Environ().
 package childenv
 
 import (
