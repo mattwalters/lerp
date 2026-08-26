@@ -30,9 +30,22 @@ func TestCleanDefusesEscapeSequences(t *testing.T) {
 		{"tab", "a\tb", "a b"},
 		{"bell", "ring\x07ring", "ringring"},
 		{"reset charset", "\x1bcreset", "reset"},
+		// Category Cf: no glyph, no execution, but a row that reads as a
+		// different ticket than the one it names.
+		{"rtl override", "LERP-1 \u202egnitratS", "LERP-1 gnitratS"},
+		{"bidi isolates", "\u2066LERP-1\u2069 \u2068title\u2069", "LERP-1 title"},
+		{"left-to-right mark", "LERP-\u200e1", "LERP-1"},
+		{"zero-width joiner", "LERP\u200d-1", "LERP-1"},
+		{"zero-width space", "LE\u200bRP-1", "LERP-1"},
+		{"byte order mark", "\ufeffLERP-1", "LERP-1"},
+		{"soft hyphen", "LERP\u00ad-1", "LERP-1"},
+		{"tag characters", "LERP-1\U000e0074\U000e0061\U000e0067", "LERP-1"},
 		// Ordinary titles survive untouched — sanitizing must not cost the
 		// operator the em dash or the emoji their tickets are named with.
 		{"unicode passes through", "Fix ✅ the — 日本語 test", "Fix ✅ the — 日本語 test"},
+		// A variation selector is a combining mark, not a format character:
+		// dropping it would change how the emoji beside it renders.
+		{"emoji variation selector survives", "warn \u26a0\ufe0f now", "warn \u26a0\ufe0f now"},
 		{"empty", "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -63,6 +76,11 @@ func TestCleanTextKeepsRowsAndNothingElse(t *testing.T) {
 		{"eight-bit csi", "\x9b2Jwipe", "wipe"},
 		{"delete", "del\x7fete", "delete"},
 		{"broken utf-8", "bad\xffbytes", "badbytes"},
+		// A body is prose, and prose is where a spoofed identifier reads
+		// most like the real thing.
+		{"rtl override", "see \u202e63-PREL", "see 63-PREL"},
+		{"bidi isolate spans a line", "one\n\u2066two\u2069\nthree", "one\ntwo\nthree"},
+		{"zero-width joiner", "LERP\u200d-36", "LERP-36"},
 		{"markdown passes through", "## Plan\n\n- one — 日本語", "## Plan\n\n- one — 日本語"},
 		{"empty", "", ""},
 	} {
