@@ -28,6 +28,12 @@ const quitWait = 30 * time.Second
 // run evidence on disk, so the next lerp adopts them (SCOPE invariant 3 —
 // everything is safe to kill, including lerp).
 func Run(ctx context.Context, o Options) error {
+	// Before anything renders: the palette's light and dark variants are
+	// chosen per render from what lipgloss believes the background is, and
+	// this is the operator's say in that belief (see theme.go).
+	if err := UseBackground(); err != nil {
+		return err
+	}
 	if err := o.Validate(); err != nil {
 		return err
 	}

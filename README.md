@@ -450,6 +450,24 @@ on, `esc` clears it before it closes the pane. While the search prompt is open i
 keyboard — a `p` or a `q` typed into it is text — and `ctrl+c` still
 quits.
 
+Colour marks state and never carries it alone: every state also has a
+shape or a word, so what the screen *says* survives a 16-colour terminal
+and a colour-blind operator. Legibility is measured — a test computes
+the WCAG contrast ratio of every colour in the palette against the light
+and dark backgrounds a terminal is likely to have, and fails below the
+4.5:1 floor for text, so a retune cannot quietly cost it. It measures
+the colours as written, which is what a 24-bit terminal draws; a
+terminal with fewer draws the nearest colour it has, and that one can
+sit under the floor — a little under on 256 colours, further under on
+16. `NO_COLOR` turns the colour off entirely.
+
+Which half of the palette you get is decided by asking the terminal for
+its background colour, and a terminal that does not answer — tmux and
+screen among them, and plenty of ssh and CI terminals — is read as
+dark; set `LERP_BACKGROUND=light` (or `dark`) to say which you have. It
+is read once at startup, and any other value is an error rather than a
+shrug.
+
 Quitting (`q` or `ctrl+c`) closes the screen, stops future passes, and
 waits briefly for a pass already in flight to settle. The agents are
 never touched: they are their own processes, with run evidence on
