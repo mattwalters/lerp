@@ -9,6 +9,8 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -607,5 +609,184 @@ func TestTeamGitAutomationsReportsUnknownTeam(t *testing.T) {
 	_, err := c.TeamGitAutomations(context.Background(), "NOPE")
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestListTeamIssuesUpdatedSince(t *testing.T) {
+	page := 0
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		req := decodeRequest(t, r)
+		if req.Variables["team"] != "LERP" {
+			t.Errorf("variables = %v", req.Variables)
+		}
+		// Millisecond precision in UTC, the resolution Linear stores: a
+		// cursor rendered finer is a value the server rounds down, and a
+		// rounded-down cursor is a lost update.
+		if got := req.Variables["since"]; got != "2026-08-25T15:04:05.123Z" {
+			t.Errorf("since = %v, want the cursor in UTC to the millisecond", got)
+		}
+		// gte, not gt: two issues can share the boundary millisecond, and
+		// the caller dedupes by id anyway.
+		if !strings.Contains(req.Query, "updatedAt: { gte: $since }") {
+			t.Errorf("query does not ask inclusively for changes: %q", req.Query)
+		}
+		// Filtering by state or assignee here is the bug this read exists
+		// to avoid: a ticket that finishes, or that a colleague claims, has
+		// to arrive so the caller can drop it.
+		if strings.Contains(req.Query, "nin:") || strings.Contains(req.Query, "assignee: {") {
+			t.Errorf("delta query filters what it must report: %q", req.Query)
+		}
+		// It replaces rows the two inbox listings produced, so it has to
+		// read everything they read.
+		for _, field := range []string{"state { name type }", "project { name }", "updatedAt"} {
+			if !strings.Contains(req.Query, field) {
+				t.Errorf("query does not read %s: %q", field, req.Query)
+			}
+		}
+		page++
+		switch page {
+		case 1:
+			writeData(t, w, `{"issues":{
+				"pageInfo":{"hasNextPage":true,"endCursor":"cur-1"},
+				"nodes":[{
+					"id":"iss-1","identifier":"LERP-1","title":"First",
+					"state":{"name":"Backlog","type":"backlog"},
+					"url":"https://linear.app/acme/issue/LERP-1/first",
+					"assignee":null,"project":{"name":"Open-source readiness"},
+					"updatedAt":"2026-08-25T15:04:06.500Z",
+					"inverseRelations":{"nodes":[]}
+				}]
+			}}`)
+		case 2:
+			if req.Variables["after"] != "cur-1" {
+				t.Errorf("second page after = %v, want cur-1", req.Variables["after"])
+			}
+			// A completed ticket comes back precisely because nothing
+			// filtered it out: this is how its reader learns it is gone.
+			writeData(t, w, `{"issues":{
+				"pageInfo":{"hasNextPage":false,"endCursor":""},
+				"nodes":[{
+					"id":"iss-2","identifier":"LERP-2","title":"Second",
+					"state":{"name":"Done","type":"completed"},
+					"assignee":{"id":"user-9"},
+					"updatedAt":"2026-08-25T15:04:07.000Z",
+					"inverseRelations":{"nodes":[]}
+				}]
+			}}`)
+		default:
+			t.Errorf("unexpected page %d", page)
+		}
+	})
+
+	since := time.Date(2026, 8, 25, 15, 4, 5, 123456789, time.UTC)
+	issues, err := c.ListTeamIssuesUpdatedSince(context.Background(), "LERP", since)
+	if err != nil {
+		t.Fatalf("ListTeamIssuesUpdatedSince: %v", err)
+	}
+	want := []Issue{
+		{ID: "iss-1", Identifier: "LERP-1", Title: "First", Status: "Backlog",
+			StatusType: CategoryBacklog, URL: "https://linear.app/acme/issue/LERP-1/first",
+			Project:   "Open-source readiness",
+			UpdatedAt: time.Date(2026, 8, 25, 15, 4, 6, 500000000, time.UTC)},
+		{ID: "iss-2", Identifier: "LERP-2", Title: "Second", Status: "Done",
+			StatusType: CategoryCompleted, AssigneeID: "user-9",
+			UpdatedAt: time.Date(2026, 8, 25, 15, 4, 7, 0, time.UTC)},
+	}
+	if !reflect.DeepEqual(issues, want) {
+		t.Errorf("issues = %+v, want %+v", issues, want)
+	}
+}
+
+// The delta cursor is read off UpdatedAt, so a listing that did not carry it
+// would pin the cursor at the zero time — and a zero cursor asks Linear for
+// the team's entire history on every pass, which is the cost this all exists
+// to remove.
+func TestListingsCarryUpdatedAt(t *testing.T) {
+	node := `{
+		"id":"iss-1","identifier":"LERP-1","title":"First",
+		"state":{"name":"Todo","type":"unstarted"},
+		"assignee":null,"updatedAt":"2026-08-25T15:04:06.500Z",
+		"inverseRelations":{"nodes":[]}
+	}`
+	for _, tc := range []struct {
+		name string
+		list func(*HTTP) ([]Issue, error)
+	}{
+		{"ListIssues", func(c *HTTP) ([]Issue, error) {
+			return c.ListIssues(context.Background(), "LERP", "Todo")
+		}},
+		{"ListAssignedIssues", func(c *HTTP) ([]Issue, error) {
+			return c.ListAssignedIssues(context.Background(), "LERP", "user-9")
+		}},
+		{"ListUnassignedIssues", func(c *HTTP) ([]Issue, error) {
+			return c.ListUnassignedIssues(context.Background(), "LERP")
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+				if req := decodeRequest(t, r); !strings.Contains(req.Query, "updatedAt") {
+					t.Errorf("query does not read updatedAt: %q", req.Query)
+				}
+				writeData(t, w, `{"issues":{"pageInfo":{"hasNextPage":false,"endCursor":""},"nodes":[`+node+`]}}`)
+			})
+			issues, err := tc.list(c)
+			if err != nil {
+				t.Fatalf("%s: %v", tc.name, err)
+			}
+			want := time.Date(2026, 8, 25, 15, 4, 6, 500000000, time.UTC)
+			if len(issues) != 1 || !issues[0].UpdatedAt.Equal(want) {
+				t.Errorf("UpdatedAt = %v, want %v", issues, want)
+			}
+		})
+	}
+}
+
+// The viewer id is a property of the API key, which never changes for a
+// client — so every call after the first is a request lerp does not have to
+// spend. Every claim, every release and every pass asks for it.
+func TestViewerIsReadOnce(t *testing.T) {
+	var reads atomic.Int64
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		reads.Add(1)
+		writeData(t, w, `{"viewer":{"id":"user-1"}}`)
+	})
+
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if id, err := c.Viewer(context.Background()); err != nil || id != "user-1" {
+				t.Errorf("Viewer = %q, %v", id, err)
+			}
+		}()
+	}
+	wg.Wait()
+	if got := reads.Load(); got != 1 {
+		t.Errorf("viewer read %d times, want exactly 1", got)
+	}
+}
+
+// A failed read must not be remembered: caching the empty id would leave
+// every later claim comparing assignees against "", which is what an
+// unassigned ticket carries — so a colleague's ticket would read as lerp's
+// own for the life of the process.
+func TestViewerDoesNotCacheAFailure(t *testing.T) {
+	reads := 0
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		reads++
+		if reads == 1 {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		writeData(t, w, `{"viewer":{"id":"user-1"}}`)
+	})
+
+	if _, err := c.Viewer(context.Background()); !errors.Is(err, ErrAuth) {
+		t.Fatalf("first Viewer error = %v, want ErrAuth", err)
+	}
+	id, err := c.Viewer(context.Background())
+	if err != nil || id != "user-1" {
+		t.Fatalf("second Viewer = %q, %v, want the id once the key works", id, err)
 	}
 }

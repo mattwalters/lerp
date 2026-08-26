@@ -16,8 +16,8 @@ type issueNode struct {
 	State      struct {
 		Name string `json:"name"`
 		// Type is Linear's own category for the state — "backlog",
-		// "started" and the rest. Requested only by the two queries the
-		// attention pass runs; it decodes as "" everywhere else.
+		// "started" and the rest. Requested only by the reads behind the
+		// attention pass; it decodes as "" everywhere else.
 		Type string `json:"type"`
 	} `json:"state"`
 	Assignee *struct {
@@ -25,11 +25,14 @@ type issueNode struct {
 	} `json:"assignee"`
 	// Linear types priority as a Float, so it decodes as one.
 	Priority float64 `json:"priority"`
-	// Project is requested only by the two queries the attention pass runs;
-	// it decodes as nil everywhere else, which is the same as no project.
+	// Project is requested only by the reads behind the attention pass; it
+	// decodes as nil everywhere else, which is the same as no project.
 	Project *struct {
 		Name string `json:"name"`
 	} `json:"project"`
+	// UpdatedAt is requested by the three listing queries and the delta
+	// read, and decodes as the zero time everywhere else.
+	UpdatedAt        time.Time `json:"updatedAt"`
 	InverseRelations struct {
 		Nodes []struct {
 			Type  string `json:"type"`
@@ -63,6 +66,7 @@ func (n issueNode) toIssue() Issue {
 		Status:     n.State.Name,
 		StatusType: n.State.Type,
 		Priority:   int(n.Priority),
+		UpdatedAt:  n.UpdatedAt,
 	}
 	if n.Project != nil {
 		is.Project = n.Project.Name
@@ -78,7 +82,7 @@ func (n issueNode) toIssue() Issue {
 		if r.Type != "blocks" {
 			continue
 		}
-		if t := r.Issue.State.Type; t == "completed" || t == "canceled" {
+		if t := r.Issue.State.Type; t == CategoryCompleted || t == CategoryCanceled {
 			continue
 		}
 		is.BlockedBy = append(is.BlockedBy, r.Issue.Identifier)
@@ -91,7 +95,7 @@ func (n issueNode) toIssue() Issue {
 		if r.Type != "blocks" {
 			continue
 		}
-		if t := r.RelatedIssue.State.Type; t == "completed" || t == "canceled" {
+		if t := r.RelatedIssue.State.Type; t == CategoryCompleted || t == CategoryCanceled {
 			continue
 		}
 		is.Blocks = append(is.Blocks, r.RelatedIssue.Identifier)
@@ -119,6 +123,7 @@ query ListIssues($team: String!, $state: String!, $after: String) {
       identifier
       title
       url
+      updatedAt
       state { name }
       assignee { id }
       priority
@@ -165,6 +170,7 @@ query ListAssignedIssues($team: String!, $assignee: ID!, $after: String) {
       identifier
       title
       url
+      updatedAt
       state { name type }
       assignee { id }
       priority
@@ -214,6 +220,7 @@ query ListUnassignedIssues($team: String!, $after: String) {
       identifier
       title
       url
+      updatedAt
       state { name type }
       assignee { id }
       priority
@@ -241,6 +248,63 @@ func (c *HTTP) ListUnassignedIssues(ctx context.Context, teamKey string) ([]Issu
 	issues, err := c.listIssues(ctx, listUnassignedIssuesQuery, map[string]any{"team": teamKey})
 	if err != nil {
 		return nil, fmt.Errorf("list unassigned issues: %w", err)
+	}
+	return issues, nil
+}
+
+const listTeamIssuesUpdatedSinceQuery = `
+query ListTeamIssuesUpdatedSince($team: String!, $since: DateTimeOrDuration!, $after: String) {
+  issues(
+    first: 50
+    after: $after
+    filter: {
+      team: { key: { eq: $team } }
+      updatedAt: { gte: $since }
+    }
+  ) {
+    pageInfo { hasNextPage endCursor }
+    nodes {
+      id
+      identifier
+      title
+      url
+      updatedAt
+      state { name type }
+      assignee { id }
+      priority
+      project { name }
+      inverseRelations(first: 50) {
+        nodes {
+          type
+          issue { identifier state { type } }
+        }
+      }
+      relations(first: 50) {
+        nodes {
+          type
+          relatedIssue { identifier state { type } }
+        }
+      }
+    }
+  }
+}`
+
+// ListTeamIssuesUpdatedSince returns the team's issues touched at or after
+// since (see Client for why it filters on nothing else). It asks for the same
+// fields the two inbox listings do, because what comes back replaces their
+// rows one for one.
+//
+// since is sent as RFC 3339 with millisecond precision in UTC — Linear stores
+// timestamps to the millisecond, and a cursor rendered any finer would be a
+// value the server rounds, which is a lost update rather than a repeated one.
+func (c *HTTP) ListTeamIssuesUpdatedSince(ctx context.Context, teamKey string, since time.Time) ([]Issue, error) {
+	vars := map[string]any{
+		"team":  teamKey,
+		"since": since.UTC().Format("2006-01-02T15:04:05.000Z07:00"),
+	}
+	issues, err := c.listIssues(ctx, listTeamIssuesUpdatedSinceQuery, vars)
+	if err != nil {
+		return nil, fmt.Errorf("list team issues updated since: %w", err)
 	}
 	return issues, nil
 }
@@ -516,8 +580,19 @@ query Viewer {
 }`
 
 // Viewer returns the authenticated user's id — the self of the claim
-// protocol.
+// protocol — reading it from Linear once and remembering it for the life of
+// the process. The id is a property of the API key, and this client's key
+// never changes, so the second read could only ever return the first answer.
+//
+// The lock is held across the request so that a burst of first calls makes
+// one of them: the callers are a pass and whatever lane goroutines are
+// claiming at that moment, and each of them blocks on the network anyway.
 func (c *HTTP) Viewer(ctx context.Context) (string, error) {
+	c.viewerMu.Lock()
+	defer c.viewerMu.Unlock()
+	if c.viewerID != "" {
+		return c.viewerID, nil
+	}
 	var resp struct {
 		Viewer struct {
 			ID string `json:"id"`
@@ -526,7 +601,8 @@ func (c *HTTP) Viewer(ctx context.Context) (string, error) {
 	if err := c.do(ctx, viewerQuery, nil, &resp); err != nil {
 		return "", fmt.Errorf("viewer: %w", err)
 	}
-	return resp.Viewer.ID, nil
+	c.viewerID = resp.Viewer.ID
+	return c.viewerID, nil
 }
 
 const teamGitAutomationsQuery = `

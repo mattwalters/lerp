@@ -1188,6 +1188,312 @@ func TestPromoteLeavesAnotherUsersClaimAlone(t *testing.T) {
 	}
 }
 
+// resyncEvery sets how many delta reads the attention pass makes per team
+// before re-listing that team's board in full. Call it before the first
+// Tick, the way the option it stands for is set before NewReconciler.
+func (h *harness) resyncEvery(n int) { h.rec.o.ResyncEvery = n }
+
+// countingBoardClient counts the reads behind the attention pass — the
+// mechanical form of "a pass costs one query per team, not the team's whole
+// backlog". listings counts both full listings together, since the pass
+// always runs them as a pair.
+type countingBoardClient struct {
+	linear.Client
+	deltas   atomic.Int64
+	listings atomic.Int64
+	// deltaErr, when set, is returned instead of the delta read — the pass
+	// that could not see what changed.
+	deltaErr error
+}
+
+func (c *countingBoardClient) ListTeamIssuesUpdatedSince(ctx context.Context, teamKey string, since time.Time) ([]linear.Issue, error) {
+	c.deltas.Add(1)
+	if c.deltaErr != nil {
+		return nil, c.deltaErr
+	}
+	return c.Client.ListTeamIssuesUpdatedSince(ctx, teamKey, since)
+}
+
+func (c *countingBoardClient) ListUnassignedIssues(ctx context.Context, teamKey string) ([]linear.Issue, error) {
+	c.listings.Add(1)
+	return c.Client.ListUnassignedIssues(ctx, teamKey)
+}
+
+func (c *countingBoardClient) ListAssignedIssues(ctx context.Context, teamKey, assigneeID string) ([]linear.Issue, error) {
+	c.listings.Add(1)
+	return c.Client.ListAssignedIssues(ctx, teamKey, assigneeID)
+}
+
+// newCountingHarness is a one-team harness whose board reads are counted.
+func newCountingHarness(t *testing.T) (*harness, *countingBoardClient) {
+	t.Helper()
+	fake := linear.NewFake()
+	counting := &countingBoardClient{Client: fake}
+	return newHarnessWith(t, 1, nil, fake, counting), counting
+}
+
+// Done-when: the pass stops paying for the whole backlog every 12 seconds.
+// After the cold start's one full listing, each pass reads one delta per team
+// and nothing else — on an established board that is the difference between
+// ~25 requests a pass and one.
+func TestAttentionReadsOneDeltaPerPass(t *testing.T) {
+	h, counting := newCountingHarness(t)
+	h.resyncEvery(20)
+	h.fake.AddIssue("LERP", linear.Issue{ID: "loose", Identifier: "LERP-1", Status: "Backlog"})
+	ctx := context.Background()
+
+	for range 5 {
+		h.rec.Tick(ctx)
+		h.waitEvents(t, EventAttention, 1)
+	}
+	// One pair on the cold start and none after: five passes inside the
+	// resync window re-list once, not five times.
+	if got := counting.listings.Load(); got != 2 {
+		t.Errorf("full listings = %d, want the cold start's pair and no more", got)
+	}
+	// The four passes after the cold start each cost exactly one read.
+	if got := counting.deltas.Load(); got != 4 {
+		t.Errorf("delta reads = %d, want one per pass after the first", got)
+	}
+}
+
+// Done-when: what a delta structurally cannot report still heals. An
+// archived or deleted ticket changes nothing — no query returns it at all —
+// so only the periodic full re-list can notice it is gone.
+func TestAttentionResyncDropsAnArchivedTicket(t *testing.T) {
+	h, counting := newCountingHarness(t)
+	h.resyncEvery(1)
+	h.fake.AddIssue("LERP", linear.Issue{ID: "gone", Identifier: "LERP-1", Status: "Backlog"})
+	h.fake.AddIssue("LERP", linear.Issue{ID: "stays", Identifier: "LERP-2", Status: "Backlog"})
+	ctx := context.Background()
+
+	h.rec.Tick(ctx) // cold start: both listed
+	if got := h.waitEvents(t, EventAttention, 1)[0]; len(got.Attention) != 2 {
+		t.Fatalf("cold start = %+v, want both tickets", got.Attention)
+	}
+	h.fake.DropIssue("gone")
+
+	// The delta pass cannot see it: nothing arrived saying so.
+	h.rec.Tick(ctx)
+	if got := h.waitEvents(t, EventAttention, 1)[0]; len(got.Attention) != 2 {
+		t.Fatalf("delta pass = %+v, want the archived ticket still listed", got.Attention)
+	}
+	// The resync pass rebuilds from the listings, which no longer mention it.
+	h.rec.Tick(ctx)
+	got := h.waitEvents(t, EventAttention, 1)[0].Attention
+	if len(got) != 1 || got[0].Ticket != "LERP-2" {
+		t.Errorf("resync pass = %+v, want only the ticket that still exists", got)
+	}
+	if counting.listings.Load() != 4 {
+		t.Errorf("full listings = %d, want the cold start's pair and the resync's", counting.listings.Load())
+	}
+}
+
+// Done-when: the two ways a ticket leaves the inbox without anyone here
+// touching it — a colleague claims it, or it finishes — both land on the very
+// next pass. Neither would, if the delta query were filtered the way the
+// listings it replaces are: the row would simply never arrive.
+func TestAttentionEvictsThroughTheDelta(t *testing.T) {
+	h, _ := newCountingHarness(t)
+	h.fake.AddIssue("LERP", linear.Issue{ID: "taken", Identifier: "LERP-1", Status: "Backlog"})
+	h.fake.AddIssue("LERP", linear.Issue{ID: "finished", Identifier: "LERP-2", Status: "Backlog"})
+	h.fake.AddIssue("LERP", linear.Issue{ID: "stays", Identifier: "LERP-3", Status: "Backlog"})
+	ctx := context.Background()
+
+	h.rec.Tick(ctx)
+	if got := h.waitEvents(t, EventAttention, 1)[0]; len(got.Attention) != 3 {
+		t.Fatalf("cold start = %+v, want all three", got.Attention)
+	}
+	if err := h.fake.AssignIssue(ctx, "taken", "somebody-else"); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.fake.MoveIssue(ctx, "finished", "Done"); err != nil {
+		t.Fatal(err)
+	}
+
+	h.rec.Tick(ctx)
+	got := h.waitEvents(t, EventAttention, 1)[0].Attention
+	if len(got) != 1 || got[0].Ticket != "LERP-3" {
+		t.Errorf("after the delta = %+v, want only the ticket still waiting on the operator", got)
+	}
+}
+
+// Done-when: lerp's own writes reach the inbox as fast as anyone else's. A
+// promote moves the ticket, which bumps its updatedAt, so the next delta
+// carries it — no special case anywhere for changes this process made.
+func TestAttentionSeesOurOwnPromoteOnTheNextPass(t *testing.T) {
+	h, _ := newCountingHarness(t)
+	h.fake.AddIssue("LERP", linear.Issue{ID: "parked", Identifier: "LERP-1", Status: "Needs Help",
+		AssigneeID: "fake-viewer"})
+	ctx := context.Background()
+
+	h.rec.Tick(ctx)
+	if got := h.waitEvents(t, EventAttention, 1)[0]; len(got.Attention) != 1 {
+		t.Fatalf("cold start = %+v, want the parked ticket", got.Attention)
+	}
+	if err := h.rec.Promote(ctx, "parked", "Todo"); err != nil {
+		t.Fatalf("Promote: %v", err)
+	}
+
+	h.rec.Tick(ctx)
+	if got := h.waitEvents(t, EventAttention, 1)[0]; len(got.Attention) != 0 {
+		t.Errorf("after promoting into a queue = %+v, want an empty inbox", got.Attention)
+	}
+	// The same pass filled a lane with the ticket it just promoted, which is
+	// the point of promoting into a queue. Let that run finish before the
+	// test's temporary evidence store goes away underneath it.
+	waitIdle(t, h.rec)
+}
+
+// Done-when: a failed delta reads as a failed pass and nothing else. It emits
+// no inbox — a partial read must never look like an empty one — and it leaves
+// the cursor where it was, so the change it missed arrives on the retry
+// rather than being skipped past.
+func TestAttentionKeepsItsCursorWhenTheDeltaFails(t *testing.T) {
+	h, counting := newCountingHarness(t)
+	h.fake.AddIssue("LERP", linear.Issue{ID: "loose", Identifier: "LERP-1", Status: "Backlog"})
+	ctx := context.Background()
+
+	h.rec.Tick(ctx)
+	h.waitEvents(t, EventAttention, 1)
+
+	// A ticket arrives, and the pass that would have seen it fails.
+	h.fake.AddIssue("LERP", linear.Issue{ID: "new", Identifier: "LERP-2", Status: "Backlog"})
+	counting.deltaErr = errors.New("boom")
+	h.rec.Tick(ctx)
+	ev := h.waitEvents(t, EventError, 1)[0]
+	if !strings.Contains(ev.Err.Error(), "boom") {
+		t.Errorf("error event = %v, want the delta's own failure", ev.Err)
+	}
+	select {
+	case ev := <-h.events:
+		if ev.Type == EventAttention {
+			t.Fatalf("a failed pass emitted an inbox: %+v", ev.Attention)
+		}
+	default:
+	}
+
+	// The retry asks from the same cursor, so the ticket it missed is in it.
+	counting.deltaErr = nil
+	h.rec.Tick(ctx)
+	got := h.waitEvents(t, EventAttention, 1)[0].Attention
+	if len(got) != 2 {
+		t.Errorf("after the retry = %+v, want both tickets: nothing was skipped past", got)
+	}
+	if counting.listings.Load() != 2 {
+		t.Errorf("full listings = %d, want no re-list: a failed delta is retried, not escalated", counting.listings.Load())
+	}
+}
+
+// laggingDeltaClient hides one issue from the first delta read, standing in
+// for the replica that has a newer write but not an older one. Everything
+// after that read answers truthfully.
+type laggingDeltaClient struct {
+	linear.Client
+	hide  string
+	reads int
+}
+
+func (c *laggingDeltaClient) ListTeamIssuesUpdatedSince(ctx context.Context, teamKey string, since time.Time) ([]linear.Issue, error) {
+	issues, err := c.Client.ListTeamIssuesUpdatedSince(ctx, teamKey, since)
+	if err != nil {
+		return nil, err
+	}
+	c.reads++
+	if c.reads > 1 {
+		return issues, nil
+	}
+	kept := issues[:0]
+	for _, is := range issues {
+		if is.ID != c.hide {
+			kept = append(kept, is)
+		}
+	}
+	return kept, nil
+}
+
+// Done-when: a row a lagging replica hid still reaches the inbox on a later
+// pass, without waiting for the resync. Linear answers these reads from
+// replicas that do not all hold the same writes, so a delta can come back
+// with a newer row and not an older one — and a cursor that then jumped to
+// the newer row would leave the older one unread for as long as the resync
+// interval. Each read asking from behind the cursor is what closes that.
+func TestAttentionRereadsBehindItsCursor(t *testing.T) {
+	fake := linear.NewFake()
+	lagging := &laggingDeltaClient{Client: fake, hide: "hidden"}
+	h := newHarnessWith(t, 1, nil, fake, lagging)
+	h.resyncEvery(20)
+	h.fake.AddIssue("LERP", linear.Issue{ID: "first", Identifier: "LERP-1", Status: "Backlog"})
+	ctx := context.Background()
+
+	h.rec.Tick(ctx)
+	if got := h.waitEvents(t, EventAttention, 1)[0]; len(got.Attention) != 1 {
+		t.Fatalf("cold start = %+v, want the one ticket", got.Attention)
+	}
+
+	// Two tickets arrive; the pass that reads them sees only the newer.
+	h.fake.AddIssue("LERP", linear.Issue{ID: "hidden", Identifier: "LERP-2", Status: "Backlog"})
+	h.fake.AddIssue("LERP", linear.Issue{ID: "newer", Identifier: "LERP-3", Status: "Backlog"})
+	h.rec.Tick(ctx)
+	got := h.waitEvents(t, EventAttention, 1)[0].Attention
+	if len(got) != 2 || got[1].Ticket != "LERP-3" {
+		t.Fatalf("lagging pass = %+v, want it to have missed LERP-2 and seen LERP-3", got)
+	}
+
+	// The next read asks from behind the cursor the newer row moved it to,
+	// so the row that was hidden is inside the window.
+	h.rec.Tick(ctx)
+	got = h.waitEvents(t, EventAttention, 1)[0].Attention
+	if len(got) != 3 {
+		t.Errorf("next pass = %+v, want the hidden ticket to have arrived without a resync", got)
+	}
+	if lagging.reads != 2 {
+		t.Errorf("delta reads = %d, want the two passes after the cold start", lagging.reads)
+	}
+}
+
+// Done-when: an empty board never sends a delta. Its cursor comes from the
+// rows the listing returned, so an empty listing leaves it at the zero time —
+// and "everything since the beginning of time", against a query filtered by
+// neither state nor assignee, is the team's entire history including every
+// completed ticket. The two listings for that board are two empty pages, so
+// asking them again is the cheap answer as well as the correct one.
+func TestAttentionDoesNotDeltaFromAZeroCursor(t *testing.T) {
+	h, counting := newCountingHarness(t)
+	h.resyncEvery(20)
+	// On the board but never in the inbox: somebody else's, and finished.
+	h.fake.AddIssue("LERP", linear.Issue{ID: "theirs", Identifier: "LERP-1", Status: "Backlog",
+		AssigneeID: "somebody-else"})
+	h.fake.AddIssue("LERP", linear.Issue{ID: "done", Identifier: "LERP-2", Status: "Done"})
+	ctx := context.Background()
+
+	for range 3 {
+		h.rec.Tick(ctx)
+		if got := h.waitEvents(t, EventAttention, 1)[0]; len(got.Attention) != 0 {
+			t.Fatalf("inbox = %+v, want it empty", got.Attention)
+		}
+	}
+	if got := counting.deltas.Load(); got != 0 {
+		t.Errorf("delta reads = %d, want none: there is no cursor to ask from", got)
+	}
+	if got := counting.listings.Load(); got != 6 {
+		t.Errorf("full listings = %d, want the pair each pass", got)
+	}
+
+	// The moment a ticket the inbox can draw appears, the listing has a row
+	// to take a cursor from and the pass goes back on the delta.
+	h.fake.AddIssue("LERP", linear.Issue{ID: "loose", Identifier: "LERP-3", Status: "Backlog"})
+	h.rec.Tick(ctx)
+	if got := h.waitEvents(t, EventAttention, 1)[0]; len(got.Attention) != 1 {
+		t.Fatalf("inbox = %+v, want the new ticket", got.Attention)
+	}
+	h.rec.Tick(ctx)
+	h.waitEvents(t, EventAttention, 1)
+	if got := counting.deltas.Load(); got != 1 {
+		t.Errorf("delta reads = %d, want the one pass that had a cursor", got)
+	}
+}
+
 // countingDetailClient counts the detail reads made through it — the
 // mechanical form of "no per-item comment query entered attention()".
 type countingDetailClient struct {
