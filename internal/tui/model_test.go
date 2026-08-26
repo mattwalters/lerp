@@ -1987,28 +1987,61 @@ func TestPromotePickerFollowsTheKeymap(t *testing.T) {
 }
 
 // The picker's line is built from bindings now, so its width is whatever
-// their labels add up to rather than a string somebody counted. On an
-// eighty-column window the bar must still fit it beside "● n in the inbox"
-// — the one number the truncation at the bottom of statusBar is written to
-// protect, and the first thing a line four columns too wide takes.
-func TestThePickersLineLeavesTheInboxCountWhole(t *testing.T) {
-	m, _, _, _ := newPromoteTestModel(t, 2, defaultTestStatuses)
-	resized, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 30})
-	m = resized.(model)
-	m = update(t, m, keyMsg("1"))
-	var items []loop.AttentionItem
-	for i := range 12 {
-		items = append(items, loop.AttentionItem{
-			Ticket: fmt.Sprintf("LERP-%d", i), TicketID: fmt.Sprintf("id-%d", i),
-			Title: "Nobody's routed this", Status: "Backlog"})
-	}
-	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: items}})
-	m = update(t, m, keyMsg("p"))
+// their labels add up to rather than a string somebody counted — and
+// reading them off the bindings costs columns the hardcoded line did not
+// pay. Those columns come out of the line, which bubbles cuts from its own
+// end, and not out of "● n in the inbox": the number the truncation at the
+// bottom of statusBar is written to protect. Ten lanes and three digits is
+// the stock board at its widest on the left, which is where a line that
+// will not fit has nowhere else to take the room from.
+//
+// The floor is the two ways out of the modal. Below that the trade turns
+// round and the count gives way instead, so the line always says how to
+// leave the picker.
+func TestThePickersLineGivesWayBeforeTheInboxCount(t *testing.T) {
+	for _, tc := range []struct {
+		width, lanes, items int
+		wantCount, wantNav  bool
+	}{
+		{width: 100, lanes: 2, items: 12, wantCount: true, wantNav: true},
+		{width: 80, lanes: 2, items: 12, wantCount: true, wantNav: true},
+		// The stock ten lanes and a three-digit count: the line is a few
+		// columns too wide now, and what it gives up is its own last hint.
+		{width: 80, lanes: 10, items: 120, wantCount: true, wantNav: false},
+		// Under the floor: the line is whole and the count is the one that
+		// gets clipped, the way it did before any of this was bindings.
+		{width: 60, lanes: 10, items: 120, wantCount: false, wantNav: true},
+	} {
+		m, _, _, _ := newPromoteTestModel(t, tc.lanes, defaultTestStatuses)
+		resized, _ := m.Update(tea.WindowSizeMsg{Width: tc.width, Height: 30})
+		m = resized.(model)
+		m = update(t, m, keyMsg("1"))
+		var items []loop.AttentionItem
+		for i := range tc.items {
+			items = append(items, loop.AttentionItem{
+				Ticket: fmt.Sprintf("LERP-%d", i), TicketID: fmt.Sprintf("id-%d", i),
+				Title: "Nobody's routed this", Status: "Backlog"})
+		}
+		m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: items}})
+		m = update(t, m, keyMsg("p"))
 
-	bar := m.statusBar()
-	for _, want := range []string{"● 12 in the inbox", "↑/k ↓/j choose", "esc cancel"} {
-		if !strings.Contains(bar, want) {
-			t.Fatalf("the eighty-column bar lost %q:\n%s", want, bar)
+		bar := m.statusBar()
+		where := fmt.Sprintf("%d columns, %d lanes, %d in the inbox", tc.width, tc.lanes, tc.items)
+		if w := lipgloss.Width(bar); w > tc.width {
+			t.Fatalf("%s: the bar came out %d wide:\n%s", where, w, bar)
+		}
+		// Both ways out of the modal, at every width: that is the floor.
+		for _, want := range []string{"enter promote", "esc cancel"} {
+			if !strings.Contains(bar, want) {
+				t.Fatalf("%s: the picker's line lost %q:\n%s", where, want, bar)
+			}
+		}
+		count := fmt.Sprintf("● %d in the inbox", tc.items)
+		if got := strings.Contains(bar, count); got != tc.wantCount {
+			t.Fatalf("%s: count whole = %v, want %v:\n%s", where, got, tc.wantCount, bar)
+		}
+		if got := strings.Contains(bar, "↑/k ↓/j choose"); got != tc.wantNav {
+			t.Fatalf("%s: nav hint shown = %v, want %v:\n%s", where, got, tc.wantNav, bar)
 		}
 	}
 }

@@ -183,21 +183,35 @@ func short(b key.Binding, desc string) key.Binding {
 // the same bindings handlePromoteKey matches — rebind Up and the picker and
 // its line move together. q and ctrl+c back out too; the line names esc
 // alone, the way the ? overlay names q for Quit's two keys.
+// The order is what survives a narrow bar, the way panelHelp's is: bubbles
+// drops hints off the end to fit, so the two keys that end the modal come
+// before the pair that only moves inside it. A picker whose line has been
+// cut down to "enter promote · esc cancel…" still says both ways out; one
+// cut down to "↑/k ↓/j choose…" says neither. promoteExits is where that
+// cutting stops.
 func (k keymap) promoteHelp() []key.Binding {
 	return []key.Binding{
-		pair(k.Up, k.Down, "choose"),
 		short(k.Detail, "promote"),
 		short(k.Close, "cancel"),
+		pair(k.Up, k.Down, "choose"),
 	}
 }
 
+// promoteExits is the part of promoteHelp a narrow bar must not cut down:
+// the two keys that end the modal. Taken from promoteHelp itself, so the
+// floor can never come to name a key the line does not.
+func (k keymap) promoteExits() []key.Binding { return k.promoteHelp()[:2] }
+
 // pair renders two bindings as one hint — "↑/k ↓/j choose" — where naming a
-// direction twice would cost more than the line has. The picker's
-// instructions share the status bar with "● n in the inbox", and that count
-// is what the bar's truncation takes first: spelling up and down out
-// separately is seven columns, enough to eat the number on an
-// eighty-column window. Keys from both, so the hint still says what the
-// picker answers to.
+// direction twice would cost more than the line has. Reading the labels off
+// the bindings is what this ticket is for, and "↑/k ↓/j" is four columns
+// wider than the "↑/↓" the hardcoded line could afford to write; spelling up
+// and down out as two hints costs seven. The bar's budget decides what a
+// narrow window keeps, so the saving is in what is left to drop.
+//
+// Keys from both, so the binding is honest about what it stands for, though
+// nothing matches against it — it is only ever rendered, and Help().Key is
+// what the operator reads.
 func pair(a, b key.Binding, desc string) key.Binding {
 	return key.NewBinding(
 		key.WithKeys(slices.Concat(a.Keys(), b.Keys())...),
