@@ -82,6 +82,15 @@ which statuses it creates and which it reuses before it acts. It then
 writes `lerp.toml` at the repository root, uncommitted, for you to
 review and check in.
 
+Init also appends `.lerp/` to the repository's `.gitignore`, creating
+that file if there is none — lerp's run records, logs and workspace
+worktrees live there, and none of it belongs in your history. Commit
+that change along with `lerp.toml`: a colleague who clones a repo that
+already has a `lerp.toml` never runs `lerp init`, so an uncommitted
+ignore covers only your clone. A repository whose ignore list already
+names `.lerp/` is left alone, and an ignore file lerp cannot write is
+reported, not fatal — init still writes `lerp.toml`.
+
 The conversation's last question is whether the stock Claude runner
 should include `--permission-mode bypassPermissions`. The default is no
 — saying yes is a real grant (see [Stock pipeline](#stock-pipeline)),
@@ -93,9 +102,10 @@ skips the conversation and takes the stock answers: the full pipeline,
 stock status names, no bypass grant.
 
 `lerp init` is safe to repeat: it creates only missing Linear
-structure and never replaces an existing `lerp.toml` — it verifies
-that the existing config serves the requested team, and ensures the
-statuses that config's queues name, instead.
+structure, adds nothing to `.gitignore` twice, and never replaces an
+existing `lerp.toml` — it verifies that the existing config serves the
+requested team, and ensures the statuses that config's queues name,
+instead.
 
 Init may also print a report about where your pipeline ends — statuses
 Linear does not yet count as completing work. Act on what it prints;
@@ -503,9 +513,10 @@ and `lerp init` complete the surface.
 **Where does state live?** In Linear — that is the first sentence of
 the model, and [SCOPE.md](SCOPE.md) invariant 1 holds it. Locally lerp
 keeps exactly two things: `lerp.toml` (config, checked in) and an
-evidence store, `.lerp/` at the repo root — one record per run under
-`.lerp/runs` (pid, log file, ticket, workspace path, and the exit status
-the run records for itself as it ends), workspaces under
+evidence store, `.lerp/` at the repo root (gitignored, by init) — one
+record per run under `.lerp/runs` (pid, log file, ticket, workspace
+path, and the exit status the run records for itself as it ends),
+workspaces under
 `.lerp/workspaces`, an advisory lock at `.lerp/lock` that keeps it to
 one loop per clone, and the loop's diagnostics in `.lerp/loop.log`.
 Local state is evidence, never truth: losing all of it may cost
