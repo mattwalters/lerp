@@ -31,12 +31,21 @@ builds:
     # came from is the thing a user wants to match.
     ldflags:
       - -s -w -X github.com/mattwalters/lerp/internal/version.Version=v{{ .Version }}
-    # Archives whose contents differ only by build time produce different
-    # checksums for identical binaries. Pinning to the commit makes a rebuild
-    # of the same tag verifiable against the checksums already published.
+    # The binary's mtime comes from the commit rather than from whenever the
+    # runner happened to build it, so rebuilding a tag does not churn that one
+    # byte. Worth the line, but not more than it is worth: this does not make
+    # the archives reproducible. The README and LICENSE inside them still
+    # carry checkout times, and tar records the builder's uid/gid names, so
+    # two builds of the same tag produce different checksums even when the
+    # binaries inside are identical. checksums.txt says what shipped; it is
+    # not a thing to reproduce independently.
     mod_timestamp: "{{ .CommitTimestamp }}"
 
 archives:
+  # Bare `.Version` here, no `v`, unlike the stamp above — the two are read by
+  # different things. The stamp is read by a person comparing `lerp version`
+  # against a tag, so it matches the tag. A filename is read by installers and
+  # fetch scripts, which expect goreleaser's convention, so it keeps it.
   - formats: [tar.gz]
     name_template: "lerp_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:

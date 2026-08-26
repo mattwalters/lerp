@@ -71,8 +71,8 @@ binaries locally and publishes nothing — it needs
 [goreleaser](https://goreleaser.com/install/), which is why it is not
 in the gate. `make release VERSION=v0.1.0` tags merged main and pushes
 the tag; pushing a `v*` tag is the only thing that cuts a release, and
-the build itself happens in CI so that what ships is reproducible from
-a clean checkout rather than from somebody's laptop.
+the build itself happens in CI, from a clean checkout of the tag rather
+than from whatever was lying around on somebody's laptop.
 
 ## Getting started
 

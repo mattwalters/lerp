@@ -65,8 +65,17 @@ snapshot: ## Build the release binaries locally, publishing nothing (needs gorel
 	  echo 'snapshot: goreleaser is not installed — see https://goreleaser.com/install/'; \
 	  exit 1; }
 	goreleaser release --snapshot --clean
-	@printf 'built into dist/ — check the stamp with: %s version\n' \
-	  "$$(ls -d dist/lerp_$$(go env GOOS)_$$(go env GOARCH)*/lerp 2>/dev/null | head -1)"
+# The hint names this platform's binary so the stamp is one command away.
+# Guarded like demo's cap and example's `test -s`: goreleaser has renamed
+# these directories before — `arm64` became `arm64_v8.0` when it grew
+# `goarm64` — and a glob that misses must not print a sentence with a hole
+# where the path goes.
+	@bin=$$(ls -d dist/lerp_$$(go env GOOS)_$$(go env GOARCH)*/lerp 2>/dev/null | head -1); \
+	  if [ -n "$$bin" ]; then \
+	    printf 'built into dist/ — check the stamp with: %s version\n' "$$bin"; \
+	  else \
+	    printf 'built into dist/\n'; \
+	  fi
 
 .PHONY: release
 release: ## Tag main and push it, which starts the release build (VERSION=v0.1.0)
@@ -76,9 +85,13 @@ release: ## Tag main and push it, which starts the release build (VERSION=v0.1.0
 #
 # VERSION defaults to `git describe` output for the benefit of `install`, and
 # that default must never become a tag. `origin` is how make tells a value it
-# supplied itself from one the operator did.
-	@test '$(origin VERSION)' != 'file' || { \
-	  echo 'release: name the tag — make release VERSION=v0.1.0'; exit 1; }
+# supplied itself from one the operator did — and the test is for `command
+# line` specifically, not merely "not the default": an exported VERSION left
+# over from another project by a shell profile or a direnv `.envrc` is not
+# somebody asking for a release, and this is not the command to guess on.
+	@test '$(origin VERSION)' = 'command line' || { \
+	  echo 'release: name the tag on the command line — make release VERSION=v0.1.0'; \
+	  exit 1; }
 	@printf '%s' '$(VERSION)' \
 	  | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$$' || { \
 	  printf 'release: %s is not a version tag — vMAJOR.MINOR.PATCH, optionally -rc1\n' \
@@ -91,13 +104,30 @@ release: ## Tag main and push it, which starts the release build (VERSION=v0.1.0
 	@test "$$(git rev-parse HEAD)" = "$$(git rev-parse origin/main)" || { \
 	  echo 'release: HEAD is not origin/main — releases are cut from merged main'; \
 	  exit 1; }
-	@if git rev-parse -q --verify 'refs/tags/$(VERSION)' >/dev/null; then \
-	  printf 'release: %s already exists here — a released tag is never moved\n' \
+# Origin is asked first, because whether the tag is published is the fact the
+# local check below needs. --exit-code so the three answers stay three: 0 the
+# tag is there, 2 it is not, anything else means the question was never put to
+# origin — and a guard that reads "unreachable" as "absent" is not a guard.
+	@git ls-remote --exit-code --tags origin 'refs/tags/$(VERSION)' >/dev/null 2>&1; \
+	  case $$? in \
+	  0) printf 'release: %s already exists on origin — pick the next version\n' \
+	       '$(VERSION)'; exit 1 ;; \
+	  2) ;; \
+	  *) printf 'release: could not reach origin to check whether %s exists\n' \
+	       '$(VERSION)'; exit 1 ;; \
+	  esac
+# Origin does not have the tag, so a local one is the wreckage of an earlier
+# attempt whose push did not land — a dropped VPN, an expired key. If it names
+# the commit being released it is exactly the tag this run would create, so
+# reuse it and push. Refusing here would tell the operator to burn a version
+# number on a failed connection. A local tag on some *other* commit is the
+# real thing this refuses: moving a tag people may already have fetched.
+	@if git rev-parse -q --verify 'refs/tags/$(VERSION)' >/dev/null \
+	   && test "$$(git rev-parse 'refs/tags/$(VERSION)^{commit}')" != "$$(git rev-parse HEAD)"; then \
+	  printf 'release: %s already exists here on another commit — a tag is never moved\n' \
 	    '$(VERSION)'; exit 1; fi
-	@if [ -n "$$(git ls-remote --tags origin 'refs/tags/$(VERSION)')" ]; then \
-	  printf 'release: %s already exists on origin — pick the next version\n' \
-	    '$(VERSION)'; exit 1; fi
-	git tag -a '$(VERSION)' -m 'lerp $(VERSION)'
+	@git rev-parse -q --verify 'refs/tags/$(VERSION)' >/dev/null \
+	  || git tag -a '$(VERSION)' -m 'lerp $(VERSION)'
 	git push origin 'refs/tags/$(VERSION)'
 	@printf 'pushed %s — the release build takes it from here:\n' '$(VERSION)'
 	@printf '  https://github.com/mattwalters/lerp/actions/workflows/release.yml\n'
