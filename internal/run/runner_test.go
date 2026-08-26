@@ -151,16 +151,24 @@ printf 'env=%s\n' "$LERP_TICKET"
 // Substitution happens in one pass, so a value can never be re-read as a
 // template. Prompt prose is the value most likely to name a placeholder — the
 // prose that tells an agent what {{workdir}} means is prose about lerp — and a
-// second pass over the quoted prompt would splice a quoted path into it and
-// end the quote mid-argument, splitting one argument into several or leaving
-// the command unparseable. The runner prints its whole argument list, so a
-// prompt that arrives as one argument, verbatim, is the proof.
+// second pass over the quoted prompt would splice a quoted path into it,
+// ending the quote mid-argument.
+//
+// The workspace here has a space in its name, which is what makes the argument
+// count evidence rather than decoration: under a second pass the spliced path
+// breaks the prompt into two words, and the runner sees three arguments where
+// the template named two. A path without a space would concatenate back into
+// one word and hide the split, leaving only the prompt text to catch it.
 func TestExecuteDoesNotExpandPlaceholdersInsideSubstitutedValues(t *testing.T) {
 	dir := t.TempDir()
 	script := writeScript(t, dir, "runner.sh", `
 printf 'argc=%s\n' "$#"
 printf 'prompt=%s\n' "$1"
 `)
+	workdir := filepath.Join(dir, "lane 1")
+	if err := os.MkdirAll(workdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	logPath := filepath.Join(dir, "runner.log")
 
 	if _, err := Execute(context.Background(), Invocation{
@@ -169,7 +177,7 @@ printf 'prompt=%s\n' "$1"
 			Prompt: "Work {{ticket}} in {{workdir}}; resume with {{session}}.",
 		},
 		Ticket:  "LERP-42",
-		Workdir: dir,
+		Workdir: workdir,
 		LogPath: logPath,
 	}); err != nil {
 		t.Fatal(err)
