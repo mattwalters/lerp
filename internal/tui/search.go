@@ -56,6 +56,15 @@ func (m *model) openSearch() {
 func (m *model) closeSearch(accept bool) {
 	m.searching = false
 	m.searchInput.Blur()
+	if accept {
+		// Onto the list, wherever the keys were when the prompt opened.
+		// Narrowing is something the operator does in order to pick a row
+		// out of what is left, so the first j after enter has to walk the
+		// matches rather than scroll the ticket body the pane was holding.
+		// Cancelling takes this back too: nothing was narrowed, and the
+		// list as it was includes the keys as they were.
+		m.keysInMain = false
+	}
 	if !accept {
 		// The list as it was is the rows and the cursor both: a prompt that
 		// narrowed down to nothing left setSearch no selection to carry

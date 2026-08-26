@@ -148,7 +148,7 @@ func TestAFailedFirstPassSaysSoRatherThanSpinning(t *testing.T) {
 func TestTheOverlayTakesTheScreenFromTheSplash(t *testing.T) {
 	m, _, _ := newTestModel(t, 2)
 	m = update(t, m, keyMsg("?"))
-	if !strings.Contains(m.View(), "next panel") {
+	if !strings.Contains(m.View(), "cycle back") {
 		t.Fatalf("? over the splash opened nothing:\n%s", m.View())
 	}
 	m = update(t, m, keyMsg("?"))

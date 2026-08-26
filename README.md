@@ -436,16 +436,17 @@ one and press `p` to promote it: pick a target from the configured
 queue statuses or a pipeline exit, and lerp moves it there. That
 MoveIssue and force-start's claim are the only writes any view makes;
 everything else about a ticket still happens in Linear. Keys: `1`/`2`
-choose a panel and `tab` cycles. `↑`/`↓` pick a row, `enter` opens the
-main pane on it and `esc` closes it again — both panels start closed,
-and each remembers its own answer — `s` sorts the Inbox, `P` scopes it
-to a project, `/` searches it and `B` unfolds its backlog, `o` opens the
-selected ticket in
-Linear, `S` force-starts the selected queued ticket, `e` ejects the
-selected run, `pgup`/`pgdn` scroll the log or the ticket, `end`
-resumes following, `r` shows the raw log, `q` quits (or backs out of
-the promote picker or an eject). With a filter on, `esc` clears it
-before it closes the pane. While the search prompt is open it has the
+choose a panel and `tab` cycles — an open main pane is a surface in
+that cycle, and while it holds the keys its border says so and
+`↑`/`↓` scroll it a line at a time. `↑`/`↓` pick a row, `enter` opens
+the main pane on it and `esc` closes it again — both panels start
+closed, and each remembers its own answer — `s` sorts the Inbox, `P`
+scopes it to a project, `/` searches it and `B` unfolds its backlog,
+`o` opens the selected ticket in Linear, `S` force-starts the selected
+queued ticket, `e` ejects the selected run, `pgup`/`pgdn` scroll the
+log or the ticket, `end` resumes following, `r` shows the raw log, `q`
+quits (or backs out of the promote picker or an eject). With a filter
+on, `esc` clears it before it closes the pane. While the search prompt is open it has the
 keyboard — a `p` or a `q` typed into it is text — and `ctrl+c` still
 quits.
 

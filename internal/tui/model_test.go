@@ -257,6 +257,8 @@ func keyMsg(s string) tea.KeyMsg {
 	switch s {
 	case "tab":
 		return tea.KeyMsg{Type: tea.KeyTab}
+	case "shift+tab":
+		return tea.KeyMsg{Type: tea.KeyShiftTab}
 	case "up":
 		return tea.KeyMsg{Type: tea.KeyUp}
 	case "down":
@@ -1981,11 +1983,11 @@ func TestStatusBarAndHelp(t *testing.T) {
 
 	m = update(t, m, keyMsg("?"))
 	view := m.View()
-	if !strings.Contains(view, "open in Linear") || !strings.Contains(view, "next panel") {
+	if !strings.Contains(view, "open in Linear") || !strings.Contains(view, "cycle back") {
 		t.Fatalf("help overlay is missing bindings:\n%s", view)
 	}
 	m = update(t, m, keyMsg("?"))
-	if strings.Contains(m.View(), "next panel") {
+	if strings.Contains(m.View(), "cycle back") {
 		t.Fatalf("help overlay did not close:\n%s", m.View())
 	}
 }
@@ -2234,7 +2236,7 @@ func TestThePickerAndTheOverlayForceThePane(t *testing.T) {
 	}
 
 	m = update(t, m, keyMsg("?"))
-	if !strings.Contains(m.View(), "next panel") {
+	if !strings.Contains(m.View(), "cycle back") {
 		t.Fatalf("? from a closed inbox drew no overlay:\n%s", m.View())
 	}
 	m = update(t, m, keyMsg("?"))
@@ -5354,5 +5356,337 @@ func TestCapacityLabelStaysFullWhileAForcedRunHoldsTheBudget(t *testing.T) {
 		TicketID: "t3", Ticket: "LERP-3", Queue: "implement", ExitCode: 0}})
 	if got := m.capacityLabel(); got != "1/2 running" {
 		t.Fatalf("capacity label once the forced run ended = %q, want a lane free again", got)
+	}
+}
+
+// Done-when: an open pane is a surface tab reaches, and the chrome says
+// which surface has the keys. The panels have 1 and 2; the pane has the
+// cycle it is already in exactly when it is open.
+func TestTabPutsTheKeysInTheOpenPane(t *testing.T) {
+	m, _, reader := newReadingTestModel(t)
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+	m = openMain(t, m)
+	m = selectAndRead(t, m, 0, linear.IssueDetail{Body: "the body of the first"}, nil, reader)
+	if m.mainFocused() {
+		t.Fatal("the pane took the keys the moment it opened; enter opens, it does not move focus")
+	}
+
+	m = update(t, m, keyMsg("tab"))
+	if !m.mainFocused() {
+		t.Fatal("tab from a panel with an open pane did not put the keys in it")
+	}
+	if m.focus != panelAttention {
+		t.Fatalf("the keys moving into the pane moved the panel focus to %v: "+
+			"the pane is the inbox's lens, and it stays the inbox's lens", m.focus)
+	}
+	// Wide layout: the two panels and the pane share every line, so the top
+	// border carries both boxes — the inbox's on the left, the pane's on the
+	// right — and exactly one of them is heavy.
+	top := strings.Split(m.View(), "\n")[0]
+	if !strings.HasPrefix(top, "╭") {
+		t.Fatalf("the inbox kept the heavy box after the keys left it: %q", top)
+	}
+	if !strings.HasSuffix(top, "┓") {
+		t.Fatalf("the pane holds the keys but not the heavy box: %q", top)
+	}
+	// Non-goal: the pane still follows the selected row, so that row is
+	// still marked while the keys are in what it opened.
+	if !strings.Contains(m.View(), "▸ ") {
+		t.Fatalf("the inbox stopped marking the row the pane is reading:\n%s", m.View())
+	}
+
+	// And on round the cycle: the pane, then the other panel — whose own
+	// pane is shut, so the cycle there is two surfaces and not three.
+	m = update(t, m, keyMsg("tab"))
+	if m.focus != panelWork || m.mainFocused() {
+		t.Fatalf("tab out of the pane landed on %v with the keys in the pane %v, want work's list",
+			m.focus, m.mainFocused())
+	}
+	m = update(t, m, keyMsg("tab"))
+	if m.focus != panelAttention || m.mainFocused() {
+		t.Fatalf("tab past a panel with no pane open landed on %v/%v, want the inbox's list",
+			m.focus, m.mainFocused())
+	}
+}
+
+// Done-when: shift+tab is tab's exact inverse, which is what makes a third
+// surface safe to add to the cycle — stepping back off a panel lands in the
+// pane that panel has open, not past it.
+func TestShiftTabWalksTheCycleBackwards(t *testing.T) {
+	m, _, reader := newReadingTestModel(t)
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+	m = openMain(t, m)
+	m = selectAndRead(t, m, 0, linear.IssueDetail{Body: "the body of the first"}, nil, reader)
+
+	type surface struct {
+		focus panel
+		pane  bool
+	}
+	forward := []surface{{panelAttention, true}, {panelWork, false}, {panelAttention, false}}
+	for i, want := range forward {
+		m = update(t, m, keyMsg("tab"))
+		if got := (surface{m.focus, m.mainFocused()}); got != want {
+			t.Fatalf("tab %d landed on %+v, want %+v", i+1, got, want)
+		}
+	}
+	for i := len(forward) - 2; i >= 0; i-- {
+		m = update(t, m, keyMsg("shift+tab"))
+		if got := (surface{m.focus, m.mainFocused()}); got != forward[i] {
+			t.Fatalf("shift+tab back to step %d landed on %+v, want %+v", i+1, got, forward[i])
+		}
+	}
+}
+
+// Done-when: j/k scroll the pane a line at a time while it holds the keys —
+// the movement the page keys never had — and the tail follows the same rule
+// the page keys follow: a line off the bottom stops it, a line back on
+// resumes it. The selection they would otherwise move stays where it is.
+func TestTheFocusedPaneScrollsALineAtATime(t *testing.T) {
+	log := filepath.Join(t.TempDir(), "one.log")
+	writeLog(t, log, []byte(strings.Repeat("a line of agent output\n", 200)))
+
+	m, _, _ := newTestModel(t, 2)
+	m = update(t, m, keyMsg("2"))
+	for _, ev := range []loop.Event{
+		{Type: loop.EventStarted, RunID: "r1", Lane: 1, TicketID: "id-1", Ticket: "LERP-1", Queue: "plan", LogPath: log},
+		{Type: loop.EventStarted, RunID: "r2", Lane: 2, TicketID: "id-2", Ticket: "LERP-2", Queue: "plan", LogPath: log},
+	} {
+		m = update(t, m, eventMsg{ev: ev})
+	}
+	m = openMain(t, m)
+	m = update(t, m, keyMsg("tab"))
+	if !m.mainFocused() {
+		t.Fatal("tab did not put the keys in the log pane")
+	}
+	bottom, sel := m.vp.YOffset, m.workSel
+
+	m = update(t, m, keyMsg("k"))
+	if got := m.vp.YOffset; got != bottom-1 {
+		t.Fatalf("k moved the pane to %d, want one line up from %d", got, bottom)
+	}
+	if m.follow {
+		t.Fatal("a line back off the bottom left the tail following")
+	}
+	if m.workSel != sel {
+		t.Fatalf("k moved the work selection to %q while the keys were in the pane", m.workSel)
+	}
+
+	m = update(t, m, keyMsg("j"))
+	if got := m.vp.YOffset; got != bottom {
+		t.Fatalf("j moved the pane to %d, want back to %d", got, bottom)
+	}
+	if !m.follow {
+		t.Fatal("a line back onto the bottom did not pick the tail up again")
+	}
+
+	// And with the keys back on the list — shift+tab, the way back out of
+	// the pane the panel opened — j is the row key it has always been.
+	m = update(t, m, keyMsg("shift+tab"))
+	if m.focus != panelWork || m.mainFocused() {
+		t.Fatalf("shift+tab out of the pane landed on %v/%v, want work's list",
+			m.focus, m.mainFocused())
+	}
+	m = update(t, m, keyMsg("j"))
+	if m.workSel == sel {
+		t.Fatalf("j on the list did not move the selection off %q", sel)
+	}
+}
+
+// Done-when: esc means what it always meant. It closes the pane, and the
+// keys it was holding go back to the list — including for the next pane the
+// operator opens, which enter opens to read, not to move focus into.
+func TestClosingThePaneHandsTheKeysBack(t *testing.T) {
+	m, _, reader := newReadingTestModel(t)
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+	m = openMain(t, m)
+	m = selectAndRead(t, m, 0, linear.IssueDetail{Body: "the body of the first"}, nil, reader)
+	m = update(t, m, keyMsg("tab"))
+
+	m = update(t, m, keyMsg("esc"))
+	if m.mainOpen() {
+		t.Fatal("esc did not close the pane the keys were in")
+	}
+	if m.mainFocused() {
+		t.Fatal("the keys stayed in a closed pane")
+	}
+	m = update(t, m, keyMsg("j"))
+	if m.attnSel != 1 {
+		t.Fatalf("j after esc moved the selection to %d, want the second row", m.attnSel)
+	}
+
+	m = update(t, m, keyMsg("enter"))
+	if m.mainFocused() {
+		t.Fatalf("enter reopened the pane with the keys already in it: " +
+			"enter opens the pane, tab is what moves into it")
+	}
+}
+
+// Done-when: the ? overlay borrows the pane, not the keys in it. It draws
+// in that same viewport, so the keys stay where the operator put them and
+// move what the pane is holding — which is the help while it is up. The
+// panel still lit behind the overlay is what says the keys are on the list,
+// so the two states are not the same screen.
+//
+// The alternative — falling through to the list while the overlay covers it
+// — walks a selection nobody can see, and the pane comes back reading a
+// ticket the operator never chose.
+func TestTheOverlayBorrowsThePaneNotItsKeys(t *testing.T) {
+	m, _, reader := newReadingTestModel(t)
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+	m = openMain(t, m)
+	m = selectAndRead(t, m, 0, linear.IssueDetail{Body: "the body of the first"}, nil, reader)
+	m = update(t, m, keyMsg("tab"))
+	// Short enough that the overlay is longer than the pane, so scrolling it
+	// is a fact and not an accident of how many bindings there are.
+	m = update(t, m, tea.WindowSizeMsg{Width: 100, Height: 18})
+
+	m = update(t, m, keyMsg("?"))
+	if !m.mainFocused() {
+		t.Fatal("the overlay took the pane's keys as well as its room")
+	}
+	top := strings.Split(m.View(), "\n")[0]
+	if !strings.HasPrefix(top, "╭") {
+		t.Fatalf("the inbox is lit behind the overlay while the keys are in the pane: %q", top)
+	}
+	if m.vp.TotalLineCount() <= m.vp.Height {
+		t.Fatalf("the overlay fits its pane (%d lines in %d rows): nothing here scrolls",
+			m.vp.TotalLineCount(), m.vp.Height)
+	}
+
+	m = update(t, m, keyMsg("j"))
+	if m.vp.YOffset != 1 {
+		t.Fatalf("j behind the overlay moved the pane to %d, want one line into the help",
+			m.vp.YOffset)
+	}
+	if m.attnSel != 0 {
+		t.Fatalf("j behind the overlay walked the hidden list to row %d, "+
+			"re-aiming the pane the keys were in", m.attnSel)
+	}
+
+	m = update(t, m, keyMsg("?"))
+	if !m.mainFocused() {
+		t.Fatal("closing the overlay moved the keys the operator had left in the pane")
+	}
+	if !strings.Contains(m.View(), "the body of the first") {
+		t.Fatalf("the pane came back on another row:\n%s", m.View())
+	}
+
+	// And with the keys on the list, the overlay is what it always was: the
+	// selection moves behind it, and the pane comes back on the new row.
+	m = update(t, m, keyMsg("shift+tab"))
+	if m.focus != panelAttention || m.mainFocused() {
+		t.Fatalf("the keys are not back on the inbox list: %v/%v", m.focus, m.mainFocused())
+	}
+	m = update(t, m, keyMsg("?"))
+	if got := strings.Split(m.View(), "\n")[0]; !strings.HasPrefix(got, "┏") {
+		t.Fatalf("the inbox is dark behind the overlay while the keys are on it: %q", got)
+	}
+	m = update(t, m, keyMsg("j"))
+	if m.attnSel != 1 {
+		t.Fatalf("j behind the overlay from the list moved to row %d, want the second row: "+
+			"re-aiming the lens behind the overlay is what it has always done", m.attnSel)
+	}
+}
+
+// Done-when: tab reaches a pane that is a lens on a row. A panel with no row
+// under its cursor has a pane holding a state sentence — the first pass has
+// not landed, or the inbox is empty and that is the goal state — and the
+// keys would arrive there with nothing to scroll and no selection left to
+// move, which is the one thing rowKeys exists to prevent.
+func TestTabSkipsAPaneWithNoRowUnderIt(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	// A pass that reported an empty queue, not a pass that has not reported:
+	// the splash covers the second one, and enter does not open a pane under
+	// it. What is left is a work panel with a queue and no tickets in it.
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Team: "LERP", Name: "implement", Status: "Todo"},
+	}}})
+	m = update(t, m, keyMsg("2"))
+	m = openMain(t, m)
+	if m.hasRow(panelWork) {
+		t.Fatalf("the work panel has a row after an empty pass:\n%s", m.View())
+	}
+	m = update(t, m, keyMsg("tab"))
+	if m.mainFocused() {
+		t.Fatal("tab put the keys in a pane with no row under it")
+	}
+	if m.focus != panelAttention {
+		t.Fatalf("tab past the rowless pane landed on %v, want the inbox", m.focus)
+	}
+
+	// And it reaches the same pane the moment a pass gives it a row.
+	m = update(t, m, keyMsg("2"))
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
+			{ID: "id-9", Identifier: "LERP-9", Title: "queued", Eligible: true},
+		}}}}})
+	m = update(t, m, keyMsg("tab"))
+	if !m.mainFocused() {
+		t.Fatalf("tab did not reach the pane once it had a row to be a lens on:\n%s", m.View())
+	}
+
+	// Only arriving asks. A panel that empties under a pane the operator is
+	// already reading keeps its keys — a pass whose Linear calls all failed
+	// reports an empty queue exactly like an empty one, and a rule that let
+	// a read move the keyboard would move it every interval an outage
+	// lasted, then again on the way back, into a pane aimed at whatever
+	// queued next.
+	for _, ev := range []loop.Event{
+		{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+			{Team: "LERP", Name: "implement", Status: "Todo"}}},
+		{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+			{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
+				{ID: "id-10", Identifier: "LERP-10", Title: "queued later", Eligible: true},
+			}}}},
+	} {
+		m = update(t, m, eventMsg{ev: ev})
+		if !m.mainFocused() {
+			t.Fatalf("a pass moved the keys out of the pane the operator put them in:\n%s",
+				m.View())
+		}
+	}
+}
+
+// Done-when: tab behind the ? overlay means what it always meant. The
+// overlay leaves the keys where they are — see the test above — but it
+// covers the pane, and a tab that moved them into a surface the operator
+// cannot see them arrive in would land them somewhere they never chose:
+// the overlay closes, and j scrolls a ticket body instead of walking rows.
+func TestTabBehindTheOverlayStillMeansTheNextPanel(t *testing.T) {
+	m, _, reader := newReadingTestModel(t)
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+	m = openMain(t, m)
+	m = selectAndRead(t, m, 0, linear.IssueDetail{Body: "the body of the first"}, nil, reader)
+
+	m = update(t, m, keyMsg("?"))
+	m = update(t, m, keyMsg("tab"))
+	if m.mainFocused() {
+		t.Fatal("tab behind the overlay put the keys in a pane nobody can see")
+	}
+	if m.focus != panelWork {
+		t.Fatalf("tab behind the overlay landed on %v, want the work panel", m.focus)
+	}
+	m = update(t, m, keyMsg("?"))
+	if m.mainFocused() || m.focus != panelWork {
+		t.Fatalf("closing the overlay left the keys at %v/%v", m.focus, m.mainFocused())
+	}
+}
+
+// Done-when: the bar names the way out of the surface the keys have just
+// landed in — and esc still says "close", because from in the pane it still
+// closes rather than having grown a second meaning.
+func TestTheBarNamesTheWayOutOfThePane(t *testing.T) {
+	m, _, reader := newReadingTestModel(t)
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+	m = openMain(t, m)
+	m = selectAndRead(t, m, 0, linear.IssueDetail{Body: "the body of the first"}, nil, reader)
+	if got := m.statusBar(); !strings.Contains(got, "esc close") || strings.Contains(got, "tab next") {
+		t.Fatalf("the bar offers the pane's own keys before the pane has them:\n%s", got)
+	}
+
+	m = update(t, m, keyMsg("tab"))
+	got := m.statusBar()
+	if !strings.Contains(got, "tab next") || !strings.Contains(got, "esc close") {
+		t.Fatalf("the bar does not name the way out of the pane:\n%s", got)
 	}
 }
