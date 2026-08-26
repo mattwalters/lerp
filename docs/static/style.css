@@ -50,7 +50,9 @@ header {
   display: flex;
   align-items: baseline;
   flex-wrap: wrap;
-  gap: 0 1rem;
+  /* A row gap as well as a column one: on a narrow phone the header wraps,
+     and every item in it has line-height 1. */
+  gap: 0.35rem 1rem;
   padding: 0.9rem 1.5rem;
   border-bottom: 1px solid var(--rule);
 }

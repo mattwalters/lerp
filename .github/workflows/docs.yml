@@ -9,8 +9,10 @@
 # mints the docs describing it, so a repo pinned to lerp vX.Y.Z can read the
 # docs that match it.
 #
-# One-time setup, by hand: GitHub Pages serving the gh-pages branch
-# (Settings → Pages). The first run of this workflow creates that branch.
+# One-time setup, in this order: merging this workflow lets its first run of
+# main create the gh-pages branch, and Pages is then pointed at that branch by
+# hand (Settings → Pages). Until that second act the site builds and deploys
+# to a branch nobody serves.
 name: docs
 
 on:
@@ -52,6 +54,13 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    # One deploy at a time. Each run clones gh-pages, stages onto it and
+    # pushes, so a merge to main and the tag pushed a second later would race
+    # and the loser's push is rejected. Deliberately not cancel-in-progress:
+    # the run cancelled could be the tag run, and the frozen version and
+    # manifest entry it carries cannot be re-cut without moving the tag.
+    concurrency:
+      group: docs-publish
     steps:
       - uses: actions/checkout@v7
       - id: pin
@@ -65,7 +74,13 @@ jobs:
       # and any directory, and only the stamped version label differs between
       # them. The root is built first because the version directories are
       # staged inside it.
+      #
+      # Not on a tag: the root and /latest/ track main, and a tag is a commit
+      # that main may already have moved past — rebuilding them from the tag's
+      # tree would roll the homepage back and label it "latest". A tag stages
+      # only its own frozen copy, and keep_files leaves the rest standing.
       - name: Build root
+        if: github.ref_type != 'tag'
         run: hugo --source docs --destination "$PWD/public"
         env:
           HUGO_PARAMS_VERSION: latest
@@ -73,6 +88,7 @@ jobs:
       # A level below the root, so the version picker's manifest — and the
       # other versions it points at — are one directory up from this copy.
       - name: Build latest
+        if: github.ref_type != 'tag'
         run: hugo --source docs --destination "$PWD/public/latest"
         env:
           HUGO_PARAMS_VERSION: latest
@@ -93,10 +109,24 @@ jobs:
       - name: Update versions.json
         if: github.ref_type == 'tag'
         run: |
-          if git fetch origin gh-pages --depth=1 2>/dev/null; then
+          # Only a branch that genuinely is not there yet starts from []. A
+          # fetch that failed for any other reason — a blip, an auth failure —
+          # must not be read as an empty manifest: this step stages the file
+          # the deploy publishes, so keep_files does not protect the versions
+          # already listed in it, and a truncated manifest strands every
+          # release before this one behind a picker that no longer lists it.
+          status=0
+          git ls-remote --exit-code --heads origin gh-pages >/dev/null || status=$?
+          if [ "$status" -eq 0 ]; then
+            git fetch origin gh-pages --depth=1
+            # The branch can exist without a manifest: every deploy before
+            # the first tag publishes the site without writing one.
             git show FETCH_HEAD:versions.json > versions.json || echo "[]" > versions.json
-          else
+          elif [ "$status" -eq 2 ]; then
             echo "[]" > versions.json
+          else
+            echo "gh-pages lookup failed (exit $status) — refusing to publish a manifest built from nothing"
+            exit 1
           fi
           # tonumber? keeps a tag the semver sort cannot parse — a v1.0.0-rc1
           # — from failing the release deploy over its position in a list.

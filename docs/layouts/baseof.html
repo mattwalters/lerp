@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ if not .IsHome }}{{ .Title }} · {{ end }}{{ site.Title }}</title>
-  <meta name="description" content="{{ site.Params.tagline | default site.Title }}">
+  <meta name="description" content="{{ site.Home.Params.tagline | default site.Title }}">
   <link rel="stylesheet" href="{{ "style.css" | relURL }}">
 </head>
 <body>

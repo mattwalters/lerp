@@ -65,8 +65,9 @@ The same rules the agents work under (see `AGENTS.md`):
 - The docs site publishes this repo's own markdown — the README and
   SCOPE.md you are reading — so a PR touching either builds the site as
   a gate. `make docs-serve` previews it locally and needs
-  [hugo](https://gohugo.io); `make hugo-version` prints the one version
-  CI and your machine share.
+  [hugo](https://gohugo.io); `make hugo-version` prints the version CI
+  builds and deploys with, which is also what a local build warns about
+  not being.
 - PRs go against `main`. Lerp is pre-1.0 with no tagged releases;
   `main` is what `go install ...@latest` gets.
 - One change per PR, and say in the description what it does and why.
