@@ -4152,6 +4152,7 @@ func TestTicketDetailRendersHostileBodyInert(t *testing.T) {
 
 	view := m.View()
 	escapeFree(t, "inbox detail", view)
+	bidiFree(t, "inbox detail", view)
 	if !strings.Contains(view, "blocked by LERP-36") || strings.Contains(view, "<issue") {
 		t.Fatalf("issue tags did not reduce to identifiers:\n%s", view)
 	}
@@ -4284,8 +4285,10 @@ func TestHostileErrorTextCannotRepaintTheStatusBar(t *testing.T) {
 	bidiFree(t, "status bar", m.View())
 	m = update(t, m, openErrMsg{err: errors.New(hostile)})
 	escapeFree(t, "status bar", m.View())
+	bidiFree(t, "status bar", m.View())
 	m = update(t, m, promotedMsg{ticket: "LERP-1", status: "Planning", err: errors.New(hostile)})
 	escapeFree(t, "status bar", m.View())
+	bidiFree(t, "status bar", m.View())
 }
 
 // Running and pending rows are adjacent in one list now, so stepping past a

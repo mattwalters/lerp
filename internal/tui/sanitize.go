@@ -217,6 +217,11 @@ func control(r rune) bool {
 // into its components, an Arabic word loses the joiner that shaped it.
 // cleanLog is the one path that keeps them, because the raw stream it
 // renders is the fallback that reproduces what a runner printed verbatim.
+// That is a real residual: an override written into a raw log line can
+// reorder the rest of that row, the pane's border included, the way an
+// unterminated SGR would. Unlike the SGR, closing it needs the nesting
+// tracked rather than a reset appended, and the row it can spoil names no
+// ticket — so the exemption stands and this is what it costs.
 func format(r rune) bool {
 	return unicode.Is(unicode.Cf, r)
 }

@@ -46,10 +46,12 @@ func TestCleanDefusesEscapeSequences(t *testing.T) {
 		// are named with. A ZWJ sequence does come apart, which is the
 		// price of dropping the category rather than curating a list.
 		{"unicode passes through", "Fix ✅ the — 日本語 test", "Fix ✅ the — 日本語 test"},
-		// A variation selector is a combining mark, not a format character.
-		// Dropping it would change how the emoji beside it renders, so a
-		// reach for unicode.C rather than unicode.Cf fails here.
+		// Cf, not the whole of C, and not the marks next door: a variation
+		// selector decides how the emoji beside it renders, and a private-use
+		// rune is the glyph a patched font draws. These two are what fails if
+		// format() is ever widened to unicode.C or to the combining marks.
 		{"emoji variation selector survives", "warn \u26a0\ufe0f now", "warn \u26a0\ufe0f now"},
+		{"private use survives", "warn \uf05a now", "warn \uf05a now"},
 		{"empty", "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
