@@ -1319,7 +1319,7 @@ func openURL(rawURL string) tea.Cmd {
 	// asking a question — and the status bar is where the answer goes.
 	if !openable(rawURL) {
 		return func() tea.Msg {
-			return openErrMsg{err: fmt.Errorf("refusing to open %s: not an https://%s URL", rawURL, linearHost)}
+			return openErrMsg{err: fmt.Errorf("refusing to open %s: only a plain https://%s link opens from here", rawURL, linearHost)}
 		}
 	}
 	return func() tea.Msg {
