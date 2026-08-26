@@ -1010,7 +1010,7 @@ func (r *Reconciler) ForceStart(ctx context.Context, ticketID string) error {
 	// would leave it.
 	unclaimed := issue
 	unclaimed.AssigneeID = ""
-	if !Eligible(unclaimed, servedStatuses(r.o.Repo)) {
+	if !Eligible(unclaimed, map[string]bool{queue.Status: true}) {
 		return fmt.Errorf("force-start %s: not eligible", issue.Identifier)
 	}
 	reserved, err := r.recordedLanes()
