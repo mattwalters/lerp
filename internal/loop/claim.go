@@ -95,11 +95,13 @@ func claimForQueue(ctx context.Context, client linear.Client, issueID, status st
 // claim is verified first: if someone else holds the issue now, their claim
 // is left alone.
 //
-// It is the one spelling of that rule for callers holding nothing but a
-// ticket ID. The two callers that do not route through it hold more than
-// that and say why: conclude releases a claim it won and ran, from the
-// read-back it already has, and (*Reconciler).releaseDead verifies status and
-// assignee together from a single snapshot.
+// It is the one spelling of that rule. What decides whether a caller can
+// release without it is not whether the caller holds a read-back but whether
+// something has already raced that read-back: claimForQueue holds one and
+// still comes here, because a move beat it. The two callers that do not route
+// through it say why — conclude releases a claim it won and ran, from a
+// read-back nothing has contradicted, and (*Reconciler).releaseDead verifies
+// status and assignee together from a single snapshot.
 func releaseClaim(ctx context.Context, client linear.Client, issueID, viewerID string) error {
 	current, err := client.GetIssue(ctx, issueID)
 	if err != nil {
