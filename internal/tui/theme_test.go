@@ -6,6 +6,7 @@ import (
 	"go/token"
 	"io"
 	"math"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -75,6 +76,10 @@ func TestUseBackgroundOverridesDetection(t *testing.T) {
 	} {
 		t.Run(tc.in, func(t *testing.T) {
 			restoreBackground(t)
+			// From the other side, always: detection under `go test` reads
+			// dark, so a "dark" case that started dark would pass on a
+			// branch that does nothing at all.
+			lipgloss.SetHasDarkBackground(!tc.wantDark)
 			if err := useBackground(tc.in); err != nil {
 				t.Fatalf("useBackground(%q) = %v, want no error", tc.in, err)
 			}
@@ -125,33 +130,57 @@ func TestUseBackgroundLeavesDetectionAloneOtherwise(t *testing.T) {
 
 // The floor is only a floor if it covers everything, and palette is a list
 // somebody has to remember to add to. So the list is checked against the
-// declarations themselves: a colour added to theme.go and not to palette
-// fails here rather than going unmeasured.
-func TestPaletteListsEveryColorInTheme(t *testing.T) {
-	f, err := parser.ParseFile(token.NewFileSet(), "theme.go", nil, 0)
+// declarations themselves — every adaptive colour this package declares,
+// wherever in it they land, since a new colour is as likely to be written
+// beside its user as in theme.go. A colour missing from the list fails
+// here rather than shipping unmeasured under a green suite.
+//
+// It reads the package's own source, so it wants the package directory as
+// the working directory — which is where `go test` runs it.
+func TestPaletteListsEveryColor(t *testing.T) {
+	sources, err := filepath.Glob("*.go")
 	if err != nil {
-		t.Fatalf("parse theme.go: %v", err)
+		t.Fatalf("list sources: %v", err)
 	}
-	var declared []string
-	ast.Inspect(f, func(n ast.Node) bool {
-		spec, ok := n.(*ast.ValueSpec)
-		if !ok {
-			return true
+	declared := map[string]bool{}
+	for _, src := range sources {
+		if strings.HasSuffix(src, "_test.go") {
+			continue
 		}
-		for i, v := range spec.Values {
-			lit, ok := v.(*ast.CompositeLit)
+		f, err := parser.ParseFile(token.NewFileSet(), src, nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", src, err)
+		}
+		ast.Inspect(f, func(n ast.Node) bool {
+			spec, ok := n.(*ast.ValueSpec)
 			if !ok {
-				continue
+				return true
 			}
-			if sel, ok := lit.Type.(*ast.SelectorExpr); ok && sel.Sel.Name == "AdaptiveColor" {
-				declared = append(declared, spec.Names[i].Name)
+			for i, v := range spec.Values {
+				lit, ok := v.(*ast.CompositeLit)
+				if !ok {
+					continue
+				}
+				if sel, ok := lit.Type.(*ast.SelectorExpr); ok && sel.Sel.Name == "AdaptiveColor" {
+					declared[spec.Names[i].Name] = true
+				}
 			}
+			return true
+		})
+	}
+	listed := map[string]bool{}
+	for _, c := range palette {
+		listed[c.name] = true
+	}
+	for name := range declared {
+		if !listed[name] {
+			t.Errorf("%s is declared but not in palette — an unlisted colour is an unmeasured one", name)
 		}
-		return true
-	})
-	if len(declared) != len(palette) {
-		t.Errorf("theme.go declares %d adaptive colours %v, palette lists %d — an unlisted colour is an unmeasured one",
-			len(declared), declared, len(palette))
+	}
+	for name := range listed {
+		if !declared[name] {
+			t.Errorf("palette lists %s, which this package does not declare", name)
+		}
 	}
 }
 

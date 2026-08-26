@@ -43,16 +43,17 @@ const contrastFloor = 4.5
 
 // palette is every colour above in one list, so the contrast test can walk
 // them. A colour added to the block above belongs here too, or nothing
-// measures it.
+// measures it — which the test checks, by name, against what this package
+// declares.
 var palette = []struct {
 	name  string
 	color lipgloss.AdaptiveColor
 }{
-	{"focus", colorFocus},
-	{"running", colorRunning},
-	{"provisioning", colorProvisioning},
-	{"attention", colorAttention},
-	{"faint", colorFaint},
+	{"colorFocus", colorFocus},
+	{"colorRunning", colorRunning},
+	{"colorProvisioning", colorProvisioning},
+	{"colorAttention", colorAttention},
+	{"colorFaint", colorFaint},
 }
 
 // backgroundEnv lets an operator say which background their terminal has.
