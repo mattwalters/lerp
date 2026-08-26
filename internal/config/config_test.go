@@ -599,8 +599,14 @@ func firstDiff(got, want string) string {
 	if len(long) == len(short)+1 && long[len(short)] == "" && !strings.HasSuffix(shortText, "\n") {
 		return fmt.Sprintf("identical except the trailing newline: %s has one, the other does not", which)
 	}
+	// A newline-terminated text's last element is the phantom after it, not a
+	// line, so it is not counted — the number has to be one a reader can go to.
+	lines := len(short)
+	if strings.HasSuffix(shortText, "\n") {
+		lines--
+	}
 	return fmt.Sprintf("identical for %d lines, then %s continues: %q",
-		len(short), which, long[len(short)])
+		lines, which, long[len(short)])
 }
 
 // Declining the permission grant strips bypassFlag from the whole rendered
@@ -616,9 +622,16 @@ func firstDiff(got, want string) string {
 // then name the file a reader has to edit, and occupants of optional sections
 // are covered even when the rendering being checked drops them.
 func TestBypassFlagAppearsOnlyInRunnerCommands(t *testing.T) {
-	table := ""
+	table, inPrompt := "", false
 	for i, line := range strings.Split(stockRepo, "\n") {
-		if strings.HasPrefix(line, "[") {
+		// Prompt bodies are multi-line basic strings, and a prompt that shows
+		// a config snippet contains lines that look exactly like table
+		// headers. Track the quotes first, or such a prompt could name itself
+		// [runners.claude] and take the exemption meant for real runners.
+		if quotes := strings.Count(line, `"""`); quotes%2 == 1 {
+			inPrompt = !inPrompt
+		}
+		if !inPrompt && strings.HasPrefix(line, "[") {
 			table = strings.TrimSuffix(strings.TrimPrefix(line, "["), "]")
 		}
 		// A runner's command is the one place the strip is meant to reach.

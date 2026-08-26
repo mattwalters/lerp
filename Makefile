@@ -47,19 +47,26 @@ fmt: ## Format all Go source
 	gofmt -w .
 
 # Where the example generator writes before it is moved into place. Gitignored
-# and beside the target, not in TMPDIR: the move is then a same-filesystem
-# rename, and the file keeps the mode the redirect gave it. Staging through
-# `mktemp` would carry its 0600 onto the committed example, which git does not
-# track and so nobody would see.
+# and beside the target, not in TMPDIR, so the move is a same-filesystem
+# rename rather than a copy.
 EXAMPLE_TMP := .lerp.example.toml.tmp
 
 .PHONY: example
 example: ## Regenerate lerp.example.toml from internal/config/stock.toml
-# Moved into place only once the generator has written it, for the same reason
-# the demo recipe stages its render: `go run ... > lerp.example.toml` truncates
-# the committed file before the generator starts, so a package that does not
-# compile leaves an empty example behind and a deletion in the diff.
+# Moved into place only once the generator has written something, for the same
+# reason the demo recipe stages its render: `go run ... > lerp.example.toml`
+# truncates the committed file before the generator starts, so a package that
+# does not compile leaves an empty example behind and a deletion in the diff.
+# `test -s` is the same guard demo puts on a silent vhs — a generator that
+# exits 0 having written nothing must not pass either.
+#
+# The mode is set explicitly rather than inherited: the rename carries the
+# temp file's mode onto the committed example, and under a restrictive umask
+# the redirect would have created it 0600. Git tracks only the exec bit, so
+# that change would show up in nothing.
 	@go run ./internal/config/example > '$(EXAMPLE_TMP)' \
+	  && test -s '$(EXAMPLE_TMP)' \
+	  && chmod 644 '$(EXAMPLE_TMP)' \
 	  && mv '$(EXAMPLE_TMP)' lerp.example.toml \
 	  && printf 'regenerated lerp.example.toml\n' \
 	  || { rm -f '$(EXAMPLE_TMP)'; exit 1; }
