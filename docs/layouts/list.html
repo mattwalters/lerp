@@ -1,0 +1,27 @@
+{{ define "main" }}
+{{/* Section indexes. The entries are the section's own children rather than
+     a curated list: a hand-kept index of pages that already exist is a
+     second list to forget to update, and unlike the sidebar this one carries
+     no editorial grouping. Order is each child's weight, which is where the
+     curation lives, and the line under each name is its `summary` front
+     matter. A child with no summary lists as a bare name — deliberately
+     plain, so the gap shows.
+
+     No <h1> here: the heading is the first line of _index.md, the way it is
+     on every other page the site serves. */}}
+<div class="prose">
+  {{ .Content }}
+  {{ with .Pages.ByWeight }}
+  <dl class="pagelist">
+    {{ range . }}
+    <dt><a href="{{ .RelPermalink }}">
+      {{- /* Same rule as the sidebar's mono entries: a page titled with a
+             command is set in the face you type it in. */ -}}
+      {{- if .Params.mono }}<code>{{ .Title }}</code>{{ else }}{{ .Title }}{{ end -}}
+    </a></dt>
+    <dd>{{ .Params.summary }}</dd>
+    {{ end }}
+  </dl>
+  {{ end }}
+</div>
+{{ end }}

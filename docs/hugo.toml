@@ -5,9 +5,10 @@
 # picker's own "latest" option has somewhere to point. Every release tag
 # additionally freezes a copy under /vX.Y.Z/ that is never rebuilt.
 #
-# The layout is hand-rolled in layouts/ and one stylesheet: the site is three
-# pages, and a theme module would be a pinned dependency (or, for Docsy, a
-# Node toolchain) to render markdown this repo already has.
+# The layout is hand-rolled in layouts/ and one stylesheet: a sidebar, a
+# reading column and a rail is the whole of it, and a theme module would be a
+# pinned dependency (or, for Docsy, a Node toolchain) to render markdown this
+# repo already has.
 
 # Deliberately the bare domain, carrying neither the /lerp/ project path the
 # site actually serves from nor a version subpath: with relativeURLs every
@@ -55,18 +56,43 @@ versionroot = "."
 # Where render-link.html sends the repo files the site does not publish.
 repo = "https://github.com/mattwalters/lerp"
 
-# The site's whole navigation. Three pages: the landing page, and the two
-# markdown files the repo already keeps — published, not rewritten, so there
-# is no second copy of lerp's prose to drift out of sync with the first.
+# The sidebar, and with the header's one Docs link the site's whole
+# navigation. It is curated rather than derived from the content tree: the
+# order is editorial, and a page that is not listed here is unreachable by
+# design — a half-written section can sit in the repo without being published
+# to the front of the manual.
+#
+# `section` is the group heading an entry sits under. baseof.html emits one
+# whenever the value changes as it walks this list in weight order, so a
+# section's entries have to be contiguous in weight — hence the gaps, which
+# leave room to insert a page without renumbering the ones after it.
+#
+# `mono` marks an entry whose name is a command, and sets it in the face you
+# type it in. Nothing carries it yet; the first page named for a command will.
+
+[[menus.main]]
+name = "Overview"
+pageRef = "/docs/overview"
+weight = 10
+[menus.main.params]
+section = "Start"
+
+# README.md and SCOPE.md are pages of the manual too — mounted below rather
+# than rewritten, so there is no second copy of lerp's prose to drift out of
+# sync with the first.
 [[menus.main]]
 name = "README"
 pageRef = "/readme"
-weight = 10
+weight = 100
+[menus.main.params]
+section = "Reference"
 
 [[menus.main]]
 name = "SCOPE"
 pageRef = "/scope"
-weight = 20
+weight = 110
+[menus.main.params]
+section = "Reference"
 
 # README.md and SCOPE.md live at the repository root and are mounted into the
 # site rather than copied: one source of truth, edited in the same PR as the

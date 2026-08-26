@@ -1,0 +1,60 @@
+{{- /* A cast: the recording, and under it the keys a reader would press.
+
+       VHS cannot draw keystrokes into a recording — charmbracelet/vhs#719 is
+       open and unmerged, and nothing here builds on it — so the page says
+       them instead: the tape shows the motion, the caption names the keys.
+       Which keys a cast names is the cast's business, not this file's.
+
+       Called from markdown:
+
+         {{< cast webm="casts/promote.webm" mp4="casts/promote.mp4"
+                  title="A parked ticket promoted into a queue and claimed"
+                  keys="[p] · pick a status · [enter]" >}}
+
+       The two paths are from the site root, wherever the page calling them
+       sits; relativeURLs (see hugo.toml) turns them into links that survive
+       a frozen copy being served from a version directory.
+
+       Bracketed segments of `keys` become keycaps and everything else stays
+       prose, because a caption interleaves the two — neither position nor
+       word count tells them apart, so the author does.
+
+       No autoplay: a page of casts that all start moving at once is a page
+       nobody can read. */ -}}
+{{- $webm := .Get "webm" -}}
+{{- $mp4 := .Get "mp4" -}}
+{{- $title := .Get "title" -}}
+{{- if and (not $webm) (not $mp4) -}}
+  {{- errorf "cast: %s names neither a webm nor an mp4 — there is nothing to play" .Position -}}
+{{- end -}}
+{{- if not $title -}}
+  {{- /* A video with no text alternative is a blank frame to a reader who
+         cannot see it, and the keycap caption names keys, not what happens. */ -}}
+  {{- errorf "cast: %s has no title saying what the cast shows" .Position -}}
+{{- end -}}
+<figure class="cast">
+  {{/* WebM first: where both play, it is the smaller file. A browser takes
+       the first source it supports and ignores the rest. */}}
+  <video controls muted loop playsinline preload="metadata" aria-label="{{ $title }}">
+    {{- with $webm }}
+    <source src="{{ . | relURL }}" type="video/webm">
+    {{- end }}
+    {{- with $mp4 }}
+    <source src="{{ . | relURL }}" type="video/mp4">
+    {{- end }}
+  </video>
+  {{- with .Get "keys" }}
+  {{/* The separators are drawn by the stylesheet, so the spacing around them
+       is the same whichever segment they fall between. */}}
+  <figcaption class="keys">
+    {{- range $part := split . "·" -}}
+      {{- $part = trim $part " " -}}
+      {{- if and (hasPrefix $part "[") (hasSuffix $part "]") -}}
+        <kbd>{{ strings.TrimSuffix "]" (strings.TrimPrefix "[" $part) }}</kbd>
+      {{- else -}}
+        <span>{{ $part }}</span>
+      {{- end -}}
+    {{- end -}}
+  </figcaption>
+  {{- end }}
+</figure>
