@@ -287,6 +287,96 @@ func TestServerErrorIsNotLatched(t *testing.T) {
 	}
 }
 
+// A token endpoint that declines to answer — rate limited — is not a refused
+// grant, and must not latch: `lerp login` is unauthenticated from the same
+// address and could not help.
+func TestRateLimitIsNotLatched(t *testing.T) {
+	t.Setenv(apiKeyEnv, "")
+	expired := liveToken()
+	expired.ExpiresAt = time.Now().Add(-time.Minute)
+	s := tempStore(t, &expired)
+
+	var exchanges int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		exchanges++
+		if exchanges == 1 {
+			w.Header().Set("Retry-After", "60")
+			http.Error(w, "slow down", http.StatusTooManyRequests)
+			return
+		}
+		_, _ = w.Write([]byte(`{"access_token":"access-2","refresh_token":"refresh-2","expires_in":3600}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	source, err := storedSource(s, srv.Client())
+	if err != nil {
+		t.Fatalf("storedSource: %v", err)
+	}
+	source.endpoint = srv.URL
+	source.clientID = testClientID
+
+	_, err = source.header(context.Background())
+	if err == nil {
+		t.Fatal("first call: want an error")
+	}
+	if errors.Is(err, ErrLoginRequired) {
+		t.Errorf("a 429 latched as an expired session: %v", err)
+	}
+	if !strings.Contains(err.Error(), "slow down") {
+		t.Errorf("error %q does not say what the endpoint complained about", err)
+	}
+	got, err := source.header(context.Background())
+	if err != nil {
+		t.Fatalf("second call: %v", err)
+	}
+	if got != "Bearer access-2" {
+		t.Errorf("header = %q, want the renewed token", got)
+	}
+}
+
+// Two lerps share one token file. When the other one has already renewed,
+// this one adopts what is on disk rather than spending a rotation on a
+// refresh token Linear has retired — which would come back a refusal and
+// latch a credential that is live.
+func TestRenewalPrefersTheFileOverStaleMemory(t *testing.T) {
+	t.Setenv(apiKeyEnv, "")
+	expired := liveToken()
+	expired.ExpiresAt = time.Now().Add(-time.Minute)
+	s := tempStore(t, &expired)
+
+	var exchanges int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		exchanges++
+		http.Error(w, `{"error":"invalid_grant"}`, http.StatusBadRequest)
+	}))
+	t.Cleanup(srv.Close)
+
+	source, err := storedSource(s, srv.Client())
+	if err != nil {
+		t.Fatalf("storedSource: %v", err)
+	}
+	source.endpoint = srv.URL
+	source.clientID = testClientID
+
+	// The other lerp renews and writes; this one still holds access-1.
+	renewed := liveToken()
+	renewed.AccessToken, renewed.RefreshToken = "access-2", "refresh-2"
+	if err := s.save(renewed); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	got, err := source.header(context.Background())
+	if err != nil {
+		t.Fatalf("header: %v", err)
+	}
+	if got != "Bearer access-2" {
+		t.Errorf("header = %q, want the other process's token", got)
+	}
+	if exchanges != 0 {
+		t.Errorf("exchanges = %d, want 0 — a rotation was spent on a token already superseded", exchanges)
+	}
+}
+
 // A refresh whose write fails is a failed refresh — adopting a token nobody
 // can recover is worse than not renewing — and it is latched, so a pass does
 // not keep spending rotations against a disk that cannot hold the result.

@@ -106,6 +106,13 @@ func storedSource(s store, hc *http.Client) (*oauthSource, error) {
 	}, nil
 }
 
+// snippet reads the head of an error response, for a message that says what
+// the endpoint actually complained about.
+func snippet(resp *http.Response) string {
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+	return strings.TrimSpace(string(body))
+}
+
 // oauthSource is a stored token that renews itself.
 //
 // Everything is done under mu, refresh included: concurrent callers block on
@@ -141,13 +148,32 @@ func (s *oauthSource) header(ctx context.Context) (string, error) {
 	if s.dead != nil {
 		return "", s.dead
 	}
-	if time.Now().Before(s.tok.ExpiresAt.Add(-refreshSkew)) {
+	if s.fresh() {
+		return "Bearer " + s.tok.AccessToken, nil
+	}
+	// Expired as far as this process knows — but the operator's other lerp,
+	// in another clone, shares this file and may have renewed since. Read it
+	// before spending a rotation: memory is a cache of the file, and a
+	// refresh token this process still holds may be one Linear has already
+	// retired, which would come back as a refusal and latch a credential
+	// that is in fact live. Only on the renewal path, so an ordinary request
+	// still touches no disk.
+	if stored, err := s.store.load(); err == nil && stored.AccessToken != s.tok.AccessToken {
+		s.tok = stored
+	}
+	if s.fresh() {
 		return "Bearer " + s.tok.AccessToken, nil
 	}
 	if err := s.refresh(ctx); err != nil {
 		return "", err
 	}
 	return "Bearer " + s.tok.AccessToken, nil
+}
+
+// fresh reports whether the access token is still usable — outside the
+// renewal window, not merely unexpired. Called with mu held.
+func (s *oauthSource) fresh() bool {
+	return time.Now().Before(s.tok.ExpiresAt.Add(-refreshSkew))
 }
 
 // refresh exchanges the refresh token for a new pair. It is called with mu
@@ -214,13 +240,20 @@ func exchange(ctx context.Context, hc *http.Client, endpoint, clientID, refreshT
 
 	switch {
 	case resp.StatusCode == http.StatusOK:
+	case resp.StatusCode == http.StatusTooManyRequests, resp.StatusCode == http.StatusRequestTimeout:
+		// Declined to answer, not a refused grant — the same distinction
+		// the GraphQL side draws between ErrRateLimited and ErrAuth. It
+		// matters because the caller latches a refusal: an operator behind
+		// a shared egress IP would lose a live credential for the life of
+		// the process, and `lerp login` — unauthenticated from the same
+		// address — is the one remedy that could not help.
+		return token{}, fmt.Errorf("credentials: refresh: %s: %s", resp.Status, snippet(resp))
 	case resp.StatusCode >= 400 && resp.StatusCode < 500:
 		// The grant was refused, not fumbled: a revoked token, or a
 		// rotated one past its grace. Asking again cannot help.
 		return token{}, ErrLoginRequired
 	default:
-		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return token{}, fmt.Errorf("credentials: refresh: unexpected status %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
+		return token{}, fmt.Errorf("credentials: refresh: unexpected status %d: %s", resp.StatusCode, snippet(resp))
 	}
 
 	var body struct {
