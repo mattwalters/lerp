@@ -128,10 +128,16 @@ func TestTheHarnessReportsItsExitStatus(t *testing.T) {
 	// Unset, nothing is written: `go run ./internal/demo` by hand leaves no
 	// file behind, and the Makefile's own rm is what makes a stale one from a
 	// previous render unable to answer for this one.
+	//
+	// Unsetenv rather than Setenv(""): those are different states, and only
+	// the first is the by-hand run this is pinning. t.Setenv above has already
+	// registered the restore, so removing it here is still undone at the end.
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv(exitEnv, "")
+	if err := os.Unsetenv(exitEnv); err != nil {
+		t.Fatal(err)
+	}
 	reportExit(nil)
 	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("a run nobody asked about wrote a status anyway: %v", err)
