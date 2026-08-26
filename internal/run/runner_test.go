@@ -229,9 +229,11 @@ func TestExecuteRequiresATicket(t *testing.T) {
 }
 
 // A workspace that is gone by the time the runner starts fails the exec
-// itself, not the agent. The error has to say so: the loop above keeps a
-// ticket's claim for a runner it could not start, and concludes the ticket
-// for an agent that ran and failed, so the two must not arrive looking alike.
+// itself, not the agent. Returning an error at all is what the loop above
+// branches on — an agent that ran and failed comes back as an exit code and
+// a nil error, and gets its ticket concluded, while this keeps the claim.
+// The message is for whoever reads the log afterwards, and names the stage
+// so a runner that never started is not mistaken for one that did.
 func TestExecuteReportsARunnerItCouldNotStart(t *testing.T) {
 	dir := t.TempDir()
 	_, err := Execute(context.Background(), Invocation{

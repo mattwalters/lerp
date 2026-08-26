@@ -707,6 +707,13 @@ func TestShutdownMidRunKeepsTheRecordAndTheClaim(t *testing.T) {
 	if got.Status != "Todo" {
 		t.Errorf("status = %q, want the ticket left where the run found it — a stop is not a hop", got.Status)
 	}
+	// A stop is not an error either: reporting one per live lane would paint
+	// the work panel and the log red every time the operator quits.
+	for _, ev := range h.drainEvents() {
+		if ev.Type == EventError {
+			t.Errorf("shutdown emitted %v, want a clean stop to report nothing", ev.Err)
+		}
+	}
 }
 
 // The two run-exit branches enumerated above have opposite record
