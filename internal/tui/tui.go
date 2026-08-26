@@ -8,6 +8,8 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/mattwalters/lerp/internal/loop"
 )
 
 // quitWait bounds how long quitting waits for an in-flight reconciliation
@@ -31,19 +33,36 @@ func Run(ctx context.Context, o Options) error {
 	m := newModel(ctx, o)
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	_, err := p.Run()
-	awaitPasses(m.passes)
+	awaitPasses(m.passes, o.Events)
 	return err
 }
 
 // awaitPasses blocks until no reconciliation pass is in flight, giving up
 // after quitWait with a note: the operator should know the pass may still be
 // mutating when the process exits.
-func awaitPasses(passes *sync.WaitGroup) {
+//
+// It keeps draining events while it waits. Nothing renders them any more —
+// the screen is closed — but the loop emits into a buffered channel, and once
+// the buffer fills the emitting pass blocks forever on a receiver that has
+// gone. A pass with more to say than the buffer holds (a wave of adoptions or
+// reaps, plus the queue and attention payloads) would then always take the
+// full quitWait, so quit would hang for 30s and then claim the pass was slow.
+// Discarding is the point: the events are screen detail, and the evidence a
+// later lerp reads is on disk.
+func awaitPasses(passes *sync.WaitGroup, events <-chan loop.Event) {
 	done := make(chan struct{})
 	go func() { passes.Wait(); close(done) }()
-	select {
-	case <-done:
-	case <-time.After(quitWait):
-		fmt.Fprintf(os.Stderr, "lerp: gave up waiting for the in-flight pass after %s\n", quitWait)
+	// Outside the loop: a deadline re-armed on every drained event would let
+	// a chatty pass push the bound out indefinitely.
+	deadline := time.After(quitWait)
+	for {
+		select {
+		case <-done:
+			return
+		case <-events:
+		case <-deadline:
+			fmt.Fprintf(os.Stderr, "lerp: gave up waiting for the in-flight pass after %s\n", quitWait)
+			return
+		}
 	}
 }
