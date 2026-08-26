@@ -219,6 +219,20 @@ func update(t *testing.T, m model, msg tea.Msg) model {
 	return next.(model)
 }
 
+// pastTheSplash lands the first pass on a fresh model. The opening splash
+// owns the whole screen until one reports (see splashing), so a test about
+// what the board draws starts by getting past it — with the pass reporting
+// nothing, which is the weaker of the two ways out and leaves the panels on
+// their own empty states.
+func pastTheSplash(t *testing.T, m model) model {
+	t.Helper()
+	m = update(t, m, tickedMsg{})
+	if m.splashing() {
+		t.Fatal("the splash still owns the screen after the first pass landed")
+	}
+	return m
+}
+
 // openMain opens the focused panel's main pane. Both panels start with the
 // list owning the screen, so a test about what the pane holds asks for it
 // with the key an operator would press rather than reaching into the model.
@@ -260,6 +274,7 @@ func keyMsg(s string) tea.KeyMsg {
 
 func TestWorkPanelShowsTheRunLifecycle(t *testing.T) {
 	m, _, _ := newTestModel(t, 2)
+	m = pastTheSplash(t, m)
 	view := m.View()
 	for _, want := range []string{"inbox", "work", "q quit"} {
 		if !strings.Contains(view, want) {
@@ -396,6 +411,7 @@ func TestAdoptedRunOccupiesAndFreesItsRow(t *testing.T) {
 // the key that used to open one is bound to nothing.
 func TestFocusSwitching(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	if m.focus != panelAttention {
 		t.Fatalf("lerp opens focused on %v, want inbox", m.focus)
 	}
@@ -433,6 +449,7 @@ func TestFocusSwitching(t *testing.T) {
 // ticket, including why it will not run.
 func TestWorkPanelShowsWhatRunsNext(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("2"))
 	m = openMain(t, m)
 
@@ -665,6 +682,7 @@ func TestWorkPanelCapsToItsPanel(t *testing.T) {
 // what would make items appear.
 func TestInboxListsWhatWaits(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, keyMsg("enter"))
 
@@ -719,7 +737,7 @@ func board() loop.Event {
 	return loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
 		{Ticket: "LERP-1", TicketID: "id-1", Title: "Fix the build", Status: "Needs Attention",
 			Project: "Open-source readiness", Relevance: loop.StatusFailed, Priority: 3,
-			Reason: `claimed in "Needs Attention" — a run failed here`},
+			Claimed: true, Reason: `claimed in "Needs Attention" — a run failed here`},
 		{Ticket: "LERP-22", TicketID: "id-22", Title: "GoReleaser: tagged releases", Status: "Backlog",
 			Project: "Open-source readiness", Relevance: loop.StatusBacklog, Priority: 2,
 			Unblocks: 2, Blocks: []string{"LERP-23"}},
@@ -740,6 +758,20 @@ func board() loop.Event {
 		{Ticket: "LERP-70", TicketID: "id-70", Title: "Unprioritized work", Status: "Backlog",
 			Relevance: loop.StatusBacklog, Priority: 0},
 	}}
+}
+
+// browseBacklog presses B on the inbox panel. The fixture is half backlog
+// rows and the panel opens folded, so every test below that is about the
+// whole of it — the sort order, the grouping, the columns, the filters —
+// asks for the rest of the list the way an operator does. The tests about
+// what the panel says on sight do not call it.
+func browseBacklog(t *testing.T, m model) model {
+	t.Helper()
+	m = update(t, m, keyMsg("B"))
+	if !m.backlogOpen {
+		t.Fatal("B did not expand the backlog")
+	}
+	return m
 }
 
 // rowOf returns the panel line carrying the ticket, for the assertions that
@@ -777,6 +809,7 @@ func TestInboxRowsCarryTheRealStatus(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: board()})
+	m = browseBacklog(t, m)
 
 	panel := m.attentionPanel(96, 14)
 	view := m.View()
@@ -1016,6 +1049,7 @@ func TestTheHelpOverlayIsNotWrittenOverByALiveLog(t *testing.T) {
 // that one screen, so being dropped back at the top of it is a real loss.
 func TestTheHelpOverlayGivesTheTicketPaneBackWhereItWas(t *testing.T) {
 	m, _, reader := newReadingTestModel(t)
+	m = pastTheSplash(t, m)
 	resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
 	m = update(t, resized.(model), keyMsg("1"))
 	m = update(t, m, keyMsg("enter")) // the inbox reads a ticket once its pane is open
@@ -1112,6 +1146,7 @@ func TestInboxSortModesCycle(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: board()})
+	m = browseBacklog(t, m)
 
 	// Status is the default: pipeline-relevance first — a failure route,
 	// then where a clean run comes to rest, then the statuses the pipeline
@@ -1242,6 +1277,7 @@ func TestInboxProjectFilter(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: board()})
+	m = browseBacklog(t, m)
 
 	// Projects cycle in name order: OSS readiness, then TUI redesign, then
 	// back to every project. A ticket in no project is not a stop.
@@ -1285,6 +1321,338 @@ func TestInboxProjectFilter(t *testing.T) {
 	}
 	if !strings.Contains(m.attentionPanel(96, 14), "LERP-9") {
 		t.Fatalf("a stale filter hid the whole panel:\n%s", m.attentionPanel(96, 14))
+	}
+}
+
+// Done-when: the inbox opens on the tickets a human is blocked on — where a
+// run failed, where one finished, and the status the pipeline never named —
+// and the backlog is one line saying how many are behind it and which key
+// opens them.
+func TestInboxOpensOnWhatIsBlockedOnYou(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: board()})
+
+	panel := m.attentionPanel(96, 18)
+	want := []string{"LERP-1", "LERP-48", "LERP-60"}
+	if got := shownTickets(m); !slices.Equal(got, want) {
+		t.Fatalf("the inbox opens on %v, want the three blocked on a human", got)
+	}
+	for _, folded := range []string{"LERP-22", "LERP-23", "LERP-70"} {
+		if strings.Contains(panel, folded+" ") {
+			t.Fatalf("%s has not entered the pipeline, but the panel opens on it:\n%s", folded, panel)
+		}
+	}
+	// The count, the reason and the key, in the backlog tier's own words.
+	if !strings.Contains(panel, "3 waiting to enter the pipeline — B to browse") {
+		t.Fatalf("the fold does not say what it is holding back:\n%s", panel)
+	}
+	// A long enough blocked-on-you list windows the summary away behind
+	// "⋯ n more", so the key has to be somewhere that never scrolls.
+	if got := ansi.Strip(update(t, m, keyMsg("?")).View()); !strings.Contains(got, "browse the backlog") {
+		t.Fatalf("the ? overlay does not carry the fold's key:\n%s", got)
+	}
+}
+
+// Done-when: B expands the fold in place — the same panel, the same table,
+// the same pinned header, the backlog rows under their own status group
+// header — and B again puts it back. Not a tab and not a second view.
+func TestBacklogExpandsInPlace(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: board()})
+
+	m = browseBacklog(t, m)
+	panel := m.attentionPanel(96, 18)
+	want := []string{"LERP-1", "LERP-48", "LERP-60", "LERP-22", "LERP-70", "LERP-23"}
+	if got := order(panel, want...); !slices.Equal(got, want) {
+		t.Fatalf("expanded order = %v, want the whole list in the sort's own order:\n%s", got, panel)
+	}
+	// Same table: the column header is still pinned above it, and the rows
+	// arrive under the status group header the sort would give them anyway.
+	for _, keep := range []string{hdrTicket, hdrStatus, "Backlog — waiting to enter the pipeline"} {
+		if !strings.Contains(panel, keep) {
+			t.Fatalf("the expanded panel is missing %q:\n%s", keep, panel)
+		}
+	}
+	// Nothing left folded is nothing left to say.
+	if strings.Contains(panel, "to browse") {
+		t.Fatalf("the summary line survived the expansion:\n%s", panel)
+	}
+	// The way back is in the title, beside the other controls a key changed.
+	if !strings.Contains(panel, "· backlog") {
+		t.Fatalf("the title does not say the backlog is expanded:\n%s", panel)
+	}
+
+	m = update(t, m, keyMsg("B"))
+	if m.backlogOpen {
+		t.Fatal("B a second time did not fold the backlog back")
+	}
+	panel = m.attentionPanel(96, 18)
+	if got := shownTickets(m); len(got) != 3 {
+		t.Fatalf("folding back left %v, want the three blocked on a human", got)
+	}
+	if strings.Contains(panel, "· backlog") {
+		t.Fatalf("the folded title still says the backlog is expanded:\n%s", panel)
+	}
+}
+
+// Done-when: "● n in the inbox" counts only what is blocked on a human, so
+// it is the same number folded or not — that is what makes it mean
+// "something to look up at". The panel's own count is the other question,
+// what is in this panel, and follows the fold.
+func TestTheInboxCountIsWhatIsBlockedOnYou(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: board()})
+
+	if got := m.View(); !strings.Contains(got, "● 3 in the inbox") {
+		t.Fatalf("the status bar counts the backlog into the inbox:\n%s", got)
+	}
+	if panel := m.attentionPanel(96, 18); !strings.Contains(panel, "● 3") {
+		t.Fatalf("the folded panel title does not count its rows:\n%s", panel)
+	}
+
+	m = browseBacklog(t, m)
+	if got := m.View(); !strings.Contains(got, "● 3 in the inbox") {
+		t.Fatalf("expanding the backlog moved the status bar's count:\n%s", got)
+	}
+	if panel := m.attentionPanel(96, 18); !strings.Contains(panel, "● 6") {
+		t.Fatalf("the expanded panel title does not count what it shows:\n%s", panel)
+	}
+}
+
+// Done-when: an expanded backlog row is a row like any other — enter reads
+// it and p promotes it. The fold is display over the list the pass already
+// fetched, not a second class of row.
+func TestExpandedBacklogRowsTakeTheKeys(t *testing.T) {
+	m, _, _, promoter := newPromoteTestModel(t, 1, []string{"Planning", "Implementing"})
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: board()})
+	m = browseBacklog(t, m)
+
+	// Down to LERP-22, the first backlog row under the status default.
+	for range 3 {
+		m = update(t, m, keyMsg("j"))
+	}
+	if got := m.selectedAttention().Ticket; got != "LERP-22" {
+		t.Fatalf("the cursor reached %s, want the first expanded backlog row", got)
+	}
+	m = openMain(t, m)
+	if got := m.View(); !strings.Contains(got, "GoReleaser: tagged releases") {
+		t.Fatalf("enter on an expanded backlog row opened nothing:\n%s", got)
+	}
+
+	m = update(t, m, keyMsg("p"))
+	if !m.promoting {
+		t.Fatal("p did not open the promote picker on an expanded backlog row")
+	}
+	next, cmd := m.Update(keyMsg("enter"))
+	m = next.(model)
+	if cmd == nil {
+		t.Fatal("enter produced no promote command")
+	}
+	cmd()
+	if got := promoter.last(); got.ticketID != "id-22" || got.status != "Planning" {
+		t.Fatalf("Promote call = %+v, want {id-22 Planning}", got)
+	}
+}
+
+// Done-when: P stops only at projects with a row the fold lets through.
+// Cycling to one whose every ticket is folded away would scope the panel to
+// "nothing in X" — a filter that hides the whole panel is the thing the
+// project cycle already refuses to do.
+func TestProjectFilterSkipsAProjectThatIsAllBacklog(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: allBacklogProject()})
+
+	if got := m.projects(); !slices.Equal(got, []string{"Shipping"}) {
+		t.Fatalf("the project cycle offers %v, want only the project with a visible row", got)
+	}
+	m = update(t, m, keyMsg("P"))
+	if m.project != "Shipping" {
+		t.Fatalf("P scoped to %q, want the one project on screen", m.project)
+	}
+	m = update(t, m, keyMsg("P"))
+	if m.project != "" {
+		t.Fatalf("P scoped to %q, want back to every project", m.project)
+	}
+
+	// Expanding puts the project back on the cycle: the rows are on screen,
+	// so scoping to them shows something.
+	m = browseBacklog(t, m)
+	if got := m.projects(); !slices.Equal(got, []string{"Later", "Shipping"}) {
+		t.Fatalf("the expanded project cycle offers %v, want both projects", got)
+	}
+
+	// Scope to the backlog-only project, then fold it away underneath: the
+	// scope is a choice the operator made and the fold is not a reason to
+	// take it back, but P has to leave it in one press. The panel is showing
+	// nothing and the only text on it is the hint that says so.
+	m = update(t, m, keyMsg("P"))
+	if m.project != "Later" {
+		t.Fatalf("P scoped to %q, want the backlog-only project", m.project)
+	}
+	m = update(t, m, keyMsg("B"))
+	if m.project != "Later" || len(m.shown) != 0 {
+		t.Fatalf("folding changed the scope: %q, %d rows", m.project, len(m.shown))
+	}
+	// Both keys: either one can be why the panel is empty, and the note
+	// above the hint does not say which.
+	for _, want := range []string{"P cycles the project filter back to all", "B browses the backlog"} {
+		if got := m.emptyHint(); !strings.Contains(got, want) {
+			t.Fatalf("the empty panel's hint = %q, want it to name %q", got, want)
+		}
+	}
+	m = update(t, m, keyMsg("P"))
+	if m.project != "" {
+		t.Fatalf("P from a folded-away project went to %q, want every project", m.project)
+	}
+
+	// And a pass does not take the scope away on its own: the project did
+	// not stop existing, it went behind the fold.
+	m = update(t, m, keyMsg("B")) // expanded, so Later is on the cycle again
+	m = update(t, m, keyMsg("P"))
+	if m.project != "Later" {
+		t.Fatalf("P scoped to %q, want the backlog-only project", m.project)
+	}
+	m = update(t, m, keyMsg("B")) // and now folded away under the scope
+	m = update(t, m, eventMsg{ev: allBacklogProject()})
+	if m.project != "Later" {
+		t.Fatalf("a pass cleared the scope to %q, though the board did not change", m.project)
+	}
+}
+
+// allBacklogProject is a board with one ticket blocked on a human and a
+// whole project behind the fold: the shape that separates "the fold is
+// hiding this project" from "the pass no longer has it".
+func allBacklogProject() loop.Event {
+	return loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-1", TicketID: "id-1", Title: "Fix the build", Status: "Needs Attention",
+			Project: "Shipping", Relevance: loop.StatusFailed},
+		{Ticket: "LERP-2", TicketID: "id-2", Title: "Someday", Status: "Backlog",
+			Project: "Later", Relevance: loop.StatusBacklog},
+	}}
+}
+
+// Done-when: an inbox holding nothing but backlog says nothing is waiting on
+// a human, and still offers the key to the rows behind it. It must not claim
+// "the inbox is empty" — a board with nothing waiting at all is the goal
+// state, and a fold does not get to wear it.
+func TestAFoldedBacklogDoesNotClaimTheGoalState(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-2", TicketID: "id-2", Title: "Someday", Status: "Backlog",
+			Relevance: loop.StatusBacklog},
+	}}})
+
+	panel := m.attentionPanel(96, 14)
+	if !strings.Contains(panel, "nothing is waiting on you") {
+		t.Fatalf("an inbox of nothing but backlog does not say so:\n%s", panel)
+	}
+	if strings.Contains(panel, "the inbox is empty") {
+		t.Fatalf("the fold claimed the goal state:\n%s", panel)
+	}
+	if !strings.Contains(panel, "1 waiting to enter the pipeline — B to browse") {
+		t.Fatalf("the one line that is on you is precisely when the key must show:\n%s", panel)
+	}
+	if got := m.View(); strings.Contains(got, "in the inbox") {
+		t.Fatalf("the status bar counts a backlog nobody is blocked on:\n%s", got)
+	}
+	// No count to show is not no title: the sort is still in force, and a
+	// panel that says nothing about it makes `s` a silent state change.
+	if !strings.Contains(panel, "by status") {
+		t.Fatalf("the title dropped the sort mode along with the count:\n%s", panel)
+	}
+	m = update(t, m, keyMsg("s"))
+	if got := m.attentionPanel(96, 14); !strings.Contains(got, "by project") {
+		t.Fatalf("s cycled the sort without the title moving:\n%s", got)
+	}
+	m = update(t, m, keyMsg("s"))
+
+	// A board with nothing waiting at all still reads as the goal state, and
+	// has no fold to advertise.
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention}})
+	panel = m.attentionPanel(96, 14)
+	if !strings.Contains(panel, "the inbox is empty") {
+		t.Fatalf("an empty board no longer reads as the goal state:\n%s", panel)
+	}
+	if strings.Contains(panel, "to browse") {
+		t.Fatalf("an empty board advertises a fold with nothing behind it:\n%s", panel)
+	}
+}
+
+// Done-when: a pass does not reset the fold. It is model state like the sort
+// and the project scope, and a list that re-folded itself every few seconds
+// would take the rows back out from under the operator's hands.
+func TestAPassDoesNotResetTheFold(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: board()})
+	m = browseBacklog(t, m)
+
+	m = update(t, m, eventMsg{ev: board()})
+	if !m.backlogOpen {
+		t.Fatal("a pass folded the backlog back")
+	}
+	if got := len(m.shown); got != 6 {
+		t.Fatalf("the list after a pass has %d rows, want the whole expanded list", got)
+	}
+}
+
+// Done-when: a ticket the operator has claimed, resting in a status Linear
+// files as intake, is never folded away and is counted on the status bar.
+// The backlog tier is derived from Linear's category alone and says nothing
+// about who holds the ticket; a claimed one there did not fail to enter the
+// pipeline, it fell back out of one, and no pass can pick it up again while
+// the claim stands. Folding it would hide the one row only a human can
+// unstick behind a key nothing tells them to press.
+func TestAClaimedTicketInIntakeIsNeverFolded(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-5", TicketID: "id-5", Title: "Dragged back to Todo", Status: "Todo",
+			Relevance: loop.StatusBacklog, Claimed: true,
+			Reason: `claimed in "Todo" — waiting to enter the pipeline`},
+		{Ticket: "LERP-6", TicketID: "id-6", Title: "Nobody has started this", Status: "Todo",
+			Relevance: loop.StatusBacklog,
+			Reason:    `unassigned in "Todo" — waiting to enter the pipeline`},
+	}}})
+
+	if got := shownTickets(m); !slices.Equal(got, []string{"LERP-5"}) {
+		t.Fatalf("the folded inbox shows %v, want the stranded claimed ticket", got)
+	}
+	if got := m.View(); !strings.Contains(got, "● 1 in the inbox") {
+		t.Fatalf("the status bar does not count the stranded claimed ticket:\n%s", got)
+	}
+	// And the one beside it, which nobody has claimed, is behind the fold.
+	panel := m.attentionPanel(96, 14)
+	if !strings.Contains(panel, "1 waiting to enter the pipeline — B to browse") {
+		t.Fatalf("the unclaimed intake row is not folded:\n%s", panel)
+	}
+	if strings.Contains(panel, "nothing is waiting on you") {
+		t.Fatalf("a panel with a stranded claimed ticket on it says nothing is:\n%s", panel)
+	}
+}
+
+// Done-when: an item carrying StatusUnknown is never folded away. It is the
+// reconciler's bug marker — nothing set a relevance on this row — which is
+// why the fold hides the backlog tier rather than keeping an allow-list of
+// the tiers it shows.
+func TestTheBugMarkerIsNeverFolded(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-3", TicketID: "id-3", Title: "Nothing ranked this", Status: "Somewhere"},
+	}}})
+
+	if got := shownTickets(m); !slices.Equal(got, []string{"LERP-3"}) {
+		t.Fatalf("the folded inbox shows %v, want the unranked row it cannot classify", got)
+	}
+	if panel := m.attentionPanel(96, 14); strings.Contains(panel, "to browse") {
+		t.Fatalf("an unranked row was counted as folded backlog:\n%s", panel)
 	}
 }
 
@@ -1364,6 +1732,7 @@ func TestInboxTitleIsTheLastColumn(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: board()})
+	m = browseBacklog(t, m)
 
 	panel := m.attentionPanel(120, 14)
 	row := ansi.Strip(rowOf(t, panel, "LERP-1"))
@@ -1592,12 +1961,18 @@ func TestPromotePickerClosesWhenTheListEmpties(t *testing.T) {
 // swaps the main pane for the full keymap.
 func TestStatusBarAndHelp(t *testing.T) {
 	m, _, _ := newTestModel(t, 2)
+	// The bar is only on screen once the board is: the splash covers the
+	// first pass, mark and all. So this is the bar the board hands over to,
+	// and the pass it reports is the one after the one the splash covered.
+	m = pastTheSplash(t, m)
 	if !strings.Contains(m.statusBar(), "lerp") {
 		t.Fatalf("status bar does not carry the mark:\n%s", m.statusBar())
 	}
+	m = update(t, m, tickMsg{})
 	if !strings.Contains(m.View(), "pass running") {
-		t.Fatalf("status bar hides the in-flight first pass:\n%s", m.View())
+		t.Fatalf("status bar hides the pass in flight:\n%s", m.View())
 	}
+	m = update(t, m, tickedMsg{})
 
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
 		{Ticket: "LERP-1", Title: "one"}, {Ticket: "LERP-2", Title: "two"},
@@ -1768,6 +2143,7 @@ func TestEnterOpensTheDetailAndEscCloses(t *testing.T) {
 // away: the answer is the panel's and not the screen's.
 func TestThePaneIsRememberedPerPanel(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("2"))
 	m = update(t, m, keyMsg("enter")) // work
 	m = update(t, m, keyMsg("1"))
@@ -1920,6 +2296,7 @@ func TestAClosedPaneReadsNothing(t *testing.T) {
 // keystroke or the next byte of log.
 func TestRefocusingRewrapsThePane(t *testing.T) {
 	m, _, reader := newReadingTestModel(t)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, keyMsg("enter"))
 	m = update(t, m, eventMsg{ev: threeWaiting()})
@@ -1952,6 +2329,7 @@ func TestRefocusingRewrapsThePane(t *testing.T) {
 // frame names.
 func TestAWindowTooShortForThePaneKeepsItsScreen(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	m = openMain(t, m) // the pane 12 lines cannot hold
 	resized, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 12})
 	m = resized.(model)
@@ -2277,6 +2655,7 @@ func TestShrinkingTheWindowClosesWhatTookThePane(t *testing.T) {
 // state across a resize — so without this the only way out is a guess.
 func TestTheTooSmallScreenNamesTheWayOut(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	m = openMain(t, m)
 	resized, _ := m.Update(tea.WindowSizeMsg{Width: 70, Height: 12})
 	m = resized.(model)
@@ -2305,6 +2684,7 @@ func TestTheTooSmallScreenNamesTheWayOut(t *testing.T) {
 // number the needs-you panel exists for.
 func TestTheStatusBarKeepsTheCountOverTheHint(t *testing.T) {
 	m, _, _ := newTestModel(t, 3)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("2"))
 	resized, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 30})
 	m = openMain(t, resized.(model))
@@ -2387,6 +2767,7 @@ func TestTheOverlayTakesEscAndEnter(t *testing.T) {
 // debounce is a quarter of a second, which is time enough to shut it.
 func TestADebounceDoesNotOutliveThePane(t *testing.T) {
 	m, _, reader := newReadingTestModel(t)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, keyMsg("enter"))
 	m = update(t, m, eventMsg{ev: threeWaiting()})
@@ -2499,6 +2880,7 @@ func TestFocusDrawsTheHeavyBox(t *testing.T) {
 // And the weight follows focus, both ways, in the view the operator sees.
 func TestTheHeavyBoxFollowsFocus(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	for _, tc := range []struct{ key, focused, idle string }{
 		{"1", "[1] inbox", "[2] work"},
 		{"2", "[2] work", "[1] inbox"},
@@ -2519,6 +2901,7 @@ func TestTheHeavyBoxFollowsFocus(t *testing.T) {
 // the whole reason they felt like they did not exist.
 func TestFocusedPanelCarriesItsKeys(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	m = openMain(t, update(t, m, keyMsg("1"))) // the 45-column panel below
 	m = update(t, m, eventMsg{ev: threeWaiting()})
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
@@ -2609,6 +2992,7 @@ func fullBoard() loop.Event {
 // This is the first frame a new operator sees.
 func TestAPanelWithNothingSelectedOffersNoKeys(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	for _, key := range []string{"1", "2"} {
 		m = update(t, m, keyMsg(key))
 		for _, dead := range []string{"p promote", "s sort", "P project", "r raw", "o open"} {
@@ -2626,6 +3010,7 @@ func TestAPanelWithNothingSelectedOffersNoKeys(t *testing.T) {
 // panel offers it exactly where it does something.
 func TestRawIsOfferedOnlyWhereThereIsALog(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	m = openMain(t, update(t, m, keyMsg("2")))
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
 		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
@@ -3476,6 +3861,7 @@ func selectAndRead(t *testing.T, m model, sel int, detail linear.IssueDetail, er
 // row schedules a debounce; only the one the selection settled on reads.
 func TestTicketDetailFetchesOnceTheSelectionSettles(t *testing.T) {
 	m, _, reader := newReadingTestModel(t)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, keyMsg("enter"))
 	m = update(t, m, eventMsg{ev: threeWaiting()})
@@ -3516,6 +3902,7 @@ func TestTicketDetailFetchesOnceTheSelectionSettles(t *testing.T) {
 // the main pane, oldest comment first, without leaving lerp.
 func TestTicketDetailShowsBodyAndComments(t *testing.T) {
 	m, _, reader := newReadingTestModel(t)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, keyMsg("enter"))
 	m = update(t, m, eventMsg{ev: threeWaiting()})
@@ -3552,6 +3939,7 @@ func TestTicketDetailShowsBodyAndComments(t *testing.T) {
 // today, and still points at Linear.
 func TestTicketDetailFailureKeepsThePaneThatWorks(t *testing.T) {
 	m, _, reader := newReadingTestModel(t)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, keyMsg("enter"))
 	m = update(t, m, eventMsg{ev: threeWaiting()})
@@ -3587,6 +3975,7 @@ func TestTicketDetailFailureKeepsThePaneThatWorks(t *testing.T) {
 // A ticket with nothing on it still reads as answered, not as still loading.
 func TestTicketDetailEmptyTicket(t *testing.T) {
 	m, _, reader := newReadingTestModel(t)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, keyMsg("enter"))
 	m = update(t, m, eventMsg{ev: threeWaiting()})
@@ -3602,6 +3991,7 @@ func TestTicketDetailEmptyTicket(t *testing.T) {
 // body and the verdict in a comment render the same way, as markdown.
 func TestTicketDetailRendersMarkdown(t *testing.T) {
 	m, _, reader := newReadingTestModel(t)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, keyMsg("enter"))
 	m = update(t, m, eventMsg{ev: threeWaiting()})
@@ -3630,6 +4020,7 @@ func TestTicketDetailRendersMarkdown(t *testing.T) {
 // carrying Linear's inline issue tags renders as bare identifiers.
 func TestTicketDetailRendersHostileBodyInert(t *testing.T) {
 	m, _, reader := newReadingTestModel(t)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, keyMsg("enter"))
 	m = update(t, m, eventMsg{ev: threeWaiting()})
@@ -3656,6 +4047,7 @@ func TestTicketDetailRendersHostileBodyInert(t *testing.T) {
 // row is readable past its first line.
 func TestTicketDetailWrapsProse(t *testing.T) {
 	m, _, reader := newReadingTestModel(t)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, keyMsg("enter"))
 	m = update(t, m, eventMsg{ev: threeWaiting()})
@@ -4285,8 +4677,9 @@ func TestEjectResultKeepsTheWholeCommand(t *testing.T) {
 }
 
 // A running row's second line is the question the first one cannot answer:
-// not "did it start" but "is it still doing something". Elapsed, when the log
-// last grew, and the activity behind it.
+// not "did it start" but "is it still doing something". Elapsed and what the
+// run has spent on the first line, the last call it made and the activity
+// around it on the second.
 func TestRunningRowShowsHowTheRunIsGoing(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "run.log")
 	writeLog(t, path, []byte(
@@ -4304,11 +4697,14 @@ func TestRunningRowShowsHowTheRunIsGoing(t *testing.T) {
 	// The first poll attaches the pulse; the agent then does something.
 	m = update(t, m, pollMsg{})
 	appendLog(t, path,
-		`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"/a/b.go"}}]}}`+"\n")
+		`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"go test ./..."}}],`+
+			`"usage":{"input_tokens":52,"output_tokens":448,"cache_read_input_tokens":11500}}}`+"\n")
 	m = update(t, m, pollMsg{})
 
+	// The tool is a shell one, so the row spends its columns on the command
+	// and not on the word "Bash"; the tokens are the call's four counts.
 	view := m.View()
-	for _, want := range []string{"running", "1m30s", "heard", "ago", "█"} {
+	for _, want := range []string{"running", "1m30s", "12k tok", "$ go test ./...", "█"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("the running row is missing %q:\n%s", want, view)
 		}
@@ -4350,8 +4746,10 @@ func TestProvisioningRowClaimsNoReading(t *testing.T) {
 		TicketID: "id-9", Ticket: "LERP-9", Queue: "plan", LogPath: path, StartedAt: time.Now()}})
 	m = update(t, m, pollMsg{})
 	view := m.View()
-	if strings.Contains(view, "heard") {
-		t.Fatalf("a provisioning row reports a log it does not have:\n%s", view)
+	// One line, not two: the second line is a reading of a log, and there is
+	// no log.
+	if rows, _ := m.workListRows(40); len(rows) != 2 {
+		t.Fatalf("work list drew %d lines, want a header and a one-line row: %q", len(rows), rows)
 	}
 	if strings.ContainsAny(view, "▁█") {
 		t.Fatalf("a provisioning row draws activity for a log that does not exist:\n%s", view)
@@ -4387,10 +4785,15 @@ func TestPulseStartsWhenTheLogDoes(t *testing.T) {
 // operator is looking at; one that opens on a second line strands it under
 // whatever name happens to be above, where it reads as that ticket's.
 func TestScrolledRunKeepsRowsWhole(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "run.log")
-	writeLog(t, path, []byte("agent at work\n"))
+	// The log starts empty and the call arrives after the first poll: a
+	// pulse attaches at the end of the file it finds, so a line written
+	// before the run started is one no row would ever have read.
+	call := `{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash",` +
+		`"input":{"command":"go build ./..."}}]}}` + "\n"
 
 	for _, size := range []struct{ w, h int }{{120, 22}, {120, 25}, {120, 30}, {100, 44}} {
+		path := filepath.Join(t.TempDir(), "run.log")
+		writeLog(t, path, nil)
 		m, _, _ := newTestModel(t, 5)
 		resized, _ := m.Update(tea.WindowSizeMsg{Width: size.w, Height: size.h})
 		m = fillBoard(t, resized.(model), 40)
@@ -4400,6 +4803,8 @@ func TestScrolledRunKeepsRowsWhole(t *testing.T) {
 				TicketID: fmt.Sprintf("t%d", lane-1), Ticket: fmt.Sprintf("QUEUED-%d", lane),
 				Queue: "implement", LogPath: path}})
 		}
+		m = update(t, m, pollMsg{})
+		appendLog(t, path, call)
 		m = update(t, m, pollMsg{})
 		m = update(t, m, keyMsg("2"))
 
@@ -4418,13 +4823,13 @@ func TestScrolledRunKeepsRowsWhole(t *testing.T) {
 			if at < 0 {
 				t.Fatalf("%dx%d: the selected row %s is not on the panel:\n%s", size.w, size.h, want, panel)
 			}
-			if at+1 >= len(lines) || !strings.Contains(lines[at+1], "heard") {
+			if at+1 >= len(lines) || !strings.Contains(lines[at+1], "$ go build") {
 				t.Fatalf("%dx%d: %s lost its reading to the window:\n%s", size.w, size.h, want, panel)
 			}
 			// And no reading line is left under a name it does not belong
 			// to: every one of them follows the row that produced it.
 			for i, l := range lines {
-				if !strings.Contains(l, "heard") {
+				if !strings.Contains(l, "$ go build") {
 					continue
 				}
 				if i == 0 || !strings.Contains(lines[i-1], "●") {
@@ -4524,25 +4929,27 @@ func TestEjectSaysWhyARunnerCannotResume(t *testing.T) {
 }
 
 // The panel the wide layout starts at is the narrowest one it draws, and the
-// number is the reading: the sparkline is what yields to a narrow panel,
-// never the digits.
-func TestRunLineKeepsItsNumbersWhenNarrow(t *testing.T) {
+// call is the reading: the sparkline is what yields to a narrow panel, never
+// the command.
+func TestRunLineKeepsTheCallWhenNarrow(t *testing.T) {
 	r := workRow{lane: 1, since: time.Now().Add(-65 * time.Minute),
 		heard: time.Now().Add(-12*time.Minute - 30*time.Second),
-		rate:  []int{1, 0, 3, 0, 9, 0, 0, 0}}
+		tool:  "Bash", target: "go test ./...",
+		rate: []int{1, 0, 3, 0, 9, 0, 0, 0}}
 	// What a 100-column terminal — the wide layout's own threshold — leaves
 	// a list panel for its rows beside an open pane, asked of the geometry
 	// rather than restated. The pane is what makes the panel narrow, so it
 	// is open here: with it shut the list has the whole terminal and this
 	// row has columns to spare.
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	resized, _ := m.Update(tea.WindowSizeMsg{Width: narrowWidth, Height: 40})
 	m = openMain(t, resized.(model))
 	width := padList.inner(m.geometry().sideW)
 
 	line := ansi.Strip(runLine(r, width))
-	if !strings.Contains(line, "heard 12m30s ago") {
-		t.Fatalf("the number did not survive a %d-column panel: %q", width, line)
+	if !strings.Contains(line, "$ go test ./...") {
+		t.Fatalf("the call did not survive a %d-column panel: %q", width, line)
 	}
 	if !strings.ContainsAny(line, "▁█") {
 		t.Fatalf("the sparkline was dropped where it fits: %q", line)
@@ -4559,15 +4966,89 @@ func TestRunLineKeepsItsNumbersWhenNarrow(t *testing.T) {
 			fits = w
 		}
 	}
-	if want := lipgloss.Width("    heard 12m30s ago") + 1 + len(r.rate); fits != want {
+	if want := lipgloss.Width("    $ go test ./...") + 1 + len(r.rate); fits != want {
 		t.Fatalf("the sparkline appears at %d columns, but the line draws in %d", fits, want)
 	}
 	tight := ansi.Strip(runLine(r, fits-1))
 	if strings.ContainsAny(tight, "▁█") {
-		t.Fatalf("a sparkline crowded out the number: %q", tight)
+		t.Fatalf("a sparkline crowded out the call: %q", tight)
 	}
-	if !strings.Contains(tight, "heard 12m30s ago") {
+	if !strings.Contains(tight, "$ go test ./...") {
 		t.Fatalf("the reading was truncated to make room for decoration: %q", tight)
+	}
+}
+
+// The first line carries the facts about the whole run — how long it has been
+// going, and what it has spent — in the columns a row can spare for them. A
+// run this process did not start has a total that begins partway through it,
+// and the row says at least rather than reporting a number it knows is short.
+func TestRunningRowCarriesWhatTheRunHasSpent(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	r := workRow{ticket: "LERP-1", title: "one", lane: 1, state: laneRunning,
+		since: time.Now().Add(-90 * time.Second), heard: time.Now(), tokens: 5_200_000}
+
+	first := ansi.Strip(m.workRowLines(r, false, 80)[0])
+	if !strings.Contains(first, "1m30s") || !strings.Contains(first, "5.2M tok") {
+		t.Fatalf("the running row does not say how long or how much: %q", first)
+	}
+	if strings.Contains(first, "≥") {
+		t.Fatalf("a run watched from the start hedges its own total: %q", first)
+	}
+
+	r.state, r.unread = laneAdopted, true
+	if got := ansi.Strip(m.workRowLines(r, false, 80)[0]); !strings.Contains(got, "≥5.2M tok") {
+		t.Fatalf("an adopted run reports a partial total as the run's: %q", got)
+	}
+
+	// A run that has not been charged for anything yet says nothing about
+	// tokens: "0 tok" is a reading nobody asked for.
+	r.tokens, r.unread = 0, false
+	if got := ansi.Strip(m.workRowLines(r, false, 80)[0]); strings.Contains(got, "tok") {
+		t.Fatalf("a run that has spent nothing still reports a total: %q", got)
+	}
+}
+
+// The counts a run reaches span four orders of magnitude, and the row has
+// about six columns for them: the decimal goes where it changes the reading
+// and not where it is noise.
+func TestSpendReadsInTheColumnsARowHas(t *testing.T) {
+	for _, tc := range []struct {
+		n    int
+		want string
+	}{
+		{940, "940 tok"},
+		{1_400, "1.4k tok"},
+		{9_990, "10.0k tok"},
+		{12_499, "12k tok"},
+		{847_000, "847k tok"},
+		{999_900, "1.0M tok"},
+		{5_200_000, "5.2M tok"},
+	} {
+		if got := tokenCount(tc.n, false); got != tc.want {
+			t.Errorf("tokenCount(%d) = %q, want %q", tc.n, got, tc.want)
+		}
+	}
+	if got := tokenCount(5_200_000, true); got != "≥5.2M tok" {
+		t.Errorf("a partial total renders as %q", got)
+	}
+}
+
+// A log that exists but has not reached a tool call keeps its second line:
+// the sparkline is still a reading, and an agent that has only been thinking
+// has done nothing to name. The line goes only when there is no log at all.
+func TestRunLineHoldsItsPlaceBeforeTheFirstCall(t *testing.T) {
+	r := workRow{lane: 1, since: time.Now(), heard: time.Now(),
+		rate: []int{0, 1, 2, 0, 1, 0, 0, 3}}
+	line := ansi.Strip(runLine(r, 60))
+	if !strings.ContainsAny(line, "▁█") {
+		t.Fatalf("a run with no call yet lost its line: %q", line)
+	}
+	if strings.Contains(line, "$") {
+		t.Fatalf("a run that has called nothing drew a call: %q", line)
+	}
+	r.heard = time.Time{}
+	if got := runLine(r, 60); got != "" {
+		t.Fatalf("a lane with no log at all drew %q", got)
 	}
 }
 
@@ -4586,6 +5067,7 @@ func TestTheSparklineTakesTheWidthItIsGiven(t *testing.T) {
 		heard: time.Now().Add(-12*time.Minute - 30*time.Second), rate: rate}
 
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	m = resized.(model)
 
@@ -5113,10 +5595,16 @@ func TestTheOverlayBorrowsThePaneNotItsKeys(t *testing.T) {
 // move, which is the one thing rowKeys exists to prevent.
 func TestTabSkipsAPaneWithNoRowUnderIt(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	// A pass that reported an empty queue, not a pass that has not reported:
+	// the splash covers the second one, and enter does not open a pane under
+	// it. What is left is a work panel with a queue and no tickets in it.
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Team: "LERP", Name: "implement", Status: "Todo"},
+	}}})
 	m = update(t, m, keyMsg("2"))
 	m = openMain(t, m)
-	if !strings.Contains(m.View(), "waiting for the first pass") {
-		t.Fatalf("the work pane is not holding its state sentence:\n%s", m.View())
+	if m.hasRow(panelWork) {
+		t.Fatalf("the work panel has a row after an empty pass:\n%s", m.View())
 	}
 	m = update(t, m, keyMsg("tab"))
 	if m.mainFocused() {
@@ -5126,7 +5614,7 @@ func TestTabSkipsAPaneWithNoRowUnderIt(t *testing.T) {
 		t.Fatalf("tab past the rowless pane landed on %v, want the inbox", m.focus)
 	}
 
-	// And it reaches the same pane the moment the pass gives it a row.
+	// And it reaches the same pane the moment a pass gives it a row.
 	m = update(t, m, keyMsg("2"))
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
 		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{

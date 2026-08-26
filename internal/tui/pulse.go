@@ -46,11 +46,12 @@ const (
 )
 
 // pulse is one lane's log read for what its work row says about the run in
-// progress: when the log last grew, and how much activity it has carried
-// lately. Both come out of the log the pane already tails, so they degrade
-// the way logfmt degrades — whatever a runner's adapter can count, it counts,
-// and an unrecognized stream counts lines. Nothing is persisted anywhere; the
-// log is ephemeral evidence (SCOPE invariant 1) and so is this.
+// progress: how much activity it has carried lately, what it has spent, and
+// the last call it made. All of it comes out of the log the pane already
+// tails, so it degrades the way logfmt degrades — whatever a runner's adapter
+// can count, it counts, and an unrecognized stream counts lines and reports
+// no tokens at all. Nothing is persisted anywhere; the log is ephemeral
+// evidence (SCOPE invariant 1) and so is this.
 //
 // This is display, not hang detection. SCOPE defers hang detection, and
 // nothing here holds a threshold, names a state, or acts on a number: the
@@ -60,7 +61,9 @@ type pulse struct {
 	stream logfmt.Stream
 	// heard is when the log last grew, taken from the file's own mtime — so
 	// a row is right on the first poll, including for a run adopted from a
-	// previous process, rather than only once a byte arrives.
+	// previous process, rather than only once a byte arrives. It is also
+	// what tells a lane with a log from one whose runner has not made the
+	// file yet, which is whether the row has a second line to draw at all.
 	heard time.Time
 	// cells is a ring of event counts, one per bucket; head is the bucket
 	// now filling, at is when it opened, and seen is how many buckets have
@@ -75,6 +78,14 @@ type pulse struct {
 	// none to be had — and window draws them ahead of the ring, so an
 	// adopted run reads as older than the stretch it has been watched for.
 	unread int
+	// tokens is what the run has spent, summed from the usage its log
+	// reports; tool and target are the last tool call it made, which is the
+	// most concrete answer the log has to what it is doing. Both are of the
+	// stretch this pulse has read: unread above says whether there is a
+	// stretch before it, and the row says so too rather than passing a
+	// partial total off as the run's.
+	tokens       int
+	tool, target string
 }
 
 // newPulse attaches at the end of the file. What is already in it happened at
@@ -123,12 +134,22 @@ func (p *pulse) read(now time.Time) {
 		// that the span is still the truth about the run after one.
 		p.stream, p.cells, p.head, p.seen = logfmt.Stream{}, [sparkCells]int{}, 0, 0
 		p.at = time.Time{}
+		// The total and the last call went with the file: both are readings
+		// of a log that no longer exists, and the one still on screen would
+		// be a command from a run nobody can look at any more.
+		p.tokens, p.tool, p.target = 0, "", ""
 	}
 	if mid {
 		p.stream.SkipLine()
 	}
 	p.roll(now)
-	p.cells[p.head] += len(p.stream.Feed(b))
+	for _, ev := range p.stream.Feed(b) {
+		p.cells[p.head]++
+		p.tokens += ev.Usage
+		if ev.Kind == logfmt.KindToolCall {
+			p.tool, p.target = ev.Tool, ev.Text
+		}
+	}
 }
 
 // roll advances the ring to the bucket now falls in, zeroing the ones that
@@ -195,7 +216,7 @@ func (p *pulse) window() []int {
 // A long line makes that the ordinary reading rather than the rare one: a
 // burst at the start of a run holds the scale for as long as it stays in the
 // window, and steady work under it sits on the bar above the floor. Alive
-// rather than how alive is what the row is for, with heard beside it.
+// rather than how alive is what the row is for, with the call beside it.
 //
 // A bucket marked unread is drawn as itself and takes no part in the scale:
 // it is a span nobody counted, not a quiet one, and letting it read as either

@@ -34,11 +34,24 @@ const (
 //   - KindToolCall: Tool is the tool's name, Text a short target.
 //   - KindToolResult: Text is the head of the result, IsError its verdict.
 //   - KindResult: Text is the run's one-line summary.
+//
+// Usage is the exception: it is not a kind's field but the line's, and it
+// rides whatever kind the line decoded to.
 type Event struct {
-	Kind    Kind
-	Text    string
-	Tool    string
-	Tokens  int
+	Kind Kind
+	Text string
+	Tool string
+	// Tokens is the thinking heartbeat's running count (KindThinking only).
+	Tokens int
+	// Usage is the tokens the runner says the API call behind this line
+	// spent — every kind of token it bills for, since that is the number
+	// "how much has this run used" is asking for. It is a delta, not a
+	// total: a reader sums it over the stream. Zero on a line that reports
+	// no usage, which is most of them, and on a runner that reports none at
+	// all. A line whose content decodes to nothing worth showing is dropped
+	// with its usage; the loss is one call's worth on a stream that reports
+	// per call, which the next line's arrival makes invisible.
+	Usage   int
 	IsError bool
 }
 

@@ -354,3 +354,50 @@ func TestPulseStartsOverWhenTheLogIsRewritten(t *testing.T) {
 		t.Fatalf("the rewritten log carries the old ring: %v", got)
 	}
 }
+
+// The row's two other readings come off the same events the buckets are
+// counted from: what the run has spent, summed as the log reports it, and the
+// last call it made, which stays until another one replaces it. A run does
+// not stop having run a command while it thinks about the output.
+func TestPulseTracksSpendAndTheLastCall(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.log")
+	appendLog(t, path, `{"type":"system","subtype":"init","model":"claude-opus-5","session_id":"abc"}`+"\n")
+	now := time.Now()
+	p := newPulse(path, now, now)
+	p.read(now)
+	if p.tokens != 0 || p.tool != "" {
+		t.Fatalf("a run that has done nothing reports %d tokens and %q", p.tokens, p.tool)
+	}
+
+	appendLog(t, path,
+		`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"/a/b.go"}}],`+
+			`"usage":{"input_tokens":100,"output_tokens":900}}}`+"\n")
+	p.read(now)
+	if p.tokens != 1000 {
+		t.Fatalf("the first call spent %d tokens, want 1000", p.tokens)
+	}
+	if p.tool != "Read" || p.target != "b.go" {
+		t.Fatalf("the last call is %q %q, want Read b.go", p.tool, p.target)
+	}
+
+	// Prose costs tokens and is not a call: the total moves, the call does
+	// not.
+	appendLog(t, path,
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"that file is fine"}],`+
+			`"usage":{"input_tokens":500,"output_tokens":10,"cache_read_input_tokens":1490}}}`+"\n")
+	p.read(now)
+	if p.tokens != 3000 {
+		t.Fatalf("the run has spent %d tokens, want 3000", p.tokens)
+	}
+	if p.tool != "Read" {
+		t.Fatalf("prose replaced the last call with %q", p.tool)
+	}
+
+	// A rewritten log takes both with it: they are readings of a file that
+	// is gone, and the command on screen would be one nobody can look up.
+	writeLog(t, path, []byte("a wholly new log\n"))
+	p.read(now.Add(sparkBucket))
+	if p.tokens != 0 || p.tool != "" || p.target != "" {
+		t.Fatalf("the rewritten log kept %d tokens and the call %q %q", p.tokens, p.tool, p.target)
+	}
+}

@@ -879,7 +879,7 @@ func TestTickEmitsAttention(t *testing.T) {
 	want := []AttentionItem{
 		{
 			Ticket: "LERP-1", TicketID: "help", Title: "Fix the build", Status: "Needs Help",
-			Project: "Open-source readiness", Relevance: StatusFailed,
+			Project: "Open-source readiness", Relevance: StatusFailed, Claimed: true,
 			Reason: `claimed in "Needs Help" — a run failed here`,
 			URL:    "https://linear.app/l/LERP-1",
 		},
