@@ -440,6 +440,10 @@ type model struct {
 	frame    int
 	inFlight bool
 	lastPass time.Time
+	// heard is whether anything has come back from the loop yet — any event
+	// at all, which is the moment the board stops having nothing to draw. It
+	// is what the opening splash gives way to; see splashing.
+	heard bool
 
 	lastErr string
 	// notes are this interval's transient reports — run outcomes, a
@@ -662,7 +666,12 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Detail):
 		// Not under the overlay: it is what is on screen, and enter behind it
 		// would open a pane nobody asked for and read a ticket nobody sees.
-		if m.roomForMain() && !m.helpOn {
+		// Nor under the splash, which is the same rule about a different
+		// screen: there is no row to detail before the first pass reports,
+		// and the pane would be open in the geometry without being on it —
+		// enough, on a short window, to turn the next resize into "window
+		// too small · esc closes the pane" about a pane never drawn.
+		if m.roomForMain() && !m.helpOn && !m.splashing() {
 			m.detailOpen[m.focus] = true
 			// Size before filling: the viewport was zero-width while the
 			// pane was closed, and refreshMain wraps to that width.
@@ -1147,6 +1156,7 @@ func openURL(url string) tea.Cmd {
 // cleaned here, once, so the views below can stay plain string building.
 func (m *model) apply(ev loop.Event) {
 	ev = cleanEvent(ev)
+	m.heard = true
 	if ev.Err != nil {
 		// Pass errors interpolate Linear's own status and team names.
 		m.lastErr = clean(ev.Err.Error())
@@ -2037,6 +2047,20 @@ func (m *model) layout() {
 	m.vp.SetYOffset(m.vp.YOffset)
 }
 
+// splashing reports the state the splash stands in for: lerp is up, the
+// first pass is out, and nothing has come back from it — no event, and no
+// pass finished. Either one ends it, and neither un-happens, which is what
+// keeps the splash the first screen and never a later one.
+//
+// An event is the board having something to draw, whatever it was about: a
+// lane, a queue, the inbox. A failed pass is an event too — its error goes
+// to the status bar, where it can be read, rather than under a spinner that
+// would go on saying "working" about a pass that is over. And a pass that
+// finished having said nothing at all has nothing left to wait for.
+func (m model) splashing() bool {
+	return !m.heard && m.lastPass.IsZero()
+}
+
 func (m model) View() string {
 	if !m.ready {
 		return "starting lerp…\n"
@@ -2063,6 +2087,23 @@ func (m model) View() string {
 			return "lerp — window too small\nesc closes the pane\n"
 		}
 		return "lerp — window too small\n"
+	}
+	// Below the too-small screen, which is the actionable one: a splash on a
+	// window that cannot draw a board would hide the one thing the operator
+	// can do something about behind a spinner. And above everything else
+	// except what has taken the keyboard — the ? overlay, a picker, an
+	// eject — for mainOpen's reason rather than its exact list: something
+	// that answers to keys while nothing it draws reaches the screen is a ?
+	// that does nothing, or an enter that writes to Linear from under a
+	// spinner. Only ? can be open here today, because every other one of
+	// them is gated on a row, and a row means the pass has reported.
+	//
+	// A detail pane cannot be in that list at all: enter does not open one
+	// while the splash is up, precisely so that this guard and the
+	// too-small guard above it cannot disagree about a pane the operator
+	// never saw.
+	if m.splashing() && !m.modal() && !m.helpOn {
+		return m.splash()
 	}
 	g := m.geometry()
 	side := lipgloss.JoinVertical(lipgloss.Left,
@@ -3268,7 +3309,7 @@ func (m model) statusBar() string {
 	// The corner is the bar's one fixed point: same text, same weight, same
 	// width, every frame. Which panel holds the keys is already drawn by the
 	// panel borders, so the focus badge that used to sit here said it twice.
-	brand := styleMark.Render("lerp")
+	brand := styleMark.Render(markWord)
 
 	// The heartbeat speaks only when there is something to say. "Is the
 	// board fresh?" is the bar's real question, and yes is silence: a pass
