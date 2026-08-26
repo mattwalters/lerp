@@ -654,6 +654,15 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// The selection keys move the selection, everywhere the selection is
 	// what the keys are pointed at. In the pane they move the pane, a line
 	// at a time, which is the movement the scroll keys never had.
+	//
+	// And where the keys are in the pane but the pane is not the operator's
+	// to move — the ? overlay drawn over it, a window too short to hold it —
+	// they are inert, the rule the scroll keys follow on a closed pane one
+	// case below. Falling through to the selection would walk a list nobody
+	// can see, and the pane would come back re-aimed at a row the operator
+	// never chose, at the top of it.
+	case m.keysInMain && !m.mainFocused() &&
+		(key.Matches(msg, m.keys.Up) || key.Matches(msg, m.keys.Down)):
 	case key.Matches(msg, m.keys.Up):
 		if m.mainFocused() {
 			m.scrollMain(-1)
@@ -1036,10 +1045,26 @@ func (m *model) mainFocused() bool {
 }
 
 // paneTakesKeys reports whether p's pane is a surface tab can reach: open,
-// with the room to draw, and showing p's detail rather than the help or a
-// modal that has the keyboard already.
+// with the room to draw, showing p's detail rather than the help or a modal
+// that has the keyboard already, and open on a row.
+//
+// The row is the last of those because the pane is a lens and not a panel:
+// with no row under p's cursor it is holding a state sentence — "waiting for
+// the first pass…", "the inbox is empty" — and the keys would arrive with
+// nothing to scroll and no selection left to move. Which row it is never
+// matters, so a pane the operator is reading is not handed back its panel's
+// keys by the list resorting under it; a panel that empties while they read
+// is a different thing, and the keys go back to the list that now says so.
 func (m *model) paneTakesKeys(p panel) bool {
-	return m.detailOpen[p] && m.roomForMain() && !m.helpOn && !m.modal()
+	return m.detailOpen[p] && m.roomForMain() && !m.helpOn && !m.modal() && m.hasRow(p)
+}
+
+// hasRow reports whether p's cursor is standing on anything.
+func (m *model) hasRow(p panel) bool {
+	if p == panelWork {
+		return m.selectedWork() != nil
+	}
+	return m.selectedAttention() != nil
 }
 
 // cycleSurface is tab: the two panels, and after each one the pane it has
@@ -2786,8 +2811,13 @@ func (m model) mainPanel(w, h int) string {
 	title := m.mainTitle()
 	// The pane lights up the same way a panel does — heavy box, title in
 	// the focus accent — so "where are my keys pointed" is answered by the
-	// chrome the operator already reads for it, and only ever by one
-	// surface at a time.
+	// chrome the operator already reads for it. Between the two panels and
+	// this pane it is one surface at a time: paneTakesKeys is what the
+	// panels ask too, so the box can only move, never split. The overlay
+	// and the modals are the exception, and were before this: each draws
+	// itself focused in this pane while the panel behind it stays focused
+	// too — they have the keyboard outright, so neither box is a claim on
+	// keys the other one has.
 	if m.mainFocused() {
 		return panelBox(styleTitleFocus.Render(title), true, w, h,
 			strings.Split(m.vp.View(), "\n"), padMain)

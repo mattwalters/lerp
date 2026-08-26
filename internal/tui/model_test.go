@@ -5044,6 +5044,11 @@ func TestClosingThePaneHandsTheKeysBack(t *testing.T) {
 // its own scrolling, so it takes them back for as long as it is up — and
 // hands them straight back on the way out, the way an open pane survives
 // anything else that borrows the room.
+//
+// While it is up, j and k are inert rather than falling through to the list
+// behind it. A pane the operator put the keys in, walked three rows down by
+// a list they could not see, would come back reading a ticket they never
+// chose — and at the top of it.
 func TestTheOverlayTakesTheKeysBackFromThePane(t *testing.T) {
 	m, _, reader := newReadingTestModel(t)
 	m = update(t, m, eventMsg{ev: threeWaiting()})
@@ -5055,8 +5060,71 @@ func TestTheOverlayTakesTheKeysBackFromThePane(t *testing.T) {
 	if m.mainFocused() {
 		t.Fatal("the keys stayed in a pane the overlay had taken")
 	}
+	m = update(t, m, keyMsg("j"))
+	m = update(t, m, keyMsg("j"))
+	if m.attnSel != 0 {
+		t.Fatalf("j behind the overlay walked the hidden list to row %d, "+
+			"re-aiming the pane the keys were in", m.attnSel)
+	}
 	m = update(t, m, keyMsg("?"))
 	if !m.mainFocused() {
 		t.Fatal("closing the overlay did not give the pane its keys back")
+	}
+	if !strings.Contains(m.View(), "the body of the first") {
+		t.Fatalf("the pane came back on another row:\n%s", m.View())
+	}
+
+	// The list still has them when they were never in the pane: this is the
+	// keys the operator put there, not a new rule about the overlay.
+	m = update(t, m, keyMsg("shift+tab"))
+	if m.focus != panelAttention || m.mainFocused() {
+		t.Fatalf("the keys are not back on the inbox list: %v/%v", m.focus, m.mainFocused())
+	}
+	m = update(t, m, keyMsg("?"))
+	m = update(t, m, keyMsg("j"))
+	if m.attnSel != 1 {
+		t.Fatalf("j behind the overlay from the list moved to row %d, want the second row: "+
+			"re-aiming the lens behind the overlay is what it has always done", m.attnSel)
+	}
+}
+
+// Done-when: tab reaches a pane that is a lens on a row. A panel with no row
+// under its cursor has a pane holding a state sentence — the first pass has
+// not landed, or the inbox is empty and that is the goal state — and the
+// keys would arrive there with nothing to scroll and no selection left to
+// move, which is the one thing rowKeys exists to prevent.
+func TestTabSkipsAPaneWithNoRowUnderIt(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("2"))
+	m = openMain(t, m)
+	if !strings.Contains(m.View(), "waiting for the first pass") {
+		t.Fatalf("the work pane is not holding its state sentence:\n%s", m.View())
+	}
+	m = update(t, m, keyMsg("tab"))
+	if m.mainFocused() {
+		t.Fatal("tab put the keys in a pane with no row under it")
+	}
+	if m.focus != panelAttention {
+		t.Fatalf("tab past the rowless pane landed on %v, want the inbox", m.focus)
+	}
+
+	// And it reaches the same pane the moment the pass gives it a row.
+	m = update(t, m, keyMsg("2"))
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
+			{ID: "id-9", Identifier: "LERP-9", Title: "queued", Eligible: true},
+		}}}}})
+	m = update(t, m, keyMsg("tab"))
+	if !m.mainFocused() {
+		t.Fatalf("tab did not reach the pane once it had a row to be a lens on:\n%s", m.View())
+	}
+
+	// A panel that empties under a pane holding the keys hands them back to
+	// the list that now says so.
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Team: "LERP", Name: "implement", Status: "Todo"},
+	}}})
+	if m.mainFocused() {
+		t.Fatal("the keys stayed in a pane whose row had gone")
 	}
 }

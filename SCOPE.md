@@ -153,10 +153,14 @@ its existence.
 Two panels on one screen, one per question an operator actually has. The
 list owns the screen: a main pane detailing the selected row opens beside
 it with `enter` and closes with `esc`, and each panel remembers whether it
-is open. Both start closed: a ticket's detail is something you open once
-you have decided to read that ticket, and a run's log is something you
-open to read that run — the work row already says whether the run is
-alive without it. That is a display default, not a rule about process.
+is open. An open pane is a surface the keyboard reaches — `tab` cycles the
+panels and the pane the focused one has open, and the keys scroll it a line
+at a time while it holds them — but it is a lens and never a third panel:
+what it shows stays the selected row's business. Both start closed: a
+ticket's detail is something you open once you have decided to read that
+ticket, and a run's log is something you open to read that run — the work
+row already says whether the run is alive without it. That is a display
+default, not a rule about process.
 
 1. **Inbox** — what waits on a human: unclaimed tickets, and the
    operator's own claimed tickets, sitting in a status no queue serves
