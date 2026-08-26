@@ -115,8 +115,9 @@ cut the other way:
   losing all of it may cost compute, never correctness — but it does
   hold each run's full agent transcript, the loop's diagnostics, and
   the lane workspaces. Those transcripts contain whatever the agent
-  read aloud. `lerp init` does not touch your `.gitignore`, so add
-  `.lerp/` to it yourself before the first run.
+  read aloud. `lerp init` adds `.lerp/` to your `.gitignore` for you,
+  and says so when it cannot — take it at its word and check, because
+  what a committed transcript publishes is not recoverable.
 
 ## Reporting a vulnerability
 
