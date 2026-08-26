@@ -82,6 +82,36 @@ func TestClaimForQueueReleasesATicketMovedDuringTheClaim(t *testing.T) {
 	}
 }
 
+// The moved-mid-claim release goes through releaseClaim, so a colleague who
+// overwrites the claim in the window after the read-back keeps it. That path
+// is racy by definition — a move has already beaten the claim — which is
+// exactly where a raw unassign clears the wrong person's claim.
+func TestClaimForQueueLeavesAColleaguesClaimOnAMovedTicket(t *testing.T) {
+	ctx := context.Background()
+	f := linear.NewFake()
+	f.SetViewer("me")
+	f.AddIssue("LERP", linear.Issue{ID: "iss-1", Identifier: "LERP-1", Status: "Todo"})
+
+	moved := movedOnAssign{Client: f, move: func(issueID string) {
+		if err := f.MoveIssue(ctx, issueID, "Escalated"); err != nil {
+			t.Error(err)
+		}
+	}}
+	client := &stolenAfterReadBack{Client: moved, fake: f, rivalID: "colleague"}
+
+	viewerID, won, err := claimForQueue(ctx, client, "iss-1", "Todo")
+	if err != nil || won {
+		t.Fatalf("claimForQueue = (%v, %v), want the claim given up", won, err)
+	}
+	if viewerID != "me" {
+		t.Errorf("viewerID = %q, want the operating user for later claim bookkeeping", viewerID)
+	}
+	got, _ := f.GetIssue(ctx, "iss-1")
+	if got.AssigneeID != "colleague" {
+		t.Errorf("assignee = %q, want the colleague's claim left alone", got.AssigneeID)
+	}
+}
+
 func TestEligible(t *testing.T) {
 	statuses := map[string]bool{"Todo": true}
 	tests := []struct {
@@ -128,6 +158,28 @@ func (c movedOnAssign) AssignIssue(ctx context.Context, issueID, userID string) 
 	}
 	c.move(issueID)
 	return nil
+}
+
+// stolenAfterReadBack hands back the read-back the claim protocol expects,
+// then lets a colleague overwrite the assignment before anything reads the
+// issue again — the window releaseClaim's verify exists for.
+type stolenAfterReadBack struct {
+	linear.Client
+	fake    *linear.Fake
+	rivalID string
+	stolen  bool
+}
+
+func (c *stolenAfterReadBack) GetIssue(ctx context.Context, issueID string) (linear.Issue, error) {
+	issue, err := c.Client.GetIssue(ctx, issueID)
+	if err != nil || c.stolen {
+		return issue, err
+	}
+	c.stolen = true
+	if assignErr := c.fake.AssignIssue(ctx, issueID, c.rivalID); assignErr != nil {
+		return issue, assignErr
+	}
+	return issue, nil
 }
 
 type failingClient struct {

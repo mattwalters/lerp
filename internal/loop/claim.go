@@ -76,7 +76,12 @@ func claimForQueue(ctx context.Context, client linear.Client, issueID, status st
 		return viewerID, false, nil
 	}
 	if claimed.Status != status {
-		if err := client.UnassignIssue(ctx, issueID); err != nil {
+		// Through releaseClaim, not a raw unassign: the read-back said the
+		// claim was ours, but a move has already raced it, so this is by
+		// definition the path where something else is touching the ticket.
+		// Verifying costs one GetIssue on a rare path and is the difference
+		// between releasing our own claim and clearing a colleague's.
+		if err := releaseClaim(ctx, client, issueID, viewerID); err != nil {
 			return viewerID, false, fmt.Errorf("release moved issue %s: %w", issueID, err)
 		}
 		return viewerID, false, nil
@@ -85,9 +90,16 @@ func claimForQueue(ctx context.Context, client linear.Client, issueID, status st
 }
 
 // releaseClaim unassigns an issue so it becomes eligible again — for a run
-// this process claimed but never started, and for a ticket promote moved
-// back into a queue. The claim is verified first: if someone else holds the
-// issue now, their claim is left alone.
+// this process claimed but never started, for a ticket that moved out of its
+// queue mid-claim, and for a ticket promote moved back into a queue. The
+// claim is verified first: if someone else holds the issue now, their claim
+// is left alone.
+//
+// It is the one spelling of that rule for callers holding nothing but a
+// ticket ID. The two callers that do not route through it hold more than
+// that and say why: conclude releases a claim it won and ran, from the
+// read-back it already has, and (*Reconciler).releaseDead verifies status and
+// assignee together from a single snapshot.
 func releaseClaim(ctx context.Context, client linear.Client, issueID, viewerID string) error {
 	current, err := client.GetIssue(ctx, issueID)
 	if err != nil {
