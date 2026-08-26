@@ -46,6 +46,114 @@ check: ## The gate, on Linux and macOS in CI: gofmt, vet, build, test
 fmt: ## Format all Go source
 	gofmt -w .
 
+# --------------------------------------------------------------------------
+# Releases
+# --------------------------------------------------------------------------
+
+# The two halves of cutting a release. `snapshot` builds what a tag would
+# build, without publishing anything; `release` pushes the tag and stops,
+# because the build itself belongs to .github/workflows/release.yml — a
+# release nobody can reproduce from a clean checkout is a release built on
+# somebody's laptop.
+#
+# Neither is in `check`. The gate needs nothing installed beyond Go, and
+# cross-building four binaries is not what a pre-commit run is for.
+
+.PHONY: snapshot
+snapshot: ## Build the release binaries locally, publishing nothing (needs goreleaser)
+# Presence is all this checks. There is a version floor too — v2.6, where
+# `archives.formats` replaced `format` — but nothing here enforces it: an
+# older v2 fails on the config a moment later, saying which key, which is a
+# legible enough answer not to be worth parsing `goreleaser --version` for.
+# The floor is in the message so it is at hand when that happens.
+	@command -v goreleaser >/dev/null || { \
+	  echo 'snapshot: goreleaser (v2.6+) is not installed — see https://goreleaser.com/install/'; \
+	  exit 1; }
+	goreleaser release --snapshot --clean
+# The hint names this platform's binary so the stamp is one command away.
+# Guarded like demo's cap and example's `test -s`: goreleaser has renamed
+# these directories before — `arm64` became `arm64_v8.0` when it grew
+# `goarm64` — and a glob that misses must not print a sentence with a hole
+# where the path goes.
+	@bin=$$(ls -d dist/lerp_$$(go env GOOS)_$$(go env GOARCH)*/lerp 2>/dev/null | head -1); \
+	  if [ -n "$$bin" ]; then \
+	    printf 'built into dist/ — check the stamp with: %s version\n' "$$bin"; \
+	  else \
+	    printf 'built into dist/\n'; \
+	  fi
+
+# Semver's own grammar, spelled out because the looser pattern this replaces
+# waved through tags goreleaser then refused — and it refuses at `parsing tag`,
+# which is after the push. `v1.0.0-01` and `v1.0.0-rc.01` (a plausible typo for
+# `-rc.1`) are the cases that cost a version number: semver forbids leading
+# zeros in numeric identifiers, so an identifier is either a zeroless number or
+# something containing a non-digit. Build metadata (`+…`) is left out; nothing
+# here has a use for it.
+SEMVER_NUM := (0|[1-9][0-9]*)
+SEMVER_ID := ($(SEMVER_NUM)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)
+SEMVER_RE := ^v$(SEMVER_NUM)\.$(SEMVER_NUM)\.$(SEMVER_NUM)(-$(SEMVER_ID)(\.$(SEMVER_ID))*)?
+
+.PHONY: release
+release: ## Tag main and push it, which starts the release build (VERSION=v0.1.0)
+# Every guard below is here because pushing a tag is the one thing in this
+# file that cannot be undone: the workflow fires on the push, and a published
+# release is not something to move afterwards.
+#
+# VERSION defaults to `git describe` output for the benefit of `install`, and
+# that default must never become a tag. `origin` is how make tells a value it
+# supplied itself from one the operator did — and the test is for `command
+# line` specifically, not merely "not the default": an exported VERSION left
+# over from another project by a shell profile or a direnv `.envrc` is not
+# somebody asking for a release, and this is not the command to guess on.
+	@test '$(origin VERSION)' = 'command line' || { \
+	  echo 'release: name the tag on the command line — make release VERSION=v0.1.0'; \
+	  exit 1; }
+	@printf '%s' '$(VERSION)' | grep -Eq '$(SEMVER_RE)$$' || { \
+	  printf 'release: %s is not a version tag — vMAJOR.MINOR.PATCH, optionally -rc1\n' \
+	    '$(VERSION)'; exit 1; }
+	@test -z "$$(git status --porcelain)" || { \
+	  echo 'release: the tree is dirty — commit or stash before tagging'; exit 1; }
+# Cut from merged main and nothing else, so the commit inside the release is
+# one everybody else can already see rather than something local. Note what
+# this does not prove: main having a commit is not CI having finished with it,
+# so a release cut a minute after a merge tags a commit whose run is still
+# going. Checking that would mean asking GitHub, which is a second API and a
+# different tool's job.
+	git fetch --quiet origin main
+	@test "$$(git rev-parse HEAD)" = "$$(git rev-parse origin/main)" || { \
+	  echo 'release: HEAD is not origin/main — releases are cut from merged main'; \
+	  exit 1; }
+# Origin is asked first, because whether the tag is published is the fact the
+# local check below needs. --exit-code so the three answers stay three: 0 the
+# tag is there, 2 it is not, anything else means the question was never put to
+# origin — and a guard that reads "unreachable" as "absent" is not a guard.
+# stderr is deliberately not redirected: a revoked key, a renamed repo and a
+# dropped VPN all land in the `*` branch below, and git has already said which
+# one it was.
+	@git ls-remote --exit-code --tags origin 'refs/tags/$(VERSION)' >/dev/null; \
+	  case $$? in \
+	  0) printf 'release: %s already exists on origin — pick the next version\n' \
+	       '$(VERSION)'; exit 1 ;; \
+	  2) ;; \
+	  *) printf 'release: could not reach origin to check whether %s exists\n' \
+	       '$(VERSION)'; exit 1 ;; \
+	  esac
+# Origin does not have the tag, so a local one is the wreckage of an earlier
+# attempt whose push did not land — a dropped VPN, an expired key. If it names
+# the commit being released it is exactly the tag this run would create, so
+# reuse it and push. Refusing here would tell the operator to burn a version
+# number on a failed connection. A local tag on some *other* commit is the
+# real thing this refuses: moving a tag people may already have fetched.
+	@if git rev-parse -q --verify 'refs/tags/$(VERSION)' >/dev/null \
+	   && test "$$(git rev-parse 'refs/tags/$(VERSION)^{commit}')" != "$$(git rev-parse HEAD)"; then \
+	  printf 'release: %s already exists here on another commit — a tag is never moved\n' \
+	    '$(VERSION)'; exit 1; fi
+	@git rev-parse -q --verify 'refs/tags/$(VERSION)' >/dev/null \
+	  || git tag -a '$(VERSION)' -m 'lerp $(VERSION)'
+	git push origin 'refs/tags/$(VERSION)'
+	@printf 'pushed %s — the release build takes it from here:\n' '$(VERSION)'
+	@printf '  https://github.com/mattwalters/lerp/actions/workflows/release.yml\n'
+
 # Where the example generator writes before it is moved into place. Gitignored
 # and beside the target, not in TMPDIR, so the move is a same-filesystem
 # rename rather than a copy.

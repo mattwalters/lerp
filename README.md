@@ -42,6 +42,12 @@ lerp is concerned, and that is the Windows answer.
 go install github.com/mattwalters/lerp/cmd/lerp@latest
 ```
 
+Or, without a Go toolchain, take a prebuilt binary — macOS and Linux,
+amd64 and arm64 — from the
+[releases page](https://github.com/mattwalters/lerp/releases). Every
+release tag — `v0.1.0` and the like — publishes an archive per platform
+and a `checksums.txt` beside them.
+
 Or from a clone:
 
 ```sh
@@ -53,12 +59,22 @@ make install
 `make install` builds with the version stamped from `git describe` and
 installs into Go's bin dir — `GOBIN` when set, else `GOPATH/bin`;
 `lerp version` prints what you got. `make check` is the gate — gofmt,
-vet, build, test — and CI runs it on Linux and macOS. Two things CI does
-are deliberately not in it: `govulncheck`, which needs the network and a
-vulnerability database that is only ever current, and re-recording the
-demo cast, which needs vhs installed —
-[CONTRIBUTING.md](CONTRIBUTING.md) describes both. The gate needs
-nothing installed beyond Go itself.
+vet, build, test — and CI runs it on Linux and macOS. Three things CI
+does are deliberately not in it: `govulncheck`, which needs the network
+and a vulnerability database that is only ever current; re-recording the
+demo cast, which needs vhs installed; and the release cross-build, which
+needs goreleaser — [CONTRIBUTING.md](CONTRIBUTING.md) describes all
+three. The gate needs nothing installed beyond Go itself.
+
+Releases are two commands. `make snapshot` builds the four release
+binaries locally and publishes nothing — it needs
+[goreleaser](https://goreleaser.com/install/), which is why it is not
+in the gate — though CI runs it on every pull request, so a config that
+would fail the real build fails there first. `make release
+VERSION=v0.1.0` tags merged main and pushes the tag; pushing a version
+tag is the only thing that cuts a release, and the build itself happens
+in CI, from a clean checkout of the tag rather than from whatever was
+lying around on somebody's laptop.
 
 ## Lerp needs the status field
 

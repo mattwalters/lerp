@@ -40,3 +40,6 @@ go.work.sum
 
 # Where `make example` stages its render
 /.lerp.example.toml.tmp
+
+# Where goreleaser builds
+/dist/
