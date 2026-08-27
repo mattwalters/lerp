@@ -267,6 +267,35 @@ func TestModalKeysStayShutDuringTheSplashGap(t *testing.T) {
 	}
 }
 
+// Unlike Promote, Search and Eject, force-start opens no modal — nothing
+// about pressing S flips View's splashing && !modal gate — so the splash
+// stays on screen and the operator cannot see the row they are about to
+// force-start. Without its own check that row is still real: queues alone
+// is enough for selectedWork to return one, before attention has reported.
+// S would claim a ticket and start an agent on a row nobody has seen drawn.
+func TestForceStartStaysShutDuringTheSplashGap(t *testing.T) {
+	m, _, starter := newStartingTestModel(t, 1)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
+			{ID: "t1", Identifier: "LERP-1", Title: "one", Eligible: true},
+		}},
+	}}})
+	if !hasMark(m.View()) {
+		t.Fatalf("queues alone ended the splash:\n%s", m.View())
+	}
+	m = update(t, m, keyMsg("2"))
+	m, cmd := updateCmd(t, m, keyMsg("S"))
+	if cmd != nil {
+		t.Fatal("S produced a force-start command before attention reported")
+	}
+	if got := starter.started(); len(got) != 0 {
+		t.Fatalf("force-started tickets = %v, want none before attention reported", got)
+	}
+	if !hasMark(m.View()) {
+		t.Fatalf("S ended the splash on a row queues alone drew:\n%s", m.View())
+	}
+}
+
 // fill emits its own EventQueues right behind a partial-listing error,
 // regardless of whether that error means anything about the pass as a whole
 // (reconciler.go's fill). An error from one read must not preempt the other

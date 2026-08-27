@@ -894,12 +894,17 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Eject):
 		m.startEject()
 	case key.Matches(msg, m.keys.ForceStart):
-		// No gate here beyond having a row: every refusal is the
-		// reconciler's, decided against the board rather than against a
-		// snapshot up to an interval old. Pressing S on a running row gets
-		// its refusal back like any other — "already claimed", since a run
-		// this lerp started holds the ticket.
-		if m.focus == panelWork {
+		// No gate here beyond having a row and the splash: every refusal
+		// past that is the reconciler's, decided against the board rather
+		// than against a snapshot up to an interval old. Pressing S on a
+		// running row gets its refusal back like any other — "already
+		// claimed", since a run this lerp started holds the ticket. But a
+		// row on the work panel needs only queues, not attention — this is
+		// SCOPE's other TUI write, and unlike Promote/Search/Eject it
+		// touches nothing that would flip View's modal bypass, so without
+		// this check it would claim a ticket the operator has never seen
+		// drawn, from under the spinner.
+		if m.focus == panelWork && !m.splashing() {
 			if r := m.selectedWork(); r != nil && r.ticketID != "" {
 				return m, m.doForceStart(r.ticketID, r.ticket)
 			}
