@@ -121,7 +121,16 @@ func (m model) updateSearch(msg tea.Msg) (tea.Model, tea.Cmd) {
 // goes to the first row, which is what the operator is narrowing toward —
 // clamping the old index instead would park it on whatever row happened to
 // slide under it.
+//
+// Any actual change in what the filter shows drops a live visual range too,
+// the same rule the `/` key follows to open one: an unfiltered esc from
+// another panel is one more way the rows between a range's endpoints can
+// change while the endpoints themselves stay put, and dropVisual is where
+// every one of those paths is meant to end up.
 func (m *model) setSearch(query string) {
+	if query != m.search {
+		m.dropVisual()
+	}
 	was := ""
 	if it := m.selectedAttention(); it != nil {
 		was = it.Ticket

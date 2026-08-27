@@ -2383,11 +2383,18 @@ func (m model) View() string {
 		// focus to a panel whose pane is open, and shrinking a window under
 		// one — leave it open, and esc is the way out.
 		if m.width >= minWidth && m.height >= m.minHeight(false) {
-			// esc resolves nearest-first, so a live filter is what the first
-			// one takes. Say so rather than promise a pane it will not
-			// close: with no status bar here, an esc that looks like it did
-			// nothing is the worse half of the trade.
-			if m.search != "" {
+			// esc resolves nearest-first, so a live selection or filter is
+			// what the first one takes — the same order handleKey's Close
+			// cascade resolves them in. Say so rather than promise a pane it
+			// will not close: with no status bar here, an esc that looks
+			// like it did nothing is the worse half of the trade.
+			visual := m.visual && m.focus == panelAttention
+			switch {
+			case visual && m.search != "":
+				return "lerp — window too small\nesc drops the selection, then clears the filter, then closes the pane\n"
+			case visual:
+				return "lerp — window too small\nesc drops the selection, then closes the pane\n"
+			case m.search != "":
 				return "lerp — window too small\nesc clears the filter, then closes the pane\n"
 			}
 			return "lerp — window too small\nesc closes the pane\n"

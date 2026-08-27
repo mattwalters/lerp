@@ -2178,6 +2178,37 @@ func TestCursorRowStillMarksItsOwnFailure(t *testing.T) {
 	}
 }
 
+// Done-when: the recoloured-arrow branch is reachable through the real
+// render path, not just as a direct call — a single promote failing leaves
+// the cursor on the very ticket that failed, which is the shape
+// TestCursorRowStillMarksItsOwnFailure cannot exercise on its own.
+func TestSingleTicketFailureMarksTheCursorsOwnRow(t *testing.T) {
+	forceColour(t)
+	promoter := &recordingPromoter{err: errors.New("claimed by another lerp")}
+	m, _, _ := newTestModelWith(t, 1, defaultTestStatuses, promoter, &recordingEjector{}, &recordingStarter{}, &recordingReader{})
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-4", TicketID: "loose", Title: "Nobody's routed this", Status: "Backlog"},
+	}}})
+
+	m = update(t, m, keyMsg("p"))
+	next, cmd := updateCmd(t, m, keyMsg("enter"))
+	m = next
+	if cmd == nil {
+		t.Fatal("enter produced no promote command")
+	}
+	m = update(t, m, cmd())
+
+	width := padList.inner(m.geometry().sideW)
+	rows, cur := m.attentionRows(width)
+	if cur.at < 0 {
+		t.Fatalf("the inbox has no selection: %q", rows)
+	}
+	if want := attentionMark(true, true); !strings.Contains(rows[cur.at], want) {
+		t.Fatalf("the cursor's own failed row does not carry the recoloured arrow %q:\n%q", want, rows[cur.at])
+	}
+}
+
 // Done-when: v, then movement, then p promotes every row the range spans —
 // not just the cursor's — through the exact same Promote call a single
 // ticket takes, one per target, in order.
@@ -3012,6 +3043,90 @@ func TestTheTooSmallScreenNamesTheFilterItWillClearFirst(t *testing.T) {
 	m = update(t, m, keyMsg("esc"))
 	if m.detailOpen[panelWork] || strings.Contains(m.View(), "too small") {
 		t.Fatalf("the second esc did not give the window its screen:\n%s", m.View())
+	}
+}
+
+// Done-when: a live visual selection is also named before the pane it is
+// nearer than in the Close cascade — the same "esc that looks like it did
+// nothing is the worse half of the trade" reasoning the filter case above
+// tests, for the selection instead of a filter.
+func TestTheTooSmallScreenNamesTheSelectionItWillDropFirst(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+	m = update(t, m, keyMsg("v"))
+	m = update(t, m, keyMsg("j"))
+	m = openMain(t, m) // the inbox's own pane
+	if !m.visual {
+		t.Fatal("test setup: visual mode did not start")
+	}
+
+	resized, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 12})
+	m = resized.(model)
+	view := m.View()
+	if !strings.Contains(view, "too small") {
+		t.Fatalf("this window holds the inbox's pane after all:\n%s", view)
+	}
+	if !strings.Contains(view, "drops the selection") {
+		t.Fatalf("the frame promises a pane the first esc will not close:\n%s", view)
+	}
+
+	// And it is telling the truth: esc takes the selection, esc takes the pane.
+	m = update(t, m, keyMsg("esc"))
+	if m.visual || !m.detailOpen[panelAttention] {
+		t.Fatalf("the first esc did not take the selection alone: visual %v, pane %v",
+			m.visual, m.detailOpen[panelAttention])
+	}
+	m = update(t, m, keyMsg("esc"))
+	if m.detailOpen[panelAttention] || strings.Contains(m.View(), "too small") {
+		t.Fatalf("the second esc did not give the window its screen:\n%s", m.View())
+	}
+}
+
+// Done-when: clearing a filter from outside the inbox does not leave a live
+// range's endpoints standing over rows that were filtered out when the
+// operator drew it — the same rule `/` itself follows to open a search, now
+// followed by the path that closes one.
+func TestClearingTheFilterFromAnotherPanelDropsTheSelection(t *testing.T) {
+	m, _, _, promoter := newPromoteTestModel(t, 1, defaultTestStatuses)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+
+	// Narrow to one row, select it under the filter, then start a range —
+	// LERP-2 is both the anchor and the cursor here.
+	m = update(t, m, keyMsg("/"))
+	m = update(t, m, keyMsg("Second"))
+	m = update(t, m, keyMsg("enter")) // keep the filter, hand the keys back
+	if len(m.shown) != 1 || m.shown[0].TicketID != "id-2" {
+		t.Fatalf("test setup: the filter did not narrow to id-2 alone: %+v", m.shown)
+	}
+	m = update(t, m, keyMsg("v"))
+	if !m.visual {
+		t.Fatal("test setup: visual mode did not start")
+	}
+
+	// Switch panels, then clear the filter with a bare esc — not `/`, not
+	// ClearSearch, the Close cascade's own rung.
+	m = update(t, m, keyMsg("2"))
+	m = update(t, m, keyMsg("esc"))
+	if m.search != "" {
+		t.Fatalf("test setup: esc did not clear the filter: %q", m.search)
+	}
+	if m.visual {
+		t.Fatal("the selection survived the filter clearing out from under it")
+	}
+
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, keyMsg("p"))
+	next, cmd := updateCmd(t, m, keyMsg("enter"))
+	m = next
+	if cmd == nil {
+		t.Fatal("enter produced no promote command")
+	}
+	cmd()
+	if len(promoter.calls) != 1 {
+		t.Fatalf("Promote called %d times, want 1 (the cursor's own row, not a stale range): %+v",
+			len(promoter.calls), promoter.calls)
 	}
 }
 
