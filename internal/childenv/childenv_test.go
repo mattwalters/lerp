@@ -99,12 +99,12 @@ func TestNothingElsePutsTheKeyWithinReachOfAChild(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		reads, drops, environ := keyUse(file)
+		undropped, environ := keyUse(file)
 		if environ {
 			t.Errorf("%s calls os.Environ(); a child's environment comes from childenv.Inherited, which drops %s", path, LinearAPIKeyEnv)
 		}
-		if reads > 0 && drops == 0 {
-			t.Errorf("%s reads %s without dropping it; a child spawned with a nil Env inherits it", path, LinearAPIKeyEnv)
+		for _, fn := range undropped {
+			t.Errorf("%s: %s reads %s without dropping it; a child spawned with a nil Env inherits it", path, fn, LinearAPIKeyEnv)
 		}
 		return nil
 	})
@@ -136,26 +136,51 @@ func osCall(n ast.Node) (string, ast.Expr) {
 	return sel.Sel.Name, arg
 }
 
-// keyUse reports how one parsed file touches the key: how many times it
-// reads it through os.Getenv, how many times it drops it with os.Unsetenv,
-// and whether it builds a child environment from os.Environ. It is a
-// function so the gate above and TestTheGateCatchesAPrivateConstAlias run
-// the same code over a real tree and over a written-out example.
-func keyUse(file *ast.File) (reads, drops int, environ bool) {
+// keyUse reports how one parsed file touches the key: the names of the
+// declarations that read it through os.Getenv without dropping it with
+// os.Unsetenv, and whether the file builds a child environment from
+// os.Environ. It is a function so the gate above and
+// TestTheGateCatchesAPrivateConstAlias run the same code over a real tree
+// and over written-out examples.
+//
+// Reads and drops are matched inside one declaration rather than tallied
+// across the file. A file-wide tally lets a drop anywhere cover a read
+// anywhere, and the names below come from the source with no scope
+// attached — so a local variable that happens to reuse the name of a
+// package const, dropped in some unrelated function, would silently cover
+// a genuine leak in another. Per declaration, the drop has to sit with the
+// read that needs it, which is the only shape that is actually safe and is
+// what the one real reader does.
+func keyUse(file *ast.File) (undropped []string, environ bool) {
 	alias := aliases(file)
-	ast.Inspect(file, func(n ast.Node) bool {
-		name, arg := osCall(n)
-		switch {
-		case name == "Environ":
-			environ = true
-		case name == "Getenv" && namesTheKey(arg, alias):
-			reads++
-		case name == "Unsetenv" && namesTheKey(arg, alias):
-			drops++
+	within := func(name string, n ast.Node) {
+		var reads, drops int
+		ast.Inspect(n, func(n ast.Node) bool {
+			call, arg := osCall(n)
+			switch {
+			case call == "Environ":
+				environ = true
+			case call == "Getenv" && namesTheKey(arg, alias):
+				reads++
+			case call == "Unsetenv" && namesTheKey(arg, alias):
+				drops++
+			}
+			return true
+		})
+		if reads > 0 && drops == 0 {
+			undropped = append(undropped, name)
 		}
-		return true
-	})
-	return reads, drops, environ
+	}
+	for _, decl := range file.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok {
+			within(fn.Name.Name, fn)
+			continue
+		}
+		// A package-level var initializer can read it too, and has nowhere
+		// to drop it — there is no ordering it could rely on.
+		within("a package-level declaration", decl)
+	}
+	return undropped, environ
 }
 
 // aliases returns the names a file binds the key to itself — `const
@@ -166,6 +191,12 @@ func keyUse(file *ast.File) (reads, drops int, environ bool) {
 // exported constant reached for a private one instead, and this gate went
 // green on it; the literal has to count wherever it is written, not only
 // where it is passed to os.
+//
+// One level, and only names: a literal returned by a function or held in a
+// struct field still reaches os.Getenv as a shape this cannot read. That is
+// a blind spot on purpose — closing it wants type information, and the gate
+// is here to catch the reasonable way to write a leak, not a determined
+// one, which is the same line childenv itself draws.
 func aliases(file *ast.File) map[string]bool {
 	found := map[string]bool{}
 	bind := func(names []*ast.Ident, values []ast.Expr) {
@@ -220,23 +251,23 @@ func namesTheKey(arg ast.Expr, alias map[string]bool) bool {
 // keyUse the walk above uses.
 func TestTheGateCatchesAPrivateConstAlias(t *testing.T) {
 	tests := []struct {
-		name         string
-		src          string
-		reads, drops int
+		name string
+		src  string
+		want []string
 	}{{
 		name: "private const alias, read and not dropped",
 		src: `package p
 import "os"
 const apiKeyEnv = "LINEAR_API_KEY"
 func f() string { return os.Getenv(apiKeyEnv) }`,
-		reads: 1, drops: 0,
+		want: []string{"f"},
 	}, {
 		name: "private const alias, read and dropped",
 		src: `package p
 import "os"
 const apiKeyEnv = "LINEAR_API_KEY"
 func f() string { k := os.Getenv(apiKeyEnv); os.Unsetenv(apiKeyEnv); return k }`,
-		reads: 1, drops: 1,
+		want: nil,
 	}, {
 		name: "alias of the exported constant",
 		src: `package p
@@ -247,19 +278,37 @@ import (
 )
 var envName = childenv.LinearAPIKeyEnv
 func f() string { return os.Getenv(envName) }`,
-		reads: 1, drops: 0,
+		want: []string{"f"},
+	}, {
+		// The drop has to sit with the read. Tallied across the file, the
+		// unrelated local below would cover the leak in f and the gate
+		// would go green on it.
+		name: "a drop in another function does not cover the read",
+		src: `package p
+import "os"
+const apiKeyEnv = "LINEAR_API_KEY"
+func f() string { return os.Getenv(apiKeyEnv) }
+func g() { apiKeyEnv := "SOMETHING_ELSE"; os.Unsetenv(apiKeyEnv) }`,
+		want: []string{"f"},
+	}, {
+		name: "a package-level read has nowhere to drop it",
+		src: `package p
+import "os"
+const apiKeyEnv = "LINEAR_API_KEY"
+var key = os.Getenv(apiKeyEnv)`,
+		want: []string{"a package-level declaration"},
 	}, {
 		name: "the literal declared but never read",
 		src: `package p
 const apiKeyEnv = "LINEAR_API_KEY"`,
-		reads: 0, drops: 0,
+		want: nil,
 	}, {
 		name: "an unrelated variable read through a const",
 		src: `package p
 import "os"
 const homeEnv = "HOME"
 func f() string { return os.Getenv(homeEnv) }`,
-		reads: 0, drops: 0,
+		want: nil,
 	}}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -267,9 +316,9 @@ func f() string { return os.Getenv(homeEnv) }`,
 			if err != nil {
 				t.Fatalf("parse: %v", err)
 			}
-			reads, drops, environ := keyUse(file)
-			if reads != tt.reads || drops != tt.drops {
-				t.Errorf("keyUse = %d reads, %d drops; want %d, %d", reads, drops, tt.reads, tt.drops)
+			undropped, environ := keyUse(file)
+			if !slices.Equal(undropped, tt.want) {
+				t.Errorf("keyUse flagged %q, want %q", undropped, tt.want)
 			}
 			if environ {
 				t.Error("keyUse reported os.Environ in a file that has none")
