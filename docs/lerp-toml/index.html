@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>lerp.toml · lerp</title>
+  <meta name="description" content="A small, reliable CLI that orchestrates software work through Linear.">
+  <link rel="stylesheet" href="../../style.css">
+</head>
+<body>
+  
+  
+  
+  
+  
+  <header>
+    <a class="brand" href="../../">lerp</a>
+    
+    <a class="nav here" href="../../docs/">Docs</a>
+    
+    <a class="nav" href="../../why/">Why lerp</a>
+    <span class="spacer"></span>
+    <a class="nav" href="https://github.com/mattwalters/lerp">GitHub</a>
+    <span class="version">
+      <span class="version-label"></span>
+      <select id="version-picker" hidden aria-label="Documentation version"></select>
+    </span>
+  </header>
+  <div class="wrap">
+    
+    
+    <nav class="sidenav" aria-label="Manual">
+      
+      
+      
+      <h5>Start</h5>
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/">Documentation</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/overview/">Overview</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/install/">Install</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/quickstart/">Quickstart</a>
+      
+      <h5>Concepts</h5>
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/the-board/">The board</a>
+      
+      <h5>The interface</h5>
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/reading-the-board/">Reading the board</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/finding-tickets/">Finding tickets</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/promoting/">Promoting</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/ejecting/">Ejecting</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/watching-a-run/">Watching a run</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/starting-past-the-limit/">Starting past the limit</a>
+      
+      <h5>Reference</h5>
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/lerp-toml/" class="mono active" aria-current="page">lerp.toml</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/cli/">The command line</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/troubleshooting/">Troubleshooting</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../scope/">SCOPE</a>
+      
+    </nav>
+    
+    <main>
+      
+
+<div class="prose">
+  <h1 id="lerptoml"><code>lerp.toml</code></h1>
+<p>Lerp reads one file: <code>lerp.toml</code> at the repo root, <strong>checked in</strong>. It
+declares which Linear teams the repo serves, how to build a workspace, and
+the pipeline itself — runners and queues, prompts included. The pipeline is a
+team artifact: keeping it in the repo means the permissions it grants are
+versioned and reviewed like code, and every developer runs the same pipeline
+against the same board.</p>
+<p>No durable state lives in this file or anywhere else on disk — <a href="../../docs/the-board/#tickets-and-where-state-lives">Linear is the
+database</a>
+. The file is strictly
+parsed: an unknown key is an error, not a shrug.</p>
+<p><a href="https://github.com/mattwalters/lerp/blob/main/lerp.example.toml">lerp.example.toml</a>
+ is the stock pipeline in full, with
+prompts you can read and argue with. <code>lerp init --team KEY</code> writes it into
+the repo for you (see <a href="../../docs/quickstart/">Quickstart</a>
+). Read it before you run
+it: it may grant the agent broad permissions and it assumes your runner can
+reach Linear, both of which are <a href="#the-stock-pipeline">below</a>
+.</p>
+<h2 id="the-shape-of-it">The shape of it</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-toml" data-lang="toml"><span class="line"><span class="cl"><span class="c"># Linear team keys this repo serves. One repo may serve several teams</span>
+</span></span><span class="line"><span class="cl"><span class="c"># (the monorepo case); two repos may never claim the same team.</span>
+</span></span><span class="line"><span class="cl"><span class="nx">teams</span> <span class="p">=</span> <span class="p">[</span><span class="s2">&#34;LERP&#34;</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c"># Commands that create and destroy a lane&#39;s workspace. Lerp invokes</span>
+</span></span><span class="line"><span class="cl"><span class="c"># them with a unique lane/run identity and otherwise knows nothing</span>
+</span></span><span class="line"><span class="cl"><span class="c"># about what they do. Environment isolation — ports, databases,</span>
+</span></span><span class="line"><span class="cl"><span class="c"># containers — is this repo&#39;s problem, solved here.</span>
+</span></span><span class="line"><span class="cl"><span class="nx">provision</span> <span class="p">=</span> <span class="s2">&#34;scripts/lerp-provision&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="nx">dispose</span> <span class="p">=</span> <span class="s2">&#34;scripts/lerp-dispose&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c"># A runner is an adapter to a coding-agent CLI. The contract is the</span>
+</span></span><span class="line"><span class="cl"><span class="c"># lowest common denominator: takes a prompt and a working directory,</span>
+</span></span><span class="line"><span class="cl"><span class="c"># runs to exit, exit code means done or failed.</span>
+</span></span><span class="line"><span class="cl"><span class="p">[</span><span class="nx">runners</span><span class="p">.</span><span class="nx">claude</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl"><span class="nx">command</span> <span class="p">=</span> <span class="s2">&#34;claude -p {{prompt}} --session-id {{session}}&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="c"># Optional. Handed to you on eject so a headless run becomes your</span>
+</span></span><span class="line"><span class="cl"><span class="c"># interactive session. {{session}} is the id lerp generated for the</span>
+</span></span><span class="line"><span class="cl"><span class="c"># run — so a command without {{session}} cannot be ejected either,</span>
+</span></span><span class="line"><span class="cl"><span class="c"># however this line reads — and {{workdir}} is the workspace lerp</span>
+</span></span><span class="line"><span class="cl"><span class="c"># leaves standing, which Claude Code needs to be in to find the</span>
+</span></span><span class="line"><span class="cl"><span class="c"># session.</span>
+</span></span><span class="line"><span class="cl"><span class="nx">resume</span> <span class="p">=</span> <span class="s2">&#34;cd {{workdir}} &amp;&amp; claude --resume {{session}}&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c"># A queue is a Linear status with instructions attached. Tickets</span>
+</span></span><span class="line"><span class="cl"><span class="c"># sitting in `status` are picked up, run through `runner` with</span>
+</span></span><span class="line"><span class="cl"><span class="c"># `prompt`, and moved to `on_success` on a clean exit — unless the</span>
+</span></span><span class="line"><span class="cl"><span class="c"># agent already moved the ticket itself, which lerp respects.</span>
+</span></span><span class="line"><span class="cl"><span class="p">[</span><span class="nx">queues</span><span class="p">.</span><span class="nx">plan</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl"><span class="nx">status</span> <span class="p">=</span> <span class="s2">&#34;Planning&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="nx">prompt</span> <span class="p">=</span> <span class="s2">&#34;Read {{ticket}} and post a plan as a comment.&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="nx">runner</span> <span class="p">=</span> <span class="s2">&#34;claude&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="nx">on_success</span> <span class="p">=</span> <span class="s2">&#34;Implementing&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="p">[</span><span class="nx">queues</span><span class="p">.</span><span class="nx">implement</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl"><span class="nx">status</span> <span class="p">=</span> <span class="s2">&#34;Implementing&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="nx">prompt</span> <span class="p">=</span> <span class="s2">&#34;Implement {{ticket}} per its plan comment. Open a PR.&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="nx">runner</span> <span class="p">=</span> <span class="s2">&#34;claude&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="nx">on_success</span> <span class="p">=</span> <span class="s2">&#34;Reviewing&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="c"># Optional. Where the ticket goes when the agent exits non-zero.</span>
+</span></span><span class="line"><span class="cl"><span class="nx">on_failure</span> <span class="p">=</span> <span class="s2">&#34;Human Review&#34;</span>
+</span></span></code></pre></div><p>The queue fields above are the complete set — status, prompt, runner,
+<code>on_success</code>, and optionally <code>on_failure</code>. There is deliberately no
+conditional, template, or DAG syntax: <a href="../../docs/the-board/#queues-and-why-there-is-no-workflow-syntax">topology lives on the
+board</a>
+, and
+branching is a human or an agent moving a ticket.</p>
+<h2 id="notes">Notes</h2>
+<ul>
+<li><code>on_success</code> / <code>on_failure</code> name Linear statuses, not queues. They
+may point at a status no queue watches (a human review column) —
+that is how work exits the automated path.</li>
+<li>A status may drive at most one queue; two queues sharing a <code>status</code>
+is a config error.</li>
+<li>Every queue&rsquo;s <code>runner</code> must be defined under <code>[runners]</code>.</li>
+<li><code>command</code> is run by <code>sh -c</code>. Use <code>{{prompt}}</code>, <code>{{ticket}}</code> and
+<code>{{workdir}}</code> to insert the queue prompt, the ticket identifier and
+the workspace directory; lerp shell-quotes every value, so nothing in
+a ticket can alter the command you configured. If the runner accepts
+a caller-chosen session ID (for example, Claude Code&rsquo;s
+<code>--session-id</code>), include <code>{{session}}</code> in its command. Lerp generates
+that ID before the run starts and records it with the run, which is
+what makes the run <a href="../../docs/ejecting/">ejectable</a>
+ later — including by a
+<code>lerp</code> that did not start it. <code>resume</code> may use <code>{{session}}</code>,
+<code>{{ticket}}</code> and <code>{{workdir}}</code>, quoted the same way.</li>
+<li><strong>Name the ticket in your prompt.</strong> <code>{{ticket}}</code> is expanded inside
+the prompt as well as the command, and the identifier reaches the
+runner as <code>LERP_TICKET</code>. A prompt is shared by every ticket in its
+queue, so one that never names the ticket leaves the agent no way to
+know which ticket it was started for — while lerp will still advance
+that ticket on a clean exit. Write <code>prompt = &quot;Implement {{ticket}} ...&quot;</code>, not <code>prompt = &quot;Implement the ticket ...&quot;</code>.</li>
+<li><strong>Name statuses by placeholder, not by name.</strong> A prompt may also use
+<code>{{status}}</code>, <code>{{on_success}}</code>, and <code>{{on_failure}}</code>, expanded from
+its own queue&rsquo;s fields — no other queue&rsquo;s, and nothing more. Prose
+like &ldquo;move {{ticket}} to {{on_failure}}&rdquo; then follows a status rename
+or remap, where a literal name would silently point agents at a
+status that no longer exists. Referencing <code>{{on_failure}}</code> in a queue
+that does not set <code>on_failure</code> is a config error.</li>
+</ul>
+<p>Every ticket must resolve to exactly one working directory: one repo may
+serve several teams, but two repos may never claim the same team. A single
+repo config can only vouch for its own repo, and today lerp does not verify
+the cross-repo half of that rule — keeping it is your job when you copy a
+pipeline between repos.</p>
+<h2 id="workspace-commands">Workspace commands</h2>
+<p>Lerp runs <code>provision</code> before starting a runner and <code>dispose</code> when reaping its
+lane. Each command runs from the repo root, writes both standard output and
+standard error to the lane log, and receives these environment variables:</p>
+<ul>
+<li><code>LERP_LANE</code> — the lane number</li>
+<li><code>LERP_TICKET_ID</code> — the Linear issue ID</li>
+<li><code>LERP_WORKSPACE</code> — the workspace path</li>
+</ul>
+<p>They inherit the rest of lerp&rsquo;s environment, with one variable removed:
+<code>LINEAR_API_KEY</code> is lerp&rsquo;s own credential and does not go down to a
+provision, dispose or runner command. A command that needs Linear must carry
+its own credential. See <a href="https://github.com/mattwalters/lerp/blob/main/SECURITY.md">SECURITY.md</a>
+ for what that does and
+does not buy you.</p>
+<p>If provisioning fails, lerp leaves the ticket untouched and does not start
+the runner. A disposal failure is recorded in the lane log but never keeps a
+lane occupied.</p>
+<h2 id="the-stock-pipeline">The stock pipeline</h2>
+<p><a href="https://github.com/mattwalters/lerp/blob/main/lerp.example.toml">lerp.example.toml</a>
+ ships one opinion. Lerp holds none:
+the order below exists only in the config&rsquo;s <code>on_success</code> pointers, and
+rewriting them into a different shape needs no code change.</p>
+<table>
+	<thead>
+			<tr>
+					<th>Status</th>
+					<th>Who acts</th>
+					<th>Then</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td>Backlog / Todo</td>
+					<td>you</td>
+					<td>promote a ticket into Planning, or into Implementing if it is small</td>
+			</tr>
+			<tr>
+					<td>Planning</td>
+					<td>agent</td>
+					<td>writes the plan into the ticket&rsquo;s description, under <code>## Plan</code> → Plan Review</td>
+			</tr>
+			<tr>
+					<td>Plan Review</td>
+					<td>you</td>
+					<td>read the plan — it is the top of the ticket — edit it where you disagree, then press <code>p</code> to promote: Implementing to build it, Planning to re-plan, Needs Attention to park it</td>
+			</tr>
+			<tr>
+					<td>Implementing</td>
+					<td>agent</td>
+					<td>reads its brief — unanswered PR review threads, else the newest comment asking for changes, else the ticket — commits, pushes, opens a draft PR with <code>gh</code> or adds to the ticket&rsquo;s existing one, then reviews and fixes its own work until a round is clean or three rounds are up; ends by leaving a verdict comment on the ticket and then marking the PR ready → In Review, or moves itself → Needs Attention</td>
+			</tr>
+			<tr>
+					<td>In Review</td>
+					<td>you</td>
+					<td>merge the PR; Linear&rsquo;s GitHub integration moves it to Done</td>
+			</tr>
+			<tr>
+					<td>Needs Attention</td>
+					<td>you</td>
+					<td>where failed runs and reviews that three rounds could not settle park; no queue watches it, so nothing retries it — promote back to Implementing to rework</td>
+			</tr>
+	</tbody>
+</table>
+<p>Which ticket enters where is the only routing decision, and it is made by
+<a href="../../docs/promoting/">moving a ticket</a>
+, not by configuration.</p>
+<h3 id="why-there-is-no-review-queue">Why there is no review queue</h3>
+<p>A hop on the board is a decision somebody makes, and iteration is not a
+decision: a review stage of its own turns review-and-fix into a cycle nothing
+can bound, since counting the rounds would mean state outside Linear or an
+<code>if</code> about your process. So Implementing reviews and fixes its own work
+inside one run — findings go on the pull request, as comments on the lines
+they concern, and the round count is the agent&rsquo;s own context, which costs the
+board nothing. One short verdict comment on the ticket says how it went.</p>
+<p>That comment is also what makes a skipped review visible. The hop out of
+Implementing keys on the run&rsquo;s exit code and the ticket&rsquo;s status, never on a
+pull request — so an agent that implements, opens the draft and stops still
+lands its ticket in In Review looking finished. The prompt answers that by
+leading with the contract rather than trailing it: a run ends either with a
+verdict on the ticket and the PR marked ready, or in Needs Attention saying
+what stopped it and the PR never marked ready. Nothing enforces that
+mechanically, but the verdict says how the review went — rounds run and what
+the last one found — which is what keeps it from reading the same whether the
+review happened or not, and <a href="../../docs/reading-the-board/#the-main-pane">the board reads a ticket&rsquo;s
+comments</a>
+ into the main pane. The comment
+goes on before the PR is marked ready: on a team configured as <a href="../../docs/install/#lerp-needs-the-status-field">Lerp needs
+the status field</a>
+ asks, nothing is
+listening for that flip and lerp&rsquo;s own <code>on_success</code> makes the hop — but the
+ordering is what makes the run safe on a team that has not done it yet, where
+the flip is exactly what frees an automation to move the ticket.</p>
+<p>What reaches Needs Attention is only what three rounds could not settle, and
+that is a loop rather than the end of the line: say what you want on the pull
+request, promote the ticket back to Implementing, and the next run reads your
+unanswered threads as its brief, checks out the branch of the pull request
+that already exists, and adds commits to it — no second PR. Lerp remembers
+none of this. There is no &ldquo;this is a re-run&rdquo; flag anywhere, only a ticket in
+a queue status, with its description, its comments and its pull request as
+the state.</p>
+<h3 id="two-things-it-assumes">Two things it assumes</h3>
+<p>Both worth a deliberate look before you run it:</p>
+<ul>
+<li><strong>The agent needs its own Linear access.</strong> Lerp passes the ticket
+identifier and nothing else — never the ticket body — and every durable
+artifact — the plan in the ticket, the pull request, the verdict comment —
+is written by the agent, not by lerp. For Claude Code that means the Linear
+MCP server from step 2 of the <a href="../../docs/quickstart/">quickstart</a>
+.</li>
+<li><strong>The agent runs with permissions — if you say so.</strong> An unattended agent
+that cannot run <code>git</code>, <code>gh</code>, or your tests just fails, so the stock runner
+wants <code>--permission-mode bypassPermissions</code>; <code>lerp init</code> asks before
+including it, and defaults to leaving it out. Understand what a yes means:
+the agent runs with your full user account. The worktree that <code>provision</code>
+builds is a tidiness boundary, not a security one — nothing stops the agent
+from reading <code>~/.ssh</code> or writing outside its workspace. Because the grant
+lives in a checked-in <code>lerp.toml</code>, adding, reviewing, or narrowing it (for
+example with <code>--allowedTools</code>) is an ordinary code change.</li>
+</ul>
+<p>Both of those, and the half that is not about this config at all — who can
+trigger a run, and what a ticket&rsquo;s text is to the agent that reads it — are
+set out in <a href="https://github.com/mattwalters/lerp/blob/main/SECURITY.md">SECURITY.md</a>
+, which is also where to report a
+vulnerability.</p>
+
+</div>
+
+    </main>
+    
+    
+    
+    <nav class="toc" aria-label="On this page">
+      <h5>On this page</h5>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#the-shape-of-it">The shape of it</a></li>
+    <li><a href="#notes">Notes</a></li>
+    <li><a href="#workspace-commands">Workspace commands</a></li>
+    <li><a href="#the-stock-pipeline">The stock pipeline</a>
+      <ul>
+        <li><a href="#why-there-is-no-review-queue">Why there is no review queue</a></li>
+        <li><a href="#two-things-it-assumes">Two things it assumes</a></li>
+      </ul>
+    </li>
+  </ul>
+</nav>
+    </nav>
+    
+  </div>
+  <script>
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    (function () {
+      var here = new URL(".", document.querySelector('link[rel="stylesheet"]').href);
+      var root = new URL("." + "/", here);
+      fetch(new URL("versions.json", root))
+        .then(function (r) { if (!r.ok) { throw r; } return r.json(); })
+        .then(function (versions) {
+          var picker = document.getElementById("version-picker");
+          ["latest"].concat(versions).forEach(function (v) {
+            var option = document.createElement("option");
+            option.value = v;
+            option.textContent = v;
+            option.selected = v === "";
+            picker.appendChild(option);
+          });
+          picker.addEventListener("change", function () {
+            window.location.href = new URL(picker.value + "/", root);
+          });
+          picker.hidden = false;
+        })
+        .catch(function () {});
+    })();
+  </script>
+</body>
+</html>

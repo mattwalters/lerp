@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Troubleshooting · lerp</title>
+  <meta name="description" content="A small, reliable CLI that orchestrates software work through Linear.">
+  <link rel="stylesheet" href="../../style.css">
+</head>
+<body>
+  
+  
+  
+  
+  
+  <header>
+    <a class="brand" href="../../">lerp</a>
+    
+    <a class="nav here" href="../../docs/">Docs</a>
+    
+    <a class="nav" href="../../why/">Why lerp</a>
+    <span class="spacer"></span>
+    <a class="nav" href="https://github.com/mattwalters/lerp">GitHub</a>
+    <span class="version">
+      <span class="version-label"></span>
+      <select id="version-picker" hidden aria-label="Documentation version"></select>
+    </span>
+  </header>
+  <div class="wrap">
+    
+    
+    <nav class="sidenav" aria-label="Manual">
+      
+      
+      
+      <h5>Start</h5>
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/">Documentation</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/overview/">Overview</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/install/">Install</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/quickstart/">Quickstart</a>
+      
+      <h5>Concepts</h5>
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/the-board/">The board</a>
+      
+      <h5>The interface</h5>
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/reading-the-board/">Reading the board</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/finding-tickets/">Finding tickets</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/promoting/">Promoting</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/ejecting/">Ejecting</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/watching-a-run/">Watching a run</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/starting-past-the-limit/">Starting past the limit</a>
+      
+      <h5>Reference</h5>
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/lerp-toml/" class="mono">lerp.toml</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/cli/">The command line</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/troubleshooting/" class="active" aria-current="page">Troubleshooting</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../scope/">SCOPE</a>
+      
+    </nav>
+    
+    <main>
+      
+
+<div class="prose">
+  <h1 id="troubleshooting">Troubleshooting</h1>
+<h2 id="why-isnt-my-ticket-being-picked-up">Why isn&rsquo;t my ticket being picked up?</h2>
+<p>Check the three <a href="../../docs/the-board/#the-claim">eligibility</a>
+ conditions: a queue&rsquo;s
+status, no assignee, not blocked.</p>
+<p>The one that surprises people is the assignee — the assignment is the claim,
+so a ticket assigned to anyone, including you, is someone else&rsquo;s work as far
+as lerp is concerned. A finished run releases its claim, so the usual reason
+one is still on a ticket is that a human put it there, or that a run died
+where nothing was left to reap it. Either way the fix is the same: select the
+row in the work panel and press <code>S</code>, which <a href="../../docs/starting-past-the-limit/">takes back your own
+claim</a>
+ and runs the stage.</p>
+<h2 id="why-did-my-ticket-skip-a-stage">Why did my ticket skip a stage?</h2>
+<p>A run whose ticket left its queue status before it finished keeps that move,
+and says on the status bar which hop it therefore skipped.</p>
+<p>Something moved the ticket mid-stage: an agent escalating (a status your
+pipeline names), or an automation (usually one it does not) — see <a href="../../docs/install/#lerp-needs-the-status-field">Lerp needs
+the status field</a>
+, which is also what
+lerp warns about at startup.</p>
+<h2 id="what-happens-on-crash-or-kill">What happens on crash or kill?</h2>
+<p>Every queue run is safe to kill and restart from its beginning: progress is
+checkpointed only at queue boundaries, as artifacts in Linear — the plan in
+the ticket, a PR link — so the worst case is a re-run stage, never a lost
+ticket. <a href="../../scope/">SCOPE.md</a>
+ invariants 3 and 4 carry the full argument.</p>
+<p>That includes killing lerp itself: agents outlive it, and the next <code>lerp</code>
+adopts the live ones and reaps the dead. An adopted run that reaches its own
+last line records its exit status beside its log, so reaping it applies the
+queue&rsquo;s move rule — restarting lerp across a run&rsquo;s finish costs nothing,
+rather than a whole re-run stage.</p>
+<p>A run killed before it got that far records nothing, and reaping it releases
+the claim so its ticket becomes eligible again. A failed run whose queue has
+no <code>on_failure</code> route keeps its claim and waits on you, as it does when lerp
+watched it fail; to run such a ticket again, select it in the work panel and
+press <code>S</code>.</p>
+<h2 id="why-does-init-tell-me-to-set-a-statuss-category-myself">Why does init tell me to set a status&rsquo;s category myself?</h2>
+<p>Statuses lerp creates are always in-progress (Linear&rsquo;s &ldquo;started&rdquo; category),
+and statuses that already exist are left exactly as you have them. That
+leaves one piece of setup only you can finish: where your pipeline ends.</p>
+<p>Linear counts a ticket as blocking its dependents (<code>blockedBy</code>) until its
+status carries a completed category — a fact about your process that init
+cannot infer, so it reports instead of guessing. For each <code>on_success</code> target
+no queue watches, init prints whether Linear categorises it as completed.</p>
+<p>If such a status genuinely means the work is done, set its category to Done
+in Linear; left in-progress, finished tickets there would block their
+dependents forever. If a human still acts on tickets there — the stock
+pipeline&rsquo;s &ldquo;Plan Review&rdquo;, where you approve a plan, and &ldquo;In Review&rdquo;, where
+you merge the PR and Linear&rsquo;s GitHub integration moves the ticket on —
+in-progress is exactly right, and marking it completed would release
+dependent tickets before the work had actually landed.</p>
+<h2 id="where-are-the-logs">Where are the logs?</h2>
+<p>Two places, and which one you want depends on whether a run started.</p>
+<ul>
+<li><code>.lerp/runs/</code> holds one record and one log per run — the agent&rsquo;s own
+output, which is what <a href="../../docs/watching-a-run/#the-log">the main pane tails</a>
+.</li>
+<li><code>.lerp/loop.log</code> holds the loop&rsquo;s diagnostics: provision, dispose, adopt,
+reap, the eject commands lerp handed back, and the full text of any
+status-bar line a narrow terminal truncated. It is appended to across
+sessions, with a marker line at each start.</li>
+</ul>
+
+</div>
+
+    </main>
+    
+    
+    
+    <nav class="toc" aria-label="On this page">
+      <h5>On this page</h5>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#why-isnt-my-ticket-being-picked-up">Why isn&rsquo;t my ticket being picked up?</a></li>
+    <li><a href="#why-did-my-ticket-skip-a-stage">Why did my ticket skip a stage?</a></li>
+    <li><a href="#what-happens-on-crash-or-kill">What happens on crash or kill?</a></li>
+    <li><a href="#why-does-init-tell-me-to-set-a-statuss-category-myself">Why does init tell me to set a status&rsquo;s category myself?</a></li>
+    <li><a href="#where-are-the-logs">Where are the logs?</a></li>
+  </ul>
+</nav>
+    </nav>
+    
+  </div>
+  <script>
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    (function () {
+      var here = new URL(".", document.querySelector('link[rel="stylesheet"]').href);
+      var root = new URL("." + "/", here);
+      fetch(new URL("versions.json", root))
+        .then(function (r) { if (!r.ok) { throw r; } return r.json(); })
+        .then(function (versions) {
+          var picker = document.getElementById("version-picker");
+          ["latest"].concat(versions).forEach(function (v) {
+            var option = document.createElement("option");
+            option.value = v;
+            option.textContent = v;
+            option.selected = v === "";
+            picker.appendChild(option);
+          });
+          picker.addEventListener("change", function () {
+            window.location.href = new URL(picker.value + "/", root);
+          });
+          picker.hidden = false;
+        })
+        .catch(function () {});
+    })();
+  </script>
+</body>
+</html>
