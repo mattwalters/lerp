@@ -82,22 +82,25 @@ args = "--permission-mode bypassPermissions"
 # one place a vendor regression is easiest to spot from the diff it leaves
 # behind. gemini-3.7-flash-high is antigravity's cheap-hands tier at its
 # highest reasoning effort — the same "thoroughness is still the whole job"
-# bet the old claude-sonnet-5 pick made, translated to this CLI's own model
-# names, which bake effort into the id rather than taking it as a separate
-# flag.
+# bet the old claude-sonnet-5 pick made, translated to this CLI's own
+# vocabulary: agy's model catalog ships each tier pre-named per effort level
+# (`-high`/`-medium`/`-low`), so naming the tier is naming the effort — an
+# `effort =` line here would just repeat what the model id already says.
 #
-# No reviewer roster rides along, and that is a capability gap rather than a
-# choice: no adapter lerp ships, not even claude's own, models a flag like
-# claude's raw `--agents` JSON — that only exists by writing a runner as
-# `command` instead of `vendor`, which is what this repo's claude-implement
-# runner used to do before this migration. Buying the roster back here would
-# mean giving up the adapter's session bookkeeping (resume, eject) to regain
-# one flag; instead this queue takes the plain shape, and the implement
-# prompt below already tolerates that — "hand it to the reviewer agent if
-# your runner provides one ... otherwise read it back yourself" — so a run
-# here reviews its own diff instead of handing it up to a pinned reviewer.
-# If that proves too little, the fix is a `command` runner here, or moving
-# this queue back to claude.
+# No reviewer roster rides along, and that is agy's own limit, not a
+# vendor-vs-command one: `args` splices in verbatim regardless of runner
+# shape, so a vendor="claude" runner with `--agents '{...}'` in its args
+# would have produced this repo's old claude-implement command exactly,
+# resume and eject intact — the roster was never gated on writing a
+# `command` runner. What agy actually lacks is claude's capability itself:
+# its CLI can select an already-defined `--agent`, but has no flag for
+# defining a bespoke one inline the way claude's `--agents` JSON does. So
+# moving this queue onto agy is what drops the roster, not the vendor
+# adapter mechanism. The implement prompt below already tolerates that —
+# "hand it to the reviewer agent if your runner provides one ... otherwise
+# read it back yourself" — so a run here reviews its own diff instead of
+# handing it up to a pinned reviewer. If that proves too little, moving this
+# queue back to claude (with the roster back in its args) is the fix.
 [runners.antigravity-implement]
 vendor = "antigravity"
 model = "gemini-3.7-flash-high"
@@ -111,8 +114,9 @@ args = "--dangerously-skip-permissions"
 # before expecting these prompts to work. Lerp's own LINEAR_API_KEY is not a
 # fallback: lerp drops it once it has read it, so nothing it starts inherits
 # it. That is hygiene, not containment — a command that reaches a login
-# shell, and a session you resume yourself with the command above, both pick
-# the key back up from wherever you exported it.
+# shell, and a session you resume yourself with the command an adapter
+# generates for eject, both pick the key back up from wherever you exported
+# it.
 
 # --------------------------------------------------------------------------
 # Queues
