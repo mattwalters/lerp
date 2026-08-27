@@ -26,8 +26,19 @@
     {{/* The manual is what most people come here for, so the way into it is
          in the header on every page — including the two that run without the
          sidebar and so have no other door to it. .here marks the part of the
-         site you are already in. */}}
-    <a class="nav{{ if $manual }} here{{ end }}" href="{{ "docs/" | relURL }}">Docs</a>
+         site you are already in.
+
+         From inside the manual this stays self-relative: relURL resolves
+         within this build, and a version's Docs link should never leave
+         that version. The root carries no manual of its own — the publish
+         workflow prunes it back out after building — so from there the link
+         goes straight to /latest/, root-absolute because /latest/ is a
+         sibling build this one has never heard of. Until the first tag
+         exists that 404s; accepted rather than adding a manifest-gated
+         hide/show for one link, since the version picker below already
+         tolerates that same fetch failing silently, and there is no manual
+         to publish before the first tag regardless. */}}
+    <a class="nav{{ if $manual }} here{{ end }}" href="{{ if $manual }}{{ "docs/" | relURL }}{{ else }}/latest/docs/{{ end }}">Docs</a>
     {{/* Beside the manual, not inside it: somebody still deciding whether
          lerp is the right tool has not started reading a manual yet, and the
          sidebar is for people who have. */}}
