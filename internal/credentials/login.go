@@ -205,11 +205,9 @@ func login(ctx context.Context, out io.Writer, flow loginFlow) error {
 	// The identity behind the token just obtained, not through Resolve —
 	// which prefers LINEAR_API_KEY and would cheerfully confirm the wrong
 	// identity when one is set. A failure here is reported but does not fail
-	// the command: the token is already on disk and good, and the brief's
-	// refusal list — nothing stored on a non-zero exit — only covers the
-	// callback and the exchange. Failing here too would tell the operator to
-	// `lerp login` again and burn a second authorization for a login that
-	// already succeeded.
+	// the command: the token is already on disk and good, so failing here
+	// too would tell the operator to `lerp login` again and burn a second
+	// authorization for a login that already succeeded.
 	identity, err := flow.newViewer(flow.hc, tok.AccessToken).ViewerIdentity(ctx)
 	if err != nil {
 		fmt.Fprintf(out, "signed in to Linear, but could not confirm the identity: %v\n", err)

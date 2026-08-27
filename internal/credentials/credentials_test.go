@@ -30,8 +30,8 @@ func tempStore(t *testing.T, tok *token) store {
 	return s
 }
 
-// testClientID stands in for the public client LERP-109 will register; the
-// shipped constant is still empty.
+// testClientID stands in for the public client a human still has to
+// register in Linear; the shipped constant is empty until then.
 const testClientID = "lerp-test-client"
 
 func liveToken() token {
