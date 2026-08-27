@@ -574,7 +574,11 @@ on_success = "Done"
 	}
 	record := evidence.Record{SessionID: id, Ticket: "LERP-1", Workspace: "/tmp/lane"}
 	want := "cd '/tmp/lane' && claude --resume '" + id + "'"
-	if got := ResumeCommand(runner, record); got != want {
+	got, err := ResumeCommand(runner, record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
 		t.Errorf("ResumeCommand = %q, want %q", got, want)
 	}
 }
@@ -591,7 +595,11 @@ func TestResumeCommandExpandsAndQuotes(t *testing.T) {
 	}
 	want := "agent --resume '1e9a4a0e-0000-4000-8000-00000000abcd' " +
 		"--ticket 'LERP-42; rm -rf /' --cwd '/tmp/lerp work/lane 1'"
-	if got := ResumeCommand(runner, record); got != want {
+	got, err := ResumeCommand(runner, record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
 		t.Errorf("ResumeCommand = %q, want %q", got, want)
 	}
 }
@@ -599,8 +607,11 @@ func TestResumeCommandExpandsAndQuotes(t *testing.T) {
 // A runner with no resume template is what makes a run un-ejectable, and the
 // empty command is how that is reported.
 func TestResumeCommandIsEmptyWithoutATemplate(t *testing.T) {
-	got := ResumeCommand(config.Runner{Command: "agent {{session}}"},
+	got, err := ResumeCommand(config.Runner{Command: "agent {{session}}"},
 		evidence.Record{SessionID: "1e9a4a0e-0000-4000-8000-00000000abcd"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if got != "" {
 		t.Errorf("ResumeCommand = %q for a runner with no resume, want empty", got)
 	}

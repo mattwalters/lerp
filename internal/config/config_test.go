@@ -271,7 +271,7 @@ dispose = "d"
 [runners.mine]
 vendor = "chatgpt"
 ` + pipeline,
-			wantErr: `runner "mine": unknown vendor "chatgpt" (known: claude)`,
+			wantErr: `runner "mine": unknown vendor "chatgpt" (known: claude, codex)`,
 		},
 		{
 			name: "model on a command runner",
@@ -574,6 +574,36 @@ on_success = "Done"
 				t.Errorf("Command = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// A codex vendor block resolves the same way a claude one does, through the
+// same code path — the point of the adapter mechanism.
+func TestCodexVendorRunnerResolves(t *testing.T) {
+	path := writeFile(t, "lerp.toml", `
+teams = ["LERP"]
+provision = "p"
+dispose = "d"
+
+[runners.codex]
+vendor = "codex"
+
+[queues.plan]
+status = "Planning"
+prompt = "p"
+runner = "codex"
+on_success = "Done"
+`)
+	c, err := LoadRepoConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := c.Runners["codex"]
+	if want := "codex exec --json -- {{prompt}}"; r.Command != want {
+		t.Errorf("Command = %q, want %q", r.Command, want)
+	}
+	if want := "cd {{workdir}} && codex resume {{session}}"; r.Resume != want {
+		t.Errorf("Resume = %q, want %q", r.Resume, want)
 	}
 }
 

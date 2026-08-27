@@ -96,6 +96,88 @@ func TestEjectAdoptedRun(t *testing.T) {
 	}
 }
 
+// codexRunner is the test repo's runner for a vendor that names its own
+// session instead of accepting one lerp mints — the shape LERP-137 adds.
+func codexRunner(h *harness) {
+	h.rec.o.Repo.Runners["agent"] = config.Runner{
+		Vendor:  "codex",
+		Command: "codex exec --json -- {{prompt}}",
+		Resume:  "cd {{workdir}} && codex resume {{session}}",
+	}
+}
+
+// A codex run records no SessionID at all — lerp never mints one for a
+// vendor that names its own — and eject resolves it from the run's own log
+// instead, exactly as it would for a live run or one adopted after a
+// restart, since both read the same file.
+func TestEjectCodexRunResolvesSessionFromItsLog(t *testing.T) {
+	h := newHarness(t, 1, nil)
+	h.rec.o.Alive = evidence.Alive // the eject below must be a real kill
+	codexRunner(h)
+	agent := startFakeAgent(t)
+	record := orphanRun(t, h, evidence.Record{
+		Lane: 1, TicketID: "tkt", Ticket: "LERP-1", Queue: "todo", StartingStatus: "Todo",
+	}, agent)
+	if err := os.WriteFile(record.LogPath,
+		[]byte(`{"type":"turn.started"}`+"\n"+
+			`{"type":"thread.started","thread_id":"01a03575-0a83-7601-bdcc-1a734ee2b1b2"}`+"\n"),
+		0o644); err != nil {
+		t.Fatal(err)
+	}
+	h.fake.AddIssue("LERP", linear.Issue{
+		ID: "tkt", Identifier: "LERP-1", Status: "Todo", AssigneeID: "fake-viewer",
+	})
+	ctx := context.Background()
+
+	h.rec.Tick(ctx)
+	h.waitEvents(t, EventAdopted, 1)
+
+	ejection, err := h.rec.Eject(ctx, "tkt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent.waitKilled()
+
+	if want := "cd '" + record.Workspace + "' && codex resume '01a03575-0a83-7601-bdcc-1a734ee2b1b2'"; ejection.Resume != want {
+		t.Errorf("Resume = %q, want %q", ejection.Resume, want)
+	}
+}
+
+// A codex agent killed before it ever wrote thread.started leaves eject
+// nothing to resume, and refusing is required to happen before the kill: the
+// agent must still be found alive and running afterwards, the same guarantee
+// TestEjectRefusesAndKillsNothing holds for every other refusal.
+func TestEjectRefusesACodexRunThatNeverReportedASession(t *testing.T) {
+	h := newHarness(t, 1, nil)
+	h.rec.o.Alive = evidence.Alive
+	codexRunner(h)
+	agent := startFakeAgent(t)
+	record := orphanRun(t, h, evidence.Record{
+		Lane: 1, TicketID: "tkt", Ticket: "LERP-1", Queue: "todo", StartingStatus: "Todo",
+	}, agent)
+	// The log exists — the run started — but died before its first event.
+	if err := os.WriteFile(record.LogPath, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h.fake.AddIssue("LERP", linear.Issue{
+		ID: "tkt", Identifier: "LERP-1", Status: "Todo", AssigneeID: "fake-viewer",
+	})
+	ctx := context.Background()
+	h.rec.Tick(ctx)
+	h.waitEvents(t, EventAdopted, 1)
+
+	_, err := h.rec.Eject(ctx, "tkt")
+	if err == nil || !strings.Contains(err.Error(), "never reported a session id") {
+		t.Fatalf("Eject error = %v, want one naming the missing session", err)
+	}
+	if !agent.alive() {
+		t.Error("a refused eject killed the agent")
+	}
+	if _, err := h.evidence.Read(record.RunID); err != nil {
+		t.Errorf("run record after a refused eject: read error = %v, want it intact", err)
+	}
+}
+
 // A run this process started ends as an eject rather than as an exit: no
 // conclude, so the ticket keeps the claim and the status the run had it in,
 // no dispose, and the lane frees for the next ticket.
@@ -546,6 +628,13 @@ func TestCanEjectNeedsBothHalves(t *testing.T) {
 		{"both halves", config.Runner{Command: "agent {{session}}", Resume: "agent --resume {{session}}"}, true, ""},
 		{"no resume template", config.Runner{Command: "agent {{session}}"}, false, "no resume command"},
 		{"command opens no session", config.Runner{Command: "agent", Resume: "agent --resume {{session}}"}, false, "{{session}}"},
+		// A vendor that names its own session (codex) never opens one lerp
+		// chose, so the command alone would read as "does not use
+		// {{session}}" — CapturesSession is what turns this on anyway.
+		{"vendor captures its own session", config.Runner{
+			Vendor: "codex", Command: "codex exec --json -- {{prompt}}",
+			Resume: "cd {{workdir}} && codex resume {{session}}",
+		}, true, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
