@@ -37,6 +37,16 @@ opens the selected ticket there.
 room to draw the picker. Inside the picker, `↑`/`↓` pick a target, `enter`
 takes it, and `esc` — or `q` — backs out without writing anything.
 
+## Several at once
+
+Press `v` on a row to start a visual-mode range, the way lazygit does; the
+movement keys extend it, and `esc` drops it. `p` opens the same picker once,
+for one target — confirm, and every selected ticket goes through the promote
+above, one at a time. One failing (a race with another lerp claiming it,
+say) never stops the rest: the note says how many of the batch made it, and
+the row that did not carries a `✗` until it promotes cleanly or leaves the
+board.
+
 ## After the promote
 
 A promoted ticket is [eligible](the-board.md#the-claim) the moment it is

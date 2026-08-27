@@ -34,11 +34,13 @@ func (c *countingTicker) Tick(context.Context) { c.ticks.Add(1) }
 
 // recordingPromoter stands in for the reconciler's one write action: it
 // records every Promote call, so a test can assert what the picker sent,
-// and returns whatever err is set to.
+// and returns whatever err is set to — or, for a ticket named in errs, that
+// ticket's own error, so a batch test can fail one of several calls.
 type recordingPromoter struct {
 	mu    sync.Mutex
 	calls []promoteCall
 	err   error
+	errs  map[string]error
 }
 
 type promoteCall struct {
@@ -50,6 +52,9 @@ func (p *recordingPromoter) Promote(_ context.Context, ticketID, status string) 
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.calls = append(p.calls, promoteCall{ticketID, status})
+	if err, ok := p.errs[ticketID]; ok {
+		return err
+	}
 	return p.err
 }
 
@@ -2090,6 +2095,243 @@ func TestPromotePickerClosesWhenTheListEmpties(t *testing.T) {
 	}
 }
 
+// Done-when: v, then movement, then p promotes every row the range spans —
+// not just the cursor's — through the exact same Promote call a single
+// ticket takes, one per target, in order.
+func TestBatchPromoteMovesEverySelectedRow(t *testing.T) {
+	m, _, _, promoter := newPromoteTestModel(t, 1, defaultTestStatuses)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+
+	m = update(t, m, keyMsg("v"))
+	m = update(t, m, keyMsg("j"))
+	m = update(t, m, keyMsg("j"))
+	m = update(t, m, keyMsg("p"))
+	m = update(t, m, keyMsg("down")) // choose Implementing
+
+	next, cmd := updateCmd(t, m, keyMsg("enter"))
+	m = next
+	if m.promoting {
+		t.Fatal("enter did not close the promote picker")
+	}
+	if cmd == nil {
+		t.Fatal("enter produced no promote command")
+	}
+	msg := cmd()
+	promoted, ok := msg.(promotedMsg)
+	if !ok {
+		t.Fatalf("promote command yielded %T, want promotedMsg", msg)
+	}
+
+	wantIDs := []string{"id-1", "id-2", "id-3"}
+	if len(promoter.calls) != len(wantIDs) {
+		t.Fatalf("Promote called %d times, want %d: %+v", len(promoter.calls), len(wantIDs), promoter.calls)
+	}
+	for i, want := range wantIDs {
+		if got := promoter.calls[i]; got.ticketID != want || got.status != "Implementing" {
+			t.Fatalf("call %d = %+v, want {%s Implementing}", i, got, want)
+		}
+	}
+
+	m = update(t, m, promoted)
+	if !strings.Contains(m.View(), "promoted 3 tickets to Implementing") {
+		t.Fatalf("view does not note the batch promotion:\n%s", m.View())
+	}
+}
+
+// Done-when: one target failing (a race with another lerp claiming it, say)
+// never stops the batch: every call still happens, the note says how many
+// of the batch made it, and the failure is named.
+func TestMidBatchFailureSettlesTheRest(t *testing.T) {
+	promoter := &recordingPromoter{errs: map[string]error{"id-2": errors.New("claimed by another lerp")}}
+	m, _, _ := newTestModelWith(t, 1, defaultTestStatuses, promoter, &recordingEjector{}, &recordingStarter{}, &recordingReader{})
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+
+	m = update(t, m, keyMsg("v"))
+	m = update(t, m, keyMsg("j"))
+	m = update(t, m, keyMsg("j"))
+	m = update(t, m, keyMsg("p"))
+	m = update(t, m, keyMsg("down")) // choose Implementing
+
+	next, cmd := updateCmd(t, m, keyMsg("enter"))
+	m = next
+	promoted, ok := cmd().(promotedMsg)
+	if !ok {
+		t.Fatal("promote command yielded no promotedMsg")
+	}
+
+	wantIDs := []string{"id-1", "id-2", "id-3"}
+	if len(promoter.calls) != len(wantIDs) {
+		t.Fatalf("Promote called %d times, want %d — a failure must not abort the batch: %+v",
+			len(promoter.calls), len(wantIDs), promoter.calls)
+	}
+
+	m = update(t, m, promoted)
+	view := m.View()
+	if !strings.Contains(view, "promoted 2 of 3 to Implementing") {
+		t.Fatalf("view does not note the partial batch:\n%s", view)
+	}
+	if !strings.Contains(view, "LERP-2") {
+		t.Fatalf("view does not name the failed ticket:\n%s", view)
+	}
+	width := padList.inner(m.geometry().sideW)
+	rows, _ := m.attentionRows(width)
+	if !strings.Contains(rows[1], "✗") {
+		t.Fatalf("the failed row does not carry a ✗:\n%q", rows[1])
+	}
+}
+
+// Done-when: esc during a range degrades cleanly to single-ticket promote,
+// acting on the cursor's own row.
+func TestEscDegradesVisualToSingleTicket(t *testing.T) {
+	m, _, _, promoter := newPromoteTestModel(t, 1, defaultTestStatuses)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+
+	m = update(t, m, keyMsg("v")) // anchor: id-1
+	m = update(t, m, keyMsg("j")) // cursor: id-2
+	m = update(t, m, keyMsg("esc"))
+	if m.visual {
+		t.Fatal("esc did not end the visual selection")
+	}
+
+	m = update(t, m, keyMsg("p"))
+	next, cmd := updateCmd(t, m, keyMsg("enter"))
+	m = next
+	if cmd == nil {
+		t.Fatal("enter produced no promote command")
+	}
+	cmd()
+	if len(promoter.calls) != 1 {
+		t.Fatalf("Promote called %d times, want 1: %+v", len(promoter.calls), promoter.calls)
+	}
+	if got := promoter.calls[0].ticketID; got != "id-2" {
+		t.Fatalf("promoted %s, want id-2 (the cursor's row after esc)", got)
+	}
+}
+
+// Done-when: the four keys that reorder or narrow the rows a range is drawn
+// over drop the selection — a range whose endpoints stay put while the rows
+// between them change is a promote of tickets the operator never saw.
+func TestDisplayControlsDropTheSelection(t *testing.T) {
+	for _, key := range []string{"s", "P", "B", "/"} {
+		t.Run(key, func(t *testing.T) {
+			m, _, _, promoter := newPromoteTestModel(t, 1, defaultTestStatuses)
+			m = update(t, m, keyMsg("1"))
+			m = update(t, m, eventMsg{ev: threeWaiting()})
+
+			m = update(t, m, keyMsg("v"))
+			m = update(t, m, keyMsg("j"))
+			if !m.visual {
+				t.Fatal("v did not start visual mode")
+			}
+
+			m = update(t, m, keyMsg(key))
+			if m.visual {
+				t.Fatalf("%q did not drop the visual selection", key)
+			}
+			if key == "/" {
+				m = update(t, m, keyMsg("esc")) // back out of the prompt it opened
+			}
+
+			m = update(t, m, keyMsg("p"))
+			next, cmd := updateCmd(t, m, keyMsg("enter"))
+			m = next
+			if cmd == nil {
+				t.Fatal("enter produced no promote command")
+			}
+			cmd()
+			if len(promoter.calls) != 1 {
+				t.Fatalf("%q left the selection live: Promote called %d times, want 1: %+v",
+					key, len(promoter.calls), promoter.calls)
+			}
+		})
+	}
+}
+
+// Done-when: a pass that no longer lists the anchor ends visual mode, the
+// same degradation esc gives, rather than promoting a range drawn over rows
+// that have since changed underneath it.
+func TestVisualEndsWhenTheAnchorLeaves(t *testing.T) {
+	m, _, _, promoter := newPromoteTestModel(t, 1, defaultTestStatuses)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+
+	m = update(t, m, keyMsg("v")) // anchor: id-1
+	m = update(t, m, keyMsg("j"))
+	m = update(t, m, keyMsg("j")) // cursor: id-3
+
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-2", TicketID: "id-2", Title: "Second", Status: "Backlog"},
+		{Ticket: "LERP-3", TicketID: "id-3", Title: "Third", Status: "Backlog"},
+	}}})
+	if m.visual {
+		t.Fatal("visual mode survived the anchor leaving the board")
+	}
+
+	m = update(t, m, keyMsg("p"))
+	next, cmd := updateCmd(t, m, keyMsg("enter"))
+	m = next
+	if cmd == nil {
+		t.Fatal("enter produced no promote command")
+	}
+	cmd()
+	if len(promoter.calls) != 1 {
+		t.Fatalf("Promote called %d times, want 1: %+v", len(promoter.calls), promoter.calls)
+	}
+	if got := promoter.calls[0].ticketID; got != "id-3" {
+		t.Fatalf("promoted %s, want id-3 (the surviving cursor row)", got)
+	}
+}
+
+// Done-when: the rows between the anchor and the cursor carry the selection
+// band, only the cursor's own row carries the ▸, and the panel's key line
+// swaps to the promote-count hint while a range is live.
+func TestVisualRangeRendersTheBandAndTheKeyLine(t *testing.T) {
+	m, _, _, _ := newPromoteTestModel(t, 1, defaultTestStatuses)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+
+	m = update(t, m, keyMsg("v")) // anchor: id-1 (LERP-1)
+	m = update(t, m, keyMsg("j")) // cursor: id-2 (LERP-2); LERP-3 stays out of range
+
+	// Checked before forceColour: with escapes in play the key line's words
+	// render as separate spans, and this is plain text either way.
+	line := lineWith(t, m.View(), "p promote")
+	if !strings.Contains(line, "p promote 2") {
+		t.Fatalf("the key line does not name the selection count:\n%s", line)
+	}
+	if !strings.Contains(line, "esc drop") {
+		t.Fatalf("the key line does not offer esc to drop the selection:\n%s", line)
+	}
+
+	forceColour(t)
+	width := padList.inner(m.geometry().sideW)
+	rows, cur := m.attentionRows(width)
+	if cur.at < 0 {
+		t.Fatalf("the inbox has no selection to band: %q", rows)
+	}
+	var banded, arrows int
+	for i, r := range rows {
+		if strings.Contains(r, bandOpen()) {
+			banded++
+		}
+		if strings.Contains(r, "▸") {
+			arrows++
+			if i != cur.at {
+				t.Fatalf("the cursor arrow is on row %d, want the cursor's row %d: %q", i, cur.at, r)
+			}
+		}
+	}
+	if banded != 2 {
+		t.Fatalf("the band covers %d rows, want 2 (the anchor and the cursor): %q", banded, rows)
+	}
+	if arrows != 1 {
+		t.Fatalf("expected exactly one cursor arrow, got %d: %q", arrows, rows)
+	}
+}
+
 // The status bar carries the mark, the heartbeat and the counts; the ? key
 // swaps the main pane for the full keymap.
 func TestStatusBarAndHelp(t *testing.T) {
@@ -3045,19 +3287,23 @@ func TestFocusedPanelCarriesItsKeys(t *testing.T) {
 		TicketID: "id-9", Ticket: "LERP-9", Queue: "implement", LogPath: "/dev/null"}})
 
 	view := m.View()
-	for _, want := range []string{"p promote", "/ search", "s sort", "o open"} {
+	for _, want := range []string{"p promote", "v select", "/ search", "o open"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("the needs-you panel does not offer %q:\n%s", want, view)
 		}
 	}
-	// Whole, in the 45-column panel a 100-column terminal leaves. Nothing
-	// here is in a project, so P is a key that would do nothing and the
-	// four that do fit without it.
+	// In the 45-column panel a 100-column terminal leaves, the list is one
+	// key over budget now v is in the mix: nothing here is in a project, so
+	// P was already dead weight, and s — a display cycle, the tier project
+	// is in — is what gives an action key the room.
 	if strings.Contains(view, "P project") {
 		t.Fatalf("P is offered over a list with no project to cycle to:\n%s", view)
 	}
-	if line := lineWith(t, view, "p promote"); strings.Contains(line, "…") {
-		t.Fatalf("the key line does not fit the panel it is drawn in:\n%s", line)
+	if strings.Contains(view, "s sort") {
+		t.Fatalf("sort is offered when the line has no room left for it:\n%s", view)
+	}
+	if line := lineWith(t, view, "p promote"); !strings.Contains(line, "…") {
+		t.Fatalf("a key line one key over budget should say so:\n%s", line)
 	}
 
 	// The line belongs to the focused panel, so it moves with focus rather
@@ -3087,24 +3333,28 @@ func TestTheKeyLineKeepsTheKeysThatAct(t *testing.T) {
 	m = update(t, m, keyMsg("enter"))
 
 	line := lineWith(t, m.View(), "p promote")
-	for _, want := range []string{"p promote", "/ search", "o open", "s sort"} {
+	for _, want := range []string{"p promote", "v select", "/ search", "o open"} {
 		if !strings.Contains(line, want) {
 			t.Fatalf("the key line dropped %q, which acts on the row:\n%s", want, line)
 		}
 	}
-	// One key short of the room, and it is the display cycle that goes —
-	// with the ellipsis to say the ? overlay has the rest.
-	if strings.Contains(line, "P project") {
-		t.Fatalf("the whole line fits after all — this window should be one key short:\n%s", line)
+	// Two keys short of the room now v is in the mix, and both are display
+	// cycles — sort and project — with the ellipsis to say the ? overlay
+	// has the rest.
+	if strings.Contains(line, "s sort") || strings.Contains(line, "P project") {
+		t.Fatalf("the whole line fits after all — this window should be two keys short:\n%s", line)
 	}
 	if !strings.Contains(line, "…") {
 		t.Fatalf("a line with a key left out does not say so:\n%s", line)
 	}
 
-	// Given the room, the key comes back.
-	wide := update(t, m, tea.WindowSizeMsg{Width: 140, Height: 30})
-	if line := lineWith(t, wide.View(), "p promote"); !strings.Contains(line, "P project") {
-		t.Fatalf("a wide panel still drops the last key:\n%s", line)
+	// Given the room, both keys come back.
+	wide := update(t, m, tea.WindowSizeMsg{Width: 150, Height: 30})
+	line = lineWith(t, wide.View(), "p promote")
+	for _, want := range []string{"s sort", "P project"} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("a wide panel still drops %q:\n%s", want, line)
+		}
 	}
 }
 
@@ -4352,7 +4602,9 @@ func TestHostileErrorTextCannotRepaintTheStatusBar(t *testing.T) {
 	m = update(t, m, openErrMsg{err: errors.New(hostile)})
 	escapeFree(t, "status bar", m.View())
 	bidiFree(t, "status bar", m.View())
-	m = update(t, m, promotedMsg{ticket: "LERP-1", status: "Planning", err: errors.New(hostile)})
+	m = update(t, m, promotedMsg{status: "Planning", results: []promoteResult{
+		{ticketID: "id-1", ticket: "LERP-1", err: errors.New(hostile)},
+	}})
 	escapeFree(t, "status bar", m.View())
 	bidiFree(t, "status bar", m.View())
 }

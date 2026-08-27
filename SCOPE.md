@@ -233,7 +233,8 @@ default, not a rule about process.
    backlog are display over the one list the pass already fetched,
    session-only, with no saved views and no filter syntax; filtering
    that changed *which* tickets were fetched would not be. Select a
-   ticket and press `p` to promote it: pick a target from the configured
+   ticket, or a run of adjacent ones held with visual mode (`v`), and
+   press `p` to promote it: pick a target from the configured
    queue statuses or a pipeline exit, and
    lerp moves it there. A promote into a status some queue serves also
    releases the claim the parked ticket was holding — an assigned ticket
