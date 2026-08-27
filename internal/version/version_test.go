@@ -23,14 +23,25 @@ func TestFromBuildInfo(t *testing.T) {
 			want: "v0.3.1",
 		},
 		{
-			name: "devel build falls back to vcs revision",
+			name: "devel build falls back to a shortened vcs revision",
 			info: &debug.BuildInfo{
 				Main: debug.Module{Version: "(devel)"},
 				Settings: []debug.BuildSetting{
-					{Key: "vcs.revision", Value: "abc1234"},
+					{Key: "vcs.revision", Value: "abc1234567890def"},
 				},
 			},
 			want: "abc1234",
+		},
+		{
+			name: "a dirty tree is marked, not silently reported as clean",
+			info: &debug.BuildInfo{
+				Main: debug.Module{Version: "(devel)"},
+				Settings: []debug.BuildSetting{
+					{Key: "vcs.revision", Value: "abc1234567890def"},
+					{Key: "vcs.modified", Value: "true"},
+				},
+			},
+			want: "abc1234-dirty",
 		},
 		{
 			name: "nothing usable",

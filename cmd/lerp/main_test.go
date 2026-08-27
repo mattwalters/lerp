@@ -27,6 +27,33 @@ func TestUsageListsLoginAndLogout(t *testing.T) {
 	}
 }
 
+// --version and -version must reach the same case in main's switch as
+// `version`, not fall through to the bare-TUI flag set and die as an unknown
+// flag — a regression a reorder of that dispatch would not otherwise catch.
+func TestNormalizeArgsAliasesVersionFlag(t *testing.T) {
+	for _, args := range [][]string{{"--version"}, {"-version"}} {
+		got := normalizeArgs(args)
+		if len(got) != 1 || got[0] != "version" {
+			t.Errorf("normalizeArgs(%v) = %v, want [version]", args, got)
+		}
+	}
+}
+
+func TestNormalizeArgsLeavesOtherArgsAlone(t *testing.T) {
+	for _, args := range [][]string{nil, {}, {"init", "--team", "LERP"}, {"-concurrency", "3"}} {
+		got := normalizeArgs(args)
+		if len(got) != len(args) {
+			t.Errorf("normalizeArgs(%v) = %v, want unchanged", args, got)
+			continue
+		}
+		for i := range args {
+			if got[i] != args[i] {
+				t.Errorf("normalizeArgs(%v) = %v, want unchanged", args, got)
+			}
+		}
+	}
+}
+
 // cliPage is the manual's reference page for the command line, which opens
 // with this usage text verbatim.
 const cliPage = "docs/content/docs/cli.md"

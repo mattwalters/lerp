@@ -20,18 +20,39 @@ func init() {
 	}
 }
 
+// shortHashLen matches the abbreviated hash `make install` stamps via `git
+// describe` (see Makefile), so a fallback build's version has the same shape
+// as a proper one instead of a bare 40-character hex string.
+const shortHashLen = 7
+
 // fromBuildInfo picks a version out of build info recorded by the toolchain.
 // `go install pkg@version` stamps info.Main.Version with that version; a
 // plain `go build` in a checkout leaves it "(devel)" and stamps the VCS
-// revision into Settings instead.
+// revision into Settings instead — a full commit hash, with a separate
+// setting saying whether the tree was dirty, so both are folded in rather
+// than reporting a clean-looking hash for a dirty build.
 func fromBuildInfo(info *debug.BuildInfo) string {
 	if info.Main.Version != "" && info.Main.Version != "(devel)" {
 		return info.Main.Version
 	}
+	var revision string
+	var modified bool
 	for _, s := range info.Settings {
-		if s.Key == "vcs.revision" {
-			return s.Value
+		switch s.Key {
+		case "vcs.revision":
+			revision = s.Value
+		case "vcs.modified":
+			modified = s.Value == "true"
 		}
 	}
-	return ""
+	if revision == "" {
+		return ""
+	}
+	if len(revision) > shortHashLen {
+		revision = revision[:shortHashLen]
+	}
+	if modified {
+		revision += "-dirty"
+	}
+	return revision
 }
