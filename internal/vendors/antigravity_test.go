@@ -1,6 +1,7 @@
 package vendors
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -100,5 +101,69 @@ func TestAntigravityRegisteredByName(t *testing.T) {
 	}
 	if _, ok := a.(SessionNamer); !ok {
 		t.Error("the registered antigravity adapter does not implement SessionNamer")
+	}
+}
+
+func TestAntigravityCLINameAndMCPCommands(t *testing.T) {
+	a := antigravity{}
+	if got := a.CLIName(); got != "agy" {
+		t.Errorf("CLIName() = %q, want %q", got, "agy")
+	}
+	wantHTTP := "agy mcp add linear https://mcp.linear.app/mcp"
+	if got := strings.Join(a.MCPRegisterHTTP(), " "); got != wantHTTP {
+		t.Errorf("MCPRegisterHTTP() = %q, want %q", got, wantHTTP)
+	}
+	wantBridge := "agy mcp add linear -- npx -y mcp-remote https://mcp.linear.app/mcp"
+	if got := strings.Join(a.MCPRegisterBridge(), " "); got != wantBridge {
+		t.Errorf("MCPRegisterBridge() = %q, want %q", got, wantBridge)
+	}
+	if got := a.AuthInstruction(); got != "the /mcp overlay in agy" {
+		t.Errorf("AuthInstruction() = %q, want %q", got, "the /mcp overlay in agy")
+	}
+}
+
+func TestAntigravityHasLinearMCP(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+
+	a := antigravity{}
+	if a.HasLinearMCP("") {
+		t.Error("HasLinearMCP = true on empty home, want false")
+	}
+
+	// In ~/.gemini/antigravity-cli/mcp/linear directory
+	mcpDir := dir + "/.gemini/antigravity-cli/mcp/linear"
+	if err := os.MkdirAll(mcpDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if !a.HasLinearMCP("") {
+		t.Error("HasLinearMCP = false when ~/.gemini/antigravity-cli/mcp/linear exists, want true")
+	}
+
+	// In ~/.gemini/antigravity-cli/mcp_oauth_tokens.json
+	if err := os.RemoveAll(dir + "/.gemini"); err != nil {
+		t.Fatal(err)
+	}
+	geminiDir := dir + "/.gemini/antigravity-cli"
+	if err := os.MkdirAll(geminiDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(geminiDir+"/mcp_oauth_tokens.json", []byte(`{"https://mcp.linear.app/mcp": {}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !a.HasLinearMCP("") {
+		t.Error("HasLinearMCP = false when mcp_oauth_tokens.json has linear, want true")
+	}
+
+	// In repo .gemini/mcp/linear
+	if err := os.WriteFile(geminiDir+"/mcp_oauth_tokens.json", []byte(`{}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	repoDir := t.TempDir()
+	if err := os.MkdirAll(repoDir+"/.gemini/mcp/linear", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if !a.HasLinearMCP(repoDir) {
+		t.Error("HasLinearMCP = false when repo .gemini/mcp/linear exists, want true")
 	}
 }

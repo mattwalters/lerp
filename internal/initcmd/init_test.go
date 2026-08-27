@@ -840,3 +840,252 @@ func TestInitSurvivesUnusableGitignore(t *testing.T) {
 		})
 	}
 }
+
+func TestInitMCPDeclinedOnNonInteractive(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir) // empty home -> no MCP configured
+	var out bytes.Buffer
+	var commandsRun [][]string
+	restore := SetCommandRunner(func(ctx context.Context, name string, args ...string) error {
+		commandsRun = append(commandsRun, append([]string{name}, args...))
+		return nil
+	})
+	defer restore()
+
+	b := &fakeBoard{existing: linearDefaults}
+	_, err := Init(context.Background(), b, &out, nil, dir, "LERP", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(commandsRun) != 0 {
+		t.Errorf("commands run = %v, want none on non-interactive", commandsRun)
+	}
+	output := out.String()
+	for _, want := range []string{
+		"claude: Linear MCP not configured",
+		"register: claude mcp add --transport http linear https://mcp.linear.app/mcp",
+		"alternative (shared OAuth): claude mcp add linear -- npx -y mcp-remote https://mcp.linear.app/mcp",
+		"then authenticate: /mcp in claude",
+	} {
+		if !strings.Contains(output, want) {
+			t.Errorf("output missing %q:\n%s", want, output)
+		}
+	}
+}
+
+func TestInitMCPDeclinedInteractively(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	var out bytes.Buffer
+	var commandsRun [][]string
+	restore := SetCommandRunner(func(ctx context.Context, name string, args ...string) error {
+		commandsRun = append(commandsRun, append([]string{name}, args...))
+		return nil
+	})
+	defer restore()
+
+	// 4 fast-path answers + 'n' for MCP
+	answers := strings.NewReader("\n\n\n\nn\n")
+	b := &fakeBoard{existing: linearDefaults}
+	_, err := Init(context.Background(), b, &out, answers, dir, "LERP", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(commandsRun) != 0 {
+		t.Errorf("commands run = %v, want none on declined", commandsRun)
+	}
+	output := out.String()
+	for _, want := range []string{
+		"Each runner CLI needs its own Linear MCP server",
+		"Alternative single-auth bridge:",
+		"Register Linear MCP for unconfigured CLIs?",
+		"claude: Linear MCP not configured",
+		"register: claude mcp add --transport http linear https://mcp.linear.app/mcp",
+		"then authenticate: /mcp in claude",
+	} {
+		if !strings.Contains(output, want) {
+			t.Errorf("output missing %q:\n%s", want, output)
+		}
+	}
+}
+
+func TestInitMCPRegisteredOnYes(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	var out bytes.Buffer
+	var commandsRun [][]string
+	restore := SetCommandRunner(func(ctx context.Context, name string, args ...string) error {
+		commandsRun = append(commandsRun, append([]string{name}, args...))
+		return nil
+	})
+	defer restore()
+
+	// 4 fast-path answers + 'y' for MCP
+	answers := strings.NewReader("\n\n\n\ny\n")
+	b := &fakeBoard{existing: linearDefaults}
+	_, err := Init(context.Background(), b, &out, answers, dir, "LERP", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantCmd := []string{"claude", "mcp", "add", "--transport", "http", "linear", "https://mcp.linear.app/mcp"}
+	if len(commandsRun) != 1 || !reflect.DeepEqual(commandsRun[0], wantCmd) {
+		t.Errorf("commands run = %v, want [%v]", commandsRun, wantCmd)
+	}
+	output := out.String()
+	wantReport := "claude: registered Linear MCP — one-time authentication still needed: /mcp in claude"
+	if !strings.Contains(output, wantReport) {
+		t.Errorf("output missing %q:\n%s", wantReport, output)
+	}
+}
+
+func TestInitMCPRegisteredOnBridge(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	var out bytes.Buffer
+	var commandsRun [][]string
+	restore := SetCommandRunner(func(ctx context.Context, name string, args ...string) error {
+		commandsRun = append(commandsRun, append([]string{name}, args...))
+		return nil
+	})
+	defer restore()
+
+	// 4 fast-path answers + 'b' for bridge
+	answers := strings.NewReader("\n\n\n\nb\n")
+	b := &fakeBoard{existing: linearDefaults}
+	_, err := Init(context.Background(), b, &out, answers, dir, "LERP", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantCmd := []string{"claude", "mcp", "add", "linear", "--", "npx", "-y", "mcp-remote", "https://mcp.linear.app/mcp"}
+	if len(commandsRun) != 1 || !reflect.DeepEqual(commandsRun[0], wantCmd) {
+		t.Errorf("commands run = %v, want [%v]", commandsRun, wantCmd)
+	}
+	output := out.String()
+	wantReport := "claude: registered Linear MCP — one-time authentication still needed: /mcp in claude"
+	if !strings.Contains(output, wantReport) {
+		t.Errorf("output missing %q:\n%s", wantReport, output)
+	}
+}
+
+func TestInitMCPAlreadyConfigured(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	// Write ~/.claude.json with Linear MCP configured
+	if err := os.WriteFile(dir+"/.claude.json", []byte(`{"mcpServers":{"linear":{"type":"http"}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	var commandsRun [][]string
+	restore := SetCommandRunner(func(ctx context.Context, name string, args ...string) error {
+		commandsRun = append(commandsRun, append([]string{name}, args...))
+		return nil
+	})
+	defer restore()
+
+	answers := strings.NewReader("\n\n\n\n")
+	b := &fakeBoard{existing: linearDefaults}
+	_, err := Init(context.Background(), b, &out, answers, dir, "LERP", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(commandsRun) != 0 {
+		t.Errorf("commands run = %v, want none when already configured", commandsRun)
+	}
+	output := out.String()
+	if strings.Contains(output, "Register Linear MCP") {
+		t.Error("init asked to register MCP when already configured")
+	}
+	if !strings.Contains(output, "claude: Linear MCP already configured") {
+		t.Errorf("output missing already configured report:\n%s", output)
+	}
+}
+
+func TestInitMCPMultipleVendorsOnRepeat(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+
+	multiVendorConfig := `
+teams = ["LERP"]
+provision = "mine"
+dispose = "mine"
+
+[runners.agy-implement]
+vendor = "antigravity"
+
+[runners.codex-plan]
+vendor = "codex"
+
+[queues.plan]
+status = "Planning"
+prompt = "Plan {{ticket}}."
+runner = "codex-plan"
+on_success = "Implementing"
+
+[queues.code]
+status = "Implementing"
+prompt = "Implement {{ticket}}."
+runner = "agy-implement"
+on_success = "In Review"
+`
+	if err := os.WriteFile(filepath.Join(dir, config.RepoConfigFile), []byte(multiVendorConfig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	var commandsRun [][]string
+	restore := SetCommandRunner(func(ctx context.Context, name string, args ...string) error {
+		commandsRun = append(commandsRun, append([]string{name}, args...))
+		return nil
+	})
+	defer restore()
+
+	answers := strings.NewReader("y\n")
+	b := &fakeBoard{existing: []string{"Planning", "Implementing", "In Review"}}
+	_, err := Init(context.Background(), b, &out, answers, dir, "LERP", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wantAgy := []string{"agy", "mcp", "add", "linear", "https://mcp.linear.app/mcp"}
+	wantCodex := []string{"codex", "mcp", "add", "linear", "--url", "https://mcp.linear.app/mcp"}
+	if len(commandsRun) != 2 || !reflect.DeepEqual(commandsRun[0], wantAgy) || !reflect.DeepEqual(commandsRun[1], wantCodex) {
+		t.Errorf("commands run = %v, want [%v, %v]", commandsRun, wantAgy, wantCodex)
+	}
+
+	output := out.String()
+	for _, want := range []string{
+		"antigravity (agy): registered Linear MCP — one-time authentication still needed: the /mcp overlay in agy",
+		"codex: registered Linear MCP — one-time authentication still needed: codex mcp login linear",
+	} {
+		if !strings.Contains(output, want) {
+			t.Errorf("output missing %q:\n%s", want, output)
+		}
+	}
+}
+
+func TestInitMCPRegistrationFailureReportsError(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	var out bytes.Buffer
+	restore := SetCommandRunner(func(ctx context.Context, name string, args ...string) error {
+		return errors.New("command not found in PATH")
+	})
+	defer restore()
+
+	answers := strings.NewReader("\n\n\n\ny\n")
+	b := &fakeBoard{existing: linearDefaults}
+	_, err := Init(context.Background(), b, &out, answers, dir, "LERP", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := out.String()
+	for _, want := range []string{
+		"could not register claude MCP: command not found in PATH",
+		"claude: Linear MCP not configured",
+		"register: claude mcp add --transport http linear https://mcp.linear.app/mcp",
+	} {
+		if !strings.Contains(output, want) {
+			t.Errorf("output missing %q:\n%s", want, output)
+		}
+	}
+}

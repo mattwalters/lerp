@@ -2,7 +2,11 @@ package vendors
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
+
+	"github.com/BurntSushi/toml"
 )
 
 // codex adapts the Codex CLI, headless: `codex exec --json` streams one JSON
@@ -14,6 +18,72 @@ import (
 // id Codex announced, rather than lerp minting one up front. See
 // internal/run/session.go for where that read happens.
 type codex struct{}
+
+// CLIName returns the executable name for Codex.
+func (codex) CLIName() string {
+	return "codex"
+}
+
+// MCPRegisterHTTP returns the command to register Linear MCP directly via HTTP.
+func (codex) MCPRegisterHTTP() []string {
+	return []string{"codex", "mcp", "add", "linear", "--url", "https://mcp.linear.app/mcp"}
+}
+
+// MCPRegisterBridge returns the command to register Linear MCP via the mcp-remote bridge.
+func (codex) MCPRegisterBridge() []string {
+	return []string{"codex", "mcp", "add", "linear", "--", "npx", "-y", "mcp-remote", "https://mcp.linear.app/mcp"}
+}
+
+// AuthInstruction returns instructions on how to authenticate after registration.
+func (codex) AuthInstruction() string {
+	return "codex mcp login linear"
+}
+
+type codexMCPConfig struct {
+	MCPServers     map[string]any `toml:"mcp_servers"`
+	MCPServersDash map[string]any `toml:"mcp-servers"`
+}
+
+// HasLinearMCP checks whether Codex has a Linear MCP server registered in
+// ~/.codex/config.toml or repo-level codex config.
+func (codex) HasLinearMCP(repoRoot string) bool {
+	home, err := os.UserHomeDir()
+	if err == nil {
+		if checkCodexFile(filepath.Join(home, ".codex", "config.toml")) {
+			return true
+		}
+	}
+	if repoRoot != "" {
+		if checkCodexFile(filepath.Join(repoRoot, ".codex", "config.toml")) {
+			return true
+		}
+		if checkCodexFile(filepath.Join(repoRoot, "codex.toml")) {
+			return true
+		}
+	}
+	return false
+}
+
+func checkCodexFile(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	var cfg codexMCPConfig
+	if err := toml.Unmarshal(data, &cfg); err == nil {
+		for name, val := range cfg.MCPServers {
+			if isLinearServer(name, val) {
+				return true
+			}
+		}
+		for name, val := range cfg.MCPServersDash {
+			if isLinearServer(name, val) {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 // Command appends --model, then the effort override, then Args verbatim,
 // then the prompt — positional on this CLI (`codex exec [OPTIONS] [PROMPT]`),

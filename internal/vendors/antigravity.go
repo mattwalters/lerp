@@ -2,6 +2,8 @@ package vendors
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -29,6 +31,99 @@ import (
 // SessionNamer for that reason: Session reads the id back off the run's own
 // first line, the seam LERP-137 built for codex's identical shape.
 type antigravity struct{}
+
+// CLIName returns the executable name for Antigravity.
+func (antigravity) CLIName() string {
+	return "agy"
+}
+
+// MCPRegisterHTTP returns the command to register Linear MCP directly via HTTP.
+func (antigravity) MCPRegisterHTTP() []string {
+	return []string{"agy", "mcp", "add", "linear", "https://mcp.linear.app/mcp"}
+}
+
+// MCPRegisterBridge returns the command to register Linear MCP via the mcp-remote bridge.
+func (antigravity) MCPRegisterBridge() []string {
+	return []string{"agy", "mcp", "add", "linear", "--", "npx", "-y", "mcp-remote", "https://mcp.linear.app/mcp"}
+}
+
+// AuthInstruction returns instructions on how to authenticate after registration.
+func (antigravity) AuthInstruction() string {
+	return "the /mcp overlay in agy"
+}
+
+// HasLinearMCP checks whether Antigravity CLI has a Linear MCP server
+// registered under ~/.gemini/antigravity-cli/mcp/ or config files.
+func (antigravity) HasLinearMCP(repoRoot string) bool {
+	home, err := os.UserHomeDir()
+	if err == nil {
+		if checkAgyDir(filepath.Join(home, ".gemini", "antigravity-cli", "mcp")) {
+			return true
+		}
+		if checkAgyTokens(filepath.Join(home, ".gemini", "antigravity-cli", "mcp_oauth_tokens.json")) {
+			return true
+		}
+		if checkAgySettings(filepath.Join(home, ".gemini", "antigravity-cli", "settings.json")) {
+			return true
+		}
+	}
+	if repoRoot != "" {
+		if checkAgyDir(filepath.Join(repoRoot, ".gemini", "antigravity-cli", "mcp")) {
+			return true
+		}
+		if checkAgyDir(filepath.Join(repoRoot, ".gemini", "mcp")) {
+			return true
+		}
+	}
+	return false
+}
+
+func checkAgyDir(dir string) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if strings.Contains(strings.ToLower(e.Name()), "linear") {
+			return true
+		}
+	}
+	return false
+}
+
+func checkAgyTokens(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	var tokens map[string]any
+	if err := json.Unmarshal(data, &tokens); err == nil {
+		for key := range tokens {
+			if strings.Contains(key, "mcp.linear.app") || strings.Contains(strings.ToLower(key), "linear") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func checkAgySettings(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err == nil {
+		if servers, ok := settings["mcpServers"].(map[string]any); ok {
+			for name, val := range servers {
+				if isLinearServer(name, val) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
 
 // printTimeout is set far above agy's own five-minute default: a plan or
 // implement run on this repo's own pipeline routinely takes longer than
