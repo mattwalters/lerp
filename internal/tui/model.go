@@ -227,12 +227,12 @@ type (
 	eventMsg   struct{ ev loop.Event }
 	pollMsg    struct{}
 	openErrMsg struct{ err error }
-	// promotedMsg reports the outcome of a promote action: MoveIssue on a
-	// selected ticket, run off the render loop like every other write.
+	// promotedMsg reports the outcome of a promote action: MoveIssue on every
+	// captured target, run off the render loop like every other write. A
+	// single promote is a batch of one, so there is one message shape.
 	promotedMsg struct {
-		ticket string
-		status string
-		err    error
+		status  string
+		results []promoteResult
 	}
 	// ejectedMsg reports the outcome of an eject: the agent is dead and the
 	// lane free, or it is untouched and err says why.
@@ -257,6 +257,20 @@ type (
 		err      error
 	}
 )
+
+// promoteTarget is one ticket the promote picker was opened on, captured at
+// open rather than re-read at confirm (see capturePromoteTargets).
+type promoteTarget struct {
+	ticketID string
+	ticket   string // human identifier, e.g. LERP-42
+}
+
+// promoteResult is one target's outcome once the batch settles.
+type promoteResult struct {
+	ticketID string
+	ticket   string
+	err      error
+}
 
 // detailState is how far the pane has got with one ticket's body and
 // comments.
@@ -374,6 +388,16 @@ type model struct {
 	shown         []loop.AttentionItem
 	attnSel       int // index into shown; the promote target
 
+	// visual is the inbox's multi-select: a range from visualAnchor — the
+	// anchor's ticket identifier, the same key resort already follows a
+	// selection across a rebuild by — to attnSel. The range is derived at
+	// render and at act time (see visualRange), so there is no second cursor
+	// to keep in step. Session-only like sort and the project filter: never
+	// persisted, dropped by esc, s, P, B and / (see dropVisual), and ended by
+	// apply when a pass leaves the anchor off the list.
+	visual       bool
+	visualAnchor string
+
 	// sortMode and project are two of the table's four session-only
 	// controls: one key cycles the order, another scopes the rows to a
 	// single Linear project ("" is every project). None of the four is
@@ -432,6 +456,16 @@ type model struct {
 	// item, closed by confirming, cancelling, or the list going empty.
 	promoting  bool
 	promoteSel int
+	// promoteTargets is what the picker was opened on — the visual range if
+	// one was live, the cursor's own row otherwise — captured at open rather
+	// than re-read at confirm (see capturePromoteTargets).
+	promoteTargets []promoteTarget
+	// promoteErr is the sticky ✗ for a ticket a batch promote failed to
+	// move, keyed by ticket ID: cleared when that ticket promotes cleanly,
+	// pruned by apply when the ticket leaves the board. A failure the
+	// operator cannot read is not reported, so this does not clear on its
+	// own the way a note does.
+	promoteErr map[string]string
 
 	// ejecting is the eject confirm overlay's open/closed state, and ejectRow
 	// the row it is about — captured when the key was pressed, not re-read
@@ -515,7 +549,8 @@ func newModel(ctx context.Context, o Options) model {
 	// with no `enter` behind it, because work's pane stays open.
 	m := model{o: o, ctx: ctx, focus: panelAttention, lanes: make(map[int]*lane),
 		details: make(map[string]*ticketDetail), lastLog: make(map[string]string),
-		vp: viewport.New(0, 0), follow: true, keys: newKeymap(), help: h,
+		promoteErr: make(map[string]string),
+		vp:         viewport.New(0, 0), follow: true, keys: newKeymap(), help: h,
 		sortMode:    defaultSort,
 		searchInput: newSearchInput(),
 		detailOpen:  [2]bool{panelAttention: false, panelWork: false},
@@ -631,10 +666,27 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case promotedMsg:
-		if msg.err != nil {
-			m.lastErr = clean(fmt.Sprintf("promote %s to %s: %v", msg.ticket, msg.status, msg.err))
-		} else {
-			m.note(fmt.Sprintf("promoted %s to %s", msg.ticket, msg.status), false)
+		// Visual mode is spent whether the batch fully lands or not — the
+		// operator asked for one write, already made.
+		m.dropVisual()
+		m.promoteTargets = nil
+		ok := 0
+		for _, r := range msg.results {
+			if r.err != nil {
+				m.promoteErr[r.ticketID] = clean(r.err.Error())
+			} else {
+				ok++
+				delete(m.promoteErr, r.ticketID)
+			}
+		}
+		switch {
+		case ok == len(msg.results) && ok == 1:
+			m.note(fmt.Sprintf("promoted %s to %s", msg.results[0].ticket, msg.status), false)
+		case ok == len(msg.results):
+			m.note(fmt.Sprintf("promoted %d tickets to %s", ok, msg.status), false)
+		default:
+			m.lastErr = promoteFailureText(msg.status, msg.results)
+			m.note(fmt.Sprintf("promoted %d of %d to %s", ok, len(msg.results), msg.status), true)
 		}
 		return m, nil
 	case forcedMsg:
@@ -730,9 +782,16 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// detail pane. handleSearchKey has esc while the prompt itself is
 		// open, and the filter is not the inbox panel's alone — it is on the
 		// list wherever the operator is standing.
+		//
+		// Visual mode is inbox-only, and unlike the filter it draws nothing
+		// while that panel is unfocused (see attentionRows): esc on the work
+		// panel must not spend itself closing an invisible range instead of
+		// the pane in front of the operator.
 		switch {
 		case m.helpOn:
 			m.setHelp(false)
+		case m.visual && m.focus == panelAttention:
+			m.dropVisual()
 		case m.search != "":
 			m.setSearch("")
 			m.refreshMain()
@@ -746,8 +805,17 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case key.Matches(msg, m.keys.Promote):
 		if m.focus == panelAttention && len(m.shown) > 0 && len(m.o.Statuses) > 0 && m.roomForMain() {
+			m.promoteTargets = m.capturePromoteTargets()
 			m.promoting = true
 			m.promoteSel = 0
+		}
+	case key.Matches(msg, m.keys.Visual):
+		// Live exactly where p is live: visual mode exists to feed the
+		// picker, so it is not offered where the picker cannot open.
+		if m.focus == panelAttention && len(m.shown) > 0 && len(m.o.Statuses) > 0 && m.roomForMain() && !m.visual {
+			if it := m.selectedAttention(); it != nil {
+				m.visual, m.visualAnchor = true, it.Ticket
+			}
 		}
 	case key.Matches(msg, m.keys.Eject):
 		m.startEject()
@@ -764,17 +832,20 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case key.Matches(msg, m.keys.Sort):
 		if m.focus == panelAttention {
+			m.dropVisual()
 			m.sortMode = (m.sortMode + 1) % sortModes
 			m.resort()
 			m.refreshMain()
 		}
 	case key.Matches(msg, m.keys.Project):
 		if m.focus == panelAttention {
+			m.dropVisual()
 			m.cycleProject()
 			m.refreshMain()
 		}
 	case key.Matches(msg, m.keys.Backlog):
 		if m.focus == panelAttention {
+			m.dropVisual()
 			m.backlogOpen = !m.backlogOpen
 			m.resort()
 			m.refreshMain()
@@ -787,6 +858,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// over that line takes the keyboard for a filter with nothing to
 		// match. The way back out of each is the key that empty line names.
 		if m.focus == panelAttention && len(m.shown) > 0 {
+			m.dropVisual()
 			m.openSearch()
 			m.refreshMain()
 		}
@@ -924,10 +996,10 @@ func (m model) handlePromoteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.promoteSel++
 		}
 	case key.Matches(msg, m.keys.Detail):
-		it := m.selectedAttention()
+		targets := m.promoteTargets
 		m.promoting = false
-		if it != nil {
-			cmd = m.doPromote(it.TicketID, it.Ticket, m.o.Statuses[m.promoteSel])
+		if len(targets) > 0 {
+			cmd = m.doPromote(targets, m.o.Statuses[m.promoteSel])
 		}
 	}
 	// The picker and the lens under it are the same box now, so this is not
@@ -940,13 +1012,92 @@ func (m model) handlePromoteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // doPromote calls the one write the TUI is allowed (SCOPE's promote
-// amendment) off the render loop, so a slow Linear call never blocks a
-// frame.
-func (m model) doPromote(ticketID, ticket, status string) tea.Cmd {
+// amendment) for every captured target, off the render loop so a slow
+// Linear call never blocks a frame. Sequential, not tea.Batch: one Linear
+// call at a time, deterministic order, and one message back. A failure
+// records its result and the loop keeps going — nothing aborts the batch.
+func (m model) doPromote(targets []promoteTarget, status string) tea.Cmd {
 	return func() tea.Msg {
-		err := m.o.Engine.Promote(m.ctx, ticketID, status)
-		return promotedMsg{ticket: ticket, status: status, err: err}
+		results := make([]promoteResult, len(targets))
+		for i, t := range targets {
+			err := m.o.Engine.Promote(m.ctx, t.ticketID, status)
+			results[i] = promoteResult{ticketID: t.ticketID, ticket: t.ticket, err: err}
+		}
+		return promotedMsg{status: status, results: results}
 	}
+}
+
+// promoteFailureText is lastErr's line when a batch promote leaves at least
+// one target unmoved: every failure named, not just the last, since a
+// partial batch can fail more than one ticket for different reasons.
+func promoteFailureText(status string, results []promoteResult) string {
+	var fails []string
+	for _, r := range results {
+		if r.err != nil {
+			fails = append(fails, fmt.Sprintf("%s: %v", r.ticket, r.err))
+		}
+	}
+	return clean(fmt.Sprintf("promote to %s: %s", status, strings.Join(fails, "; ")))
+}
+
+// capturePromoteTargets is what p commits to before the picker takes the
+// keyboard: the visual range if one is live, the cursor's own row
+// otherwise. Capturing here rather than re-reading selectedAttention at
+// confirm is deliberate even for the single-ticket case — the picker is
+// modal, a pass can move the cursor's ticket while it is open, and
+// promoting whatever row that leaves the cursor on is not what the
+// operator chose (see ejectRow, the same rule for eject's confirm).
+func (m *model) capturePromoteTargets() []promoteTarget {
+	if lo, hi, ok := m.visualRange(); ok {
+		targets := make([]promoteTarget, 0, hi-lo+1)
+		for _, it := range m.shown[lo : hi+1] {
+			targets = append(targets, promoteTarget{ticketID: it.TicketID, ticket: it.Ticket})
+		}
+		return targets
+	}
+	it := m.selectedAttention()
+	if it == nil {
+		return nil
+	}
+	return []promoteTarget{{ticketID: it.TicketID, ticket: it.Ticket}}
+}
+
+// visualRange is the inbox rows the live visual selection spans: the
+// anchor's index in m.shown and the cursor's, ascending and both
+// inclusive. ok is false with nothing to report when visual mode is off,
+// or when a pass has moved on without the anchor — the same degradation
+// as esc, so there is one behaviour to learn and one to test.
+func (m *model) visualRange() (lo, hi int, ok bool) {
+	if !m.visual {
+		return 0, 0, false
+	}
+	i := slices.IndexFunc(m.shown, func(it loop.AttentionItem) bool { return it.Ticket == m.visualAnchor })
+	if i < 0 {
+		return 0, 0, false
+	}
+	lo, hi = i, m.attnSel
+	if lo > hi {
+		lo, hi = hi, lo
+	}
+	return lo, hi, true
+}
+
+// visualSelectionCount is how many rows the live visual range spans, 1 when
+// there is none — a single promote is a batch of one.
+func (m *model) visualSelectionCount() int {
+	lo, hi, ok := m.visualRange()
+	if !ok {
+		return 1
+	}
+	return hi - lo + 1
+}
+
+// dropVisual ends the inbox's multi-select. Called by esc and by the four
+// keys that reorder or narrow the rows a range is drawn over (s, P, B, /):
+// a range whose endpoints stay put while the rows between them change is a
+// promote of tickets the operator never saw.
+func (m *model) dropVisual() {
+	m.visual, m.visualAnchor = false, ""
 }
 
 // handleEjectKey drives both halves of eject: the confirm overlay, where
@@ -1385,6 +1536,10 @@ func (m *model) apply(ev loop.Event) {
 			return it.Project == m.project
 		}) {
 			m.project = ""
+			// The scope just widened to every project, the same way P
+			// itself widens or narrows it — a range drawn under the old
+			// scope is now over rows the operator never saw beside it.
+			m.dropVisual()
 		}
 		// An inbox with nothing in it has nothing to narrow, and the title
 		// stops carrying the query along with the count — so a filter left
@@ -1405,6 +1560,20 @@ func (m *model) apply(ev loop.Event) {
 		m.resort()
 		if len(m.shown) == 0 {
 			m.promoting = false
+		}
+		// A pass that no longer lists the visual anchor ends the selection —
+		// the same degradation esc gives — rather than promoting a range
+		// drawn over rows that have since changed underneath it.
+		if _, _, ok := m.visualRange(); m.visual && !ok {
+			m.dropVisual()
+		}
+		// promoteErr is sticky so a failure the operator cannot read is not
+		// reported, but it must not outgrow the board: a ticket that has
+		// left the inbox (promoted, or moved by hand) drops its mark too.
+		for id := range m.promoteErr {
+			if !slices.ContainsFunc(m.attention, func(it loop.AttentionItem) bool { return it.TicketID == id }) {
+				delete(m.promoteErr, id)
+			}
 		}
 		changed = panelAttention
 	}
@@ -2218,11 +2387,18 @@ func (m model) View() string {
 		// focus to a panel whose pane is open, and shrinking a window under
 		// one — leave it open, and esc is the way out.
 		if m.width >= minWidth && m.height >= m.minHeight(false) {
-			// esc resolves nearest-first, so a live filter is what the first
-			// one takes. Say so rather than promise a pane it will not
-			// close: with no status bar here, an esc that looks like it did
-			// nothing is the worse half of the trade.
-			if m.search != "" {
+			// esc resolves nearest-first, so a live selection or filter is
+			// what the first one takes — the same order handleKey's Close
+			// cascade resolves them in. Say so rather than promise a pane it
+			// will not close: with no status bar here, an esc that looks
+			// like it did nothing is the worse half of the trade.
+			visual := m.visual && m.focus == panelAttention
+			switch {
+			case visual && m.search != "":
+				return "lerp — window too small\nesc drops the selection, then clears the filter, then closes the pane\n"
+			case visual:
+				return "lerp — window too small\nesc drops the selection, then closes the pane\n"
+			case m.search != "":
 				return "lerp — window too small\nesc clears the filter, then closes the pane\n"
 			}
 			return "lerp — window too small\nesc closes the pane\n"
@@ -2377,6 +2553,10 @@ func (m *model) panelKeys(p panel) []key.Binding {
 			return nil
 		}
 	}
+	// canPromote also gates the visual-mode line: a range with nowhere to
+	// promote to is the same as no picker to open, and the line must not
+	// advertise a p that roomForMain would refuse.
+	canPromote := len(m.o.Statuses) > 0 && m.roomForMain()
 	return m.keys.panelHelp(p, rowKeys{
 		// The raw toggle acts on the log in the pane, so the line offers it
 		// where that log is on screen — the panel line advertises what this
@@ -2387,8 +2567,10 @@ func (m *model) panelKeys(p panel) []key.Binding {
 		hasURL:     browser.Openable(m.selectedURL()),
 		filtered:   m.search != "",
 		projects:   m.hasProjects(),
-		canPromote: len(m.o.Statuses) > 0 && m.roomForMain(),
+		canPromote: canPromote,
 		canEject:   m.canEjectSelected(),
+		visual:     m.visual && canPromote,
+		selected:   m.visualSelectionCount(),
 	})
 }
 
@@ -2432,6 +2614,10 @@ func (m *model) attentionRows(width int) ([]string, cursor) {
 	var rows []string
 	sel := -1
 	header := ""
+	// The visual range, only while this panel holds the keys — a range left
+	// live behind a tab away reads the same as the cursor does, unlit.
+	lo, hi, inRange := m.visualRange()
+	inRange = inRange && focused
 	// A header separates one group from the next, so a list with a single
 	// group draws none: there is no boundary left for it to mark, and on a
 	// squeezed panel it costs the row or the key hint that line was worth
@@ -2453,7 +2639,10 @@ func (m *model) attentionRows(width int) ([]string, cursor) {
 		if i == m.attnSel {
 			sel = len(rows)
 		}
-		rows = append(rows, attentionRow(it, focused && i == m.attnSel, cols, width, m.search))
+		isCursor := focused && i == m.attnSel
+		banded := isCursor || (inRange && i >= lo && i <= hi)
+		failed := m.promoteErr[it.TicketID] != ""
+		rows = append(rows, attentionRow(it, isCursor, banded, failed, cols, width, m.search))
 	}
 	return append(rows, m.backlogSummary()...), cursor{at: sel, span: 1}
 }
@@ -2651,18 +2840,57 @@ const (
 //
 // query is the search the row highlights its matches from, "" for no search.
 //
-// The selected row takes the band across the panel's whole inner width —
-// past the title's own cut, which is why the band is laid on the assembled
-// line rather than built into any one cell.
-func attentionRow(it loop.AttentionItem, selected bool, c attentionColumns, width int, query string) string {
+// isCursor is the row the cursor stands on; banded is every row the
+// selection band paints, which is isCursor's row outside visual mode and
+// every row a live range spans besides — the band takes the panel's whole
+// inner width past the title's own cut, which is why it is laid on the
+// assembled line rather than built into any one cell. failed is a batch
+// promote's sticky ✗ (see promoteErr); see attentionMark for how the gutter
+// draws all three at once.
+//
+// banded && !isCursor is a range row the cursor is not standing on — the
+// one case attentionMark needs a shape for beyond the cursor and the
+// failure, since colorSelected's band renders nothing on a 16-colour
+// terminal (theme.go) and the band was, until visual mode, only ever the
+// cursor's own row wearing its own ▸.
+func attentionRow(it loop.AttentionItem, isCursor, banded, failed bool, c attentionColumns, width int, query string) string {
 	id := padTo(highlight(it.Ticket, query, styleTicket), c.id)
-	row := inboxLine(marker(selected), id, leverageCell(it), statusCell(it, c.status, query),
+	row := inboxLine(attentionMark(isCursor, banded && !isCursor, failed), id, leverageCell(it), statusCell(it, c.status, query),
 		projectCell(it.Project, c.project, query), priorityCell(it.Priority),
 		highlight(it.Title, query, stylePlain), width)
-	if selected {
+	if banded {
 		row = selectRow(row, width)
 	}
 	return row
+}
+
+// attentionMark is an inbox row's gutter: marker's ▸ for the cursor, a
+// batch promote failure's ✗ in the two columns marker leaves blank
+// otherwise, a range row's own │ where neither applies, or nothing.
+//
+// │ is its own shape, not a dimmer ▸: the brief is that only the cursor
+// keeps the arrow, and a colour-only distinction would vanish exactly
+// where the band already does (16 colours, colorSelected's slots are
+// deliberately empty). A range the operator cannot see is a promote of
+// tickets they never chose to select.
+func attentionMark(isCursor, inRange, failed bool) string {
+	switch {
+	// The shape stays ▸ — the cursor is never mistaken for a row nobody is
+	// standing on — but a batch that failed on the ticket the cursor already
+	// sits on (the common case: a single promote, or a range's last row)
+	// still needs to be sticky here. The note that also names it fades with
+	// the next clean pass; this does not.
+	case isCursor && failed:
+		return styleErr.Render("▸ ")
+	case isCursor:
+		return marker(true)
+	case failed:
+		return styleErr.Render("✗ ")
+	case inRange:
+		return styleFocus.Render("│ ")
+	default:
+		return marker(false)
+	}
 }
 
 // inboxLine assembles one line of the inbox table from cells already padded
@@ -3134,9 +3362,7 @@ func tokenCount(n int) string {
 // otherwise the selected row's log, or a read-only detail when it has none.
 func (m model) mainPanel(w, h int) string {
 	if m.promoting {
-		if it := m.selectedAttention(); it != nil {
-			return m.promotePicker(*it, w, h)
-		}
+		return m.promotePicker(w, h)
 	}
 	if m.ejection != nil {
 		return m.ejectResult(*m.ejection, w, h)
@@ -3204,11 +3430,22 @@ func inboxLegend() []string {
 	return rows
 }
 
-// promotePicker renders the target-status list for the selected inbox
-// item: every configured queue status plus the pipeline's exits — exactly
-// what Promote (a plain MoveIssue) is allowed to move a ticket into.
-func (m model) promotePicker(it loop.AttentionItem, w, h int) string {
-	rows := []string{it.Title, ""}
+// promotePicker renders the target-status list for the captured targets —
+// the cursor's own row, or a visual range — every configured queue status
+// plus the pipeline's exits, exactly what Promote (a plain MoveIssue) is
+// allowed to move a ticket into. A batch of one keeps the single-ticket
+// title and count line; several read as a count instead of one identifier.
+func (m model) promotePicker(w, h int) string {
+	targets := m.promoteTargets
+	title, first := "promote", ""
+	if len(targets) == 1 {
+		title += " " + targets[0].ticket
+		first = targets[0].ticket
+	} else {
+		title = fmt.Sprintf("%s %d tickets", title, len(targets))
+		first = fmt.Sprintf("%d tickets selected", len(targets))
+	}
+	rows := []string{first, ""}
 	for i, status := range m.o.Statuses {
 		if i == m.promoteSel {
 			rows = append(rows, styleFocus.Render("▸ "+status))
@@ -3218,7 +3455,7 @@ func (m model) promotePicker(it loop.AttentionItem, w, h int) string {
 	}
 	// The highlighted status must be on screen before enter can confirm it.
 	rows = windowRows(rows, cursor{at: 2 + m.promoteSel, span: 1}, h-2)
-	return panelBox(styleTitleFocus.Render("promote "+it.Ticket), true, w, h, rows, padMain, nil)
+	return panelBox(styleTitleFocus.Render(title), true, w, h, rows, padMain, nil)
 }
 
 // ejectConfirm is the overlay eject opens: what pressing enter kills, and

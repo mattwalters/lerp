@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"slices"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -9,19 +10,22 @@ import (
 // keymap declares every binding once; the status bar hint and the ? overlay
 // both render from it, so the help can never drift from the keys.
 type keymap struct {
-	Attention  key.Binding
-	Work       key.Binding
-	NextPanel  key.Binding
-	PrevPanel  key.Binding
-	Up         key.Binding
-	Down       key.Binding
-	PageUp     key.Binding
-	PageDown   key.Binding
-	Top        key.Binding
-	Bottom     key.Binding
-	Detail     key.Binding
-	Close      key.Binding
-	Promote    key.Binding
+	Attention key.Binding
+	Work      key.Binding
+	NextPanel key.Binding
+	PrevPanel key.Binding
+	Up        key.Binding
+	Down      key.Binding
+	PageUp    key.Binding
+	PageDown  key.Binding
+	Top       key.Binding
+	Bottom    key.Binding
+	Detail    key.Binding
+	Close     key.Binding
+	Promote   key.Binding
+	// Visual starts the inbox's multi-select: lazygit's own key for a range
+	// selection, extended by the movement keys and fed straight to Promote.
+	Visual     key.Binding
 	Eject      key.Binding
 	ForceStart key.Binding
 	Sort       key.Binding
@@ -68,6 +72,7 @@ func newKeymap() keymap {
 		Detail:  key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open detail")),
 		Close:   key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "close detail")),
 		Promote: key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "promote")),
+		Visual:  key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "select a range")),
 		Eject:   key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "eject")),
 		// S, not s: a letter that means two different things depending on
 		// which panel has focus is worse than a letter nothing else uses.
@@ -109,7 +114,7 @@ func (k keymap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Attention, k.Work, k.NextPanel, k.PrevPanel,
 			k.Up, k.Down, k.PageUp, k.PageDown, k.Top, k.Bottom},
-		{k.Detail, k.Close, k.Promote, k.Eject, k.ForceStart, k.Sort, k.Project, k.Backlog,
+		{k.Detail, k.Close, k.Promote, k.Visual, k.Eject, k.ForceStart, k.Sort, k.Project, k.Backlog,
 			k.Search, k.Open, k.Raw, k.Help, k.Quit},
 	}
 }
@@ -128,6 +133,10 @@ type rowKeys struct {
 	projects   bool
 	canPromote bool
 	canEject   bool
+	// visual is whether the inbox has a live multi-select; selected is how
+	// many rows it spans — the line's "promote N" while one is on.
+	visual   bool
+	selected int
 }
 
 // panelHelp is the line a focused panel carries: the keys that act on the
@@ -152,13 +161,21 @@ func (k keymap) panelHelp(p panel, live rowKeys) []key.Binding {
 	var b []key.Binding
 	switch p {
 	case panelAttention:
+		// A selection is on: the six keys a row would otherwise advertise
+		// give way to the two that end it, the way a filter swaps / for esc.
+		if live.visual {
+			return []key.Binding{
+				short(k.Promote, fmt.Sprintf("promote %d", live.selected)),
+				short(k.Close, "drop"),
+			}
+		}
 		find := short(k.Search, "search")
 		if live.filtered {
 			find = short(k.ClearSearch, "clear")
 		}
 		b = []key.Binding{find}
 		if live.canPromote {
-			b = append([]key.Binding{k.Promote}, b...)
+			b = append([]key.Binding{k.Promote, short(k.Visual, "select")}, b...)
 		}
 		if live.hasURL {
 			b = append(b, short(k.Open, "open"))
