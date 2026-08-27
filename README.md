@@ -4,8 +4,8 @@
 
 ![The lerp board: an inbox of tickets waiting on a human, a work panel of queues and three lanes running coding agents beneath it, and a main pane that opens beside them to read a ticket or tail a lane's log](docs/demo.gif)
 
-<sub>Recorded from [`docs/demo.tape`](docs/demo.tape) against a fake board and
-a stub agent; `make demo` regenerates it.</sub>
+<sub>Recorded from [`docs/tapes/demo.tape`](docs/tapes/demo.tape) against a fake
+board and a stub agent; `make demo` regenerates it.</sub>
 
 Lerp is a small, reliable CLI, written in Go, that orchestrates
 software work through Linear. You put tickets on a board; lerp runs

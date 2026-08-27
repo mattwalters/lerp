@@ -1,0 +1,107 @@
+# lerp's README cast, and the site's demo video — one recording, three
+# formats. `make demo` renders the GIF (the README's committed asset);
+# `make casts` renders every tape in this directory, this one included, into
+# mp4/webm for the docs site. Neither writes anywhere a human would notice
+# until the render is under its size cap — see the Makefile.
+#
+# What is being recorded is the real TUI over the real reconciler
+# (internal/demo): only Linear and the coding agent are faked, so a change to
+# the panes or the loop that breaks this tape breaks it loudly. The
+# Wait+Screen lines below are that guarantee at the level of a single beat: a
+# keystroke that no longer drives the UI it was written against times out and
+# fails the render, where a Sleep only records the wrong thing and exits 0.
+# The remaining Sleeps are dwell time for a reader, not synchronization, and
+# carry margin.
+#
+# The loop polls, so nothing below is frame-exact. The stub agent replays a
+# ~15s log, which sets the rhythm: three lanes fill at once, run together,
+# and turn over roughly every fifteen seconds.
+Source docs/tapes/house.tape
+
+Output ".demo/out/demo.gif"
+Output ".demo/out/demo.mp4"
+Output ".demo/out/demo.webm"
+
+Type "lerp"
+Sleep 800ms
+Enter
+
+# The board opens on the inbox: what waits on a human, at full width, with
+# every column the table packs in — the leverage, the real Linear status, the
+# project, the priority. Below it the work panel, three lanes already picking
+# tickets up. The folded backlog line is the last thing the inbox draws, so
+# waiting for it is waiting for the whole first frame.
+Wait+Screen /waiting to enter the pipeline/
+Sleep 3s
+
+# Both lists own the screen until one is asked for a ticket. Down to a review
+# that has landed, then `enter` to read it: the main pane opens beside the
+# table with the ticket's body, its real Linear status and why it is sitting
+# with a human, and `esc` gives the width back.
+Down
+Sleep 2500ms
+Enter
+Sleep 4500ms
+Escape
+Sleep 2s
+
+# `2` focuses the work panel, which owns its screen the same way. A lane
+# picking a ticket up is the state word itself landing on a row — Down clamps
+# at the last row, so the count only has to be at least the distance, and
+# waiting for "running" here is waiting for that pickup rather than guessing
+# how long it takes.
+Type "2"
+Wait+Screen /running/
+Sleep 1s
+
+# Up to the first of the running lanes — Up clamps at the first row, so the
+# count only has to be at least the distance — and `enter` opens that lane's
+# log tail in the main pane, formatted from the agent's stream: thinking,
+# tool calls, the result. Down walks the other lanes through the pane the
+# same way.
+Up 6
+Sleep 2500ms
+Enter
+Sleep 4s
+Down
+Sleep 4s
+Down
+Sleep 4s
+
+# The first three runs exit while their logs are on screen, their tickets move
+# to "In Review", and the next three come off the queue into the lanes that
+# just freed.
+Sleep 5s
+
+# `1` back to the inbox, where the finished tickets have just landed under
+# "In Review — a run finished here". Waiting for the status name itself is
+# waiting for that landing rather than guessing how long the reconciler's
+# next pass takes.
+Type "1"
+Wait+Screen /In Review/
+Sleep 3s
+# Every run so far has landed here, which is the shape of the thing: the loop
+# works the board down, and what it finishes stacks up waiting on a human.
+Down
+Sleep 3s
+
+# What the panel has not been showing: the tickets that have not entered the
+# pipeline yet, folded to the summary line at the foot of the table. `B`
+# unfolds them in place — same panel, same table — and again folds them back,
+# which is the whole of the control.
+Type "B"
+Sleep 3500ms
+Type "B"
+Sleep 2s
+
+Type "q"
+Sleep 2s
+
+# Off the recording. Quitting is not instant — tui.Run waits out a
+# reconciliation pass already in flight, and the harness removes its throwaway
+# root behind that — and the exit status is written last of all. vhs tears the
+# terminal down when the tape ends, so a margin too thin turns a good render
+# into "the harness never reported a status". Frames after Hide are not
+# recorded, so this costs the cast nothing.
+Hide
+Sleep 4s

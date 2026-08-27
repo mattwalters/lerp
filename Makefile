@@ -180,63 +180,112 @@ example: ## Regenerate lerp.example.toml from internal/config/stock.toml
 	  || { rm -f '$(EXAMPLE_TMP)'; exit 1; }
 
 # --------------------------------------------------------------------------
-# The README cast
+# Casts: the README's GIF, and the docs site's videos
 # --------------------------------------------------------------------------
 
-# Where the demo harness builds to. The tape puts this dir on PATH so the cast
-# records `lerp`, not a path into a build directory.
+# Where the demo harness builds to. render-tape puts this dir on PATH so a
+# cast records `lerp`, not a path into a build directory.
 DEMO_BIN := .demo
-DEMO_TAPE := docs/demo.tape
-DEMO_GIF := docs/demo.gif
-# Where vhs writes before the cap is checked; see the demo recipe.
-DEMO_RENDER := $(DEMO_BIN)/demo.gif
-# Where the harness leaves its own exit status. The tape exports this path as
-# LERP_DEMO_EXIT; the two spellings have to agree.
+TAPES_DIR := docs/tapes
+# Where vhs writes before any cap is checked. Gitignored (see .gitignore's
+# /.demo/), and render-tape empties it before every render, so measuring what
+# lands here is an existence check too — a vhs that exited 0 without writing
+# anything cannot pass by measuring a previous render.
+DEMO_RENDER_DIR := $(DEMO_BIN)/out
+# Where the harness leaves its own exit status. render-tape exports this path
+# as LERP_DEMO_EXIT; the two spellings have to agree.
 DEMO_EXIT := $(DEMO_BIN)/exit
-# GIF bytes are not reproducible, so nothing here diffs them. The cap is the
-# only thing standing between "a couple of MB" and drift.
+DEMO_GIF := docs/demo.gif
+CASTS_DIR := docs/static/casts
+# GIF bytes are not reproducible, so nothing here diffs them. The caps are the
+# only thing standing between "a couple of MB" and drift. mp4/webm get a
+# smaller cap per file since a cast plays two of them; LERP-132 is where that
+# knob gets argued with.
 DEMO_MAX_BYTES := 3145728
+CAST_MAX_BYTES := 2097152
 
-.PHONY: demo
-demo: ## Re-record docs/demo.gif from docs/demo.tape (needs vhs)
+# Renders docs/tapes/$(TAPE).tape into $(DEMO_RENDER_DIR), gated on the
+# harness's own exit status — nothing about file size, which the caller
+# checks per output file afterward, since a GIF and an mp4 carry different
+# caps. Shared by `demo` and `casts` through recursive make ($(MAKE)
+# render-tape TAPE=name) so the two renders cannot drift apart: the same
+# command builds the harness, runs vhs with PATH and LERP_DEMO_EXIT set on
+# its own environment (which is what lets a sourced house.tape's `Require
+# lerp` see it, and retires the tape's old habit of exporting both into the
+# recorded shell by hand), and reads back the harness's own exit status.
+# Not meant to be run directly.
+.PHONY: render-tape
+render-tape:
+	@test -n "$(TAPE)" || { echo 'render-tape: TAPE is required'; exit 1; }
 	@command -v vhs >/dev/null || { \
-	  echo 'demo: vhs is not installed — see https://github.com/charmbracelet/vhs'; \
+	  echo 'render-tape: vhs is not installed — see https://github.com/charmbracelet/vhs'; \
 	  exit 1; }
 	go build -o $(DEMO_BIN)/lerp ./internal/demo
-# Rendered into the scratch dir and moved into place only once it is under the
-# cap. -o overrides the tape's own Output; the scratch dir is gitignored and
-# never holds a GIF beforehand, so measuring it is an existence check too — a
-# vhs that exited 0 without writing anything cannot pass by measuring the
-# committed file. And a render that fails, or one that comes back oversized,
-# leaves the committed asset exactly where it was — the rm is for the leftover
-# an oversized render puts there, which a later silent vhs could measure.
-	rm -f $(DEMO_RENDER) $(DEMO_EXIT)
-	vhs -o $(DEMO_RENDER) $(DEMO_TAPE)
+	rm -rf $(DEMO_RENDER_DIR)
+	mkdir -p $(DEMO_RENDER_DIR)
+	rm -f $(DEMO_EXIT)
+	PATH="$(CURDIR)/$(DEMO_BIN):$$PATH" LERP_DEMO_EXIT="$(CURDIR)/$(DEMO_EXIT)" \
+	  vhs $(TAPES_DIR)/$(TAPE).tape
 # The harness runs inside the terminal vhs is recording, so its exit code
 # reaches bash and stops there: vhs exits 0 whether the board opened or the
-# harness died at startup, and a cast of a bash error still renders under the
-# cap. This is that exit code, carried out of the recording in a file the tape
-# points the harness at. Read before the size check so a failed run is named
-# as a failed run rather than as an oversized GIF — and so it never reaches
-# the mv. Removed above, so a previous render's status cannot answer for this
-# one; missing means the harness never got far enough to write it, which is a
-# failure too.
-# No status at all is its own message: the file is missing for more reasons
-# than a crash, and every one of them is a render nobody should keep.
+# harness died at startup, and a cast of a bash error still renders under any
+# cap. This is that exit code, carried out of the recording in a file the
+# Makefile points the harness at above. Removed before the render, so a
+# previous tape's status cannot answer for this one; missing means the
+# harness never got far enough to write it, which is a failure too.
 	@status=$$(cat $(DEMO_EXIT) 2>/dev/null); \
 	  if [ -z "$$status" ]; then \
-	    printf 'demo: the harness never reported an exit status — it crashed, it never started (is lerp on the PATH the tape exports?), or it was still shutting down when the tape ended (left at %s)\n' \
-	      '$(DEMO_RENDER)'; exit 1; \
+	    printf 'render-tape: %s — the harness never reported an exit status — it crashed, it never started (is lerp on PATH?), or it was still shutting down when the tape ended\n' \
+	      '$(TAPE)'; exit 1; \
 	  elif [ "$$status" != 0 ]; then \
-	    printf 'demo: the harness exited %s — the cast would be a recording of that, not of lerp (left at %s)\n' \
-	      "$$status" '$(DEMO_RENDER)'; exit 1; \
+	    printf 'render-tape: %s — the harness exited %s, a recording of that and not of lerp\n' \
+	      '$(TAPE)' "$$status"; exit 1; \
 	  fi
-	@size=$$(wc -c < $(DEMO_RENDER) | tr -d ' '); \
+
+.PHONY: demo
+demo: ## Re-record docs/demo.gif from docs/tapes/demo.tape (needs vhs)
+	$(MAKE) render-tape TAPE=demo
+# Moved into place only once it is under the cap, so a render that fails or
+# comes back oversized leaves the committed asset exactly where it was.
+	@size=$$(wc -c < $(DEMO_RENDER_DIR)/demo.gif | tr -d ' '); \
 	  test "$$size" -le $(DEMO_MAX_BYTES) || { \
 	    printf 'demo: %s came back %s bytes, over the %s cap — shorten the tape or drop the framerate (left at %s)\n' \
-	      '$(DEMO_GIF)' "$$size" '$(DEMO_MAX_BYTES)' '$(DEMO_RENDER)'; exit 1; }; \
-	  mv $(DEMO_RENDER) $(DEMO_GIF) && \
+	      '$(DEMO_GIF)' "$$size" '$(DEMO_MAX_BYTES)' '$(DEMO_RENDER_DIR)/demo.gif'; exit 1; }; \
+	  mv $(DEMO_RENDER_DIR)/demo.gif $(DEMO_GIF) && \
 	  printf 'rendered %s (%s bytes)\n' '$(DEMO_GIF)' "$$size"
+
+.PHONY: casts
+casts: ## Render every tape under docs/tapes/ into docs/static/casts/ (needs vhs)
+	@mkdir -p $(CASTS_DIR)
+	@for f in $(TAPES_DIR)/*.tape; do \
+	  name=$$(basename "$$f" .tape); \
+	  test "$$name" = "house" && continue; \
+	  $(MAKE) render-tape TAPE="$$name" || exit 1; \
+	  for out in $(DEMO_RENDER_DIR)/$$name.mp4 $(DEMO_RENDER_DIR)/$$name.webm; do \
+	    test -e "$$out" || continue; \
+	    size=$$(wc -c < "$$out" | tr -d ' '); \
+	    test "$$size" -le $(CAST_MAX_BYTES) || { \
+	      printf 'casts: %s came back %s bytes, over the %s cap\n' \
+	        "$$out" "$$size" '$(CAST_MAX_BYTES)'; exit 1; }; \
+	    cp "$$out" $(CASTS_DIR)/; \
+	  done; \
+	  printf 'rendered %s\n' "$$name"; \
+	done
+# The rot check house.tape's Require and demo.tape's Wait+Screen lines do not
+# cover: a `{{< cast >}}` shortcode (docs/layouts/_shortcodes/cast.html)
+# names its webm/mp4 by path from the site root, and every one of those paths
+# must resolve to a file this run just staged — a page embedding a cast no
+# tape renders is otherwise a silently blank frame on the published site.
+# Nothing to find until a page calls the shortcode; it is here so it exists
+# before one does.
+	@missing=0; \
+	  for ref in $$(grep -rhoE '(webm|mp4)="casts/[^"]+"' docs/content 2>/dev/null \
+	                | sed -E 's/.*"casts\/([^"]+)"/\1/'); do \
+	    test -e "$(CASTS_DIR)/$$ref" || { \
+	      echo "casts: docs/content references casts/$$ref, which no tape rendered"; \
+	      missing=1; }; \
+	  done; \
+	  test "$$missing" -eq 0
 
 # --------------------------------------------------------------------------
 # The docs site

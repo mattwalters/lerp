@@ -1,10 +1,11 @@
-# The README cast, re-recorded to prove the tape still drives lerp.
+# Every cast under docs/tapes/, re-recorded to prove the tapes still drive
+# lerp.
 #
 # Its own workflow rather than a job in ci.yml because the thing that makes it
 # cheap is a paths filter, and a filter belongs to the workflow's trigger, not
 # to a job: added to ci.yml it would gate the gate, and an ordinary code PR
 # would run no tests at all. So the demo moves here, where a filter can say
-# "only when the demo's own inputs changed" without taking `make check` with
+# "only when the casts' own inputs changed" without taking `make check` with
 # it.
 #
 # What this does not weaken: `internal/demo` is a normal package, built by `go
@@ -16,15 +17,15 @@
 name: demo
 
 on:
-  # A PR that touches the demo's own inputs. The tape is the script,
-  # `internal/demo` is the harness it drives, and the Makefile holds both the
-  # recipe and the size cap — a change to any of them can break the render, so
-  # each of them pays for the render here. This file is in the list for the
-  # same reason docs.yml lists itself: a change to the job should be tested by
-  # the job.
+  # A PR that touches the casts' own inputs. Every tape under docs/tapes/ is
+  # the script, `internal/demo` is the harness they drive, and the Makefile
+  # holds both the render recipe and the size caps — a change to any of them
+  # can break a render, so each of them pays for the render here. This file
+  # is in the list for the same reason docs.yml lists itself: a change to the
+  # job should be tested by the job.
   pull_request:
     paths:
-      - "docs/demo.tape"
+      - "docs/tapes/**"
       - "internal/demo/**"
       - "Makefile"
       - ".github/workflows/demo.yml"
@@ -47,17 +48,21 @@ permissions:
   contents: read
 
 jobs:
-  # The cast rots silently: a tape whose keystrokes no longer drive the UI
-  # they were written against still renders, it just renders the wrong thing.
-  # This job re-records it and checks that the render worked — nothing diffs
-  # the bytes, because GIF output is not reproducible enough to compare and
-  # what is worth knowing is only whether the script still drives lerp.
+  # A cast rots silently: a tape whose keystrokes no longer drive the UI they
+  # were written against still renders, it just renders the wrong thing. This
+  # job re-records every tape and checks that each render worked — nothing
+  # diffs the bytes, because video output is not reproducible enough to
+  # compare and what is worth knowing is only whether the script still drives
+  # lerp.
   #
   # vhs's own exit code cannot answer that: the harness runs inside the
   # terminal being recorded, so a harness that dies at startup is a recording
-  # of a bash error that vhs writes out happily and exits 0 on. `make demo`
-  # gates on the status the harness itself reports (see the demo recipe), so
-  # this step stays the one command a local re-record runs.
+  # of a bash error that vhs writes out happily and exits 0 on. `make casts`
+  # gates on the status the harness itself reports and on each tape's own
+  # Wait+Screen lines (see the Makefile's render-tape), so this step stays
+  # the one command a local re-record runs — the same target that also
+  # covers the README's tape, so a PR touching any tape's inputs proves the
+  # whole set rather than just one cast.
   demo:
     runs-on: ubuntu-latest
     steps:
@@ -66,9 +71,9 @@ jobs:
         with:
           go-version-file: go.mod
       # With no `path`, the action installs vhs and its ttyd/ffmpeg
-      # dependencies and stops there, so the render itself stays `make demo` —
-      # the same command a local re-record runs. Installing all three is the
-      # slowest thing in this repository's CI, which is why it now happens on
-      # the runs above and not on every push.
+      # dependencies and stops there, so the render itself stays `make
+      # casts` — the same command a local re-record runs. Installing all
+      # three is the slowest thing in this repository's CI, which is why it
+      # now happens on the runs above and not on every push.
       - uses: charmbracelet/vhs-action@v2
-      - run: make demo
+      - run: make casts
