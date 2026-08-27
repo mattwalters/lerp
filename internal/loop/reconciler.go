@@ -107,12 +107,13 @@ const (
 	// item clears.
 	EventAttention EventType = "attention"
 	// EventTicked reports that Tick has finished emitting everything this
-	// pass will ever emit. It is always last: Tick sends it after fill and
-	// attention have both returned, over the same channel every other event
-	// this pass produced, so channel order — not wall-clock order in some
-	// other goroutine — is what guarantees it arrives after them. A
-	// subscriber that needs to know "nothing more is coming this pass"
-	// (the TUI splash, see model.go) has to learn that from this event
+	// pass will ever emit — fill and attention having both returned, or
+	// (LERP-44) the pass having been skipped outright because a rate limit
+	// is still in effect. It is always last, over the same channel every
+	// other event this pass produced, so channel order — not wall-clock
+	// order in some other goroutine — is what guarantees it arrives after
+	// them. A subscriber that needs to know "nothing more is coming this
+	// pass" (the TUI splash, see model.go) has to learn that from this event
 	// rather than from Tick's own return: Tick returning and this event
 	// being read off the channel are two different goroutines racing a
 	// buffered channel, and the goroutine that only has to return wins that
@@ -343,6 +344,15 @@ type Reconciler struct {
 	// and ejected it needs no lock. Nothing durable lives here (SCOPE.md
 	// invariant 1): losing it to a restart costs one full re-list.
 	boards map[string]*teamBoard
+
+	// resumeAt is when a pass may next ask Linear anything, set by fail when
+	// an error chain carries *linear.RateLimitError. It has its own lock
+	// rather than sharing mu: fail runs under mu already held when it is
+	// reporting ejectLane's own failures (a filesystem error today, never
+	// this one, but fail has no way to know that) — sharing mu would
+	// deadlock that call the moment it ever did carry one.
+	rateLimitMu sync.Mutex
+	resumeAt    time.Time
 }
 
 // teamBoard is the attention pass's cached reading of one team: the issues
@@ -472,13 +482,67 @@ func (r *Reconciler) Run(ctx context.Context) error {
 // agent. A failed pass is reported as an EventError, never returned: the loop
 // repairs drift, and a pass that could not finish is just drift for the next
 // one. EventTicked always closes the pass, whichever branch above ran or
-// failed to.
+// failed to — a paused pass included.
+//
+// A pass still paused from a rate limit skips reconcileEvidence, fill and
+// attention entirely — every Linear call a pass could make, not just the
+// read that failed — and reports how much longer it will wait instead. That
+// is the check here rather than in Run: Run's own ticker is one caller of
+// Tick, but production paces it from the TUI instead (tui.Options.Interval
+// drives Engine.Tick directly, no daemon behind it), so the gate has to sit
+// where every caller passes through, not in the loop only one of them uses.
+//
+// The pause has no ceiling of its own: Linear's own Retry-After is trusted
+// whole, however long, rather than clamped — a cap is retry-strategy
+// machinery the ticket asked not to grow. Promote, Eject and ForceStart are
+// still live through a long one; only the pass that starts, adopts and
+// reaps stands down.
 func (r *Reconciler) Tick(ctx context.Context) {
+	if wait, ok := r.paused(); ok {
+		r.emit(Event{Type: EventError, Err: fmt.Errorf("linear: rate limited, resuming in %s", wait.Round(time.Second))})
+		r.emit(Event{Type: EventTicked})
+		return
+	}
 	if r.reconcileEvidence(ctx) {
 		r.fill(ctx)
 	}
 	r.attention(ctx)
 	r.emit(Event{Type: EventTicked})
+}
+
+// paused reports whether a rate limit set by fail is still in effect. It
+// clears resumeAt once the deadline has passed, so a pass need only check
+// this — no jitter, no retry count, the one deadline the ticket asked for.
+func (r *Reconciler) paused() (time.Duration, bool) {
+	r.rateLimitMu.Lock()
+	defer r.rateLimitMu.Unlock()
+	if r.resumeAt.IsZero() {
+		return 0, false
+	}
+	if wait := time.Until(r.resumeAt); wait > 0 {
+		return wait, true
+	}
+	r.resumeAt = time.Time{}
+	return 0, false
+}
+
+// pauseFor extends resumeAt to at least the later of d (Linear's own
+// Retry-After) and the next interval, so a 429 that carried no usable delay
+// still costs one interval's pause rather than none — the polling this
+// replaces would have waited that long anyway. It only ever extends: fill
+// and attention can each fail with their own RateLimitError in the same
+// pass, and a header-less second one must not cut a first one's long wait
+// down to one interval.
+func (r *Reconciler) pauseFor(d time.Duration) {
+	if d < r.o.Interval {
+		d = r.o.Interval
+	}
+	until := time.Now().Add(d)
+	r.rateLimitMu.Lock()
+	if until.After(r.resumeAt) {
+		r.resumeAt = until
+	}
+	r.rateLimitMu.Unlock()
 }
 
 // AttentionDefinition is the operator-facing one-line description of the
@@ -598,15 +662,16 @@ func (r *Reconciler) refreshBoard(ctx context.Context, team, viewerID string) (*
 		return r.relistBoard(ctx, team, viewerID)
 	}
 	// Counted before the read, so failures count too. A delta that keeps
-	// failing — a 429, a gateway error, a query Linear stopped accepting —
-	// would otherwise never let the counter reach ResyncEvery, and the
-	// re-list that is this board's only other source would never run again:
-	// the inbox would freeze at whatever the cold start saw, for the life of
-	// the process, while the pass reissued the same failing read every 12
-	// seconds. Escalating to the two listings after ResyncEvery attempts is
-	// the fallback that leaves, and they are cheaper than the delta that is
-	// failing: filtered by state and assignee, where it is filtered by
-	// neither.
+	// failing — a gateway error, a query Linear stopped accepting, or
+	// (paced far slower, on its own resumeAt rather than every interval —
+	// see Tick) a 429 — would otherwise never let the counter reach
+	// ResyncEvery, and the re-list that is this board's only other source
+	// would never run again: the inbox would freeze at whatever the cold
+	// start saw, for the life of the process, while the pass kept reissuing
+	// the same failing read. Escalating to the two listings after
+	// ResyncEvery attempts is the fallback that leaves, and they are
+	// cheaper than the delta that is failing: filtered by state and
+	// assignee, where it is filtered by neither.
 	board.deltas++
 	// Asked from behind the cursor, never from the cursor itself: see
 	// deltaOverlap. The answers are deduped by issue id, so a row this
@@ -1910,5 +1975,9 @@ func (r *Reconciler) emit(ev Event) {
 }
 
 func (r *Reconciler) fail(err error) {
+	var rl *linear.RateLimitError
+	if errors.As(err, &rl) {
+		r.pauseFor(rl.RetryAfter)
+	}
 	r.emit(Event{Type: EventError, Err: err})
 }
