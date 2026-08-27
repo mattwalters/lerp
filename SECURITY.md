@@ -99,31 +99,54 @@ defaults does any of this for you.
 ### What lerp itself does
 
 Lerp's own footprint is small: it speaks exactly one external API
-(Linear), listens on no port, and runs no daemon. That last one cuts
-both ways, and it is worth knowing before you need it: quitting lerp
-does not stop a run. Agents are their own process groups and keep
-working, and the next lerp adopts them. To stop one, eject it with `e`
-— or kill its process group. Values interpolated into a runner
-`command` are shell-quoted, so nothing in a ticket can alter the
-command you configured — the injection surface is the ticket the agent
-reads, not the command line lerp builds.
+(Linear), listens on no port while the board runs, and runs no daemon.
+The one port exception is setup time: `lerp login` opens a loopback socket
+on `127.0.0.1` on an ephemeral port for the few seconds an OAuth redirect
+takes, and closes it before anything runs.
 
-Two details of that footprint are worth stating plainly, because both
-cut the other way:
+That lack of a daemon cuts both ways, and it is worth knowing before you
+need it: quitting lerp does not stop a run. Agents are their own process
+groups and keep working, and the next lerp adopts them. To stop one, eject
+it with `e` — or kill its process group. Values interpolated into a runner
+`command` are shell-quoted, so nothing in a ticket can alter the command
+you configured — the injection surface is the ticket the agent reads, not
+the command line lerp builds.
 
-- **Agents inherit lerp's environment, minus one variable.**
+Three details of that footprint are worth stating plainly:
+
+- **Where credentials live and how they are scoped.**
+  `lerp login` authenticates via PKCE OAuth with `actor=user`, requesting
+  `read,write` scopes (never `admin`). It stores an auto-renewing token
+  pair in your user config directory (`token.json` under
+  `~/.config/lerp/` on Linux, `~/Library/Application Support/lerp/` on
+  macOS) with mode `0600` inside a `0700` directory. Stored tokens live
+  outside the clone (SCOPE invariant 1): deleting the file removes local
+  access, and losing it costs a re-login, never correctness. Revocation
+  lives in `lerp logout` and in Linear's settings under **Authorized
+  applications**.
+
+  OAuth tokens are scoped and expiring where personal API keys
+  (`LINEAR_API_KEY`) are neither — a personal key carries full workspace
+  access unless manually restricted at creation, and does not expire —
+  which is why `lerp login` is the recommended path. OAuth also carries
+  Linear's 5,000 requests/hour rate limit versus 2,500/hour for personal
+  API keys.
+
+- **Agents inherit lerp's environment, minus its credentials.**
   `provision`, `dispose` and every runner are started with lerp's own
   environment plus a few `LERP_` variables — with `LINEAR_API_KEY`
-  removed. That key is lerp's own credential and a personal API key is
-  write access to your entire Linear workspace, not just the served
-  team; the agent's Linear access is meant to arrive through its own
-  authorization, under its own identity (configured via its CLI's Linear
-  MCP server), so lerp does not hand its key down, and it never writes it to
-  disk. Read that as hygiene, not containment: it closes the accidental
-  path — a `provision` script that logs its environment into the lane
-  log — and not a determined one. An agent running as you can still read
-  the shell profile you exported the key in (such as `~/.zprofile` or
-  `~/.bashrc`), or on Linux, lerp's own `/proc/<pid>/environ`.
+  removed, and stored OAuth tokens never passed down. Lerp's Linear
+  access is its own — a personal API key is write access to your entire
+  Linear workspace, not just the served team; the agent's Linear access
+  is meant to arrive through its own authorization, under its own
+  identity (configured via its CLI's Linear MCP server), so lerp does
+  not hand credentials down: it drops `LINEAR_API_KEY` once read and
+  never writes it to disk. Read that as hygiene, not containment: it
+  closes the accidental path — a `provision` script that logs its
+  environment into the lane log — and not a determined one. An agent
+  running as you can still read the shell profile you exported the key
+  in (such as `~/.zprofile` or `~/.bashrc`), or on Linux, lerp's own
+  `/proc/<pid>/environ`.
 
   An exported `LINEAR_API_KEY` reaching agents through login shells is
   precisely that environment leak, not a supported access path: on a machine
@@ -160,9 +183,10 @@ supported, fixes land there, and `go install ...@latest` gets them.
 **What is in scope:** anything that lets a party who can neither place
 a ticket in a served status nor write text a served ticket carries
 influence what an agent does, anything that escalates beyond the grants
-documented above, any path that puts the Linear API key somewhere this
-page does not say it goes, and anything in a ticket that escapes the
-TUI's sanitizing and reaches your terminal as escape sequences.
+documented above, any path that puts Linear credentials (stored token or
+API key) somewhere this page does not say they go, and anything in a
+ticket that escapes the TUI's sanitizing and reaches your terminal as
+escape sequences.
 
 **What is not:** the trust model on this page. An agent doing damage
 because someone who could write into a served ticket — its description

@@ -170,9 +170,9 @@ standard error to the lane log, and receives these environment variables:
 
 They inherit the rest of lerp's environment, with one variable removed:
 `LINEAR_API_KEY` is lerp's own credential and does not go down to a
-provision, dispose or runner command. A command that needs Linear must carry
-its own credential. See [SECURITY.md](SECURITY.md) for what that does and
-does not buy you.
+provision, dispose or runner command (and stored OAuth tokens are never
+passed). A command that needs Linear must carry its own credential. See
+[SECURITY.md](SECURITY.md) for what that does and does not buy you.
 
 If provisioning fails, lerp leaves the ticket untouched and does not start
 the runner. A disposal failure is recorded in the lane log but never keeps a

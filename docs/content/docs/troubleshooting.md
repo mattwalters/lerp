@@ -87,6 +87,9 @@ Three places, depending on what you want to read:
 `GOBIN`; an install.sh install is removed by deleting `lerp` from
 `$HOME/.local/bin` (or the `--bin-dir` you chose).
 
+Run `lerp logout` (or delete the stored token file in your user config
+directory) to revoke and remove stored Linear credentials.
+
 To clean up local state, delete `.lerp/` once all agents have stopped:
 
 ```sh

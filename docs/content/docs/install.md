@@ -48,13 +48,20 @@ the tag rather than from whatever was lying around on somebody's laptop.
 ## What else you need
 
 Lerp speaks exactly one external API: Linear, and every command needs a
-credential for it. Today that is a personal API key in the `LINEAR_API_KEY`
-environment variable — create one in Linear's settings and export it.
-A personal API key defaults to your full workspace access, but Linear can
-restrict one at creation to specific teams and to permission scopes — so
-give lerp a key restricted to the teams it serves; a dedicated Linear user
-account for automation adds harder isolation on top. Beyond that key lerp
-itself needs only Git, but the stock pipeline shells out to `claude`
+credential for it. The standard way is `lerp login`: run it once, and it
+opens your browser to sign in to Linear via OAuth (requesting `read,write`
+scopes, never `admin`), storing an auto-renewing token in your user config
+directory (`0600`). OAuth also benefits from Linear's higher rate limit:
+5,000 requests/hour compared to 2,500/hour for personal API keys.
+
+For headless environments and CI where a browser is unavailable,
+`LINEAR_API_KEY` is supported as a fallback: create a personal API key in
+Linear's settings and export it. A personal key defaults to full workspace
+access unless restricted at creation to specific teams and permission scopes.
+When `LINEAR_API_KEY` is set, it takes precedence over any stored OAuth token.
+
+Beyond Linear credentials, lerp itself needs only Git, but the stock pipeline
+shells out to `claude`
 ([Claude Code](https://docs.claude.com/en/docs/claude-code)) as its runner
 and its implementing prompt opens pull requests with `gh`, so install both
 before the [quickstart](quickstart.md) reaches its first run.
@@ -67,7 +74,7 @@ machine; that page is the whole trust model in one place.
 ## Lerp needs the status field
 
 The other prerequisite lerp cannot satisfy from here, in the same class as
-the API key above. On the teams lerp serves, the status field is lerp's: a
+the credentials above. On the teams lerp serves, the status field is lerp's: a
 queue *is* a status, and a stage finishes by moving the ticket to the next
 one. Lerp is not privileged — it keeps whatever move it finds, because that
 is how an agent escalates or refuses — so an automation that moves a ticket
