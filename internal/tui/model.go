@@ -528,10 +528,6 @@ type model struct {
 	frame    int
 	inFlight bool
 	lastPass time.Time
-	// heard is whether anything has come back from the loop yet — any event
-	// at all, which is the moment the board stops having nothing to draw. It
-	// is what the opening splash gives way to; see splashing.
-	heard bool
 	// boardEmptySettled is the empty-board wordmark's own debounce (LERP-145,
 	// rule 3): true only once a fully-landed pass has reported nothing on
 	// either panel. apply demotes it the instant either panel's own event
@@ -541,6 +537,16 @@ type model struct {
 	// empty a beat before the other, which is the board mid-report rather
 	// than the board actually empty. See boardEmpty and contentEmpty.
 	boardEmptySettled bool
+	// heardQueues and heardAttention are whether each of the first pass's two
+	// independent reads — the queue listing and the inbox — has reported
+	// back, success or failure. Both are what the opening splash gives way
+	// to; see splashing. Either landing alone would draw the board with the
+	// other half still zero, which is the flicker LERP-144 replaces — so a
+	// pass-level EventError, which cannot say which of the two reads broke,
+	// settles both at once rather than leaving the splash to spin on a read
+	// that may never come.
+	heardQueues    bool
+	heardAttention bool
 
 	lastErr string
 	// notes are this interval's transient reports — run outcomes, a
@@ -1522,7 +1528,6 @@ func openURL(rawURL string) tea.Cmd {
 // cleaned here, once, so the views below can stay plain string building.
 func (m *model) apply(ev loop.Event) {
 	ev = cleanEvent(ev)
-	m.heard = true
 	if ev.Err != nil {
 		// Pass errors interpolate Linear's own status and team names.
 		m.lastErr = clean(ev.Err.Error())
@@ -1593,12 +1598,21 @@ func (m *model) apply(ev loop.Event) {
 			}
 			m.settle(ev)
 			changed = panelWork
+		} else {
+			// A pass-level failure: one of the first pass's two reads broke
+			// before it could report its own event, and the event carries no
+			// word of which. Showing the failure beats spinning on a read
+			// that will not come, so it settles both.
+			m.heardQueues = true
+			m.heardAttention = true
 		}
 	case loop.EventQueues:
+		m.heardQueues = true
 		m.queues = ev.Queues
 		m.queuesSeen = true
 		changed = panelWork
 	case loop.EventAttention:
+		m.heardAttention = true
 		m.attention = ev.Attention
 		m.attentionSeen = true
 		// The filter is a choice about the list that was on screen. When the
@@ -2454,18 +2468,21 @@ func (m *model) layout() {
 	m.vp.SetYOffset(m.vp.YOffset)
 }
 
-// splashing reports the state the splash stands in for: lerp is up, the
-// first pass is out, and nothing has come back from it — no event, and no
-// pass finished. Either one ends it, and neither un-happens, which is what
-// keeps the splash the first screen and never a later one.
+// splashing reports the state the splash stands in for: lerp is up, and the
+// first pass's two reads — the queue listing and the inbox — have not both
+// reported back yet. Neither bit un-happens, which is what keeps the splash
+// the first screen and never a later one; a mid-session pass that fails or
+// comes back partial leaves whatever the board already shows (see apply),
+// exactly as before.
 //
-// An event is the board having something to draw, whatever it was about: a
-// lane, a queue, the inbox. A failed pass is an event too — its error goes
-// to the status bar, where it can be read, rather than under a spinner that
-// would go on saying "working" about a pass that is over. And a pass that
-// finished having said nothing at all has nothing left to wait for.
+// Waiting on both, rather than either, is the fix: cutting to the board on
+// the first of the two to land drew it with the other half still zero for
+// one frame — wordmark, then a half-populated board, then the whole of
+// it — which is the flicker the splash exists to hide. A pass-level error
+// settles both at once instead of leaving the splash to spin on a read that
+// may never come; see apply's EventError case.
 func (m model) splashing() bool {
-	return !m.heard && m.lastPass.IsZero()
+	return !m.heardQueues || !m.heardAttention
 }
 
 func (m model) View() string {

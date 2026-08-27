@@ -84,22 +84,44 @@ func TestTheSplashSpins(t *testing.T) {
 	}
 }
 
-// The board replaces the splash the moment the first pass reports — whatever
-// it reported. And it never gives the screen back: a later slow pass is the
-// status bar's to report, over a board that has something on it.
-func TestTheBoardTakesTheScreenTheMomentThePassReports(t *testing.T) {
-	m, _, _ := newTestModel(t, 2)
-	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+// The two reads that populate the first pass fail independently, so either
+// one landing alone must not cut to the board — that would draw it with the
+// other half still zero, which is the flicker the splash exists to hide.
+func TestASingleReadDoesNotEndTheSplash(t *testing.T) {
+	for _, ev := range []loop.Event{
+		{Type: loop.EventAttention, Attention: []loop.AttentionItem{{Ticket: "LERP-1", Title: "one"}}},
+		{Type: loop.EventQueues},
+	} {
+		m, _, _ := newTestModel(t, 2)
+		m = update(t, m, eventMsg{ev: ev})
+		if !hasMark(m.View()) {
+			t.Fatalf("%s alone ended the splash:\n%s", ev.Type, m.View())
+		}
+	}
+}
+
+// The board replaces the splash the moment both of the first pass's reads
+// have reported, whatever order they arrive in — the loop runs them
+// sequentially, but nothing here may depend on which finishes first. And it
+// never gives the screen back: a later slow pass is the status bar's to
+// report, over a board that has something on it.
+func TestTheBoardTakesTheScreenWhenBothReadsReport(t *testing.T) {
+	attention := loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
 		{Ticket: "LERP-1", Title: "one"},
-	}}})
+	}}
+	queues := loop.Event{Type: loop.EventQueues}
+
+	m, _, _ := newTestModel(t, 2)
+	m = update(t, m, eventMsg{ev: attention})
+	m = update(t, m, eventMsg{ev: queues})
 	view := m.View()
 	if hasMark(view) {
-		t.Fatalf("the splash outlived the pass that reported the inbox:\n%s", view)
+		t.Fatalf("the splash outlived both reads landing:\n%s", view)
 	}
 	if !strings.Contains(view, "LERP-1") {
 		t.Fatalf("the board did not take the screen:\n%s", view)
 	}
-	// The real cold start: the loop reports the inbox from inside the first
+	// The real cold start: the loop reports both reads from inside the first
 	// pass, so the first board frame anyone ever sees still has that pass in
 	// flight — and the status bar, which the splash was covering until this
 	// frame, has to pick the heartbeat up where the spinner left off.
@@ -118,12 +140,34 @@ func TestTheBoardTakesTheScreenTheMomentThePassReports(t *testing.T) {
 	}
 }
 
+// The same as above with the reads in the other order: the fix is at the
+// "have both landed" seam, not at which one happened to arrive first.
+func TestTheBoardTakesTheScreenWhenBothReadsReportInTheOtherOrder(t *testing.T) {
+	m, _, _ := newTestModel(t, 2)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues}})
+	if !hasMark(m.View()) {
+		t.Fatalf("queues alone ended the splash:\n%s", m.View())
+	}
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-1", Title: "one"},
+	}}})
+	view := m.View()
+	if hasMark(view) {
+		t.Fatalf("the splash outlived both reads landing:\n%s", view)
+	}
+	if !strings.Contains(view, "LERP-1") {
+		t.Fatalf("the board did not take the screen:\n%s", view)
+	}
+}
+
 // A pass that says nothing at all — no queues configured, an empty board —
-// still ends the splash: there is nothing left to wait for, and the panels'
-// own empty states are what have something to say about it.
+// still ends the splash once both reads have reported: there is nothing
+// left to wait for, and the panels' own empty states are what have
+// something to say about it.
 func TestAPassThatReportsNothingStillEndsTheSplash(t *testing.T) {
 	m, _, _ := newTestModel(t, 2)
-	m = update(t, m, tickedMsg{})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention}})
 	if hasMark(m.View()) {
 		t.Fatalf("the splash spins on past a finished pass:\n%s", m.View())
 	}
@@ -142,6 +186,18 @@ func TestAFailedFirstPassSaysSoRatherThanSpinning(t *testing.T) {
 	}
 	if !strings.Contains(view, "no route to host") {
 		t.Fatalf("the failure never reached the status bar:\n%s", view)
+	}
+}
+
+// A lane's run failing is not one of the first pass's two reads, so it must
+// not settle the splash on its own — only a pass-level error (Lane 0) or the
+// two reads themselves may.
+func TestALaneFailureDoesNotEndTheSplash(t *testing.T) {
+	m, _, _ := newTestModel(t, 2)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventError, Lane: 1, Ticket: "LERP-2",
+		Err: errors.New("exit status 1")}})
+	if !hasMark(m.View()) {
+		t.Fatalf("a lane failure ended the splash:\n%s", m.View())
 	}
 }
 

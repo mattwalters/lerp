@@ -241,13 +241,16 @@ func update(t *testing.T, m model, msg tea.Msg) model {
 	return next.(model)
 }
 
-// pastTheSplash lands the first pass on a fresh model. The opening splash
-// owns the whole screen until one reports (see splashing), so a test about
-// what the board draws starts by getting past it — with the pass reporting
-// nothing, which is the weaker of the two ways out and leaves the panels on
-// their own empty states.
+// pastTheSplash lands the first pass on a fresh model, the weakest of the
+// ways out: the two reads are marked heard directly, without going through
+// apply(), so nothing else about the model moves — m.queues and m.attention
+// stay nil, attentionSeen stays false. A test about what the board draws
+// once something has actually arrived sends its own eventMsg for that; this
+// helper is only for getting off the splash first.
 func pastTheSplash(t *testing.T, m model) model {
 	t.Helper()
+	m.heardQueues = true
+	m.heardAttention = true
 	m = update(t, m, tickedMsg{})
 	if m.splashing() {
 		t.Fatal("the splash still owns the screen after the first pass landed")
@@ -332,6 +335,7 @@ func TestWorkPanelShowsTheRunLifecycle(t *testing.T) {
 // file alone.
 func TestExitedEventReportsASkippedHop(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	note := `LERP-42 left "Implementing" for "In Progress" during its run — ` +
 		`the on_success hop to "Agent Review" was skipped.`
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventExited, RunID: "r1", Lane: 1,
@@ -382,6 +386,7 @@ func TestSkippedHopNoteStillCarriesCost(t *testing.T) {
 
 func TestProvisioningTicketIsOccupied(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventProvisioning, RunID: "r1", Lane: 1,
 		TicketID: "id-9", Ticket: "LERP-9", Queue: "plan", StartedAt: time.Now()}})
 	view := m.View()
@@ -394,6 +399,7 @@ func TestProvisioningTicketIsOccupied(t *testing.T) {
 
 func TestAdoptedRowShowsTrueRunAge(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAdopted, RunID: "r1", Lane: 1,
 		TicketID: "id-1", Queue: "plan", StartedAt: time.Now().Add(-2 * time.Hour)}})
 	view := m.View()
@@ -571,6 +577,7 @@ func TestWorkPanelShowsWhatRunsNext(t *testing.T) {
 // second picture of the machine's slots.
 func TestWorkPanelPutsRunningAtTheTopOfItsQueue(t *testing.T) {
 	m, _, _ := newTestModel(t, 3)
+	m = pastTheSplash(t, m)
 	resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	m = resized.(model)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
@@ -618,6 +625,7 @@ func TestTheLensFollowsTheRowNotThePanel(t *testing.T) {
 	writeLog(t, path, []byte("agent at work\n"))
 
 	m, _, _ := newTestModel(t, 2)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("2"))
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
 		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
@@ -667,6 +675,7 @@ func TestTheLensFollowsTheRowNotThePanel(t *testing.T) {
 // of its own, and it selects like any other row.
 func TestAdoptedRunAboveCapacityIsOnThePanel(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("2"))
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
 		{Team: "LERP", Name: "plan", Status: "Planning", Tickets: []loop.QueueTicket{
@@ -694,6 +703,7 @@ func TestAdoptedRunAboveCapacityIsOnThePanel(t *testing.T) {
 // row, and it clears at the next pass like every other transient note.
 func TestExitOutcomeLandsOnTheStatusBar(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 		TicketID: "id-42", Ticket: "LERP-42", Queue: "implement", LogPath: "/dev/null"}})
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventExited, RunID: "r1", Lane: 1,
@@ -711,6 +721,7 @@ func TestExitOutcomeLandsOnTheStatusBar(t *testing.T) {
 // to push the status bar off screen.
 func TestWorkPanelCapsToItsPanel(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	tickets := make([]loop.QueueTicket, 60)
 	for i := range tickets {
 		tickets[i] = loop.QueueTicket{ID: fmt.Sprintf("t%d", i),
@@ -1049,6 +1060,7 @@ func TestTheHelpOverlayIsNotWrittenOverByALiveLog(t *testing.T) {
 	writeLog(t, logPath, body)
 
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
 	m = resized.(model)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
@@ -1242,6 +1254,7 @@ func TestReadingTheHelpDoesNotDisturbTheLogBehindIt(t *testing.T) {
 	writeLog(t, logPath, body)
 
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	resized, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = resized.(model)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
@@ -1549,6 +1562,7 @@ func TestBacklogExpandsInPlace(t *testing.T) {
 // what is in this panel, and follows the fold.
 func TestTheInboxCountIsWhatIsBlockedOnYou(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: board()})
 
@@ -1573,6 +1587,7 @@ func TestTheInboxCountIsWhatIsBlockedOnYou(t *testing.T) {
 // fetched, not a second class of row.
 func TestExpandedBacklogRowsTakeTheKeys(t *testing.T) {
 	m, _, _, promoter := newPromoteTestModel(t, 1, []string{"Planning", "Implementing"})
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: board()})
 	m = browseBacklog(t, m)
@@ -1757,6 +1772,7 @@ func TestAPassDoesNotResetTheFold(t *testing.T) {
 // unstick behind a key nothing tells them to press.
 func TestAClaimedTicketInIntakeIsNeverFolded(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
 		{Ticket: "LERP-5", TicketID: "id-5", Title: "Dragged back to Todo", Status: "Todo",
@@ -2032,6 +2048,7 @@ func TestInboxTitleIsTheLastColumn(t *testing.T) {
 // note on the status bar. Cancelling touches nothing.
 func TestPromotePicker(t *testing.T) {
 	m, _, _, promoter := newPromoteTestModel(t, 1, []string{"Planning", "Implementing"})
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
 		{Ticket: "LERP-4", TicketID: "loose", Title: "Nobody's routed this", Status: "Backlog"},
@@ -2721,6 +2738,7 @@ func TestInboxTakesTheRoomAndFocusDoesNotMoveIt(t *testing.T) {
 // ticket is about, asserted directly.
 func TestTheInboxStartsWithTheScreen(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
 	m = resized.(model)
 	m = update(t, m, keyMsg("1"))
@@ -2750,6 +2768,7 @@ func TestTheInboxStartsWithTheScreen(t *testing.T) {
 // it, and neither key is a flip-flop.
 func TestEnterOpensTheDetailAndEscCloses(t *testing.T) {
 	m, _, reader := newReadingTestModel(t)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: threeWaiting()})
 	if g := m.geometry(); g.mainH != 0 {
@@ -2824,6 +2843,7 @@ func TestWorkStartsWithTheListOnScreen(t *testing.T) {
 	writeLog(t, log, []byte("agent one says hello\n"))
 
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 		TicketID: "id-1", Ticket: "LERP-1", Queue: "plan", LogPath: log}})
 
@@ -2898,6 +2918,7 @@ func TestThePickerAndTheOverlayForceThePane(t *testing.T) {
 // inbox costs no Linear calls at all. enter is what asks for one.
 func TestAClosedPaneReadsNothing(t *testing.T) {
 	m, _, reader := newReadingTestModel(t)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: threeWaiting()})
 	for _, k := range []string{"j", "j", "k"} {
@@ -3024,6 +3045,7 @@ func TestScrollingAClosedPaneIsInert(t *testing.T) {
 	writeLog(t, log, []byte(strings.Repeat("a line of agent output\n", 200)))
 
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("2"))
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 		TicketID: "id-1", Ticket: "LERP-1", Queue: "plan", LogPath: log}})
@@ -3069,6 +3091,7 @@ func TestTheReopenedPaneIsCurrent(t *testing.T) {
 	writeLog(t, two, []byte("agent two says hello\n"))
 
 	m, _, _ := newTestModel(t, 2)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("2"))
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 		TicketID: "id-1", Ticket: "LERP-1", Queue: "plan", LogPath: one}})
@@ -3490,6 +3513,7 @@ func TestTheStatusBarKeepsTheCountOverTheHint(t *testing.T) {
 // open — an advertised key that does nothing is how the operator finds out.
 func TestAPanelWithNoRoomForThePickerDoesNotOfferIt(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	resized, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 30})
 	m = resized.(model)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
@@ -3591,6 +3615,7 @@ func TestAClosedPaneIsNotRefreshed(t *testing.T) {
 	writeLog(t, log, []byte("agent one says hello\n"))
 
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("2"))
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 		TicketID: "id-1", Ticket: "LERP-1", Queue: "plan", LogPath: log}})
@@ -3734,6 +3759,7 @@ func TestFocusedPanelCarriesItsKeys(t *testing.T) {
 // display cycles, whose state the title already carries in words, go first.
 func TestTheKeyLineKeepsTheKeysThatAct(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: fullBoard()})
 	// With the detail pane open, which is the narrower of the two panels a
@@ -3859,6 +3885,7 @@ func TestAShortPanelKeepsItsRowsOverItsKeys(t *testing.T) {
 	seen := map[bool]bool{}
 	for h := 8; h <= 14; h++ {
 		m, _, _ := newTestModel(t, 1)
+		m = pastTheSplash(t, m)
 		resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: h})
 		m = update(t, resized.(model), keyMsg("1"))
 		var items []loop.AttentionItem
@@ -3953,6 +3980,7 @@ func TestTheFocusedPanelBuysTheLineItsKeysCost(t *testing.T) {
 // offering the keys it would swallow. The status bar carries the picker's.
 func TestThePickerTakesTheKeyLineWithIt(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: threeWaiting()})
 	if view := m.View(); !strings.Contains(view, "p promote") {
@@ -4196,6 +4224,7 @@ func TestStackedLayoutKeepsBothPanelsReadable(t *testing.T) {
 // contents read as a glitch rather than as a rule.
 func TestWideMainPaneFillsTheBody(t *testing.T) {
 	m, _, _ := newTestModel(t, 3)
+	m = pastTheSplash(t, m)
 	resized, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
 	m = resized.(model)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
@@ -4394,6 +4423,7 @@ func TestTickChainDrivesTheLoop(t *testing.T) {
 
 func TestEventSubscription(t *testing.T) {
 	m, _, events := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	events <- loop.Event{Type: loop.EventStarted, Lane: 1, Ticket: "LERP-7", Queue: "plan"}
 	msg := m.waitEvent()()
 	ev, ok := msg.(eventMsg)
@@ -4414,6 +4444,7 @@ func TestSelectingARunningTicketTailsItsLog(t *testing.T) {
 	writeLog(t, two, []byte("agent two says hello\n"))
 
 	m, _, _ := newTestModel(t, 2)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("2"))
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 		TicketID: "id-1", Ticket: "LERP-1", Queue: "plan", LogPath: one}})
@@ -4453,6 +4484,7 @@ func TestRunLogRendersActivityAndTogglesToRaw(t *testing.T) {
 	writeLog(t, path, []byte(claudeStream))
 
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("2"))
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 		Ticket: "LERP-1", Queue: "plan", LogPath: path}})
@@ -4501,6 +4533,7 @@ func TestLogSurvivesAFocusDetour(t *testing.T) {
 	writeLog(t, one, []byte("first line\n"))
 
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 		Ticket: "LERP-1", Queue: "plan", LogPath: one}})
 	m = update(t, m, keyMsg("2"))
@@ -5325,6 +5358,7 @@ func TestHostileLogOutputCannotRepaintTheScreen(t *testing.T) {
 	writeLog(t, path, []byte("\x1b[31mcolored output\x1b[0m\n"+hostile+"\n"))
 
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("2"))
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 		Ticket: "LERP-1", Queue: "plan", LogPath: path}})
@@ -5377,6 +5411,7 @@ func TestScrollPositionSurvivesADetourThroughAPendingRow(t *testing.T) {
 	writeLog(t, logPath, body)
 
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
 		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
 			{ID: "t1", Identifier: "LERP-1", Title: "running", Assigned: true},
@@ -5636,6 +5671,7 @@ func TestAStaleNoteDoesNotHoldTheLineAgainstTheAlarm(t *testing.T) {
 // status bar was chosen as the home for how a run ended.
 func TestBothOutcomesInOneIntervalReachTheStatusBar(t *testing.T) {
 	m, _, _ := newTestModel(t, 2)
+	m = pastTheSplash(t, m)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 		TicketID: "t1", Ticket: "LERP-1", Queue: "implement"}})
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r2", Lane: 2,
@@ -5679,6 +5715,7 @@ func TestAPassErrorDoesNotHideHowARunEnded(t *testing.T) {
 // one from the same queue belongs under the first one's header.
 func TestOffBoardRunsFromOneQueueShareAHeader(t *testing.T) {
 	m, _, _ := newTestModel(t, 2)
+	m = pastTheSplash(t, m)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
 		{Team: "LERP", Name: "plan", Status: "Planning"},
 	}}})
@@ -5715,6 +5752,7 @@ func TestEjectConfirmAndResult(t *testing.T) {
 		Ticket: "LERP-42", Lane: 1, Workspace: "/tmp/lerp/lane-1", Resume: "agent --resume 'sid-42'",
 	}}
 	m, _ := newEjectTestModel(t, 1, ejector)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("2")) // eject is the work panel's key
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 		TicketID: "id-42", Ticket: "LERP-42", Queue: "implement", LogPath: "/dev/null"}})
@@ -5886,6 +5924,7 @@ func TestRunningRowShowsHowTheRunIsGoing(t *testing.T) {
 		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
 			{ID: "id-1", Identifier: "LERP-1", Title: "one", Assigned: true}}},
 	}}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention}})
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 		TicketID: "id-1", Ticket: "LERP-1", Queue: "implement", LogPath: path,
 		StartedAt: time.Now().Add(-90 * time.Second)}})
@@ -5938,6 +5977,7 @@ func TestProvisioningRowClaimsNoReading(t *testing.T) {
 	// has a path pointing at nothing, which is the case that matters.
 	path := filepath.Join(t.TempDir(), "not-yet.log")
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventProvisioning, RunID: "r1", Lane: 1,
 		TicketID: "id-9", Ticket: "LERP-9", Queue: "plan", LogPath: path, StartedAt: time.Now()}})
 	m = update(t, m, pollMsg{})
@@ -6111,6 +6151,7 @@ func TestEjectIsNotOfferedWithoutASession(t *testing.T) {
 func TestEjectSaysWhyARunnerCannotResume(t *testing.T) {
 	ejector := &recordingEjector{resumable: []string{"implement"}}
 	m, _ := newEjectTestModel(t, 1, ejector)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("2")) // eject is the work panel's key
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 		TicketID: "id-9", Ticket: "LERP-9", Queue: "plan", LogPath: "/dev/null"}})
@@ -6471,6 +6512,7 @@ func TestForceStartKeySendsTheSelectedTicket(t *testing.T) {
 			{ID: "t2", Identifier: "LERP-2", Title: "the one to force", Eligible: true},
 		}},
 	}}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention}})
 	m = update(t, m, keyMsg("2"))
 	m = update(t, m, keyMsg("down"))
 	if r := m.selectedWork(); r == nil || r.ticketID != "t2" {
@@ -6501,6 +6543,7 @@ func TestForceStartRefusalLandsOnTheStatusBar(t *testing.T) {
 			{ID: "t2", Identifier: "LERP-2", Title: "gated work", BlockedBy: []string{"LERP-1"}},
 		}},
 	}}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention}})
 	m = update(t, m, keyMsg("2"))
 	m, cmd := updateCmd(t, m, keyMsg("S"))
 	if cmd == nil {
@@ -6549,6 +6592,7 @@ func TestForceStartIsInTheHelpOverlay(t *testing.T) {
 // an adopted run from a bigger lerp arrives in.
 func TestCapacityLabelReportsRunsAboveTheLimit(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 		TicketID: "t1", Ticket: "LERP-1", Queue: "implement", LogPath: "/dev/null"}})
 	if got := m.capacityLabel(); got != "1/1 running" {
@@ -6609,6 +6653,7 @@ func TestCapacityLabelStaysFullWhileAForcedRunHoldsTheBudget(t *testing.T) {
 func TestTabPutsTheKeysInTheOpenPane(t *testing.T) {
 	m, _, reader := newReadingTestModel(t)
 	m = update(t, m, eventMsg{ev: threeWaiting()})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues}})
 	m = openMain(t, m)
 	m = selectAndRead(t, m, 0, linear.IssueDetail{Body: "the body of the first"}, nil, reader)
 	if m.mainFocused() {
@@ -6659,6 +6704,7 @@ func TestTabPutsTheKeysInTheOpenPane(t *testing.T) {
 func TestShiftTabWalksTheCycleBackwards(t *testing.T) {
 	m, _, reader := newReadingTestModel(t)
 	m = update(t, m, eventMsg{ev: threeWaiting()})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues}})
 	m = openMain(t, m)
 	m = selectAndRead(t, m, 0, linear.IssueDetail{Body: "the body of the first"}, nil, reader)
 
@@ -6733,6 +6779,7 @@ func TestTheFocusedPaneScrollsALineAtATime(t *testing.T) {
 
 	m, _, _ := newTestModel(t, 2)
 	m = update(t, m, keyMsg("2"))
+	m = pastTheSplash(t, m)
 	for _, ev := range []loop.Event{
 		{Type: loop.EventStarted, RunID: "r1", Lane: 1, TicketID: "id-1", Ticket: "LERP-1", Queue: "plan", LogPath: log},
 		{Type: loop.EventStarted, RunID: "r2", Lane: 2, TicketID: "id-2", Ticket: "LERP-2", Queue: "plan", LogPath: log},
@@ -6784,6 +6831,7 @@ func TestTheFocusedPaneScrollsALineAtATime(t *testing.T) {
 func TestClosingThePaneHandsTheKeysBack(t *testing.T) {
 	m, _, reader := newReadingTestModel(t)
 	m = update(t, m, eventMsg{ev: threeWaiting()})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues}})
 	m = openMain(t, m)
 	m = selectAndRead(t, m, 0, linear.IssueDetail{Body: "the body of the first"}, nil, reader)
 	m = update(t, m, keyMsg("tab"))
@@ -6819,6 +6867,7 @@ func TestClosingThePaneHandsTheKeysBack(t *testing.T) {
 func TestTheOverlayBorrowsThePaneNotItsKeys(t *testing.T) {
 	m, _, reader := newReadingTestModel(t)
 	m = update(t, m, eventMsg{ev: threeWaiting()})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues}})
 	m = openMain(t, m)
 	m = selectAndRead(t, m, 0, linear.IssueDetail{Body: "the body of the first"}, nil, reader)
 	m = update(t, m, keyMsg("tab"))
@@ -6887,6 +6936,7 @@ func TestTabSkipsAPaneWithNoRowUnderIt(t *testing.T) {
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
 		{Team: "LERP", Name: "implement", Status: "Todo"},
 	}}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention}})
 	m = update(t, m, keyMsg("2"))
 	m = openMain(t, m)
 	if m.hasRow(panelWork) {
@@ -6941,6 +6991,7 @@ func TestTabSkipsAPaneWithNoRowUnderIt(t *testing.T) {
 func TestTabBehindTheOverlayStillMeansTheNextPanel(t *testing.T) {
 	m, _, reader := newReadingTestModel(t)
 	m = update(t, m, eventMsg{ev: threeWaiting()})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues}})
 	m = openMain(t, m)
 	m = selectAndRead(t, m, 0, linear.IssueDetail{Body: "the body of the first"}, nil, reader)
 
@@ -6964,6 +7015,7 @@ func TestTabBehindTheOverlayStillMeansTheNextPanel(t *testing.T) {
 func TestTheBarNamesTheWayOutOfThePane(t *testing.T) {
 	m, _, reader := newReadingTestModel(t)
 	m = update(t, m, eventMsg{ev: threeWaiting()})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues}})
 	m = openMain(t, m)
 	m = selectAndRead(t, m, 0, linear.IssueDetail{Body: "the body of the first"}, nil, reader)
 	if got := m.statusBar(); !strings.Contains(got, "esc close") || strings.Contains(got, "tab next") {
