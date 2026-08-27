@@ -2916,32 +2916,33 @@ func (m *model) oneGroup() bool {
 	return true
 }
 
-// inboxContentEmpty is the raw, un-debounced reading behind inboxEmpty: the
-// inbox has reported (attentionSeen), and holds no rows waiting on the human
-// under the current fold (len(m.unfolded()) == 0).
+// inboxContentEmpty is the raw, un-debounced reading behind inboxEmptySettled:
+// the inbox has reported (attentionSeen), and holds no rows waiting on the
+// human when folded (len(filterAttention(m.attention, "", "", false)) == 0).
+// Settle is anchored to the folded reading of the data so browsing the backlog
+// (m.backlogOpen) does not demote the settled flag while the underlying data
+// has not changed.
 func (m *model) inboxContentEmpty() bool {
-	return m.attentionSeen && len(m.unfolded()) == 0
+	return m.attentionSeen && len(filterAttention(m.attention, "", "", false)) == 0
 }
 
 // inboxEmpty is the discrete condition that licenses the empty-inbox
-// wordmark (LERP-145, LERP-151): the main pane is closed and no search box is
-// open, so there is a candidate centre space and nothing else is already
-// drawn where the mark would go, and the inbox's content has settled empty
-// (see inboxEmptySettled) rather than merely reading empty on this one
-// frame. mainOpen, searching, search, and unfolded backlog rows are read live
-// and not debounced — opening a pane, typing a search query, or pressing B to
-// unfold the backlog are deliberate, instant actions, so rule 3's "opening a
-// pane... hides it" is exactly as immediate as it reads.
+// wordmark (LERP-145, LERP-151): the main pane is closed, no search box is
+// open, no project filter is active, so there is a candidate centre space and
+// nothing else is already drawn where the mark would go, and the inbox's
+// content has settled empty (see inboxEmptySettled) rather than merely reading
+// empty on this one frame. mainOpen, searching, search, project, and unfolded
+// backlog rows are read live and not debounced — opening a pane, typing a search
+// query, cycling a project filter, or pressing B to unfold the backlog are
+// deliberate, instant actions, so rule 3's "opening a pane... hides it" is
+// exactly as immediate as it reads.
 //
-// m.search == "", not just !m.searching: closing the box keeps the query
-// (see closeSearch), so a query typed while the inbox was still non-empty
-// can outlive the box itself — and until the next pass clears it (the
-// EventAttention handler's own care about not clearing it out from under a
-// still-open box), the panel still owes that filter its key hint. The
-// wordmark must not draw over a footer line the panel still has a reason to
-// show.
+// m.search == "" and m.project == "": an active search query or project scope
+// narrows the inbox to a filtered view. When filtered, the panel displays the
+// filter note (e.g. "nothing in <project>" or "no match for /<query>") and
+// hints to clear the filter; the wordmark is reserved for the unfiltered inbox.
 func (m *model) inboxEmpty() bool {
-	return !m.mainOpen() && !m.searching && m.search == "" && m.inboxContentEmpty() && m.inboxEmptySettled
+	return !m.mainOpen() && !m.searching && m.search == "" && m.project == "" && len(m.unfolded()) == 0 && m.inboxEmptySettled
 }
 
 // attentionState is what the inbox panel is doing: loading, empty, filtered, or showing rows.
