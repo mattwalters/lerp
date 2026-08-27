@@ -57,10 +57,11 @@ Sleep 2500ms
 
 # `enter` opens that lane's log tail in the main pane, formatted from the
 # agent's stream: thinking, tool calls, the result. The footer's `r raw`
-# hint is only drawn while a lane's log pane is open — panelBox's own "o
-# open" line otherwise — so waiting for it is waiting for the pane to have
-# actually opened on a running lane rather than guessing how long that
-# takes. Down walks the other lanes through the pane the same way.
+# hint (keymap.panelHelp, drawn by model.panelBody) only appears while a
+# lane's log pane is open — "o open" otherwise — so waiting for it is
+# waiting for the pane to have actually opened on a running lane rather
+# than guessing how long that takes. Down walks the other lanes through
+# the pane the same way.
 Enter
 Wait+Screen /r raw/
 Sleep 4s
@@ -77,11 +78,14 @@ Sleep 5s
 # `1` back to the inbox, where the finished tickets have just landed under
 # "In Review — a run finished here". The inbox already seeds two tickets at
 # "In Review" before any run finishes, so "In Review" alone is on screen
-# from the first frame and proves nothing here — the wait instead names one
-# of the three tickets that were running above, immediately followed on its
-# own row by the status it lands in, which only that ticket's own move can
-# produce. [ \t] rather than \s so the match cannot stretch across a line
-# break onto some other row's "In Review".
+# from the first frame and proves nothing here — the wait instead names
+# DEMO-24/26/27, the three tickets running above (internal/demo/main.go's
+# board, in identifier order — linear.Fake.ListIssues sorts by identifier,
+# and DEMO-22 is blocked, so these three are always the first wave),
+# immediately followed on their own row by the status it lands in, which
+# only that ticket's own move can produce. [ \t] rather than \s so the
+# match cannot stretch across a line break onto some other row's
+# "In Review".
 Type "1"
 Wait+Screen /DEMO-2[467][ \t]+\S+[ \t]+In Review/
 Sleep 3s
