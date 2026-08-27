@@ -50,7 +50,7 @@ func TestClaudeDecodesTheStream(t *testing.T) {
 		{"tool result carrying blocks",
 			`{"type":"user","message":{"content":[{"type":"tool_result","content":[{"type":"text","text":"{\"comments\":[]}"}]}]}}`,
 			Event{Kind: KindToolResult, Text: `{"comments":[]}`}},
-		{"result", claudeResult, Event{Kind: KindResult, Text: "success · 3 turns · 7.3s"}},
+		{"result", claudeResult, Event{Kind: KindResult, Text: "success · 3 turns · 7.3s", Cost: 0.08}},
 		{"failed result",
 			`{"type":"result","subtype":"error_max_turns","is_error":true,"num_turns":40}`,
 			Event{Kind: KindResult, Text: "error_max_turns · 40 turns", IsError: true}},

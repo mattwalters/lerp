@@ -5842,6 +5842,47 @@ func TestSpendReadsInTheColumnsARowHas(t *testing.T) {
 	}
 }
 
+// The dollar figure is a fact about the whole run, drawn beside the elapsed
+// clock the same way the token count is — and, like the token count, absent
+// entirely for a run whose runner never states one.
+func TestRunningRowCarriesWhatTheRunHasCost(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	r := workRow{ticket: "LERP-1", title: "one", lane: 1, state: laneRunning,
+		since: time.Now().Add(-90 * time.Second), heard: time.Now(), cost: 0.42}
+
+	first := ansi.Strip(m.workRowLines(r, false, 80)[0])
+	if !strings.Contains(first, "1m30s") || !strings.Contains(first, "$0.42") {
+		t.Fatalf("the running row does not say how long or how much it cost: %q", first)
+	}
+
+	// A run whose runner reports no cost at all — codex, today — says
+	// nothing in dollars: no gap, no zero, nothing to misread as a real
+	// figure.
+	r.cost = 0
+	if got := ansi.Strip(m.workRowLines(r, false, 80)[0]); strings.Contains(got, "$") {
+		t.Fatalf("a run with no reported cost still shows a dollar figure: %q", got)
+	}
+}
+
+func TestCostGraduatesPrecisionLikeTokenCount(t *testing.T) {
+	for _, tc := range []struct {
+		c    float64
+		want string
+	}{
+		{0.08, "$0.08"},
+		{9.99, "$9.99"},
+		{10, "$10.0"},
+		{12.3, "$12.3"},
+		{99.9, "$99.9"},
+		{100, "$100"},
+		{134, "$134"},
+	} {
+		if got := costLabel(tc.c); got != tc.want {
+			t.Errorf("costLabel(%v) = %q, want %q", tc.c, got, tc.want)
+		}
+	}
+}
+
 // A log that exists but has not reached a tool call keeps its second line:
 // the sparkline is still a reading, and an agent that has only been thinking
 // has done nothing to name. The line goes only when there is no log at all.

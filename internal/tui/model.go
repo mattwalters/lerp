@@ -316,8 +316,11 @@ type workRow struct {
 	// tool and target are the last tool call the log carried, empty until it
 	// carries one; tokens is what the run has spent, summed over the whole
 	// log — history included, so an adopted run reports the run's total.
+	// cost is the same sum in dollars, zero for a runner whose stream never
+	// states one.
 	tool, target string
 	tokens       int
+	cost         float64
 	// The pickup gate, for a ticket that is not running: where it sits in
 	// its queue's order, and what holds it there.
 	pos, of   int
@@ -1914,6 +1917,7 @@ func (m *model) workGroups() []workGroup {
 			row.heard, row.rate = ln.pulse.heard, ln.pulse.window()
 			row.tool, row.target = ln.pulse.tool, ln.pulse.target
 			row.tokens = ln.pulse.tokens
+			row.cost = ln.pulse.cost
 		}
 		// A running ticket normally still sits in its queue's listing,
 		// claimed and ineligible: that listing is the group, and it carries
@@ -3332,6 +3336,9 @@ func (m model) workRowLines(r workRow, selected bool, width int) []string {
 	if r.tokens > 0 {
 		totals += " · " + tokenCount(r.tokens)
 	}
+	if r.cost > 0 {
+		totals += " · " + costLabel(r.cost)
+	}
 	right := state + " " + styleFaint.Render(totals)
 	lines := []string{splitRow(marker(selected)+dot+" "+name, right, width)}
 	if reading := runLine(r, width); reading != "" {
@@ -3455,6 +3462,26 @@ func tokenCount(n int) string {
 	// The unit stays on: a bare number beside a clock reads as another
 	// duration.
 	return s + " tok"
+}
+
+// costLabel renders what a run has spent in dollars, graduating precision
+// the way tokenCount does: cents are the reading under ten dollars, and stop
+// being one above it. The $ already tells it apart from the clock beside it,
+// so unlike tokenCount this carries no trailing unit.
+//
+// It is only ever called with what a runner's own stream reported — never a
+// figure lerp derived from tokens — so there is no per-vendor cutover here to
+// get wrong: a vendor that reports nothing never reaches this function at
+// all (r.cost stays zero, see workRowLines).
+func costLabel(c float64) string {
+	switch {
+	case c >= 100:
+		return fmt.Sprintf("$%.0f", c)
+	case c >= 10:
+		return fmt.Sprintf("$%.1f", c)
+	default:
+		return fmt.Sprintf("$%.2f", c)
+	}
 }
 
 // mainPanel is the lens: the promote picker while it is open, the ? overlay,
