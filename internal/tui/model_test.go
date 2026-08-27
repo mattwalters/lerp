@@ -875,6 +875,7 @@ func TestInboxRowsCarryTheRealStatus(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: board()})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues}})
 	m = browseBacklog(t, m)
 
 	panel := m.attentionPanel(96, 14)
@@ -1708,6 +1709,7 @@ func TestAFoldedBacklogDoesNotClaimTheGoalState(t *testing.T) {
 		{Ticket: "LERP-2", TicketID: "id-2", Title: "Someday", Status: "Backlog",
 			Relevance: loop.StatusBacklog},
 	}}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues}})
 
 	panel := m.attentionPanel(96, 14)
 	if !strings.Contains(panel, "nothing is waiting on you") {
@@ -4560,6 +4562,7 @@ func TestLogSurvivesAFocusDetour(t *testing.T) {
 
 func TestErrorsSurfaceOnTheStatusBar(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventError, Err: errors.New("linear is down")}})
 	if !strings.Contains(m.View(), "linear is down") {
 		t.Fatalf("loop error not surfaced:\n%s", m.View())
@@ -5695,6 +5698,7 @@ func TestBothOutcomesInOneIntervalReachTheStatusBar(t *testing.T) {
 // other surface that would have carried it.
 func TestAPassErrorDoesNotHideHowARunEnded(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 		TicketID: "t1", Ticket: "LERP-1", Queue: "implement"}})
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventExited, RunID: "r1", Lane: 1,
@@ -5848,6 +5852,7 @@ func TestEjectKeyOnlyOnAResumableRun(t *testing.T) {
 		Team: "LERP", Name: "implement", Status: "Implementing",
 		Tickets: []loop.QueueTicket{{ID: "id-7", Identifier: "LERP-7", Title: "waiting", Eligible: true}},
 	}}}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention}})
 	if strings.Contains(m.View(), "e eject") {
 		t.Fatalf("the work panel offers eject on a ticket that is not running:\n%s", m.View())
 	}

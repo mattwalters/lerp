@@ -541,10 +541,10 @@ type model struct {
 	// independent reads — the queue listing and the inbox — has reported
 	// back, success or failure. Both are what the opening splash gives way
 	// to; see splashing. Either landing alone would draw the board with the
-	// other half still zero, which is the flicker LERP-144 replaces — so a
-	// pass-level EventError, which cannot say which of the two reads broke,
-	// settles both at once rather than leaving the splash to spin on a read
-	// that may never come.
+	// other half still zero, which is the flicker LERP-144 replaces, so a
+	// pass-level error does not force either bit on its own — see apply's
+	// EventError case and Update's tickedMsg case for where a read that
+	// never reports falls back to it instead.
 	heardQueues    bool
 	heardAttention bool
 
@@ -672,6 +672,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// cleared by the next pass starting rather than by this one ending.
 		if !m.passHadErr {
 			m.lastErr = ""
+		}
+		// Tick has now fully returned, so every event this pass could ever
+		// emit is already queued — whichever of the two reads still has not
+		// reported by now never will this one. Show whatever arrived rather
+		// than spin on a read that is not coming; see apply's EventError
+		// case for why this cannot happen any earlier.
+		if m.splashing() {
+			m.heardQueues = true
+			m.heardAttention = true
 		}
 		m.inFlight = false
 		m.lastPass = time.Now()
@@ -1598,14 +1607,14 @@ func (m *model) apply(ev loop.Event) {
 			}
 			m.settle(ev)
 			changed = panelWork
-		} else {
-			// A pass-level failure: one of the first pass's two reads broke
-			// before it could report its own event, and the event carries no
-			// word of which. Showing the failure beats spinning on a read
-			// that will not come, so it settles both.
-			m.heardQueues = true
-			m.heardAttention = true
 		}
+		// A pass-level failure (Lane 0) touches neither heard bit here: the
+		// event carries no word of which read broke, and fill emits its own
+		// EventQueues right behind a partial-listing error regardless — so
+		// settling on sight would drop the splash before that real event, or
+		// before attention's own answer, lands. tickedMsg is where an
+		// unresolved read falls back to the error once the pass that could
+		// still answer it has genuinely finished.
 	case loop.EventQueues:
 		m.heardQueues = true
 		m.queues = ev.Queues
@@ -2479,8 +2488,14 @@ func (m *model) layout() {
 // the first of the two to land drew it with the other half still zero for
 // one frame — wordmark, then a half-populated board, then the whole of
 // it — which is the flicker the splash exists to hide. A pass-level error
-// settles both at once instead of leaving the splash to spin on a read that
-// may never come; see apply's EventError case.
+// is not, by itself, enough to say either read is done: fill emits its own
+// EventQueues right behind a partial-listing error regardless, so settling
+// on the error alone would cut to the board before that real event, or
+// before attention's own answer, lands — the very half-populated frame
+// this exists to prevent. Only once Tick has fully returned (tickedMsg) is
+// every event this pass could emit already queued, so that is where an
+// unresolved read falls back to the error rather than spin on one that is
+// not coming; see Update's tickedMsg case.
 func (m model) splashing() bool {
 	return !m.heardQueues || !m.heardAttention
 }

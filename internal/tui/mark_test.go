@@ -174,15 +174,21 @@ func TestAPassThatReportsNothingStillEndsTheSplash(t *testing.T) {
 }
 
 // A spinner that never stops is the blank screen with extra motion. When the
-// first pass fails rather than lands, the splash gives way and the error
-// goes where errors go — the status bar's transient line.
+// first pass fails rather than lands, the splash gives way once the pass
+// itself is over (tickedMsg) and the error goes where errors go — the status
+// bar's transient line. It cannot give way on the error alone: see
+// TestAQueuesErrorDoesNotPreemptAttentionStillPending for why.
 func TestAFailedFirstPassSaysSoRatherThanSpinning(t *testing.T) {
 	m, _, _ := newTestModel(t, 2)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventError,
 		Err: errors.New("attention: read viewer: no route to host")}})
+	if !hasMark(m.View()) {
+		t.Fatalf("the error alone took the screen from the splash:\n%s", m.View())
+	}
+	m = update(t, m, tickedMsg{})
 	view := m.View()
 	if hasMark(view) {
-		t.Fatalf("a failed first pass is still spinning:\n%s", view)
+		t.Fatalf("a failed first pass is still spinning once it has ended:\n%s", view)
 	}
 	if !strings.Contains(view, "no route to host") {
 		t.Fatalf("the failure never reached the status bar:\n%s", view)
@@ -190,14 +196,67 @@ func TestAFailedFirstPassSaysSoRatherThanSpinning(t *testing.T) {
 }
 
 // A lane's run failing is not one of the first pass's two reads, so it must
-// not settle the splash on its own — only a pass-level error (Lane 0) or the
-// two reads themselves may.
+// not settle the splash on its own — the pass itself is still in flight, and
+// nothing here says either read is done.
 func TestALaneFailureDoesNotEndTheSplash(t *testing.T) {
 	m, _, _ := newTestModel(t, 2)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventError, Lane: 1, Ticket: "LERP-2",
 		Err: errors.New("exit status 1")}})
 	if !hasMark(m.View()) {
 		t.Fatalf("a lane failure ended the splash:\n%s", m.View())
+	}
+}
+
+// fill emits its own EventQueues right behind a partial-listing error,
+// regardless of whether that error means anything about the pass as a whole
+// (reconciler.go's fill). An error from one read must not preempt the other
+// read that has not answered yet — success or failure — or the board draws
+// with that other half still zero, which is the flicker this whole ticket
+// removes. Only the pass ending, once both reads have had their turn, may
+// fall back to the error.
+func TestAQueuesErrorDoesNotPreemptAttentionStillPending(t *testing.T) {
+	m, _, _ := newTestModel(t, 2)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventError,
+		Err: errors.New("list queues: no route to host")}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues}})
+	if !hasMark(m.View()) {
+		t.Fatalf("the queues error ended the splash before attention reported:\n%s", m.View())
+	}
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-1", Title: "one"},
+	}}})
+	view := m.View()
+	if hasMark(view) {
+		t.Fatalf("attention landing for real did not end the splash:\n%s", view)
+	}
+	if !strings.Contains(view, "LERP-1") {
+		t.Fatalf("the board did not take the screen:\n%s", view)
+	}
+}
+
+// The mirror of the above: if attention also fails this pass, nothing more
+// is coming for either read, and only then — once Tick has actually
+// returned — does the splash give way to the error.
+func TestAPassEndingWithBothReadsUnresolvedFallsBackToTheError(t *testing.T) {
+	m, _, _ := newTestModel(t, 2)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventError,
+		Err: errors.New("list queues: no route to host")}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues}})
+	if !hasMark(m.View()) {
+		t.Fatal("the first queues error ended the splash early")
+	}
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventError,
+		Err: errors.New("attention: read viewer: no route to host")}})
+	if !hasMark(m.View()) {
+		t.Fatal("attention's error ended the splash before the pass was over")
+	}
+	m = update(t, m, tickedMsg{})
+	view := m.View()
+	if hasMark(view) {
+		t.Fatalf("the splash spins on past a finished, failed pass:\n%s", view)
+	}
+	if !strings.Contains(view, "no route to host") {
+		t.Fatalf("the failure never reached the status bar:\n%s", view)
 	}
 }
 
