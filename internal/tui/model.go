@@ -459,14 +459,14 @@ type model struct {
 	searchSelWas string
 	searchInput  textinput.Model
 
-	// The fourth is the fold. backlogOpen is whether the panel is also
-	// showing the tickets that have not entered the pipeline yet; it opens
-	// closed, so what the panel says on sight is what is blocked on a
-	// human. Pulling from the backlog is a deliberate sit-down motion and
-	// can live behind a key; being blocked-on is an interrupt and owns the
-	// default view. Model state like the other three, so it survives a pass
-	// and is saved nowhere.
-	backlogOpen bool
+	// The fourth is the status slice. slice is the Linear status the panel
+	// is showing, or "" for all statuses that have not entered the pipeline
+	// yet folded to a summary line; it opens at "", so what the panel says
+	// on sight is what is blocked on a human. Browsing a stage is a
+	// deliberate sit-down motion and can live behind a key; being blocked-on
+	// is an interrupt and owns the default view. Model state like the other
+	// three, so it survives a pass and is saved nowhere.
+	slice string
 
 	// details is what the Reader has returned, keyed by ticket ID and kept
 	// for the process's lifetime: a stale body is a view of Linear, not
@@ -1019,11 +1019,16 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.cycleProject()
 			m.refreshMain()
 		}
-	case key.Matches(msg, m.keys.Backlog):
+	case key.Matches(msg, m.keys.Slice):
 		if m.focus == panelAttention {
 			m.dropVisual()
-			m.backlogOpen = !m.backlogOpen
-			m.resort()
+			m.cycleSlice(1)
+			m.refreshMain()
+		}
+	case key.Matches(msg, m.keys.SliceBack):
+		if m.focus == panelAttention {
+			m.dropVisual()
+			m.cycleSlice(-1)
 			m.refreshMain()
 		}
 	case key.Matches(msg, m.keys.Search):
@@ -1749,6 +1754,12 @@ func (m *model) apply(ev loop.Event) {
 			// scope is now over rows the operator never saw beside it.
 			m.dropVisual()
 		}
+		if m.slice != "" && !slices.ContainsFunc(m.attention, func(it loop.AttentionItem) bool {
+			return it.Status == m.slice
+		}) {
+			m.slice = ""
+			m.dropVisual()
+		}
 		// An inbox with nothing in it has nothing to narrow, and the title
 		// stops carrying the query along with the count — so a filter left
 		// behind by a closed prompt goes with the rows, rather than
@@ -2180,7 +2191,7 @@ func (m *model) resort() {
 	if it := m.selectedAttention(); it != nil {
 		selected = it.Ticket
 	}
-	m.shown = sortAttention(filterAttention(m.attention, m.project, m.search, m.backlogOpen), m.sortMode, m.statusIndex)
+	m.shown = sortAttention(filterAttention(m.attention, m.project, m.search, m.slice), m.sortMode, m.statusIndex)
 	i := slices.IndexFunc(m.shown, func(it loop.AttentionItem) bool { return it.Ticket == selected })
 	if selected == "" || i < 0 {
 		m.attnSel = clampIndex(m.attnSel, len(m.shown))
@@ -2190,21 +2201,23 @@ func (m *model) resort() {
 }
 
 // filterAttention narrows the list to one Linear project, to the rows the
-// search matches, and — while the backlog is folded — to the tickets that
-// are actually blocked on a human. There is no filter syntax and no second
-// query behind either of the two the operator types: the project column
-// matched whole, and a plain substring over the facts a row already shows
-// (see matchesSearch).
-//
-// What the fold hides is folds(); everything else stays on screen.
-func filterAttention(items []loop.AttentionItem, project, query string, backlogOpen bool) []loop.AttentionItem {
-	if project == "" && query == "" && backlogOpen {
-		return items
-	}
+// search matches, and — when on the all-slice ("") — to the tickets that
+// are actually blocked on a human. When on a named slice, it keeps only the
+// tickets whose Linear status matches the slice and does not consult folds.
+// There is no filter syntax and no second query behind either of the two the
+// operator types: the project column matched whole, and a plain substring
+// over the facts a row already shows (see matchesSearch).
+func filterAttention(items []loop.AttentionItem, project, query, slice string) []loop.AttentionItem {
 	out := make([]loop.AttentionItem, 0, len(items))
 	for _, it := range items {
-		if !backlogOpen && folds(it) {
-			continue
+		if slice == "" {
+			if folds(it) {
+				continue
+			}
+		} else {
+			if it.Status != slice {
+				continue
+			}
 		}
 		if matchesFilters(it, project, query) {
 			out = append(out, it)
@@ -2239,21 +2252,21 @@ func matchesFilters(it loop.AttentionItem, project, query string) bool {
 	return (project == "" || it.Project == project) && matchesSearch(it, query)
 }
 
-// unfolded is the pass's list under the fold alone: every row the panel
+// sliced is the pass's list under the active slice alone: every row the panel
 // could show before the project scope and the search narrow it. It is what
 // P cycles over, what / opens on, and the base the panel title counts
 // against — so the title's fraction is always over the rows this panel can
-// reach, and P can never stop on a project whose every row is folded away.
-func (m *model) unfolded() []loop.AttentionItem {
-	return filterAttention(m.attention, "", "", m.backlogOpen)
+// reach, and P can never stop on a project whose every row is outside the slice.
+func (m *model) sliced() []loop.AttentionItem {
+	return filterAttention(m.attention, "", "", m.slice)
 }
 
 // foldedRows is what the fold is holding back: the backlog rows that pass
-// the project scope and the search already in force — exactly what pressing
-// B would put on screen, so the summary line's number can never disagree
-// with what it reveals. Nothing is folded while the backlog is open.
+// the project scope and the search already in force — exactly what cycling
+// to the Backlog slice would put on screen, so the summary line's number can
+// never disagree with what it reveals. Only the all-slice draws the line.
 func (m *model) foldedRows() []loop.AttentionItem {
-	if m.backlogOpen {
+	if m.slice != "" {
 		return nil
 	}
 	var out []loop.AttentionItem
@@ -2386,14 +2399,14 @@ func priorityRank(p int) int {
 	return p
 }
 
-// projects lists the Linear projects present in the rows the fold lets
+// projects lists the Linear projects present in the rows the active slice lets
 // through, in name order — the filter's cycle. A ticket filed under none is
 // not a project and is not a stop on it, and neither is a project whose
-// every row is folded away: cycling to one would scope the panel to
+// every row is outside the slice: cycling to one would scope the panel to
 // "nothing in X".
 func (m *model) projects() []string {
 	var names []string
-	for _, it := range m.unfolded() {
+	for _, it := range m.sliced() {
 		if it.Project != "" && !slices.Contains(names, it.Project) {
 			names = append(names, it.Project)
 		}
@@ -2402,13 +2415,13 @@ func (m *model) projects() []string {
 	return names
 }
 
-// hasProjects reports whether the rows the fold lets through have any
+// hasProjects reports whether the rows the active slice lets through have any
 // project to scope to.
 // P cycles between every project and each one present, so with none present
 // it is a key that does nothing — projects() answers the same question but
 // builds and sorts the cycle to do it.
 func (m *model) hasProjects() bool {
-	return slices.ContainsFunc(m.unfolded(), func(it loop.AttentionItem) bool {
+	return slices.ContainsFunc(m.sliced(), func(it loop.AttentionItem) bool {
 		return it.Project != ""
 	})
 }
@@ -2418,16 +2431,65 @@ func (m *model) hasProjects() bool {
 func (m *model) cycleProject() {
 	names := m.projects()
 	switch i := slices.Index(names, m.project); {
-	// A scope the fold has taken off the cycle — every row of that project
-	// is backlog, and the backlog just closed — has one stop from here, and
-	// it is the one the empty panel's hint promises. Not folded in with the
-	// case below, whose i is -1 for the empty scope that starts the cycle.
+	// A scope the slice has taken off the cycle — every row of that project
+	// is in a different status, and the slice just changed — has one stop
+	// from here, and it is the one the empty panel's hint promises. Not
+	// folded in with the case below, whose i is -1 for the empty scope
+	// that starts the cycle.
 	case m.project != "" && i < 0:
 		m.project = ""
 	case i+1 >= len(names):
 		m.project = ""
 	default:
 		m.project = names[i+1]
+	}
+	m.resort()
+}
+
+// sliceStatuses lists every status present in m.attention, deduped, ordered
+// by Linear board position (statusIndex) with unknowns sinking to the end.
+func (m *model) sliceStatuses() []string {
+	var names []string
+	for _, it := range m.attention {
+		if it.Status != "" && !slices.Contains(names, it.Status) {
+			names = append(names, it.Status)
+		}
+	}
+	slices.SortFunc(names, func(a, b string) int {
+		return compareStatusPosition(a, b, m.statusIndex)
+	})
+	return names
+}
+
+// cycleSlice advances (dir >= 0) or reverses (dir < 0) the active slice:
+// all (""), then each Linear status present in board order, then back to all.
+func (m *model) cycleSlice(dir int) {
+	names := m.sliceStatuses()
+	if len(names) == 0 {
+		m.slice = ""
+		m.resort()
+		return
+	}
+	i := slices.Index(names, m.slice)
+	if m.slice != "" && i < 0 {
+		m.slice = ""
+		m.resort()
+		return
+	}
+	if dir >= 0 {
+		if i+1 >= len(names) {
+			m.slice = ""
+		} else {
+			m.slice = names[i+1]
+		}
+	} else {
+		if i < 0 {
+			m.slice = names[len(names)-1]
+		} else if i == 0 {
+			m.slice = ""
+		} else {
+			m.slice = names[i-1]
+		}
 	}
 	m.resort()
 }
@@ -3091,24 +3153,26 @@ func (m *model) backlogSummary() []string {
 	}
 	line := fmt.Sprintf("%d %s", n, loop.StatusBacklog.Note())
 	if !m.modal() {
-		line += " — " + m.keys.Backlog.Help().Key + " to browse"
+		line += " — " + m.keys.Slice.Help().Key + " to browse"
 	}
 	return []string{styleFaint.Render(line)}
 }
 
 // emptyNote says why an inbox that has rows is showing none of them: the
-// search, the project scope, or — with neither of them narrowing it — the
-// fold, which means everything the pass found is waiting to enter the
-// pipeline and none of it is on a human. The panel never draws an empty box
-// here: a list narrowed down to nothing and a board with nothing on it are
-// the same picture, and only one of them is the goal state — which is why
-// the fold does not get to claim "the inbox is empty".
+// search, the project scope, the status slice, or — with none of them
+// narrowing it — the fold, which means everything the pass found is waiting
+// to enter the pipeline and none of it is on a human. The panel never draws
+// an empty box here: a list narrowed down to nothing and a board with nothing
+// on it are the same picture, and only one of them is the goal state — which
+// is why the fold does not get to claim "the inbox is empty".
 func (m *model) emptyNote() string {
 	switch {
 	case m.search != "" && m.project != "":
 		return fmt.Sprintf("no match for /%s in %s", m.search, m.project)
 	case m.search != "":
 		return "no match for /" + m.search
+	case m.slice != "":
+		return "nothing in " + m.slice
 	case m.project != "":
 		return "nothing in " + m.project
 	}
@@ -3116,9 +3180,8 @@ func (m *model) emptyNote() string {
 }
 
 // emptyHint is the keys that put those rows back — the one that clears
-// whatever narrowed the list, and B where the fold is holding rows behind
-// it. Both, because either can be the reason the panel is empty and the
-// operator cannot tell which from the note alone.
+// whatever narrowed the list, the key cycling the slice back to all, and
+// ] where the fold is holding rows behind it.
 func (m *model) emptyHint() string {
 	var hints []string
 	switch {
@@ -3127,8 +3190,11 @@ func (m *model) emptyHint() string {
 	case m.project != "":
 		hints = append(hints, "(P cycles the project filter back to all)")
 	}
+	if m.slice != "" {
+		hints = append(hints, fmt.Sprintf("(%s cycles the slice back to all)", m.keys.Slice.Help().Key))
+	}
 	if len(m.foldedRows()) > 0 {
-		hints = append(hints, "(B browses the backlog)")
+		hints = append(hints, fmt.Sprintf("(%s browses the backlog)", m.keys.Slice.Help().Key))
 	}
 	return strings.Join(hints, " ")
 }
@@ -3148,31 +3214,32 @@ func (m *model) oneGroup() bool {
 
 // inboxContentEmpty is the raw, un-debounced reading behind inboxEmptySettled:
 // the inbox has reported (attentionSeen), and holds no rows waiting on the
-// human when folded (len(filterAttention(m.attention, "", "", false)) == 0).
-// Settle is anchored to the folded reading of the data so browsing the backlog
-// (m.backlogOpen) does not demote the settled flag while the underlying data
+// human when folded (len(filterAttention(m.attention, "", "", "")) == 0).
+// Settle is anchored to the folded reading of the data so browsing a slice
+// (m.slice) does not demote the settled flag while the underlying data
 // has not changed.
 func (m *model) inboxContentEmpty() bool {
-	return m.attentionSeen && len(filterAttention(m.attention, "", "", false)) == 0
+	return m.attentionSeen && len(filterAttention(m.attention, "", "", "")) == 0
 }
 
 // inboxEmpty is the discrete condition that licenses the empty-inbox
 // wordmark (LERP-145, LERP-151): the main pane is closed, no search box is
-// open, no project filter is active, so there is a candidate centre space and
-// nothing else is already drawn where the mark would go, and the inbox's
-// content has settled empty (see inboxEmptySettled) rather than merely reading
-// empty on this one frame. mainOpen, searching, search, project, and unfolded
-// backlog rows are read live and not debounced — opening a pane, typing a search
-// query, cycling a project filter, or pressing B to unfold the backlog are
-// deliberate, instant actions, so rule 3's "opening a pane... hides it" is
+// open, no project filter is active, no slice is active, so there is a
+// candidate centre space and nothing else is already drawn where the mark
+// would go, and the inbox's content has settled empty (see inboxEmptySettled)
+// rather than merely reading empty on this one frame. mainOpen, searching,
+// search, project, and slice are read live and not debounced — opening a pane,
+// typing a search query, cycling a project filter, or cycling a status slice
+// are deliberate, instant actions, so rule 3's "opening a pane... hides it" is
 // exactly as immediate as it reads.
 //
-// m.search == "" and m.project == "": an active search query or project scope
-// narrows the inbox to a filtered view. When filtered, the panel displays the
-// filter note (e.g. "nothing in <project>" or "no match for /<query>") and
-// hints to clear the filter; the wordmark is reserved for the unfiltered inbox.
+// m.search == "", m.project == "", and m.slice == "": an active search query,
+// project scope, or status slice narrows the inbox to a filtered view. When
+// filtered, the panel displays the filter note (e.g. "nothing in <project>" or
+// "no match for /<query>") and hints to clear the filter; the wordmark is
+// reserved for the unfiltered inbox.
 func (m *model) inboxEmpty() bool {
-	return !m.mainOpen() && !m.searching && m.search == "" && m.project == "" && len(m.unfolded()) == 0 && m.inboxEmptySettled
+	return !m.mainOpen() && !m.searching && m.search == "" && m.project == "" && m.slice == "" && len(m.sliced()) == 0 && m.inboxEmptySettled
 }
 
 // attentionState is what the inbox panel is doing: loading, empty, filtered, or showing rows.
@@ -3479,16 +3546,16 @@ func (m model) attentionPanel(w, h int) string {
 	// surface the keys are talking to, which is what the border says.
 	keys := focused && !m.mainFocused()
 	extra := ""
-	// The title counts what this panel can show under the current fold, not
+	// The title counts what this panel can show under the current slice, not
 	// what the pass found: the fraction under a filter is over that same
 	// base, so the title and the rows beneath it always agree. It differs
-	// from the status bar's number on purpose while the backlog is open —
+	// from the status bar's number on purpose while a slice is active —
 	// the bar answers "should I look up", the title "what is in this panel".
-	base := m.unfolded()
+	base := m.sliced()
 	if len(m.attention) > 0 {
-		// The sort mode, the project filter and the fold live in the title
+		// The sort mode, the project filter and the slice live in the title
 		// because they are the only things about this panel a key changed,
-		// and a table sorted or folded differently than the operator
+		// and a table sorted or sliced differently than the operator
 		// remembers is worse than one that says how it is. They are not
 		// gated on the count below: a board worked down to nothing but
 		// backlog has no count to show and still answers to `s`, and a sort
@@ -3510,10 +3577,10 @@ func (m model) attentionPanel(w, h int) string {
 		if m.project != "" {
 			extra += styleFaint.Render(" · " + m.project)
 		}
-		// The way back from an expanded backlog: the rows below are not the
-		// panel's default, and the title is where this panel says so.
-		if m.backlogOpen {
-			extra += styleFaint.Render(" · backlog")
+		// The active status slice: the rows below are not the panel's
+		// default, and the title is where this panel says so.
+		if m.slice != "" {
+			extra += styleFaint.Render(" · " + m.slice)
 		}
 	}
 	inner := padList.inner(w)
@@ -4498,8 +4565,8 @@ func (m model) statusBar() string {
 	// time a pass started; sized into the hints below, it moved those.
 	left := brand + "  " + styleFaint.Render(m.capacityLabel())
 	// Only the tickets blocked on a human are counted, so the number means
-	// "things that should make you look up" — and it does not move when B
-	// expands the backlog into the panel.
+	// "things that should make you look up" — and it does not move when a
+	// slice expands into the panel.
 	if n := m.blockedOnYou(); n > 0 {
 		left += "  " + styleAttention.Render(fmt.Sprintf("● %d in the inbox", n))
 	}

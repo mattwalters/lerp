@@ -85,10 +85,10 @@ spells out that mark and the other two the table draws.
 The panel opens on what is blocked on you — where runs fail, where they
 finish, and the statuses the pipeline never named the ticket into — with the
 intake it never left folded to one line at the foot of the table: `28 waiting
-to enter the pipeline — B to browse`. Being blocked-on is an interrupt, while
+to enter the pipeline — ] to browse`. Being blocked-on is an interrupt, while
 pulling from the backlog is a sit-down motion, so only one of them owns the
 default view; [finding tickets](finding-tickets.md) is the other one, and the
-sorting, scoping and searching that go with it. A ticket you have claimed
+sorting, scoping, slicing and searching that go with it. A ticket you have claimed
 resting in an intake status is never folded: no pass can pick it up again
 while the claim stands, so it is blocked on you wherever Linear files it.
 

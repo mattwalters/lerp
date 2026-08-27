@@ -96,13 +96,25 @@ Sleep 3s
 Down
 Sleep 3s
 
-# What the panel has not been showing: the tickets that have not entered the
-# pipeline yet, folded to the summary line at the foot of the table. `B`
-# unfolds them in place — same panel, same table — and again folds them back,
-# which is the whole of the control.
-Type "B"
-Sleep 3500ms
-Type "B"
+# The inbox browses stages in Linear board order: `]` cycles through the
+# status slices — all, Triage, Backlog, Plan Review — and `[` walks them
+# back. Slices are display over the list already fetched.
+Type "]"
+Wait+Screen /· Triage/
+Sleep 2s
+Type "]"
+Wait+Screen /· Backlog/
+Sleep 2500ms
+Type "]"
+Wait+Screen /· Plan Review/
+Sleep 2500ms
+Type "["
+Wait+Screen /· Backlog/
+Sleep 1500ms
+Type "["
+Wait+Screen /· Triage/
+Sleep 1500ms
+Type "["
 Sleep 2s
 
 Type "q"
