@@ -217,6 +217,7 @@ func initCommand(args []string) {
 	name := fs.String("team-name", "", "name to use if the Linear team must be created")
 	yes := fs.Bool("yes", false, "take the stock answer to every question")
 	fs.Parse(args)
+	*team = strings.ToUpper(strings.TrimSpace(*team))
 	if *team == "" {
 		fmt.Fprintln(os.Stderr, "lerp init: --team is required")
 		os.Exit(2)
