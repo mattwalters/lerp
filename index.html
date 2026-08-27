@@ -17,13 +17,13 @@
   <header>
     <a class="brand" href="./">lerp</a>
     
-    <a class="nav" href="./docs/">Docs</a>
+    <a class="nav" href="./latest/docs/">Docs</a>
     
     <a class="nav" href="./why/">Why lerp</a>
     <span class="spacer"></span>
     <a class="nav" href="https://github.com/mattwalters/lerp">GitHub</a>
     <span class="version">
-      <span class="version-label">latest</span>
+      <span class="version-label"></span>
       <select id="version-picker" hidden aria-label="Documentation version"></select>
     </span>
   </header>
@@ -105,7 +105,7 @@ the picker in the header moves between versions.</p>
             var option = document.createElement("option");
             option.value = v;
             option.textContent = v;
-            option.selected = v === "latest";
+            option.selected = v === "";
             picker.appendChild(option);
           });
           picker.addEventListener("change", function () {

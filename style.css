@@ -307,10 +307,10 @@ figure.cast video {
   width: 100%;
   height: auto;
   /* `auto` first, so the real ratio wins the moment metadata lands; the
-     fallback is the tape size docs/demo.tape sets, which is what a cast
-     recorded by this repo's own harness comes back as. Without it a video
-     lays out at the spec's 300x150 until metadata arrives and then jumps,
-     shoving the prose under it down the page. */
+     fallback is the tape size docs/tapes/house.tape sets, which is what a
+     cast recorded by this repo's own harness comes back as. Without it a
+     video lays out at the spec's 300x150 until metadata arrives and then
+     jumps, shoving the prose under it down the page. */
   aspect-ratio: auto 1200 / 640;
   background: var(--bg-soft);
   border: 1px solid var(--rule);
