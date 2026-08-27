@@ -392,12 +392,7 @@ type model struct {
 	width, height int
 	ready         bool
 	helpOn        bool
-	// helpOffset is where the main pane was scrolled to when the ? overlay
-	// took it over, and helpLens is what it was showing, so closing the
-	// overlay gives the operator back the place they were reading — and
-	// knows not to, when they re-aimed the pane behind it.
-	helpOffset int
-	helpLens   mainLens
+	helpVp        viewport.Model
 
 	lanes map[int]*lane
 	order []int // lane numbers, sorted; adopted runs may sit above N
@@ -640,7 +635,7 @@ func newModel(ctx context.Context, o Options) model {
 		promoteStatuses: promoteStatuses,
 		details:         make(map[string]*ticketDetail), lastLog: make(map[string]string),
 		promoteErr: make(map[string]string),
-		vp:         viewport.New(0, 0), follow: true, keys: newKeymap(), help: h,
+		vp:         viewport.New(0, 0), helpVp: viewport.New(0, 0), follow: true, keys: newKeymap(), help: h,
 		sortMode:    defaultSort,
 		searchInput: newSearchInput(),
 		detailOpen:  [2]bool{panelAttention: false, panelWork: false},
@@ -690,7 +685,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.ready = true
-		// A window that shrank below the pane's floor closes what took it
+		// A window that shrank below the board's floor closes what took it
 		// modally. detailOpen is the operator's own preference and survives
 		// — esc is on the too-small screen — but a picker left live behind
 		// that screen would still take the enter that writes to Linear, an
@@ -699,7 +694,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// cancellable and its panel is the only copy of the resume command,
 		// so it waits for the window to come back rather than being thrown
 		// away here.
-		if !m.roomForMain() {
+		if m.screenTooSmall() {
 			m.promoting, m.helpOn, m.ejecting = false, false, false
 		}
 		m.layout()
@@ -827,10 +822,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Quit):
 		return m, tea.Quit
 	case key.Matches(msg, m.keys.Help):
-		// Closing it never needs the room opening it did.
-		if m.helpOn || m.roomForMain() {
-			m.setHelp(!m.helpOn)
-		}
+		m.setHelp(!m.helpOn)
 	case key.Matches(msg, m.keys.Attention):
 		m.setFocus(panelAttention)
 	case key.Matches(msg, m.keys.Work):
@@ -910,21 +902,17 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.keysInMain = false
 		}
 	case key.Matches(msg, m.keys.Promote):
-		// Gated on the splash too, and for the same reason as Detail above:
-		// a row can be on screen from attention alone, before queues has
-		// reported, and opening the picker on it would flip View's modal
-		// bypass early — the board drawn with m.queues still nil, the very
-		// half-populated frame this ticket exists to prevent.
-		if m.focus == panelAttention && len(m.shown) > 0 && len(m.promoteStatuses) > 0 &&
-			m.roomForMain() && !m.splashing() {
+		// Gated on the splash too: a row can be on screen from attention alone,
+		// before queues has reported, and opening the picker on it would draw the
+		// board early with m.queues still nil.
+		if m.focus == panelAttention && len(m.shown) > 0 && len(m.promoteStatuses) > 0 && !m.splashing() {
 			m.promoteTargets = m.capturePromoteTargets()
 			m.promoting = true
 			m.promoteSel = 0
 		}
 	case key.Matches(msg, m.keys.Visual):
-		// Live exactly where p is live: visual mode exists to feed the
-		// picker, so it is not offered where the picker cannot open.
-		if m.focus == panelAttention && len(m.shown) > 0 && len(m.promoteStatuses) > 0 && m.roomForMain() && !m.visual {
+		// Live exactly where p is live: visual mode exists to feed the picker.
+		if m.focus == panelAttention && len(m.shown) > 0 && len(m.promoteStatuses) > 0 && !m.visual {
 			if it := m.selectedAttention(); it != nil {
 				m.visual, m.visualAnchor = true, it.Ticket
 			}
@@ -932,13 +920,11 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.VisualAll):
 		// V selects the full shown range in one keystroke — whatever the
 		// active project filter, search, and fold state have left visible.
-		if m.focus == panelAttention && len(m.shown) > 0 && len(m.o.Statuses) > 0 && m.roomForMain() {
+		if m.focus == panelAttention && len(m.shown) > 0 && len(m.o.Statuses) > 0 {
 			m.visual, m.visualAnchor = true, m.shown[0].Ticket
 			m.attnSel = len(m.shown) - 1
-			if !m.helpOn {
-				m.refreshMain()
-				m.vp.GotoTop()
-			}
+			m.refreshMain()
+			m.vp.GotoTop()
 		}
 	case key.Matches(msg, m.keys.Eject):
 		m.startEject()
@@ -1291,7 +1277,7 @@ func (m model) doEject(ticketID, ticket string) tea.Cmd {
 // that would draw the board early, with the inbox still whatever it was
 // before this pass — stale, or on the first pass, still empty.
 func (m *model) startEject() {
-	if m.focus != panelWork || !m.roomForMain() || m.splashing() {
+	if m.focus != panelWork || m.splashing() {
 		return
 	}
 	r := m.selectedWork()
@@ -1310,11 +1296,7 @@ func (m *model) startEject() {
 // command. A provisioning lane has no agent yet and a waiting ticket has no
 // run at all, so neither offers the key.
 func (m *model) canEjectSelected() bool {
-	// The confirm is drawn in the main pane, so a window with no room for
-	// the pane has none for it: the same trade p makes, and the same reason
-	// — a key that replaced the panels with "window too small" would leave
-	// a live confirm behind it, still holding the enter that kills an agent.
-	if m.focus != panelWork || !m.roomForMain() {
+	if m.focus != panelWork {
 		return false
 	}
 	r := m.selectedWork()
@@ -1364,24 +1346,8 @@ func (m *model) setHelp(on bool) {
 	}
 	m.helpOn = on
 	if on {
-		m.helpOffset, m.helpLens = m.vp.YOffset, m.lens()
-	}
-	// Size before filling, as enter does: the overlay changes whether the
-	// pane is open at all, and refreshMain fills the viewport that height
-	// and width leave it.
-	m.layout()
-	m.refreshMain()
-	switch {
-	case on:
-		m.vp.GotoTop()
-	case m.showingLog() && m.follow:
-		// refreshLog has pinned the tail to the bottom.
-	case m.lens() != m.helpLens:
-		// The operator re-aimed the pane behind the overlay, so what comes
-		// back is not what was parked, and comes back at its top.
-		m.vp.GotoTop()
-	default:
-		m.vp.SetYOffset(m.helpOffset)
+		m.helpVp.SetContent(m.helpText())
+		m.helpVp.GotoTop()
 	}
 }
 
@@ -1468,6 +1434,14 @@ func (m *model) cycleSurface(delta int) {
 // tail. follow is the log's state, so a line off the bottom stops it and a
 // line back onto the bottom picks it up again.
 func (m *model) scrollMain(delta int) {
+	if m.helpOn {
+		if delta < 0 {
+			m.helpVp.LineUp(1)
+		} else {
+			m.helpVp.LineDown(1)
+		}
+		return
+	}
 	if delta < 0 {
 		m.vp.LineUp(1)
 	} else {
@@ -1506,12 +1480,6 @@ func (m *model) setFocus(p panel) {
 	// the outgoing panel's width would stay wrong until the next byte of log
 	// or the next keystroke.
 	m.layout()
-	if m.helpOn {
-		// The overlay is nobody's row. Moving between panels behind it
-		// re-aims the lens under it — which refreshMain draws on the way
-		// out — but must not scroll the help the operator is reading. The
-		return
-	}
 	m.refreshMain()
 	if !m.showingLog() {
 		m.vp.GotoTop()
@@ -1538,9 +1506,6 @@ func (m *model) moveSelection(delta int) {
 		m.workPos = clampIndex(m.workPos+delta, len(rows))
 		m.workSel = rows[m.workPos].ticketID
 		m.retarget()
-		if m.helpOn {
-			return // see setFocus
-		}
 		m.refreshMain()
 		switch {
 		case !m.showingLog():
@@ -1552,9 +1517,6 @@ func (m *model) moveSelection(delta int) {
 		}
 	case panelAttention:
 		m.attnSel = clampIndex(m.attnSel+delta, len(m.shown))
-		if m.helpOn {
-			return // see setFocus
-		}
 		m.refreshMain()
 		m.vp.GotoTop()
 	}
@@ -1940,36 +1902,23 @@ func (m *model) lens() mainLens {
 
 // showingLog reports whether the main pane is the log rather than a detail.
 // The lens is the selected row's, not the panel's: a ticket with a log shows
-// it, a ticket without shows what the pass knows about it. The ? overlay is
-// that same viewport holding neither, so while it is up the answer is no:
-// every caller is asking what the pane is showing, and what the pane is
-// showing is the help. It is the detail lens's own rule — a detour through
-// something that is not the log neither freezes the tail nor gets written
-// over by it — and the overlay is one more detour.
+// showingLog reports whether the main pane is the log rather than a detail.
+// The lens is the selected row's, not the panel's: a ticket with a log shows
+// it, a ticket without shows what the pass knows about it.
 func (m *model) showingLog() bool {
-	return !m.helpOn && m.focus == panelWork && m.selectedLogPath() != ""
+	return m.focus == panelWork && m.selectedLogPath() != ""
 }
 
 // logOnScreen is showingLog with the pane's own state folded in: is a log
-// actually in front of the operator? showingLog answers what the selected
-// row would show, which is a different question — the pane may be shut, or
-// the overlay may have taken it — and everything that acts on the log the
-// operator can see asks this instead.
+// actually in front of the operator?
 func (m *model) logOnScreen() bool {
 	return m.mainOpen() && m.showingLog()
 }
 
 // mainOpen is the single question everything else asks: is the main pane on
-// screen? The focused panel's own state, forced open by the promote picker,
-// the ? overlay and eject's two panels — every one of them is drawn in that
-// pane, so they take the width while they are up and hand it back when they
-// close. That keeps p and e working from a closed panel — which both panels
-// now are until the operator opens one — without a second rendering path.
-// Miss one here and the key still takes the keyboard while nothing it draws
-// reaches the screen.
+// screen?
 func (m *model) mainOpen() bool {
-	return m.promoting || m.helpOn || m.ejecting || m.ejection != nil ||
-		m.detailOpen[m.focus]
+	return m.detailOpen[m.focus]
 }
 
 // roomForMain reports whether this window can hold the main pane at all —
@@ -1977,11 +1926,7 @@ func (m *model) mainOpen() bool {
 //
 // The keys that open the pane ask first. With the pane shut a short terminal
 // is a usable screen, which is the point — but a key that turned that screen
-// into "window too small" would take the panels away, and with the promote
-// picker it would take them away while the picker was still live and still
-// taking the enter that writes to Linear. A key that does nothing, and that
-// the panel line and the status bar both stop offering, is the better half
-// of that trade.
+// into "window too small" would take the panels away.
 func (m *model) roomForMain() bool {
 	return m.width >= minWidth && m.height >= m.minHeight(true)
 }
@@ -1990,11 +1935,6 @@ func (m *model) roomForMain() bool {
 // for. Scroll position is the caller's concern — focus and selection changes
 // jump to the top; a data refresh keeps the operator's place.
 func (m *model) refreshMain() {
-	if m.helpOn {
-		m.vp.SetContent(m.helpText())
-		m.foldOwner, m.foldCount = nil, 0
-		return
-	}
 	if !m.mainOpen() {
 		return
 	}
@@ -2590,7 +2530,13 @@ func (m *model) layout() {
 	g := m.geometry()
 	m.vp.Width = max(0, padMain.inner(g.mainW))
 	m.vp.Height = max(1, g.mainH-2)
-	m.help.Width = m.vp.Width
+	hw, hh := m.modalSize(70, 40)
+	m.helpVp.Width = max(0, padMain.inner(hw))
+	m.helpVp.Height = max(1, hh-2)
+	m.help.Width = m.helpVp.Width
+	if m.helpOn {
+		m.helpVp.SetContent(m.helpText())
+	}
 	// The prompt is a row of the inbox panel, so a query longer than the
 	// panel scrolls within it rather than overflowing it. Two columns for
 	// the "/" and the cursor.
@@ -2603,6 +2549,11 @@ func (m *model) layout() {
 		return
 	}
 	m.vp.SetYOffset(m.vp.YOffset)
+}
+
+// screenTooSmall reports whether the window is too small to draw the board at all.
+func (m *model) screenTooSmall() bool {
+	return m.width < minWidth || m.height < m.minHeight(false)
 }
 
 // splashing reports the state the splash stands in for: lerp is up, and the
@@ -2645,7 +2596,7 @@ func (m model) View() string {
 		// key nor a resize edits detailOpen, so both routes here — moving
 		// focus to a panel whose pane is open, and shrinking a window under
 		// one — leave it open, and esc is the way out.
-		if m.width >= minWidth && m.height >= m.minHeight(false) {
+		if !m.screenTooSmall() {
 			// esc resolves nearest-first, so a live selection or filter is
 			// what the first one takes — the same order handleKey's Close
 			// cascade resolves them in. Say so rather than promise a pane it
@@ -2699,6 +2650,7 @@ func (m model) View() string {
 			body = lipgloss.JoinVertical(lipgloss.Left, side, main)
 		}
 	}
+	body = m.composeModal(body)
 	return body + "\n" + m.statusBar()
 }
 
@@ -2816,9 +2768,8 @@ func (m *model) panelKeys(p panel) []key.Binding {
 		}
 	}
 	// canPromote also gates the visual-mode line: a range with nowhere to
-	// promote to is the same as no picker to open, and the line must not
-	// advertise a p that roomForMain would refuse.
-	canPromote := len(m.promoteStatuses) > 0 && m.roomForMain()
+	// promote to is the same as no picker to open.
+	canPromote := len(m.promoteStatuses) > 0
 	return m.keys.panelHelp(p, rowKeys{
 		// The raw toggle acts on the log in the pane, so the line offers it
 		// where that log is on screen — the panel line advertises what this
@@ -3791,22 +3742,8 @@ func contextLoad(context, window int) (string, bool) {
 	return styleFaint.Render(label), true
 }
 
-// mainPanel is the lens: the promote picker while it is open, the ? overlay,
-// otherwise the selected row's log, or a read-only detail when it has none.
+// mainPanel is the lens: the selected row's log, or a read-only detail when it has none.
 func (m model) mainPanel(w, h int) string {
-	if m.promoting {
-		return m.promotePicker(w, h)
-	}
-	if m.ejection != nil {
-		return m.ejectResult(*m.ejection, w, h)
-	}
-	if m.ejecting {
-		return m.ejectConfirm(m.ejectRow, w, h)
-	}
-	if m.helpOn {
-		return panelBox(styleTitleFocus.Render("help"), true, w, h,
-			strings.Split(m.vp.View(), "\n"), padMain, m.mainScrollbar(h))
-	}
 	title := m.mainTitle()
 	// The pane lights up the same way a panel does — heavy box, title in
 	// the focus accent — so "where are my keys pointed" is answered by the
@@ -4356,14 +4293,7 @@ func (m model) statusBar() string {
 	if n := m.blockedOnYou(); n > 0 {
 		left += "  " + styleAttention.Render(fmt.Sprintf("● %d in the inbox", n))
 	}
-	// The bar offers what this window and this frame actually answer to. ?
-	// draws its overlay in the main pane, so a window with no room for the
-	// pane has none for the overlay either — though closing one never needs
-	// the room opening it did.
 	globals := "? help · q quit"
-	if !m.helpOn && !m.roomForMain() {
-		globals = "q quit"
-	}
 	hint := globals
 	switch {
 	// Behind the overlay, esc and ? are the overlay's and enter is inert, so

@@ -1053,12 +1053,16 @@ func TestHelpOverlayDecodesTheInboxMarks(t *testing.T) {
 	// pane that only ever showed its first screen would be a pane the
 	// legend is not in.
 	short, _, _ := newTestModel(t, 1)
+	short = pastTheSplash(t, short)
 	short = resize(t, short, 80, 24)
+	short = update(t, short, eventMsg{ev: looseAttention("")})
+	short = openMain(t, short)
+	short = update(t, short, keyMsg("tab"))
 	short = update(t, short, keyMsg("?"))
 	reached := false
-	for i := 0; i < 8 && !reached; i++ {
+	for i := 0; i < 30 && !reached; i++ {
 		reached = strings.Contains(ansi.Strip(short.View()), "never named")
-		short = update(t, short, keyMsg("f"))
+		short = update(t, short, keyMsg("j"))
 	}
 	if !reached {
 		t.Fatalf("the legend is out of reach on an 80x24 terminal:\n%s", short.View())
@@ -1301,6 +1305,7 @@ func TestReadingTheHelpDoesNotDisturbTheLogBehindIt(t *testing.T) {
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 		TicketID: "t1", Ticket: "LERP-1", Queue: "implement", LogPath: logPath}})
 	m = openMain(t, update(t, m, keyMsg("2")))
+	m = update(t, m, keyMsg("tab"))
 	m = update(t, m, keyMsg("pgup"))
 	m = update(t, m, keyMsg("pgup"))
 	if m.follow {
@@ -1311,22 +1316,27 @@ func TestReadingTheHelpDoesNotDisturbTheLogBehindIt(t *testing.T) {
 		t.Fatal("scrolling up did not move the viewport")
 	}
 
-	// Read the help: page down to the legend, step the cursor about behind
-	// it, and page back. None of it is the log talking.
+	// Read the help: scroll down in the help modal, step the cursor about behind
+	// it, and close help. None of it is the log talking.
 	m = update(t, m, keyMsg("?"))
-	m = update(t, m, keyMsg("f"))
-	scrolled := m.vp.YOffset
+	m = update(t, m, keyMsg("j"))
+	m = update(t, m, keyMsg("j"))
+	if m.helpVp.YOffset != 2 {
+		t.Fatalf("j in help moved help offset to %d, want 2", m.helpVp.YOffset)
+	}
+	if got := m.vp.YOffset; got != want {
+		t.Fatalf("scrolling help moved log viewport to %d, want %d", got, want)
+	}
+	m = update(t, m, keyMsg("shift+tab"))
 	m = update(t, m, keyMsg("down"))
 	m = update(t, m, keyMsg("up"))
-	if got := m.vp.YOffset; got != scrolled {
-		t.Errorf("moving the cursor behind the overlay scrolled it to %d, want %d", got, scrolled)
+	if got := m.vp.YOffset; got != want {
+		t.Errorf("moving the cursor behind the overlay changed log offset to %d, want %d", got, want)
 	}
-	m = update(t, m, keyMsg("b"))
-	m = update(t, m, keyMsg("G"))
 
 	m = update(t, m, keyMsg("?"))
 	if m.follow {
-		t.Error("scrolling the help overlay turned log follow on")
+		t.Error("reading the help overlay turned log follow on")
 	}
 	if got := m.vp.YOffset; got != want {
 		t.Errorf("offset after reading the help = %d, want %d — the operator lost their place", got, want)
@@ -3173,10 +3183,10 @@ func TestWorkStartsWithTheListOnScreen(t *testing.T) {
 	}
 }
 
-// Done-when: the promote picker and the ? overlay live in the main pane, so
-// they force it visible while they are up and hand the width back when they
-// close. Both keys keep working from a closed inbox, which is the default.
-func TestThePickerAndTheOverlayForceThePane(t *testing.T) {
+// Done-when: the promote picker and the ? overlay float over the board as
+// modals, so they leave the main pane alone: a closed pane stays closed, an
+// open pane stays open and its content remains visible behind the modal.
+func TestThePickerAndTheOverlayLeaveThePaneAlone(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = pastTheSplash(t, m)
 	m = openInboxOn(t, m, "")
@@ -3185,6 +3195,9 @@ func TestThePickerAndTheOverlayForceThePane(t *testing.T) {
 	}
 
 	m = update(t, m, keyMsg("p"))
+	if m.mainOpen() {
+		t.Fatal("p from a closed inbox forced the main pane open")
+	}
 	if !strings.Contains(m.View(), "promote LERP-4") {
 		t.Fatalf("p from a closed inbox drew no picker:\n%s", m.View())
 	}
@@ -3194,12 +3207,32 @@ func TestThePickerAndTheOverlayForceThePane(t *testing.T) {
 	}
 
 	m = update(t, m, keyMsg("?"))
+	if m.mainOpen() {
+		t.Fatal("? from a closed inbox forced the main pane open")
+	}
 	if !strings.Contains(m.View(), "cycle back") {
 		t.Fatalf("? from a closed inbox drew no overlay:\n%s", m.View())
 	}
 	m = update(t, m, keyMsg("?"))
 	if g := m.geometry(); m.mainOpen() || g.sideW != m.width {
 		t.Fatalf("closing the overlay kept the width: %+v", g)
+	}
+
+	// And from an open pane, both float over it while the pane stays open.
+	m = openMain(t, m)
+	if !m.mainOpen() {
+		t.Fatal("openMain did not open the pane")
+	}
+	m = update(t, m, keyMsg("p"))
+	if !m.mainOpen() {
+		t.Fatal("p closed an open pane")
+	}
+	if !strings.Contains(m.View(), "promote LERP-4") {
+		t.Fatalf("p from an open inbox drew no picker:\n%s", m.View())
+	}
+	m = update(t, m, keyMsg("esc"))
+	if !m.mainOpen() {
+		t.Fatal("cancelling the picker closed an open pane")
 	}
 }
 
@@ -3301,25 +3334,26 @@ func TestAWindowTooShortForThePaneKeepsItsScreen(t *testing.T) {
 		t.Fatalf("a closed pane did not buy this window a screen:\n%s", m.View())
 	}
 	view := m.View()
-	if strings.Contains(view, "enter detail") || strings.Contains(view, "? help") {
-		t.Fatalf("the status bar advertises a key this window has no room for:\n%s", view)
+	if strings.Contains(view, "enter detail") {
+		t.Fatalf("the status bar advertises enter detail when window has no room for pane:\n%s", view)
 	}
-	if !strings.Contains(view, "q quit") {
-		t.Fatalf("the status bar dropped the key that still works:\n%s", view)
+	if !strings.Contains(view, "? help") || !strings.Contains(view, "q quit") {
+		t.Fatalf("the status bar dropped globals that work as modals:\n%s", view)
 	}
 
-	// Not "2" or "tab": a panel key edits nobody's pane, so with every pane
-	// closed it has no screen to take away. See
-	// TestAFocusMoveNeverEditsAPanelsPane for the case where one does land
-	// on that frame, and why that is the right end of the trade.
-	for _, k := range []string{"enter", "p", "?"} {
-		next := update(t, m, keyMsg(k))
-		if strings.Contains(next.View(), "too small") {
-			t.Fatalf("%q took the screen away:\n%s", k, next.View())
-		}
-		if next.promoting {
-			t.Fatalf("%q left the promote picker live with nothing drawn", k)
-		}
+	// enter does not open the pane, while p and ? open their modals without
+	// triggering the too-small screen.
+	enterNext := update(t, m, keyMsg("enter"))
+	if enterNext.mainOpen() || strings.Contains(enterNext.View(), "too small") {
+		t.Fatalf("enter opened a pane the window cannot hold:\n%s", enterNext.View())
+	}
+	pNext := update(t, m, keyMsg("p"))
+	if !pNext.promoting || !strings.Contains(pNext.View(), "promote") {
+		t.Fatalf("p did not open the promote modal in a short window:\n%s", pNext.View())
+	}
+	helpNext := update(t, m, keyMsg("?"))
+	if !helpNext.helpOn || !strings.Contains(helpNext.View(), "help") {
+		t.Fatalf("? did not open the help modal in a short window:\n%s", helpNext.View())
 	}
 }
 
@@ -3707,9 +3741,10 @@ func TestAWideButShortWindowStillRefusesThePane(t *testing.T) {
 	}
 }
 
-// Done-when: a window that shrinks under the pane's floor does not leave the
-// picker or the overlay live behind "window too small" — the picker is modal
-// and its enter is the TUI's one write.
+// Done-when: a window that shrinks under the board's floor (screenTooSmall)
+// closes live modals (picker, confirm, help) so enter does not confirm a
+// hidden write or kill an agent, while an ejection result survives the
+// shrink because it holds the only copy of the resume command.
 func TestShrinkingTheWindowClosesWhatTookThePane(t *testing.T) {
 	m, _, _, promoter := newPromoteTestModel(t, 1, []string{"Planning"})
 	m = pastTheSplash(t, m)
@@ -3721,7 +3756,7 @@ func TestShrinkingTheWindowClosesWhatTookThePane(t *testing.T) {
 		t.Fatal("the picker is not open to begin with")
 	}
 
-	m = resize(t, m, 70, 10)
+	m = resize(t, m, 70, 8)
 	if m.promoting || m.helpOn {
 		t.Fatalf("the shrunk window kept the picker (%v) and the overlay (%v)",
 			m.promoting, m.helpOn)
@@ -3733,6 +3768,21 @@ func TestShrinkingTheWindowClosesWhatTookThePane(t *testing.T) {
 	_ = next
 	if len(promoter.calls) != 0 {
 		t.Fatalf("a picker the shrink should have closed promoted: %+v", promoter.calls)
+	}
+
+	// An eject confirm also closes on shrink, while an ejection result survives.
+	m = resize(t, m, 70, 20)
+	m.ejecting = true
+	m = resize(t, m, 70, 8)
+	if m.ejecting {
+		t.Fatal("the shrunk window kept the eject confirm")
+	}
+
+	ej := loop.Ejection{Resume: "claude --resume s1", Workspace: "/tmp/ws"}
+	m.ejection = &ej
+	m = resize(t, m, 70, 8)
+	if m.ejection == nil {
+		t.Fatal("the shrunk window discarded the ejection result")
 	}
 }
 
@@ -3787,9 +3837,9 @@ func TestTheStatusBarKeepsTheCountOverTheHint(t *testing.T) {
 	}
 }
 
-// Done-when: the panel line stops offering p where the picker has no room to
-// open — an advertised key that does nothing is how the operator finds out.
-func TestAPanelWithNoRoomForThePickerDoesNotOfferIt(t *testing.T) {
+// Done-when: a window with no room for the main pane still offers p promote,
+// because the picker is a modal that floats over the board without needing a pane.
+func TestAPanelWithNoRoomForThePaneStillOffersThePicker(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = pastTheSplash(t, m)
 	m = resize(t, m, 90, 30)
@@ -3805,11 +3855,16 @@ func TestAPanelWithNoRoomForThePickerDoesNotOfferIt(t *testing.T) {
 	if strings.Contains(view, "too small") {
 		t.Fatalf("this window was supposed to have a screen:\n%s", view)
 	}
-	if strings.Contains(view, "p promote") {
-		t.Fatalf("the panel offers a key this window has no room for:\n%s", view)
+	if !strings.Contains(view, "p promote") {
+		t.Fatalf("the panel dropped p promote on a 90x12 window:\n%s", view)
 	}
 	if !strings.Contains(view, "s sort") {
 		t.Fatalf("the panel dropped the keys that still work:\n%s", view)
+	}
+
+	m = update(t, m, keyMsg("p"))
+	if !m.promoting || !strings.Contains(m.View(), "promote") {
+		t.Fatalf("p did not open the promote modal on a 90x12 window:\n%s", m.View())
 	}
 }
 
@@ -4115,15 +4170,11 @@ func TestRawIsOfferedOnlyWhereThereIsALog(t *testing.T) {
 		t.Fatalf("a running ticket with a log does not offer the raw toggle:\n%s", view)
 	}
 
-	// The ? overlay is in that pane and covers the log, so the same row
-	// stops offering the key while it is up — the pane being open is not
-	// the question, a log being on screen is.
+	// The ? overlay floats over the board, so the log behind it is still on
+	// screen in its open pane and r stays live.
 	m = update(t, m, keyMsg("?"))
-	if view := m.View(); strings.Contains(view, "r raw") {
-		t.Fatalf("the overlay covers the log and the panel still offers the toggle:\n%s", view)
-	}
-	if next := update(t, m, keyMsg("r")); next.rawLog {
-		t.Fatal("r flipped the decoding of a log the overlay was covering")
+	if next := update(t, m, keyMsg("r")); !next.rawLog {
+		t.Fatal("r did not flip the raw toggle under floating help")
 	}
 	m = update(t, m, keyMsg("?"))
 
@@ -6019,10 +6070,8 @@ func TestEjectConfirmAndResult(t *testing.T) {
 		t.Fatalf("the work panel does not offer eject on a running row:\n%s", m.View())
 	}
 
-	// The pane is shut — the screen work starts on — so the confirm is one
-	// of the things that opens it. Live behind a closed pane it would hold
-	// the keyboard, and the enter that kills the agent, with nothing on
-	// screen saying so.
+	// The pane is shut — the screen work starts on — and the confirm floats
+	// over it as a modal without forcing the pane open.
 	if m.mainOpen() {
 		t.Fatal("the pane was open before anything asked for it")
 	}
@@ -6032,7 +6081,10 @@ func TestEjectConfirmAndResult(t *testing.T) {
 	if !m.ejecting {
 		t.Fatal("e did not open the eject confirm")
 	}
-	if !m.mainOpen() || !strings.Contains(m.View(), "eject LERP-42") {
+	if m.mainOpen() {
+		t.Fatal("eject confirm opened the main pane")
+	}
+	if !strings.Contains(m.View(), "eject LERP-42") {
 		t.Fatalf("the confirm is live but not on screen:\n%s", m.View())
 	}
 	m = update(t, m, keyMsg("esc"))
@@ -6040,7 +6092,7 @@ func TestEjectConfirmAndResult(t *testing.T) {
 		t.Fatal("esc did not close the eject confirm")
 	}
 	if m.mainOpen() {
-		t.Fatal("esc closed the confirm and left its pane behind")
+		t.Fatal("esc left a pane open")
 	}
 	if len(ejector.ejected()) != 0 {
 		t.Fatalf("esc ejected anyway: %v", ejector.ejected())
@@ -7302,15 +7354,15 @@ func TestTheOverlayBorrowsThePaneNotItsKeys(t *testing.T) {
 	if !strings.HasPrefix(top, "╭") {
 		t.Fatalf("the inbox is lit behind the overlay while the keys are in the pane: %q", top)
 	}
-	if m.vp.TotalLineCount() <= m.vp.Height {
+	if m.helpVp.TotalLineCount() <= m.helpVp.Height {
 		t.Fatalf("the overlay fits its pane (%d lines in %d rows): nothing here scrolls",
-			m.vp.TotalLineCount(), m.vp.Height)
+			m.helpVp.TotalLineCount(), m.helpVp.Height)
 	}
 
 	m = update(t, m, keyMsg("j"))
-	if m.vp.YOffset != 1 {
-		t.Fatalf("j behind the overlay moved the pane to %d, want one line into the help",
-			m.vp.YOffset)
+	if m.helpVp.YOffset != 1 {
+		t.Fatalf("j behind the overlay moved the help to %d, want one line into the help",
+			m.helpVp.YOffset)
 	}
 	if m.attnSel != 0 {
 		t.Fatalf("j behind the overlay walked the hidden list to row %d, "+
@@ -7777,4 +7829,171 @@ func TestWidestPriority(t *testing.T) {
 	if priorityW < len(widestPriority) {
 		t.Errorf("priorityW = %d is narrower than widestPriority %q (%d)", priorityW, widestPriority, len(widestPriority))
 	}
+}
+
+// Done-when: a modal floats over the board, so the background board rows (both
+// the inbox panel on the left and the open detail pane on the right) remain
+// visible in the frame around the modal.
+func TestModalFrameContainsBoardAndDetailPane(t *testing.T) {
+	m, _, reader := newReadingTestModel(t)
+	m = pastTheSplash(t, m)
+	m = resize(t, m, 120, 30)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
+			{ID: "w-1", Identifier: "LERP-99", Title: "work row title"},
+		}},
+	}}})
+	m = openMain(t, m)
+	detailBody := "This is unique detail text behind the modal overlay."
+	m = selectAndRead(t, m, 0, linear.IssueDetail{Body: detailBody}, nil, reader)
+
+	// Verify baseline before modal:
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "LERP-1") || !strings.Contains(view, detailBody) {
+		t.Fatalf("baseline view is missing inbox or detail pane:\n%s", view)
+	}
+
+	// 1. Promote modal
+	m = update(t, m, keyMsg("p"))
+	if !m.promoting {
+		t.Fatal("p did not open promote modal")
+	}
+	pView := ansi.Strip(m.View())
+	if !strings.Contains(pView, "promote LERP-1") {
+		t.Fatalf("promote modal missing title:\n%s", pView)
+	}
+	if !strings.Contains(pView, "LERP-2") || !strings.Contains(pView, "This is unique detail") {
+		t.Fatalf("promote modal hid background board rows or detail pane:\n%s", pView)
+	}
+	m = update(t, m, keyMsg("esc"))
+
+	// 2. Help modal
+	m = update(t, m, keyMsg("?"))
+	if !m.helpOn {
+		t.Fatal("? did not open help modal")
+	}
+	hView := ansi.Strip(m.View())
+	if !strings.Contains(hView, "help") || !strings.Contains(hView, "cycle back") {
+		t.Fatalf("help modal missing content:\n%s", hView)
+	}
+	if !strings.Contains(hView, "LERP-2") || !strings.Contains(hView, "al overlay.") {
+		t.Fatalf("help modal hid background board rows or detail pane:\n%s", hView)
+	}
+	m = update(t, m, keyMsg("?"))
+
+	// 3. Eject confirm modal
+	m = update(t, m, keyMsg("2"))
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		TicketID: "w-1", Ticket: "LERP-99", Queue: "implement", LogPath: "/dev/null"}})
+	m = update(t, m, keyMsg("e"))
+	if !m.ejecting {
+		t.Fatal("e did not open eject confirm")
+	}
+	eView := ansi.Strip(m.View())
+	if !strings.Contains(eView, "eject LERP-99") {
+		t.Fatalf("eject modal missing content:\n%s", eView)
+	}
+	if !strings.Contains(eView, "LERP-2") {
+		t.Fatalf("eject modal hid background inbox rows:\n%s", eView)
+	}
+	m = update(t, m, keyMsg("esc"))
+
+	// 4. Ejection result modal
+	ej := loop.Ejection{Ticket: "LERP-99", Resume: "resume-cmd-123", Workspace: "/ws/123"}
+	m.ejection = &ej
+	resView := ansi.Strip(m.View())
+	if !strings.Contains(resView, "ejected LERP-99") || !strings.Contains(resView, "resume-cmd-123") {
+		t.Fatalf("ejection result modal missing content:\n%s", resView)
+	}
+	if !strings.Contains(resView, "LERP-2") {
+		t.Fatalf("ejection result modal hid background inbox rows:\n%s", resView)
+	}
+	m = update(t, m, keyMsg("esc"))
+}
+
+// Done-when: promote, help and eject open on windows with no room for the main
+// pane, both in a short-wide window (90x12) and in a narrow-stacked window (60x12).
+func TestModalsOpenInWindowsWithNoRoomForPane(t *testing.T) {
+	ejector := &recordingEjector{resumable: []string{"implement"}}
+	m, _ := newEjectTestModel(t, 1, ejector)
+	m = pastTheSplash(t, m)
+	m = update(t, m, eventMsg{ev: looseAttention("")})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		TicketID: "id-42", Ticket: "LERP-42", Queue: "implement", LogPath: "/dev/null"}})
+
+	for _, size := range []struct{ w, h int }{{90, 12}, {60, 12}} {
+		m = resize(t, m, size.w, size.h)
+		if m.roomForMain() {
+			t.Fatalf("window %dx%d was expected to have no room for main pane", size.w, size.h)
+		}
+
+		// Promote modal on inbox
+		m = update(t, m, keyMsg("1"))
+		m = update(t, m, keyMsg("p"))
+		if !m.promoting || !strings.Contains(m.View(), "promote") {
+			t.Fatalf("%dx%d refused promote modal:\n%s", size.w, size.h, m.View())
+		}
+		m = update(t, m, keyMsg("esc"))
+
+		// Help modal
+		m = update(t, m, keyMsg("?"))
+		if !m.helpOn || !strings.Contains(m.View(), "help") {
+			t.Fatalf("%dx%d refused help modal:\n%s", size.w, size.h, m.View())
+		}
+		m = update(t, m, keyMsg("?"))
+
+		// Eject modal on work
+		m = update(t, m, keyMsg("2"))
+		m = update(t, m, keyMsg("e"))
+		if !m.ejecting || !strings.Contains(m.View(), "eject LERP-42") {
+			t.Fatalf("%dx%d refused eject modal:\n%s", size.w, size.h, m.View())
+		}
+		m = update(t, m, keyMsg("esc"))
+	}
+}
+
+// Done-when: a modal never covers the status bar, and the status bar carries
+// the modal's key hints.
+func TestModalNeverCoversStatusBar(t *testing.T) {
+	ejector := &recordingEjector{resumable: []string{"implement"}}
+	m, _ := newEjectTestModel(t, 1, ejector)
+	m = pastTheSplash(t, m)
+	m = resize(t, m, 100, 24)
+	m = update(t, m, eventMsg{ev: looseAttention("")})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		TicketID: "id-42", Ticket: "LERP-42", Queue: "implement", LogPath: "/dev/null"}})
+
+	checkBar := func(name, wantHint string) {
+		t.Helper()
+		lines := strings.Split(m.View(), "\n")
+		last := lines[len(lines)-1]
+		if !strings.Contains(last, "lerp") || !strings.Contains(last, wantHint) {
+			t.Fatalf("%s modal broke status bar line:\n%q\nFull view:\n%s", name, last, m.View())
+		}
+	}
+
+	// 1. Promote
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, keyMsg("p"))
+	checkBar("promote", "enter promote · esc cancel")
+	m = update(t, m, keyMsg("esc"))
+
+	// 2. Help
+	m = update(t, m, keyMsg("?"))
+	checkBar("help", "? help · q quit")
+	m = update(t, m, keyMsg("?"))
+
+	// 3. Ejecting confirm
+	m = update(t, m, keyMsg("2"))
+	m = update(t, m, keyMsg("e"))
+	checkBar("ejecting", "enter eject · esc cancel")
+	m = update(t, m, keyMsg("esc"))
+
+	// 4. Ejection result
+	ej := loop.Ejection{Ticket: "LERP-42", Resume: "resume", Workspace: "/ws"}
+	m.ejection = &ej
+	checkBar("ejection", "esc dismiss")
+	m = update(t, m, keyMsg("esc"))
 }

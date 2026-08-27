@@ -33,9 +33,9 @@ The move and nothing else. That MoveIssue and
 view makes; everything else about a ticket still happens in Linear, and `o`
 opens the selected ticket there.
 
-`p` drops out of the key line where there is no status to promote into, or no
-room to draw the picker. Inside the picker, `↑`/`↓` pick a target, `enter`
-takes it, and `esc` — or `q` — backs out without writing anything.
+`p` drops out of the key line where there is no status to promote into. Inside
+the picker, `↑`/`↓` pick a target, `enter` takes it, and `esc` — or `q` — backs
+out without writing anything.
 
 ## Several at once
 
