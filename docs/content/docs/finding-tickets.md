@@ -1,20 +1,20 @@
 ---
 title: Finding tickets
-summary: Sorting, scoping to a project, searching, and unfolding the backlog.
+summary: Filtering, sorting, searching, and unfolding the backlog.
 weight: 70
 ---
 
 # Finding tickets
 
 Four keys on the [Inbox panel](reading-the-board.md#the-inbox-panel) decide
-what it shows and in what order: `s` sorts, `P` scopes to a project, `/`
+what it shows and in what order: `F` filters by field and value, `s` sorts, `/`
 searches, and `B` unfolds the backlog. All four are session-only — no saved
 views, no filter syntax, and none of them changes which tickets are fetched.
 
 <!-- Cast slot (LERP-70): a full inbox narrowed — s through the sort modes,
-     P onto one project, / typed into, B unfolding the backlog and folding
+     F onto one project, / typed into, B unfolding the backlog and folding
      it back.
-     keys: [s] · [P] · [/] · [B] · [esc] -->
+     keys: [F] · [P] · [s] · [/] · [B] · [esc] -->
 
 ## Order
 
@@ -30,11 +30,15 @@ identifier. The promote worth making is the top row of its group.
 a header per boundary — none, when every row is in the same group — and the
 two flat ones order the whole list.
 
-## Scope
+## Filter
 
-`P` scopes the panel to one project and cycles back to all. It drops out of
-the key line on a list with no project in it, because a key that does nothing
-costs one that does.
+`F` opens a two-step modal to filter the inbox: pick a field (project, status,
+or priority), then pick a value. The value list displays row counts and includes
+a type-ahead prompt to narrow the options. `enter` applies the filter; `esc`
+backs out a level. `F` on an active filter reopens it for changing or clearing
+(by choosing the `all <field>` option at the top of the list).
+
+`P` is a shortcut straight to the project value list.
 
 ## Search
 

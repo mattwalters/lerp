@@ -840,26 +840,29 @@ func TestTheWordmarkStaysOffScreenBehindProjectFilter(t *testing.T) {
 	if !hasDimMark(m.View()) {
 		t.Fatalf("setup: mark not showing with folded backlog:\n%s", m.View())
 	}
-	// Unfold to reach the project cycle, scope to "Core", and refold:
+	// Unfold to reach the project list, scope to "Core", and refold:
 	m = update(t, m, keyMsg("B"))
 	m = update(t, m, keyMsg("P"))
-	if m.project != "Core" {
-		t.Fatalf("setup: P did not scope to project Core: %q", m.project)
+	m = update(t, m, keyMsg("down"))
+	m = update(t, m, keyMsg("enter"))
+	if m.filterField != filterFieldProject || m.filterValue != "Core" {
+		t.Fatalf("setup: P did not scope to project Core: field=%v val=%q", m.filterField, m.filterValue)
 	}
 	m = update(t, m, keyMsg("B"))
-	if m.project != "Core" || len(m.shown) != 0 {
-		t.Fatalf("setup: folding changed the scope: %q, %d rows", m.project, len(m.shown))
+	if m.filterField != filterFieldProject || m.filterValue != "Core" || len(m.shown) != 0 {
+		t.Fatalf("setup: folding changed the scope: field=%v val=%q, %d rows", m.filterField, m.filterValue, len(m.shown))
 	}
 	if hasDimMark(m.View()) {
 		t.Fatalf("the mark drew behind an active project scope:\n%s", m.View())
 	}
-	if !strings.Contains(m.View(), "nothing in Core") {
-		t.Fatalf("expected 'nothing in Core' note:\n%s", m.View())
+	if !strings.Contains(m.View(), "nothing in project Core") {
+		t.Fatalf("expected 'nothing in project Core' note:\n%s", m.View())
 	}
-	// Press 'P' to cycle back to all projects:
+	// Press 'P' and select all project to clear the filter:
 	m = update(t, m, keyMsg("P"))
-	if m.project != "" {
-		t.Fatalf("setup: P did not cycle back to all projects: %q", m.project)
+	m = update(t, m, keyMsg("enter"))
+	if m.filterField != filterFieldNone || m.filterValue != "" {
+		t.Fatalf("setup: clearing filter failed: field=%v val=%q", m.filterField, m.filterValue)
 	}
 	if !hasDimMark(m.View()) {
 		t.Fatalf("the mark did not reappear after clearing project filter:\n%s", m.View())
