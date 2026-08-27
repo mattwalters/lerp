@@ -1501,7 +1501,20 @@ func (r *Reconciler) executeLane(ctx context.Context, lr *laneRun, c candidate) 
 	return ev, ok
 }
 
-// runCost reads a finished run's whole log for the dollar figure its runner's
+// runCostCap bounds how much of a finished run's log runCost reads. Every
+// vendor's stream that states a cost at all states it on one line near the
+// end of an ordinary run's log — a few kilobytes to a few megabytes — so this
+// reaches it with room to spare, the way pulse's own catchupChunks reaches an
+// ordinary run's history in one poll. It exists for the run this is not: a
+// multi-day agent whose log runs to hundreds of megabytes would otherwise
+// have this reconcile's tick goroutine read the whole thing and JSON-decode
+// every line of it, unbounded, on the same call reapDisposeTimeout exists to
+// keep bounded. A run that pathological reports no cost rather than stalling
+// the loop over one — the same trade pulse already makes against a log too
+// long to catch up on in a poll.
+const runCostCap = 8 << 20 // 8 MiB
+
+// runCost reads a finished run's log for the dollar figure its runner's
 // stream reported, decoding it exactly as the TUI's pulse does and summing
 // every event's Cost. It must run before the record is discarded — a
 // subscriber reacting to EventExited is already too late, since
@@ -1510,7 +1523,12 @@ func (r *Reconciler) executeLane(ctx context.Context, lr *laneRun, c candidate) 
 // moving target. Zero for a runner whose stream never states a cost, and for
 // a log this cannot read: neither is worth failing a run over.
 func runCost(path string) float64 {
-	b, err := os.ReadFile(path)
+	f, err := os.Open(path)
+	if err != nil {
+		return 0
+	}
+	defer f.Close()
+	b, err := io.ReadAll(io.LimitReader(f, runCostCap))
 	if err != nil {
 		return 0
 	}

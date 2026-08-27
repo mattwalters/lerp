@@ -408,8 +408,10 @@ func TestPulseTracksSpendAndTheLastCall(t *testing.T) {
 // dollars until that line lands, and then the run's whole figure at once.
 // That line is also the one that ends the log, so a poll landing between it
 // and the run settling is the only chance the row itself ever gets to draw
-// the figure; model.go's finalCost is what gives the operator a second one,
-// on the exit note, that does not depend on that timing.
+// the figure. The operator's second chance does not go through pulse at all:
+// internal/loop's runCost reads the same log independently, before the run's
+// evidence (log included) is discarded, and the result rides loop.Event.Cost
+// onto the exit note that apply (model.go) builds on EventExited.
 func TestPulseTracksCostFromTheResultLine(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "run.log")
 	appendLog(t, path, `{"type":"system","subtype":"init","model":"claude-opus-5","session_id":"abc"}`+"\n")

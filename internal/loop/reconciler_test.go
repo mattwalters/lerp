@@ -671,16 +671,46 @@ func TestExitedEventCarriesTheRunsCostFromItsLog(t *testing.T) {
 	}
 }
 
-// A runner whose stream never states a cost — the stub here, standing in for
-// codex — must not have the exit event report one anyway.
+// A runner whose stream never states a cost — codex, today — must not have
+// the exit event report one anyway. The log here decodes cleanly and carries
+// real token usage, so this is testing that absence, not a log runCost
+// merely failed to open.
 func TestExitedEventReportsNoCostForARunnerThatDoesNotStateOne(t *testing.T) {
-	h := newHarness(t, 1, nil)
+	h := newHarness(t, 1, func(_ context.Context, inv run.Invocation) (run.Result, error) {
+		line := `{"type":"turn.completed","usage":{"input_tokens":100,"output_tokens":50}}` + "\n"
+		if err := os.WriteFile(inv.LogPath, []byte(line), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return run.Result{ExitCode: 0}, nil
+	})
 	h.fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Todo"})
 
 	h.rec.Tick(context.Background())
 	exited := h.waitEvents(t, EventExited, 1)
 	if exited[0].Cost != 0 {
 		t.Errorf("exit event cost = %v, want 0", exited[0].Cost)
+	}
+}
+
+// runCost bounds its read rather than loading a pathological run's whole log
+// onto the tick goroutine: a multi-day agent's log can run to hundreds of
+// megabytes, and reading and JSON-decoding all of it would stall reconcile
+// for as long as that takes. A cost stated past the cap is missed — the
+// trade this makes on purpose, the same one pulse's own catchupChunks makes
+// against a log too long to catch up on in a poll — so this pins the
+// boundary rather than the ordinary case, which TestExitedEventCarriesTheRunsCostFromItsLog
+// already covers.
+func TestRunCostIsBoundedForAPathologicalLog(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.log")
+	var b strings.Builder
+	b.WriteString(strings.Repeat("x", runCostCap+1))
+	b.WriteString("\n")
+	b.WriteString(`{"type":"result","subtype":"success","total_cost_usd":9.99}` + "\n")
+	if err := os.WriteFile(path, []byte(b.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := runCost(path); got != 0 {
+		t.Errorf("runCost read past its cap and found %v, want 0", got)
 	}
 }
 
