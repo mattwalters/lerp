@@ -1300,15 +1300,15 @@ func (m *model) dropVisual() {
 // meant for the board must not throw it away.
 func (m model) handleEjectKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
-	switch msg.String() {
-	case "ctrl+c":
+	switch {
+	case key.Matches(msg, m.keys.Quit):
 		return m, tea.Quit
-	case "?":
+	case key.Matches(msg, m.keys.Help):
 		m.setHelp(true)
-	case "esc", "q":
+	case key.Matches(msg, m.keys.Close), msg.String() == "q":
 		m.ejecting = false
 		m.ejection = nil
-	case "enter":
+	case key.Matches(msg, m.keys.Detail):
 		if m.ejecting {
 			m.ejecting = false
 			cmd = m.doEject(m.ejectRow.ticketID, m.ejectRow.ticket)
