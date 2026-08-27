@@ -19,6 +19,7 @@ import (
 	"github.com/mattwalters/lerp/internal/linear"
 	"github.com/mattwalters/lerp/internal/logfmt"
 	"github.com/mattwalters/lerp/internal/run"
+	"github.com/mattwalters/lerp/internal/telemetry"
 	"github.com/mattwalters/lerp/internal/workspace"
 )
 
@@ -305,6 +306,13 @@ type ReconcilerOptions struct {
 	// injectable for the same reason the rest are: a test that needs a kill
 	// to fail cannot provoke one for real without picking a victim.
 	Kill func(pid int, sig syscall.Signal) error
+	// Telemetry receives one Run for every settled run — executeLane and reap
+	// call it after their Evidence.Remove succeeds, which is what makes "one
+	// line or none, never two" the same guarantee as the record removal
+	// itself. Defaults to appending to the local telemetry file (SCOPE.md
+	// invariant 1) and logging a write failure without ever failing the run;
+	// injectable so loop tests can collect Runs instead of writing them.
+	Telemetry func(telemetry.Run)
 }
 
 // Reconciler is the loop — there is exactly one. Desired state is the board,
@@ -414,6 +422,14 @@ func NewReconciler(o ReconcilerOptions) (*Reconciler, error) {
 	}
 	if o.Log != nil {
 		o.Log = &syncWriter{w: o.Log}
+	}
+	if o.Telemetry == nil {
+		log := o.Log
+		o.Telemetry = func(run telemetry.Run) {
+			if err := telemetry.Append(run); err != nil && log != nil {
+				fmt.Fprintf(log, "telemetry: %v\n", err)
+			}
+		}
 	}
 	return &Reconciler{o: o, ejected: map[string]bool{}, boards: map[string]*teamBoard{}}, nil
 }
@@ -1258,13 +1274,16 @@ func (r *Reconciler) reap(ctx context.Context, record evidence.Record) bool {
 		r.o.Dispose(dctx, r.o.RepoDir, r.o.Repo.Dispose, id, r.o.Log)
 		cancel()
 	}
-	ev, ok := r.settleDead(ctx, record)
+	ev, tel, ok := r.settleDead(ctx, record)
 	if !ok {
 		return false
 	}
 	if err := r.o.Evidence.Remove(record.RunID); err != nil {
 		r.fail(fmt.Errorf("reap run %s: %w", record.RunID, err))
 		return false
+	}
+	if tel != nil {
+		r.o.Telemetry(*tel)
 	}
 	r.emit(ev)
 	return true
@@ -1292,10 +1311,25 @@ func (r *Reconciler) reap(ctx context.Context, record evidence.Record) bool {
 // case it was written for. The ticket then rests claimed in a served status,
 // which the inbox does not list (see attention); that gap is the one a live
 // failed run has always had, not a new one.
-func (r *Reconciler) settleDead(ctx context.Context, record evidence.Record) (Event, bool) {
+// settleDead also returns the telemetry.Run reap writes once it has removed
+// the record — one line for every settled run, whichever of the branches
+// below decided it, all built by the one shared assembly helper in
+// telemetry.go. It is nil for a record whose agent never ran: a claim
+// protocol failure keeps a record with no PID ever attached, and eject
+// disowns a record by blanking its TicketID — both land in the fallback
+// branch below alongside a genuinely killed run, and neither is a run
+// telemetry has anything to measure.
+func (r *Reconciler) settleDead(ctx context.Context, record evidence.Record) (Event, *telemetry.Run, bool) {
 	reaped := Event{Type: EventReaped, RunID: record.RunID, Lane: record.Lane,
 		TicketID: record.TicketID, Queue: record.Queue, LogPath: record.LogPath}
 	code, recorded := evidence.ExitStatus(record)
+	at, durationMS := exitTiming(record, recorded)
+	var exitCode *int
+	if recorded {
+		c := code
+		exitCode = &c
+	}
+
 	// The queue the run started from may have been renamed, removed, or
 	// pointed at a different status in lerp.toml since it started. Only a
 	// queue still serving the status this run picked its ticket up from has a
@@ -1306,32 +1340,46 @@ func (r *Reconciler) settleDead(ctx context.Context, record evidence.Record) (Ev
 	if !recorded || !configured || queue.Status != record.StartingStatus || record.TicketID == "" {
 		if err := r.releaseDead(ctx, record); err != nil {
 			r.fail(fmt.Errorf("reap run %s: %w", record.RunID, err))
-			return Event{}, false
+			return Event{}, nil, false
 		}
-		return reaped, true
+		if record.PID == 0 || record.TicketID == "" {
+			// PID 0: Attach never ran, so no agent ever started — a claim
+			// protocol failure kept this record for exactly this repair.
+			// Blank TicketID: eject's Disown left this behind, and eject
+			// already owns not reporting anything for it.
+			return reaped, nil, true
+		}
+		// No move rule ran, so there is nothing to say about where the ticket
+		// rested: status is absent.
+		tel := buildTelemetryRun(r.o.Repo, r.o.RepoDir, record, record.Ticket, record.Queue, at, durationMS, exitCode, "")
+		return reaped, &tel, true
 	}
 
 	issue, err := r.o.Client.GetIssue(ctx, record.TicketID)
 	if errors.Is(err, linear.ErrNotFound) {
-		return reaped, true // the ticket itself is gone; nothing to settle
+		// The ticket itself is gone; nothing to settle, and so nothing to
+		// report as its resting status.
+		tel := buildTelemetryRun(r.o.Repo, r.o.RepoDir, record, record.Ticket, record.Queue, at, durationMS, exitCode, "")
+		return reaped, &tel, true
 	}
 	if err != nil {
 		r.fail(fmt.Errorf("reap run %s: read ticket %s: %w", record.RunID, record.TicketID, err))
-		return Event{}, false
+		return Event{}, nil, false
 	}
 	viewerID, err := r.o.Client.Viewer(ctx)
 	if err != nil {
 		r.fail(fmt.Errorf("reap run %s: read viewer: %w", record.RunID, err))
-		return Event{}, false
+		return Event{}, nil, false
 	}
-	note, moveErr := conclude(ctx, r.o.Client, issue, queue, r.o.Repo, code, viewerID, r.o.Log)
+	note, final, moveErr := conclude(ctx, r.o.Client, issue, queue, r.o.Repo, code, viewerID, r.o.Log)
 	if moveErr != nil {
 		r.fail(fmt.Errorf("reap run %s: %w", record.RunID, moveErr))
-		return Event{}, false
+		return Event{}, nil, false
 	}
+	tel := buildTelemetryRun(r.o.Repo, r.o.RepoDir, record, issue.Identifier, record.Queue, at, durationMS, exitCode, final)
 	return Event{Type: EventExited, RunID: record.RunID, Lane: record.Lane,
 		TicketID: record.TicketID, Ticket: issue.Identifier, Queue: record.Queue,
-		LogPath: record.LogPath, ExitCode: code, Note: note, Cost: runCost(record.LogPath)}, true
+		LogPath: record.LogPath, ExitCode: code, Note: note, Cost: runCost(record.LogPath)}, &tel, true
 }
 
 // releaseDead releases the claim of a dead run that never said how it ended,
@@ -1506,10 +1554,12 @@ func (r *Reconciler) executeLane(ctx context.Context, lr *laneRun, c candidate) 
 		TicketID: issue.ID, Ticket: issue.Identifier, Queue: c.name,
 		LogPath: record.LogPath, StartedAt: record.StartedAt})
 
-	ev, keepRecord, ok := r.provisionAndRun(ctx, lr, c, record, viewerID)
+	ev, keepRecord, tel, ok := r.provisionAndRun(ctx, lr, c, record, viewerID)
 	if !keepRecord {
 		if err := r.o.Evidence.Remove(record.RunID); err != nil {
 			r.fail(fmt.Errorf("remove run record %s: %w", record.RunID, err))
+		} else if tel != nil {
+			r.o.Telemetry(*tel)
 		}
 	}
 	return ev, ok
@@ -1564,7 +1614,13 @@ func runCost(path string) float64 {
 // dispose runs when this function returns, before the caller discards the run
 // record, so a settled run never leaves a workspace behind without the record
 // that names it.
-func (r *Reconciler) provisionAndRun(ctx context.Context, lr *laneRun, c candidate, record evidence.Record, viewerID string) (ev Event, keepRecord, ok bool) {
+//
+// tel is the telemetry.Run executeLane writes once it has removed the
+// record, nil on every path where no agent finished a run to measure: an
+// ejected run (the operator took the work over — the run did not finish),
+// a provision failure and an execution error (no agent ran), and a shutdown
+// (ctx.Err() != nil keeps the record; the next lerp's reap writes the line).
+func (r *Reconciler) provisionAndRun(ctx context.Context, lr *laneRun, c candidate, record evidence.Record, viewerID string) (ev Event, keepRecord bool, tel *telemetry.Run, ok bool) {
 	issue := c.issue
 	id := workspace.Identity{Lane: lr.lane, TicketID: issue.ID, Workspace: record.Workspace}
 	// Registered before provisioning, not after: a provision command that
@@ -1587,9 +1643,9 @@ func (r *Reconciler) provisionAndRun(ctx context.Context, lr *laneRun, c candida
 		r.o.Dispose(dctx, r.o.RepoDir, r.o.Repo.Dispose, id, r.o.Log)
 	}()
 
-	fail := func(err error) (Event, bool, bool) {
+	fail := func(err error) (Event, bool, *telemetry.Run, bool) {
 		return Event{Type: EventError, RunID: record.RunID, Lane: lr.lane, TicketID: issue.ID,
-			Ticket: issue.Identifier, Queue: c.name, LogPath: record.LogPath, Err: err}, false, true
+			Ticket: issue.Identifier, Queue: c.name, LogPath: record.LogPath, Err: err}, false, nil, true
 	}
 
 	if err := r.o.Provision(ctx, r.o.RepoDir, r.o.Repo.Provision, id, r.o.Log); err != nil {
@@ -1648,20 +1704,24 @@ func (r *Reconciler) provisionAndRun(ctx context.Context, lr *laneRun, c candida
 		// keeps its claim and its status, so there is no conclude to run and
 		// nothing to say about the exit code of a process that was shot. The
 		// record is gone already; dropping it again is harmless and keeps the
-		// one rule ("keepRecord false means remove it") intact.
+		// one rule ("keepRecord false means remove it") intact. No telemetry
+		// either: the run did not finish, and any number written for it would
+		// be a lie about a session that continues interactively.
 		return Event{Type: EventEjected, RunID: record.RunID, Lane: lr.lane, TicketID: issue.ID,
-			Ticket: issue.Identifier, Queue: c.name, LogPath: record.LogPath}, false, true
+			Ticket: issue.Identifier, Queue: c.name, LogPath: record.LogPath}, false, nil, true
 	}
 	if ctx.Err() != nil {
 		// Shutdown, not failure: the agent was killed along with the loop.
 		// Keep the claim and the record; the next lerp finds a dead run and
-		// reaps it, so a deliberate stop and a crash repair identically.
-		return Event{}, true, false
+		// reaps it, so a deliberate stop and a crash repair identically —
+		// telemetry included, since reap is what writes the line.
+		return Event{}, true, nil, false
 	}
 	if err != nil {
 		// The runner could not be executed at all. Keep the claim — releasing
 		// it would retry a broken runner forever — and drop the local record,
-		// which never gained a process worth adopting.
+		// which never gained a process worth adopting. No agent ran, so
+		// nothing to measure.
 		return fail(fmt.Errorf("run issue %s: %w", issue.ID, err))
 	}
 
@@ -1670,10 +1730,12 @@ func (r *Reconciler) provisionAndRun(ctx context.Context, lr *laneRun, c candida
 	// on the exit event; the ticket stays claimed for a human to settle. A
 	// move that was skipped because the ticket left mid-run rides along too,
 	// as a note: the run log alone is not somewhere anyone is looking.
-	note, moveErr := conclude(ctx, r.o.Client, issue, c.queue, r.o.Repo, result.ExitCode, viewerID, r.o.Log)
+	note, final, moveErr := conclude(ctx, r.o.Client, issue, c.queue, r.o.Repo, result.ExitCode, viewerID, r.o.Log)
+	exitCode := result.ExitCode
+	settled := buildTelemetryRun(r.o.Repo, r.o.RepoDir, record, issue.Identifier, c.name, time.Now().UTC(), result.Duration.Milliseconds(), &exitCode, final)
 	return Event{Type: EventExited, RunID: record.RunID, Lane: lr.lane, TicketID: issue.ID,
 		Ticket: issue.Identifier, Queue: c.name, LogPath: record.LogPath,
-		ExitCode: result.ExitCode, Note: note, Err: moveErr, Cost: runCost(record.LogPath)}, false, true
+		ExitCode: result.ExitCode, Note: note, Err: moveErr, Cost: runCost(record.LogPath)}, false, &settled, true
 }
 
 // freeLanes returns the lane numbers new runs may start in: lanes 1..N not in

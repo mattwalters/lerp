@@ -31,7 +31,7 @@ func TestConcludeFailureWithoutRouteKeepsTheClaim(t *testing.T) {
 	repo.Queues["todo"] = queue
 
 	issue, viewerID := claimed(t, fake, "one", queue.Status)
-	if _, err := conclude(ctx, fake, issue, queue, repo, 3, viewerID, nil); err != nil {
+	if _, _, err := conclude(ctx, fake, issue, queue, repo, 3, viewerID, nil); err != nil {
 		t.Fatalf("conclude: %v", err)
 	}
 	got, _ := fake.GetIssue(ctx, "one")
@@ -46,6 +46,89 @@ func TestConcludeFailureWithoutRouteKeepsTheClaim(t *testing.T) {
 	}
 }
 
+// conclude's status return is telemetry's account of where a run's ticket
+// came to rest, so it has to agree with what the board itself shows in every
+// shape a run can settle: no route, a normal hop, a hop skipped for a status
+// nobody named, and a takeover.
+func TestConcludeReportsWhereTheTicketRested(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("no failure route", func(t *testing.T) {
+		fake := linear.NewFake()
+		fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Todo"})
+		repo := testRepo()
+		queue := repo.Queues["todo"]
+		queue.OnFailure = ""
+		repo.Queues["todo"] = queue
+
+		issue, viewerID := claimed(t, fake, "one", queue.Status)
+		_, final, err := conclude(ctx, fake, issue, queue, repo, 3, viewerID, nil)
+		if err != nil {
+			t.Fatalf("conclude: %v", err)
+		}
+		// Not "Todo": this branch never reads the board, so guessing the
+		// ticket stayed put would be exactly the zero-faking telemetry rules
+		// out — the agent could have moved it itself before exiting.
+		if final != "" {
+			t.Errorf("final = %q, want empty: nothing was observed", final)
+		}
+	})
+
+	t.Run("the queue's own move rule", func(t *testing.T) {
+		fake := linear.NewFake()
+		fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Todo"})
+		repo := testRepo()
+		queue := repo.Queues["todo"]
+
+		issue, viewerID := claimed(t, fake, "one", queue.Status)
+		_, final, err := conclude(ctx, fake, issue, queue, repo, 0, viewerID, nil)
+		if err != nil {
+			t.Fatalf("conclude: %v", err)
+		}
+		if final != "Done" {
+			t.Errorf("final = %q, want Done", final)
+		}
+	})
+
+	t.Run("an agent's own move into another served status", func(t *testing.T) {
+		fake := linear.NewFake()
+		fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Planning"})
+		repo := gatedRepo()
+		queue := repo.Queues["plan"]
+
+		issue, viewerID := claimed(t, fake, "one", queue.Status)
+		if err := fake.MoveIssue(ctx, "one", "Implementing"); err != nil {
+			t.Fatal(err)
+		}
+		_, final, err := conclude(ctx, fake, issue, queue, repo, 0, viewerID, nil)
+		if err != nil {
+			t.Fatalf("conclude: %v", err)
+		}
+		if final != "Implementing" {
+			t.Errorf("final = %q, want Implementing", final)
+		}
+	})
+
+	t.Run("a takeover mid-run", func(t *testing.T) {
+		fake := linear.NewFake()
+		fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Todo"})
+		repo := testRepo()
+		queue := repo.Queues["todo"]
+
+		issue, viewerID := claimed(t, fake, "one", queue.Status)
+		if err := fake.AssignIssue(ctx, "one", "somebody-else"); err != nil {
+			t.Fatal(err)
+		}
+		_, final, err := conclude(ctx, fake, issue, queue, repo, 0, viewerID, nil)
+		if err != nil {
+			t.Fatalf("conclude: %v", err)
+		}
+		if final != "Todo" {
+			t.Errorf("final = %q, want Todo (unmoved)", final)
+		}
+	})
+}
+
 // Finishing into a status no queue serves releases the claim. The gate is the
 // status — no queue picks up from it, so the ticket rests there either way —
 // and the inbox lists it unassigned exactly as it listed it claimed. What the
@@ -58,7 +141,7 @@ func TestConcludeReleasesTheClaimAtAGate(t *testing.T) {
 	queue := repo.Queues["todo"]
 
 	issue, viewerID := claimed(t, fake, "one", queue.Status)
-	if _, err := conclude(ctx, fake, issue, queue, repo, 0, viewerID, nil); err != nil {
+	if _, _, err := conclude(ctx, fake, issue, queue, repo, 0, viewerID, nil); err != nil {
 		t.Fatalf("conclude: %v", err)
 	}
 	got, _ := fake.GetIssue(ctx, "one")
@@ -90,7 +173,7 @@ func TestConcludeReleasesTheClaimWhenTheAgentMovedIntoAServedStatus(t *testing.T
 	if err := fake.MoveIssue(ctx, "one", "Implementing"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := conclude(ctx, fake, issue, queue, repo, 0, viewerID, nil); err != nil {
+	if _, _, err := conclude(ctx, fake, issue, queue, repo, 0, viewerID, nil); err != nil {
 		t.Fatalf("conclude: %v", err)
 	}
 	got, _ := fake.GetIssue(ctx, "one")
@@ -115,7 +198,7 @@ func TestATicketMovedOnFromAGateIsACandidateAgain(t *testing.T) {
 	queue := repo.Queues["plan"]
 
 	issue, viewerID := claimed(t, fake, "one", queue.Status)
-	if _, err := conclude(ctx, fake, issue, queue, repo, 0, viewerID, nil); err != nil {
+	if _, _, err := conclude(ctx, fake, issue, queue, repo, 0, viewerID, nil); err != nil {
 		t.Fatalf("conclude: %v", err)
 	}
 	parked, _ := fake.GetIssue(ctx, "one")

@@ -90,7 +90,7 @@ func (c *claude) Decode(line string) (Event, bool) {
 	case "system":
 		switch l.Subtype {
 		case "init":
-			return Event{Kind: KindInit, Text: runHeader(l.Model, l.SessionID)}, true
+			return Event{Kind: KindInit, Text: runHeader(l.Model, l.SessionID), Model: l.Model}, true
 		case "thinking_tokens":
 			// The stream's heartbeat: a running count for the thinking block
 			// in progress, restarting at each one.

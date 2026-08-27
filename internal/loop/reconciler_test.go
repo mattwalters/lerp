@@ -21,6 +21,7 @@ import (
 	"github.com/mattwalters/lerp/internal/evidence"
 	"github.com/mattwalters/lerp/internal/linear"
 	"github.com/mattwalters/lerp/internal/run"
+	"github.com/mattwalters/lerp/internal/telemetry"
 	"github.com/mattwalters/lerp/internal/workspace"
 )
 
@@ -41,8 +42,9 @@ type harness struct {
 	// is ordered after the write by the go statement that starts it.
 	provisionErr error
 
-	mu       sync.Mutex
-	disposed []workspace.Identity
+	mu        sync.Mutex
+	disposed  []workspace.Identity
+	telemetry []telemetry.Run
 }
 
 func newHarness(t *testing.T, lanes int, execute ExecuteFunc) *harness {
@@ -90,6 +92,11 @@ func newHarnessWith(t *testing.T, lanes int, execute ExecuteFunc, fake *linear.F
 			h.mu.Unlock()
 		},
 		Alive: func(record evidence.Record) bool { return h.alive[record.RunID] },
+		Telemetry: func(run telemetry.Run) {
+			h.mu.Lock()
+			h.telemetry = append(h.telemetry, run)
+			h.mu.Unlock()
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -132,6 +139,11 @@ func newSecondLerp(t *testing.T, h *harness, lanes int) *harness {
 			next.mu.Unlock()
 		},
 		Alive: func(record evidence.Record) bool { return next.alive[record.RunID] },
+		Telemetry: func(run telemetry.Run) {
+			next.mu.Lock()
+			next.telemetry = append(next.telemetry, run)
+			next.mu.Unlock()
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -293,6 +305,12 @@ func (h *harness) disposedIdentities() []workspace.Identity {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return append([]workspace.Identity(nil), h.disposed...)
+}
+
+func (h *harness) telemetryRuns() []telemetry.Run {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]telemetry.Run(nil), h.telemetry...)
 }
 
 func (h *harness) issue(t *testing.T, id string) linear.Issue {
@@ -1413,7 +1431,7 @@ func TestPromoteReleasesTheClaimThatParkedTheTicket(t *testing.T) {
 	if err != nil || !won {
 		t.Fatalf("claimForQueue = (%v, %v), want the claim won", won, err)
 	}
-	if _, err := conclude(ctx, h.fake, issue, queue, repo, 1, viewerID, nil); err != nil {
+	if _, _, err := conclude(ctx, h.fake, issue, queue, repo, 1, viewerID, nil); err != nil {
 		t.Fatalf("conclude: %v", err)
 	}
 	parked := h.issue(t, "one")
