@@ -254,13 +254,26 @@ demo: ## Re-record docs/demo.gif from docs/tapes/demo.tape (needs vhs)
 	  mv $(DEMO_RENDER_DIR)/demo.gif $(DEMO_GIF) && \
 	  printf 'rendered %s (%s bytes)\n' '$(DEMO_GIF)' "$$size"
 
+# The GIF cap is checked here too, even though nothing under docs/ needs the
+# file itself: only demo.tape declares one (see its Output lines), and `demo`
+# is not on any CI path, so a cap only `make demo` checked would be a cap
+# nobody but a human running it locally ever hit — a PR that grows the
+# README's tape past DEMO_MAX_BYTES would go green here and fail only later,
+# on whoever next runs `make demo` to refresh the committed asset.
 .PHONY: casts
 casts: ## Render every tape under docs/tapes/ into docs/static/casts/ (needs vhs)
+	@rm -rf $(CASTS_DIR)
 	@mkdir -p $(CASTS_DIR)
 	@for f in $(TAPES_DIR)/*.tape; do \
 	  name=$$(basename "$$f" .tape); \
 	  test "$$name" = "house" && continue; \
 	  $(MAKE) render-tape TAPE="$$name" || exit 1; \
+	  if [ -e $(DEMO_RENDER_DIR)/$$name.gif ]; then \
+	    size=$$(wc -c < $(DEMO_RENDER_DIR)/$$name.gif | tr -d ' '); \
+	    test "$$size" -le $(DEMO_MAX_BYTES) || { \
+	      printf 'casts: %s.gif came back %s bytes, over the %s cap\n' \
+	        "$$name" "$$size" '$(DEMO_MAX_BYTES)'; exit 1; }; \
+	  fi; \
 	  for out in $(DEMO_RENDER_DIR)/$$name.mp4 $(DEMO_RENDER_DIR)/$$name.webm; do \
 	    test -e "$$out" || continue; \
 	    size=$$(wc -c < "$$out" | tr -d ' '); \

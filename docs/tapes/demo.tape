@@ -45,23 +45,24 @@ Sleep 4500ms
 Escape
 Sleep 2s
 
-# `2` focuses the work panel, which owns its screen the same way. A lane
-# picking a ticket up is the state word itself landing on a row — Down clamps
-# at the last row, so the count only has to be at least the distance, and
-# waiting for "running" here is waiting for that pickup rather than guessing
-# how long it takes.
+# `2` focuses the work panel, which owns its screen the same way — both
+# panels draw every frame regardless of focus, so nothing about this
+# keystroke alone is worth waiting on; the panel's own row count is already
+# known (Up clamps at the first row, so the count only has to be at least
+# the distance).
 Type "2"
-Wait+Screen /running/
 Sleep 1s
-
-# Up to the first of the running lanes — Up clamps at the first row, so the
-# count only has to be at least the distance — and `enter` opens that lane's
-# log tail in the main pane, formatted from the agent's stream: thinking,
-# tool calls, the result. Down walks the other lanes through the pane the
-# same way.
 Up 6
 Sleep 2500ms
+
+# `enter` opens that lane's log tail in the main pane, formatted from the
+# agent's stream: thinking, tool calls, the result. The footer's `r raw`
+# hint is only drawn while a lane's log pane is open — panelBox's own "o
+# open" line otherwise — so waiting for it is waiting for the pane to have
+# actually opened on a running lane rather than guessing how long that
+# takes. Down walks the other lanes through the pane the same way.
 Enter
+Wait+Screen /r raw/
 Sleep 4s
 Down
 Sleep 4s
@@ -74,11 +75,15 @@ Sleep 4s
 Sleep 5s
 
 # `1` back to the inbox, where the finished tickets have just landed under
-# "In Review — a run finished here". Waiting for the status name itself is
-# waiting for that landing rather than guessing how long the reconciler's
-# next pass takes.
+# "In Review — a run finished here". The inbox already seeds two tickets at
+# "In Review" before any run finishes, so "In Review" alone is on screen
+# from the first frame and proves nothing here — the wait instead names one
+# of the three tickets that were running above, immediately followed on its
+# own row by the status it lands in, which only that ticket's own move can
+# produce. [ \t] rather than \s so the match cannot stretch across a line
+# break onto some other row's "In Review".
 Type "1"
-Wait+Screen /In Review/
+Wait+Screen /DEMO-2[467][ \t]+\S+[ \t]+In Review/
 Sleep 3s
 # Every run so far has landed here, which is the shape of the thing: the loop
 # works the board down, and what it finishes stacks up waiting on a human.
