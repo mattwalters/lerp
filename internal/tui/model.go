@@ -617,7 +617,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// actually finished — never mid-pass, where one side can read empty
 		// a beat before the other lands. apply already demotes the instant
 		// either side shows real content, so this only ever raises the flag.
-		if m.contentEmpty() {
+		//
+		// !m.passHadErr besides: a failed queue listing drops the queues it
+		// could not read rather than skipping the event (loop.listQueues),
+		// so an outage on the work panel's read publishes an empty snapshot
+		// indistinguishable from an actually idle one. Without this the mark
+		// would light up over a pass that errored and hide again the moment
+		// a later pass reads the same tickets back — the "reappears
+		// mid-churn" flap rule 3 rules out, arriving through the one read
+		// contentEmpty cannot itself tell succeeded from failed.
+		if m.contentEmpty() && !m.passHadErr {
 			m.boardEmptySettled = true
 		}
 		return m, tea.Tick(m.o.Interval, func(time.Time) tea.Msg { return tickMsg{} })

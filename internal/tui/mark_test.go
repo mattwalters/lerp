@@ -391,6 +391,39 @@ func TestTheWordmarkWaitsForBothEventsToSettle(t *testing.T) {
 	}
 }
 
+// loop.listQueues drops a queue it cannot read rather than skipping the
+// event, so a Linear outage on the work panel's read publishes an empty
+// snapshot indistinguishable from an actually idle one. Promoting on that
+// pass would light the mark up over an error and hide it again the moment a
+// later, successful pass reads the same tickets back — the "reappears
+// mid-churn" flap rule 3 rules out. passHadErr is what tells the two apart.
+func TestTheWordmarkDoesNotPromoteOverAFailedPass(t *testing.T) {
+	forceColour(t)
+	m, _, _ := newTestModel(t, 2)
+	m = pastTheSplash(t, m)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: nil}})
+	// The queue listing fails: contentEmpty reads true (both sides have
+	// "reported", and the failed read came back empty) but the pass carried
+	// an error.
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: nil}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventError, Err: errors.New("list queues: no route to host")}})
+	m = update(t, m, tickedMsg{})
+	if m.boardEmptySettled {
+		t.Fatal("boardEmptySettled promoted over a pass that errored")
+	}
+	if hasDimMark(m.View()) {
+		t.Fatalf("the mark showed over a failed pass:\n%s", m.View())
+	}
+	// A later pass reads the same (still empty) board cleanly: tickMsg
+	// resets passHadErr the way a real pass boundary would, and only now is
+	// the board actually confirmed idle.
+	m = update(t, m, tickMsg{})
+	m = update(t, m, tickedMsg{})
+	if !hasDimMark(m.View()) {
+		t.Fatalf("the mark did not show once a pass actually succeeded:\n%s", m.View())
+	}
+}
+
 // Opening a pane is the operator asking for something specific on screen,
 // and the mark is not it: rule 3 hides the decoration the moment there is no
 // more centre space for it to sit in, the same discrete change that would
