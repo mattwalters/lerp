@@ -28,27 +28,37 @@
          sidebar and so have no other door to it. .here marks the part of the
          site you are already in.
 
-         From inside the manual this stays self-relative: relURL resolves
-         within this build, and a version's Docs link should never leave
-         that version. The root carries no manual of its own — the publish
-         workflow prunes it back out after building — so from there the link
-         goes straight to /latest/, root-absolute because /latest/ is a
-         sibling build this one has never heard of. Until the first tag
-         exists that 404s; accepted rather than adding a manifest-gated
-         hide/show for one link, since the version picker below already
-         tolerates that same fetch failing silently, and there is no manual
-         to publish before the first tag regardless. */}}
-    <a class="nav{{ if $manual }} here{{ end }}" href="{{ if $manual }}{{ "docs/" | relURL }}{{ else }}/latest/docs/{{ end }}">Docs</a>
+         From inside the manual "docs/" | relURL resolves within this
+         build, and a version's Docs link should never leave that version.
+         The root carries no manual of its own — the publish workflow
+         prunes it back out after building — so from there the link is
+         "/latest/docs/" | relURL instead: /latest/ is a sibling build this
+         one has never heard of, so the path has to name it explicitly
+         rather than resolve inside this build, and relURL still leaves
+         Hugo's relativeURLs pass free to turn it into a page-relative link
+         that survives being served from any host or subdirectory (see
+         hugo.toml). Until the first tag exists that 404s; accepted rather
+         than adding manifest-gated hide/show logic for one link, on a
+         project that has no manual to publish before the first tag
+         regardless. */}}
+    <a class="nav{{ if $manual }} here{{ end }}" href="{{ if $manual }}{{ "docs/" | relURL }}{{ else }}{{ "/latest/docs/" | relURL }}{{ end }}">Docs</a>
     {{/* Beside the manual, not inside it: somebody still deciding whether
          lerp is the right tool has not started reading a manual yet, and the
          sidebar is for people who have. */}}
     <a class="nav{{ if eq .RelPermalink $why.RelPermalink }} here{{ end }}" href="{{ $why.RelPermalink }}">{{ $why.Title }}</a>
     <span class="spacer"></span>
     <a class="nav" href="{{ site.Params.repo }}">GitHub</a>
+    {{/* The picker belongs to manual pages: the root is unversioned, and
+         with no option in the list matching an empty site.Params.version,
+         a populated <select> would default to its first entry, "latest" —
+         showing a version label on the one build that deliberately has
+         none. */}}
+    {{ if $manual }}
     <span class="version">
       <span class="version-label">{{ site.Params.version }}</span>
       <select id="version-picker" hidden aria-label="Documentation version"></select>
     </span>
+    {{ end }}
   </header>
   <div class="wrap">
     {{ if $manual }}
@@ -100,6 +110,7 @@
     </nav>
     {{ end }}
   </div>
+  {{ if $manual }}
   <script>
     // The version picker. Each release is frozen under /vX.Y.Z/ beside a
     // moving /latest/, and versions.json sits one level above them all at the
@@ -133,5 +144,6 @@
         .catch(function () {});
     })();
   </script>
+  {{ end }}
 </body>
 </html>

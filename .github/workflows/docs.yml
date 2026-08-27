@@ -88,6 +88,7 @@ jobs:
         env:
           HUGO_PARAMS_VERSION: v0.0.0
           HUGO_PARAMS_VERSIONROOT: ".."
+          HUGO_PARAMS_REF: v0.0.0
 
   publish:
     if: github.event_name != 'pull_request'
@@ -150,13 +151,22 @@ jobs:
       # manual alike, because there is one Hugo source and one set of
       # templates, not two builds to keep in sync. This step throws the
       # manual pages back out of that build before deploy, leaving the
-      # marketing pages it actually publishes. docs/demo.gif is spared: it
-      # is a static file mounted alongside the manual's section index (see
-      # hugo.toml) but the splash page embeds it too, at the same path GitHub
-      # renders it from in the README, so it stays put.
+      # marketing pages it actually publishes. public/docs is emptied wholesale
+      # rather than by naming today's pages one at a time, so a manual page
+      # added later (docs/content/docs/<page>.md, per CONTRIBUTING.md) is
+      # pruned along with the rest instead of silently surviving onto the
+      # unversioned root. docs/demo.gif is the one file spared: it is a
+      # static mount that happens to land beside the manual's section index
+      # (see hugo.toml), but the splash page embeds it too, at the same path
+      # GitHub renders it from in the README, so it stays put.
       - name: Prune the manual from the root build
         if: github.ref == 'refs/heads/main'
-        run: rm -rf public/docs/index.html public/docs/overview public/readme public/scope
+        run: |
+          mkdir /tmp/demo-gif
+          mv public/docs/demo.gif /tmp/demo-gif/
+          rm -rf public/docs public/readme public/scope
+          mkdir public/docs
+          mv /tmp/demo-gif/demo.gif public/docs/
 
       # The manual publishes only from a tag, from that tag's own tree —
       # never from main, which is what keeps a manual that ships with an
@@ -169,12 +179,18 @@ jobs:
       # A level below where the root's version directories used to live, so
       # the version picker's manifest — and the other versions it points at
       # — are one directory up from this copy, same as every frozen version.
+      # HUGO_PARAMS_REF is the tag, not "latest": the version label is what
+      # the header shows, but off-site links (render-link.html, for a repo
+      # file the site does not publish, like CONTRIBUTING.md) need the real
+      # ref this tree came from, or they'd point at whatever main has moved
+      # on to since.
       - name: Build latest
         if: github.event_name == 'push' && github.ref_type == 'tag'
         run: hugo --source docs --destination "$PWD/public/latest"
         env:
           HUGO_PARAMS_VERSION: latest
           HUGO_PARAMS_VERSIONROOT: ".."
+          HUGO_PARAMS_REF: ${{ github.ref_name }}
 
       # The frozen copy this tag owns forever, published alongside /latest/
       # in the same run: the release that moves /latest/ forward is the same
@@ -185,6 +201,7 @@ jobs:
         env:
           HUGO_PARAMS_VERSION: ${{ github.ref_name }}
           HUGO_PARAMS_VERSIONROOT: ".."
+          HUGO_PARAMS_REF: ${{ github.ref_name }}
 
       # The manifest behind the version picker: this tag appended to whatever
       # gh-pages already carries, deduplicated and sorted newest first. The
