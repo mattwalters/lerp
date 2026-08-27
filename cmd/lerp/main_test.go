@@ -27,16 +27,14 @@ func TestUsageListsLoginAndLogout(t *testing.T) {
 	}
 }
 
-// normalizeArgs is the only thing standing between --version/-version and
-// falling through to the bare-TUI flag set as an unknown flag; this pins the
-// rewrite it does, though main still has to call it before its switch for
-// the alias to reach `version` in practice.
+// normalizeArgs is the only thing standing between --version and falling
+// through to the bare-TUI flag set as an unknown flag; this pins the rewrite
+// it does, though main still has to call it before its switch for the alias
+// to reach `version` in practice.
 func TestNormalizeArgsAliasesVersionFlag(t *testing.T) {
-	for _, args := range [][]string{{"--version"}, {"-version"}} {
-		got := normalizeArgs(args)
-		if len(got) != 1 || got[0] != "version" {
-			t.Errorf("normalizeArgs(%v) = %v, want [version]", args, got)
-		}
+	got := normalizeArgs([]string{"--version"})
+	if len(got) != 1 || got[0] != "version" {
+		t.Errorf("normalizeArgs([--version]) = %v, want [version]", got)
 	}
 }
 

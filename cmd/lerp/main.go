@@ -103,12 +103,12 @@ func main() {
 	}
 }
 
-// normalizeArgs rewrites the flag-shaped --version and -version, the
-// spelling scripts and --help habits reach for, into the version
-// subcommand. Left alone, either falls into the bare-TUI flag set below and
-// dies as an unknown flag instead of printing anything.
+// normalizeArgs rewrites the flag-shaped --version, the spelling scripts and
+// --help habits reach for, into the version subcommand. Left alone, it falls
+// into the bare-TUI flag set below and dies as an unknown flag instead of
+// printing anything.
 func normalizeArgs(args []string) []string {
-	if len(args) > 0 && (args[0] == "--version" || args[0] == "-version") {
+	if len(args) > 0 && args[0] == "--version" {
 		args[0] = "version"
 	}
 	return args
