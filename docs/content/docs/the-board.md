@@ -17,7 +17,8 @@ the canonical text where the two ever seem to disagree.
 
 A ticket is a Linear issue, and Linear is the database. All durable state —
 what work exists, what stage it is in, who has claimed it, what was decided —
-lives there, and lerp keeps no store of its own.
+lives there, and lerp keeps no store of its own. [SCOPE.md](SCOPE.md)
+invariant 1 is what holds that.
 
 Locally lerp keeps exactly two things: `lerp.toml` (config, checked in) and
 an evidence store, `.lerp/` at the repo root (gitignored, by init) — one
@@ -86,11 +87,15 @@ when three things are true at once — it sits in a queue's status, it has no
 assignee, and it is not blocked by an unfinished ticket (Linear's
 `blockedBy`).
 
-The claim is also what makes multiplayer work without a server. Each
-developer runs their own lerp against their own clone, and assign-to-self,
-settle, read-back arbitrates across machines. The board then reads like a
-human team's board: "Sarah has LERP-42 in Implementing" is true whether Sarah
-or Sarah's agent is doing the work. No scheduler, no work stealing.
+The claim is also what makes multiplayer work without a server: each
+developer runs their own lerp against their own clone, and the claim
+arbitrates between them, with no lerp server and no coordination service
+anywhere. The protocol that does it, and what it is allowed to cost when two
+lerps collide, is [SCOPE.md](SCOPE.md) invariant 4 — read it there rather
+than here, because it is the kind of rule that is worth having in one place.
+
+What falls out for an adopter is that colleagues see claims and stage
+artifacts, the same visibility they have into each other's human work.
 
 ## Where a run comes to rest
 
