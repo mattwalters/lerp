@@ -19,7 +19,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"syscall"
 	"testing"
 	"time"
@@ -298,7 +297,7 @@ func TestKillSafetyRunEvidenceDeletedUnderLiveAgent(t *testing.T) {
 
 	h.rec.Tick(ctx)
 	h.waitEvents(t, EventStarted, 1)
-	if err := os.RemoveAll(filepath.Join(h.root, ".lerp", "runs")); err != nil {
+	if err := os.RemoveAll(h.evidence.RunsDir()); err != nil {
 		t.Fatal(err)
 	}
 	h.fake.AddIssue("LERP", linear.Issue{ID: "two", Identifier: "LERP-2", Status: "Todo"})

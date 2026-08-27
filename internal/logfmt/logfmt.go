@@ -78,6 +78,9 @@ type Event struct {
 	// a kind's, and it is what lets a reader that attached late put the
 	// events it is catching up on where they actually happened.
 	Time time.Time
+	// Model is the model name a runner's init line named, KindInit only.
+	// Empty for a runner that does not say.
+	Model string
 }
 
 // Decoder turns one line of a runner's log into an event. A line a decoder
@@ -318,3 +321,12 @@ const (
 	maxTarget = 80
 	maxResult = 120
 )
+
+// sessionTag shortens a session or thread UUID to the prefix a human uses to
+// tell two runs apart.
+func sessionTag(id string) string {
+	if i := strings.IndexByte(id, '-'); i > 0 {
+		return id[:i]
+	}
+	return short(id, 8)
+}

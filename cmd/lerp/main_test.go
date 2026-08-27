@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mattwalters/lerp/internal/config"
 )
 
 // The operator's surface says concurrency, never lane. Lane stays the
@@ -152,5 +154,51 @@ func TestAnnounceDoesNotWaitWhenNobodyCanSeeIt(t *testing.T) {
 	}
 	if in.Len() != 2 {
 		t.Errorf("announce read %d bytes, want none", 2-in.Len())
+	}
+}
+
+// A missing lerp.toml is the most common first-run mistake; loadRepo points at
+// lerp init in one line rather than surfacing a raw path error.
+func TestLoadRepoMissingConfigPointsAtInit(t *testing.T) {
+	dir := t.TempDir()
+	_, err := loadRepo(dir)
+	if err == nil {
+		t.Fatal("want error, got nil")
+	}
+	if want := `no lerp.toml: run "lerp init --team KEY"`; err.Error() != want {
+		t.Errorf("error = %q, want %q", err.Error(), want)
+	}
+}
+
+// A malformed lerp.toml (syntax or validation) must not point at init — that
+// would send an operator with a typo down a setup flow they already finished.
+func TestLoadRepoMalformedConfigReportsDecoderError(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, config.RepoConfigFile), []byte("invalid = ["), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := loadRepo(dir)
+	if err == nil {
+		t.Fatal("want error, got nil")
+	}
+	if !strings.Contains(err.Error(), config.RepoConfigFile) {
+		t.Errorf("error %q does not name %s", err.Error(), config.RepoConfigFile)
+	}
+	if strings.Contains(err.Error(), "lerp init") {
+		t.Errorf("error %q points at lerp init for a malformed config", err.Error())
+	}
+}
+
+func TestLoadRepoValidConfig(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, config.RepoConfigFile), []byte(config.ExampleRepoConfig()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	repo, err := loadRepo(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(repo.Teams) == 0 {
+		t.Errorf("teams empty in loaded config: %+v", repo)
 	}
 }

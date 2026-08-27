@@ -25,6 +25,7 @@ const (
 	runsDir       = "runs"
 	workspacesDir = "workspaces"
 	lockFile      = "lock"
+	loopLogFile   = "loop.log"
 )
 
 // Record is the local evidence for a lane's running agent. It is intentionally
@@ -448,6 +449,15 @@ func parseStartTime(text string) (int64, error) {
 	}
 	return started.Unix(), nil
 }
+
+// StateDir returns the path to the .lerp directory for this repository root.
+func (e *Evidence) StateDir() string { return e.statePath() }
+
+// RunsDir returns the path to the runs directory under .lerp.
+func (e *Evidence) RunsDir() string { return e.runsPath() }
+
+// LoopLogPath returns the path to the loop diagnostic log under .lerp.
+func (e *Evidence) LoopLogPath() string { return filepath.Join(e.statePath(), loopLogFile) }
 
 func (e *Evidence) statePath() string           { return filepath.Join(e.root, stateDir) }
 func (e *Evidence) runsPath() string            { return filepath.Join(e.statePath(), runsDir) }

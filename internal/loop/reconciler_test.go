@@ -21,6 +21,7 @@ import (
 	"github.com/mattwalters/lerp/internal/evidence"
 	"github.com/mattwalters/lerp/internal/linear"
 	"github.com/mattwalters/lerp/internal/run"
+	"github.com/mattwalters/lerp/internal/telemetry"
 	"github.com/mattwalters/lerp/internal/workspace"
 )
 
@@ -41,8 +42,9 @@ type harness struct {
 	// is ordered after the write by the go statement that starts it.
 	provisionErr error
 
-	mu       sync.Mutex
-	disposed []workspace.Identity
+	mu        sync.Mutex
+	disposed  []workspace.Identity
+	telemetry []telemetry.Run
 }
 
 func newHarness(t *testing.T, lanes int, execute ExecuteFunc) *harness {
@@ -110,6 +112,11 @@ func buildHarness(t *testing.T, lanes int, execute ExecuteFunc, store *evidence.
 			h.mu.Unlock()
 		},
 		Alive: func(record evidence.Record) bool { return h.alive[record.RunID] },
+		Telemetry: func(run telemetry.Run) {
+			h.mu.Lock()
+			h.telemetry = append(h.telemetry, run)
+			h.mu.Unlock()
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -270,6 +277,12 @@ func (h *harness) disposedIdentities() []workspace.Identity {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return append([]workspace.Identity(nil), h.disposed...)
+}
+
+func (h *harness) telemetryRuns() []telemetry.Run {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]telemetry.Run(nil), h.telemetry...)
 }
 
 func (h *harness) issue(t *testing.T, id string) linear.Issue {
@@ -1390,7 +1403,7 @@ func TestPromoteReleasesTheClaimThatParkedTheTicket(t *testing.T) {
 	if err != nil || !won {
 		t.Fatalf("claimForQueue = (%v, %v), want the claim won", won, err)
 	}
-	if _, err := conclude(ctx, h.fake, issue, queue, repo, 1, viewerID, nil); err != nil {
+	if _, _, err := conclude(ctx, h.fake, issue, queue, repo, 1, viewerID, nil); err != nil {
 		t.Fatalf("conclude: %v", err)
 	}
 	parked := h.issue(t, "one")
@@ -2017,11 +2030,13 @@ func TestAttentionRestoresWhatAShortResyncDropped(t *testing.T) {
 }
 
 // Done-when: a delta that keeps failing falls back to the two listings
-// instead of retrying forever. Nothing here consumes RateLimitError — that is
-// another ticket — so a 429, a gateway error or a query Linear stopped
-// accepting is a hard failure on every pass, and a counter that only counted
-// successes would never let the re-list run again. The inbox would freeze at
-// whatever the cold start saw for the life of the process.
+// instead of retrying forever. This drives the delta with a plain error
+// rather than *linear.RateLimitError, which Tick now paces on its own
+// resumeAt instead of every pass (see TestTickPausesOnRateLimit) — so here a
+// gateway error or a query Linear stopped accepting is still a hard failure
+// on every pass, and a counter that only counted successes would never let
+// the re-list run again. The inbox would freeze at whatever the cold start
+// saw for the life of the process.
 func TestAttentionFallsBackToListingWhenTheDeltaKeepsFailing(t *testing.T) {
 	h, counting := newCountingHarness(t)
 	h.resyncEvery(2)
@@ -2075,6 +2090,77 @@ func TestAttentionFallsBackToListingWhenTheDeltaKeepsFailing(t *testing.T) {
 	if counting.deltas.Load() != 2 {
 		t.Errorf("delta attempts = %d, want ResyncEvery of them before giving up",
 			counting.deltas.Load())
+	}
+}
+
+// Done-when (LERP-44): a 429 with a Retry-After stops Linear calls for
+// roughly that long, and every skipped pass still says why instead of
+// looking stalled. A gateway error or any other failure is unaffected — see
+// TestAttentionFallsBackToListingWhenTheDeltaKeepsFailing, which never sets
+// resumeAt and keeps retrying every pass.
+func TestTickPausesOnRateLimit(t *testing.T) {
+	h, counting := newCountingHarness(t)
+	h.rec.o.Interval = 20 * time.Millisecond
+	h.fake.AddIssue("LERP", linear.Issue{ID: "first", Identifier: "LERP-1", Status: "Backlog"})
+	ctx := context.Background()
+
+	// Cold start: the two listings, no delta yet to fail.
+	h.rec.Tick(ctx)
+	h.waitEvents(t, EventAttention, 1)
+	listingsAfterColdStart := counting.listings.Load()
+
+	retryAfter := 300 * time.Millisecond
+	counting.deltaErr = &linear.RateLimitError{RetryAfter: retryAfter}
+	h.rec.Tick(ctx)
+	if got := h.waitEvents(t, EventError, 1)[0]; !strings.Contains(got.Err.Error(), "rate limited") {
+		t.Fatalf("error event = %v, want the delta's own rate limit error", got.Err)
+	}
+	h.waitEvents(t, EventTicked, 1) // this pass's own EventTicked, closing it as always
+	deltasAtFailure := counting.deltas.Load()
+
+	// Every pass inside the Retry-After window is a no-op but for the error
+	// saying so and EventTicked closing the pass as it always does: no
+	// delta, no re-list, no queue read — the hammering the ticket is about.
+	for i := 0; i < 3; i++ {
+		h.rec.Tick(ctx)
+		got := h.drainEvents()
+		if len(got) != 2 || got[0].Type != EventError || !strings.Contains(got[0].Err.Error(), "resuming") ||
+			got[1].Type != EventTicked {
+			t.Fatalf("paused pass %d emitted %+v, want the resuming error then EventTicked", i, got)
+		}
+		if counting.deltas.Load() != deltasAtFailure || counting.listings.Load() != listingsAfterColdStart {
+			t.Fatalf("paused pass %d made a Linear call: deltas=%d listings=%d, want both unchanged",
+				i, counting.deltas.Load(), counting.listings.Load())
+		}
+	}
+
+	time.Sleep(retryAfter + 50*time.Millisecond)
+	counting.deltaErr = nil
+	h.rec.Tick(ctx)
+	h.waitEvents(t, EventAttention, 1)
+	if counting.deltas.Load() != deltasAtFailure+1 {
+		t.Errorf("delta attempts after the pause = %d, want one more: the pause lifted and the "+
+			"pass resumed", counting.deltas.Load())
+	}
+}
+
+// Done-when: a second failure in the same pass, carrying no usable
+// Retry-After, must not cut a longer pause a first failure already set —
+// fill and attention can each fail with their own RateLimitError in one
+// Tick, and attention runs last, so a naive overwrite would let its
+// header-less 429 silently shorten an hour's wait to one interval.
+func TestPauseForNeverShortensALongerPause(t *testing.T) {
+	h := newHarness(t, 1, nil)
+	h.rec.o.Interval = 20 * time.Millisecond
+
+	h.rec.pauseFor(time.Hour)
+	longUntil := h.rec.resumeAt
+
+	h.rec.pauseFor(0) // no usable Retry-After: clamps to the interval alone
+
+	if h.rec.resumeAt.Before(longUntil) {
+		t.Fatalf("resumeAt = %v after a header-less failure, want the hour-long pause still standing (%v)",
+			h.rec.resumeAt, longUntil)
 	}
 }
 
@@ -2539,7 +2625,7 @@ func TestForceStartRefusesWhenTheEvidenceCannotBeRead(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.alive[orphan.RunID] = true
-	runs := filepath.Join(h.root, ".lerp", "runs")
+	runs := h.evidence.RunsDir()
 	if err := os.Chmod(runs, 0o300); err != nil {
 		t.Fatal(err)
 	}
@@ -2609,10 +2695,8 @@ func TestReconcilerIssueDetail(t *testing.T) {
 	h := newHarness(t, 1, nil)
 	h.fake.AddIssue("LERP", linear.Issue{ID: "loose", Identifier: "LERP-4", Status: "Backlog"})
 	h.fake.SetDescription("loose", "the body")
+	h.fake.AddComment("loose", "the verdict")
 	ctx := context.Background()
-	if err := h.fake.CommentOnIssue(ctx, "loose", "the verdict"); err != nil {
-		t.Fatalf("CommentOnIssue: %v", err)
-	}
 
 	detail, err := h.rec.IssueDetail(ctx, "loose")
 	if err != nil {

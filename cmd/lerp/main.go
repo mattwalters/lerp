@@ -4,9 +4,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -136,7 +138,7 @@ func openTUI(ctx context.Context, lanes int) error {
 	if err != nil {
 		return err
 	}
-	repo, err := config.LoadRepoConfig(filepath.Join(repoDir, config.RepoConfigFile))
+	repo, err := loadRepo(repoDir)
 	if err != nil {
 		return err
 	}
@@ -171,7 +173,7 @@ func openTUI(ctx context.Context, lanes int) error {
 	// which the board tails. Append rather than truncate: a session that dies
 	// at launch must not have already destroyed the previous session's crash
 	// diagnostics. The marker line keeps sessions distinguishable.
-	loopLog, err := os.OpenFile(filepath.Join(repoDir, ".lerp", "loop.log"),
+	loopLog, err := os.OpenFile(ev.LoopLogPath(),
 		os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return fmt.Errorf("open loop log: %w", err)
@@ -217,6 +219,7 @@ func initCommand(args []string) {
 	name := fs.String("team-name", "", "name to use if the Linear team must be created")
 	yes := fs.Bool("yes", false, "take the stock answer to every question")
 	fs.Parse(args)
+	*team = strings.ToUpper(strings.TrimSpace(*team))
 	if *team == "" {
 		fmt.Fprintln(os.Stderr, "lerp init: --team is required")
 		os.Exit(2)
@@ -315,6 +318,19 @@ func gitRoot() (string, error) {
 		return "", fmt.Errorf("find repository root (lerp runs inside a Git repository): %w", err)
 	}
 	return filepath.Clean(strings.TrimSpace(string(out))), nil
+}
+
+// loadRepo reads and validates the repository configuration. When the file is
+// missing, it points at init rather than surfacing the raw fs error.
+func loadRepo(repoDir string) (*config.RepoConfig, error) {
+	repo, err := config.LoadRepoConfig(filepath.Join(repoDir, config.RepoConfigFile))
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, errors.New(`no lerp.toml: run "lerp init --team KEY"`)
+		}
+		return nil, err
+	}
+	return repo, nil
 }
 
 func fatal(err error) {

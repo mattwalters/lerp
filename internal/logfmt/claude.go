@@ -90,7 +90,7 @@ func (c *claude) Decode(line string) (Event, bool) {
 	case "system":
 		switch l.Subtype {
 		case "init":
-			return Event{Kind: KindInit, Text: runHeader(l.Model, l.SessionID)}, true
+			return Event{Kind: KindInit, Text: runHeader(l.Model, l.SessionID), Model: l.Model}, true
 		case "thinking_tokens":
 			// The stream's heartbeat: a running count for the thinking block
 			// in progress, restarting at each one.
@@ -255,13 +255,4 @@ func resultLine(l claudeLine) string {
 		parts = append(parts, fmt.Sprintf("%.1fs", float64(l.DurationMS)/1000))
 	}
 	return strings.Join(parts, " · ")
-}
-
-// sessionTag shortens a session or thread UUID to the prefix a human uses to
-// tell two runs apart.
-func sessionTag(id string) string {
-	if i := strings.IndexByte(id, '-'); i > 0 {
-		return id[:i]
-	}
-	return short(id, 8)
 }

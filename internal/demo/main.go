@@ -25,6 +25,7 @@ import (
 	"github.com/mattwalters/lerp/internal/evidence"
 	"github.com/mattwalters/lerp/internal/linear"
 	"github.com/mattwalters/lerp/internal/loop"
+	"github.com/mattwalters/lerp/internal/telemetry"
 	"github.com/mattwalters/lerp/internal/tui"
 )
 
@@ -183,6 +184,11 @@ func run(ctx context.Context) error {
 		Events:   func(e loop.Event) { events <- e },
 		// No Log: provision, dispose and runner diagnostics are process
 		// detail, and the cast records a screen, not a file.
+		// Telemetry defaults to the operator's own runs.jsonl, which the
+		// fake DEMO-N tickets have no business writing into — the demo is
+		// sandboxed in root for everything else, and telemetry is the one
+		// resident outside it.
+		Telemetry: func(telemetry.Run) {},
 	})
 	if err != nil {
 		return err

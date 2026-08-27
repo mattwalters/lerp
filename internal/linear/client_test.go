@@ -405,19 +405,6 @@ func TestUnassignIssue(t *testing.T) {
 	}
 }
 
-func TestCommentOnIssue(t *testing.T) {
-	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
-		req := decodeRequest(t, r)
-		if req.Variables["issueId"] != "iss-1" || req.Variables["body"] != "## Plan\n\ndo it" {
-			t.Errorf("variables = %v", req.Variables)
-		}
-		writeData(t, w, `{"commentCreate":{"success":true}}`)
-	})
-	if err := c.CommentOnIssue(context.Background(), "iss-1", "## Plan\n\ndo it"); err != nil {
-		t.Fatalf("CommentOnIssue: %v", err)
-	}
-}
-
 func TestUpdateReportsFailure(t *testing.T) {
 	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 		writeData(t, w, `{"issueUpdate":{"success":false}}`)

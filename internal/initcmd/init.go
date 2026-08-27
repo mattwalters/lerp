@@ -57,6 +57,7 @@ type Board interface {
 //
 // out receives the whole conversation and report; nil discards it.
 func Init(ctx context.Context, board Board, out io.Writer, answers io.Reader, repoRoot, teamKey, teamName string) (created bool, err error) {
+	teamKey = strings.ToUpper(strings.TrimSpace(teamKey))
 	if teamKey == "" {
 		return false, fmt.Errorf("team key must not be empty")
 	}

@@ -7255,3 +7255,84 @@ func TestTheBandIsDrawnOnlyWhereItCanBeQuiet(t *testing.T) {
 		}
 	}
 }
+
+func TestNewLane(t *testing.T) {
+	now := time.Now()
+	ev := loop.Event{
+		RunID:     "run-1",
+		TicketID:  "ticket-1",
+		Ticket:    "LERP-101",
+		Queue:     "implement",
+		LogPath:   "/path/to/run.log",
+		StartedAt: now,
+	}
+	ln := newLane(laneRunning, ev)
+	if ln.state != laneRunning || ln.runID != "run-1" || ln.ticketID != "ticket-1" ||
+		ln.ticket != "LERP-101" || ln.queue != "implement" || ln.logPath != "/path/to/run.log" ||
+		!ln.since.Equal(now) {
+		t.Errorf("newLane(laneRunning, ev) = %+v, want all fields matched", ln)
+	}
+}
+
+func TestAttentionState(t *testing.T) {
+	m, _, _ := newTestModel(t, 2)
+	// Initial state before attention pass: attentionLoading
+	if state := m.attentionState(); state != attentionLoading {
+		t.Errorf("initial attentionState = %v, want attentionLoading", state)
+	}
+	// After empty attention event: attentionEmpty
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{}}})
+	if state := m.attentionState(); state != attentionEmpty {
+		t.Errorf("empty attentionState = %v, want attentionEmpty", state)
+	}
+	// With attention items: attentionPopulated
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-1", Title: "first", Status: "Todo"},
+	}}})
+	if state := m.attentionState(); state != attentionPopulated {
+		t.Errorf("populated attentionState = %v, want attentionPopulated", state)
+	}
+	// With search matching nothing: attentionFiltered
+	m.setSearch("nonexistent")
+	if state := m.attentionState(); state != attentionFiltered {
+		t.Errorf("filtered attentionState = %v, want attentionFiltered", state)
+	}
+}
+
+func TestWorkState(t *testing.T) {
+	m, _, _ := newTestModel(t, 2)
+	// Initial state before queues event: workLoading
+	if state := m.workState(); state != workLoading {
+		t.Errorf("initial workState = %v, want workLoading", state)
+	}
+	// Queues event with empty queues list: workNoQueues
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{}}})
+	if state := m.workState(); state != workNoQueues {
+		t.Errorf("no queues workState = %v, want workNoQueues", state)
+	}
+	// Queues configured but no tickets: workEmpty
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Name: "implement", Status: "Todo", Team: "LERP"},
+	}}})
+	if state := m.workState(); state != workEmpty {
+		t.Errorf("empty queues workState = %v, want workEmpty", state)
+	}
+	// Queues with ticket: workPopulated
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Name: "implement", Status: "Todo", Team: "LERP", Tickets: []loop.QueueTicket{
+			{ID: "id-1", Identifier: "LERP-1", Title: "one"},
+		}},
+	}}})
+	if state := m.workState(); state != workPopulated {
+		t.Errorf("populated workState = %v, want workPopulated", state)
+	}
+}
+
+func TestWidestPriority(t *testing.T) {
+	if widestPriority != "Urgent" {
+		t.Errorf("widestPriority = %q, want %q", widestPriority, "Urgent")
+	}
+	if priorityW < len(widestPriority) {
+		t.Errorf("priorityW = %d is narrower than widestPriority %q (%d)", priorityW, widestPriority, len(widestPriority))
+	}
+}

@@ -83,6 +83,11 @@ func statusRelevance(repo *config.RepoConfig) func(status, category string) Stat
 // stayed put and the rule applied normally. The caller carries it to the TUI;
 // conclude has already written it to the log.
 //
+// conclude also returns the status the ticket came to rest in, as observed at
+// settlement — telemetry's status field. It is best-effort past the first
+// read: a failure that leaves what happened next unknown returns "" rather
+// than guessing.
+//
 // The claim is released wherever the ticket comes to rest — whether lerp moved
 // it there or the agent did, and whether or not a queue serves that status. An
 // assigned ticket is never eligible, so a ticket still holding its claim is
@@ -108,7 +113,7 @@ func statusRelevance(repo *config.RepoConfig) func(status, category string) Stat
 // run releases its claim — the rule has been got wrong twice by being written
 // out a second time (LERP-50, LERP-59), so reap calls this rather than
 // carrying its own copy.
-func conclude(ctx context.Context, client linear.Client, issue linear.Issue, queue config.Queue, repo *config.RepoConfig, exitCode int, viewerID string, log io.Writer) (string, error) {
+func conclude(ctx context.Context, client linear.Client, issue linear.Issue, queue config.Queue, repo *config.RepoConfig, exitCode int, viewerID string, log io.Writer) (string, string, error) {
 	target, rule := queue.OnFailure, "on_failure"
 	if exitCode == 0 {
 		target, rule = queue.OnSuccess, "on_success"
@@ -123,12 +128,16 @@ func conclude(ctx context.Context, client linear.Client, issue linear.Issue, que
 			fmt.Fprintf(log, "%s exited %d and its queue has no on_failure route: leaving it claimed for a human\n",
 				issue.Identifier, exitCode)
 		}
-		return "", nil
+		// No GetIssue here — the ticket is assumed still in queue.Status for
+		// the claim-holding decision above, but an agent that moved it itself
+		// before exiting non-zero would make that a guess, not an
+		// observation. Best-effort past the first read means "" here too.
+		return "", "", nil
 	}
 
 	current, err := client.GetIssue(ctx, issue.ID)
 	if err != nil {
-		return "", fmt.Errorf("read completed issue %s: %w", issue.ID, err)
+		return "", "", fmt.Errorf("read completed issue %s: %w", issue.ID, err)
 	}
 	var note string
 	if current.AssigneeID != "" && current.AssigneeID != viewerID {
@@ -144,13 +153,13 @@ func conclude(ctx context.Context, client linear.Client, issue linear.Issue, que
 		if log != nil {
 			fmt.Fprintln(log, note)
 		}
-		return note, nil
+		return note, current.Status, nil
 	}
 	final := current.Status
 	switch {
 	case final == queue.Status:
 		if err := client.MoveIssue(ctx, issue.ID, target); err != nil {
-			return "", fmt.Errorf("move issue %s to %q: %w", issue.ID, target, err)
+			return "", final, fmt.Errorf("move issue %s to %q: %w", issue.ID, target, err)
 		}
 		final = target
 	case final != target:
@@ -168,12 +177,12 @@ func conclude(ctx context.Context, client linear.Client, issue linear.Issue, que
 		// Nobody holds it: whoever released the claim mid-run already did
 		// what this would do. (A ticket somebody else holds returned above,
 		// without its move.)
-		return note, nil
+		return note, final, nil
 	}
 	if err := client.UnassignIssue(ctx, issue.ID); err != nil {
-		return note, fmt.Errorf("release issue %s in %q: %w", issue.ID, final, err)
+		return note, final, fmt.Errorf("release issue %s in %q: %w", issue.ID, final, err)
 	}
-	return note, nil
+	return note, final, nil
 }
 
 // namedStatuses is every Linear status lerp.toml names — each queue's status
