@@ -40,17 +40,21 @@ func Logout(ctx context.Context, out io.Writer) error {
 }
 
 func logout(ctx context.Context, out io.Writer, flow logoutFlow) error {
-	tok, err := flow.store.load()
-	switch {
-	case errors.Is(err, fs.ErrNotExist):
+	tok, loadErr := flow.store.load()
+	if errors.Is(loadErr, fs.ErrNotExist) {
 		fmt.Fprintln(out, "nothing stored; lerp was not signed in")
 		mentionEnvKey(out)
 		return nil
-	case err != nil:
-		return fmt.Errorf("credentials: logout: load token: %w", err)
 	}
-
-	revokeErr := revoke(ctx, flow.hc, flow.revokeEndpoint, tok.AccessToken)
+	// A file that is there but will not read — truncated, hand-edited,
+	// unreadable — is not one worth revoking (there is no access token to
+	// send), but it is exactly the kind of stale credential logout exists to
+	// clear: "delete the file either way" means either way, not only when it
+	// happens to parse. The operator's remedy must not be an `rm` by hand.
+	var revokeErr error
+	if loadErr == nil {
+		revokeErr = revoke(ctx, flow.hc, flow.revokeEndpoint, tok.AccessToken)
+	}
 
 	path, err := flow.store.path()
 	if err != nil {
@@ -60,9 +64,12 @@ func logout(ctx context.Context, out io.Writer, flow logoutFlow) error {
 		return fmt.Errorf("credentials: logout: remove token file: %w", err)
 	}
 
-	if revokeErr != nil {
+	switch {
+	case loadErr != nil:
+		fmt.Fprintf(out, "removed an unreadable token file (%v); linear was not asked to revoke it\n", loadErr)
+	case revokeErr != nil:
 		fmt.Fprintf(out, "removed the local token; linear did not confirm the revocation (%v)\n", revokeErr)
-	} else {
+	default:
 		fmt.Fprintln(out, "revoked and removed")
 	}
 	mentionEnvKey(out)

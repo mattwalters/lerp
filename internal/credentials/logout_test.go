@@ -98,6 +98,41 @@ func TestLogoutWithNothingStored(t *testing.T) {
 	}
 }
 
+// An unreadable token file is not one worth keeping either: logout removes
+// it without asking Linear to revoke anything, rather than leaving the
+// operator to `rm` it by hand.
+func TestLogoutRemovesAnUnreadableTokenFile(t *testing.T) {
+	t.Setenv(childenv.LinearAPIKeyEnv, "")
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+	}))
+	t.Cleanup(srv.Close)
+
+	s := store{dir: t.TempDir()}
+	path, err := s.path()
+	if err != nil {
+		t.Fatalf("path: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("not json"), 0o600); err != nil {
+		t.Fatalf("write poison: %v", err)
+	}
+
+	var out strings.Builder
+	if err := logout(context.Background(), &out, baseLogoutFlow(t, srv, s)); err != nil {
+		t.Fatalf("logout: %v", err)
+	}
+	if !strings.Contains(out.String(), "unreadable") {
+		t.Errorf("output %q does not say the file was unreadable", out.String())
+	}
+	if calls != 0 {
+		t.Errorf("calls = %d, want 0 — there is no access token to revoke", calls)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Error("the unreadable token file is still there")
+	}
+}
+
 // LINEAR_API_KEY set is mentioned, so an operator does not read "revoked and
 // removed" and expect lerp to stop working.
 func TestLogoutMentionsTheEnvKey(t *testing.T) {

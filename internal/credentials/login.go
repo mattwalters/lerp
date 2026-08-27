@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sync"
 	"time"
 
 	"github.com/mattwalters/lerp/internal/browser"
@@ -72,12 +73,14 @@ func Login(ctx context.Context, out io.Writer) error {
 }
 
 // closeTabPage is what every response from the callback carries, success or
-// refusal alike: no assets, no request values echoed back into it. What
-// actually happened is reported on out and in the returned error, never in
-// the page a browser renders.
+// refusal alike: no assets, no request values echoed back into it, and no
+// claim of success before login has checked state and error — a refused or
+// mismatched callback must not render a page telling the operator they are
+// signed in. What actually happened is reported on out and in the returned
+// error, never in the page a browser renders.
 const closeTabPage = `<!DOCTYPE html>
 <html><head><title>lerp</title></head>
-<body>Signed in to Linear. You can close this tab and return to your terminal.</body>
+<body>lerp has received Linear's response. You can close this tab and return to your terminal.</body>
 </html>
 `
 
@@ -142,14 +145,18 @@ func login(ctx context.Context, out io.Writer, flow loginFlow) error {
 	})
 	srv := &http.Server{Handler: mux}
 	go srv.Serve(listener)
-	defer func() {
-		// Before login returns, always — so nothing is listening while any
-		// other part of lerp runs (SCOPE's port exception is setup-time and
-		// momentary).
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(shutdownCtx)
-	}()
+	var shutdownOnce sync.Once
+	shutdown := func() {
+		// Idempotent, so both the call right after the callback and the
+		// deferred safety net for an early return (the timeout path) can
+		// call it without either blocking on the other's work.
+		shutdownOnce.Do(func() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = srv.Shutdown(shutdownCtx)
+		})
+	}
+	defer shutdown()
 
 	if err := flow.open(authorize); err != nil {
 		fmt.Fprintf(out, "could not open a browser (%v); open this URL to sign in to Linear:\n%s\n", err, authorize)
@@ -165,6 +172,11 @@ func login(ctx context.Context, out io.Writer, flow loginFlow) error {
 	case <-waitCtx.Done():
 		return errors.New("credentials: login: timed out waiting for the callback")
 	}
+	// Right after catching the redirect, ahead of the exchange: the socket
+	// has done its one job, and closing it now — rather than leaving it open
+	// through the exchange and the identity read — is what keeps the window
+	// nothing else is listening in as short as the flow allows.
+	shutdown()
 	if res.err != nil {
 		return res.err
 	}

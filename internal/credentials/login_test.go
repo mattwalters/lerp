@@ -107,7 +107,8 @@ func TestLoginHappyPath(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
-			t.Fatal(err)
+			t.Errorf("parse form: %v", err)
+			return
 		}
 		if got := r.Form.Get("grant_type"); got != "authorization_code" {
 			t.Errorf("grant_type = %q, want authorization_code", got)
@@ -215,7 +216,8 @@ func TestLoginStrayPathDoesNotCompleteTheFlow(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
-			t.Fatal(err)
+			t.Errorf("parse form: %v", err)
+			return
 		}
 		verifier := r.Form.Get("code_verifier")
 		want := <-challengeCh
@@ -313,7 +315,8 @@ func TestLoginListenerRefusesConnectionsAfterReturn(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
-			t.Fatal(err)
+			t.Errorf("parse form: %v", err)
+			return
 		}
 		<-challengeCh
 		_, _ = w.Write([]byte(`{"access_token":"access-1","refresh_token":"refresh-1","expires_in":3600}`))

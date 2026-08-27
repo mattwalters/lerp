@@ -75,10 +75,21 @@ func main() {
 	case "version":
 		fmt.Printf("lerp %s\n", version.Version)
 	case "login":
+		// No flags, so an unrecognised one — --port, --help, a typo — must
+		// not fall through silently into opening a browser and binding a
+		// port for two minutes.
+		if len(args) > 1 {
+			fmt.Fprintf(os.Stderr, "lerp login: takes no arguments\n\n%s", usage)
+			os.Exit(2)
+		}
 		if err := credentials.Login(context.Background(), os.Stdout); err != nil {
 			fatal(fmt.Errorf("lerp login: %w", err))
 		}
 	case "logout":
+		if len(args) > 1 {
+			fmt.Fprintf(os.Stderr, "lerp logout: takes no arguments\n\n%s", usage)
+			os.Exit(2)
+		}
 		if err := credentials.Logout(context.Background(), os.Stdout); err != nil {
 			fatal(fmt.Errorf("lerp logout: %w", err))
 		}
