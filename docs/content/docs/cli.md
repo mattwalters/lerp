@@ -1,6 +1,6 @@
 ---
 title: The command line
-summary: The whole surface — `lerp`, `lerp init`, `lerp version` — and the environment they read.
+summary: The whole surface — `lerp`, `lerp login`, `lerp init`, `lerp version` — and the environment they read.
 weight: 130
 ---
 
@@ -10,6 +10,8 @@ weight: 130
 usage:
   lerp [-concurrency N]         open the TUI; the loop runs while it is open
   lerp version                  print the version
+  lerp login                    sign in to Linear (loopback OAuth); no flags
+  lerp logout                   sign out of Linear and revoke the token; no flags
   lerp init --team KEY [--yes]  map lerp's queues onto the team's board and write this repo's lerp.toml
 ```
 
@@ -80,7 +82,7 @@ a plain `go install` or `go build` — reports `dev`.
 
 | Variable | What it does |
 | --- | --- |
-| `LINEAR_API_KEY` | the Linear personal API key, and how lerp authenticates today. Every command needs a credential and this is the one to set. Lerp drops it from its own environment after reading it, and never passes it to a provision, dispose or runner command. |
+| `LINEAR_API_KEY` | the Linear personal API key. Every command needs a credential, and this is one of two ways to hold one — set, it wins over the token `lerp login` stores. Lerp drops it from its own environment after reading it, and never passes it to a provision, dispose or runner command. |
 | `LERP_BACKGROUND` | `light` or `dark`, saying which half of the palette to draw. Read once at startup; any other value is an error rather than a shrug. |
 | `NO_COLOR` | set to any value, turns colour off entirely. |
 
@@ -107,8 +109,8 @@ this one.
      evidence store and the Linear structure init created — plus the API key
      scoping note. -->
 
-<!-- Slot (LERP-111): the auth section — `lerp login`, the stored token, and
-     how it and LINEAR_API_KEY relate. `internal/credentials` already
-     resolves both (LINEAR_API_KEY first, then the token file, then an error
-     naming both remedies); what is missing is the command that writes one,
-     and the page saying so. -->
+<!-- Slot (LERP-111): the auth section — `lerp login`, `lerp logout`, the
+     stored token, and how it and LINEAR_API_KEY relate. The commands exist
+     (LERP-109) and `internal/credentials` resolves both sources
+     (LINEAR_API_KEY first, then the token file, then an error naming both
+     remedies); what is missing is the page saying so. -->
