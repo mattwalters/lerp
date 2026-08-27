@@ -80,10 +80,19 @@ sentence.
    queue it sits in — blocking relations are how humans sequence
    concurrent work.
 3. **Runner** — an adapter to a coding-agent CLI (Claude Code, Codex,
-   Antigravity, …). The contract: takes a prompt and a working
-   directory, runs to exit, exit code means done or failed. The
-   contract is the lowest common denominator — a capability every
-   runner can't offer is a capability lerp doesn't have.
+   …). The contract: takes a prompt and a working directory, runs to
+   exit, exit code means done or failed. The contract is the lowest
+   common denominator — a capability every runner can't offer is a
+   capability lerp doesn't have. The adapters for the CLIs lerp knows
+   ship built in — one file per vendor, holding the flag spellings and
+   the session bookkeeping a command template cannot express — and
+   config names one and overrides its defaults. The command runner
+   remains for everything else: any line of shell whose exit code
+   keeps the contract is a runner, adapter or not. Which runner serves
+   a queue is one word of that queue's config, never a policy: lerp
+   does not rotate, prefer, or fall back between runners. Choosing who
+   does the work is routing, and routing is a human placing something
+   — a ticket on a status, a word in a queue's config.
 4. **Lane** — a concurrency unit. Lerp runs at most N agents at once.
    N is small — small enough that one person can watch what is
    happening — and the number itself is a default the operator
@@ -97,11 +106,16 @@ five. If that trade is unappealing, the feature is out of scope.
 
 ## Invariants
 
-1. **Linear is the only durable store.** Local disk holds config, the
-   operator's credentials, and evidence of running processes, nothing
-   else. Losing all local state may cost compute; it may never cost
-   correctness. `rm -rf .lerp/runs` under live agents means orphaned
-   processes and re-run stages — never lost or corrupted tickets.
+1. **Linear is the only durable store.** Local disk holds config,
+   the operator's credentials, evidence of running processes, and run
+   telemetry, nothing else. Losing all local state may cost compute;
+   it may never cost correctness. `rm -rf .lerp/runs` under live
+   agents means orphaned processes and re-run stages — never lost or
+   corrupted tickets. Telemetry is the deliberate fourth resident: an
+   append-only file of finished-run measurements — tokens, cost,
+   duration, outcome — written once at run exit and read by nothing in
+   the loop. It is history, not state: losing it costs a chart, never
+   a ticket.
 
 2. **Team → repo is a function** (many-to-one allowed, not a
    bijection). Every ticket must resolve to exactly one working
@@ -159,7 +173,9 @@ five. If that trade is unappealing, the feature is out of scope.
    stage-boundary artifacts. The high-fidelity agent stream — every
    tool call and rationale — goes to a local log file, tailed live by
    the TUI and discarded without ceremony. Never post the firehose to
-   Linear.
+   Linear. A run's measurements — tokens, cost, duration — are process
+   too, summarized: they land in the local telemetry file (invariant
+   1), never on a ticket.
 
 8. **Lerp speaks exactly one external API: Linear.** Git, GitHub, and
    PRs belong to agents (via their prompts) and to humans. A PR is a
@@ -272,7 +288,10 @@ that wants a scheduler wants a different product.
   login is setup time, which invariant 6 keeps on its own side of the
   line.
 - Not a database. See invariant 1.
-- Not an agent framework. Runners are command templates, not SDKs.
+- Not an agent framework. Runners are subprocess adapters, not SDKs:
+  lerp execs a vendor's CLI and reads what it prints. It never links
+  an agent library, never calls a model API, never holds a
+  conversation of its own.
 - Not a Linear client, with one narrow exception: the inbox lists
   unassigned tickets in statuses no queue serves, promote moves a ticket
   the operator selected and settles its claim by the same rule a finished
@@ -298,6 +317,12 @@ Deferred consciously — none of these may sneak in as a subsystem:
   it grants are versioned and reviewed and every developer runs the
   same pipeline. Repos share a pipeline by copying the file. A
   personal override or merge layer is complexity waiting for a reason.
+- Runner policies — round-robin, prefer-then-fall-back. Each needs
+  state no board holds, and each hides a failure a human should see.
+  The question they answer — which vendor is better here — is one
+  telemetry answers already, one config word at a time.
+- A `lerp stats` view over the telemetry file. The file is the feature
+  for now; `jq` is the dashboard. Wait until it hurts.
 
 ## Litmus tests
 
