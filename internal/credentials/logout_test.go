@@ -27,7 +27,8 @@ func TestLogoutRevokesAndRemoves(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = r.Header.Get("Authorization")
 		if err := r.ParseForm(); err != nil {
-			t.Fatal(err)
+			t.Errorf("parse form: %v", err)
+			return
 		}
 		if got := r.Form.Get("token"); got != "access-1" {
 			t.Errorf("token = %q, want the access token", got)

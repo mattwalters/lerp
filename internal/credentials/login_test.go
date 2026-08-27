@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mattwalters/lerp/internal/childenv"
 	"github.com/mattwalters/lerp/internal/linear"
 )
 
@@ -75,6 +76,7 @@ func getCallback(t *testing.T, redirectURI string, extra url.Values) *http.Respo
 // A build with no client id refuses before opening a listener or a browser
 // at all — Linear could only refuse it as an unknown client.
 func TestLoginRefusesWithNoClientID(t *testing.T) {
+	t.Setenv(childenv.LinearAPIKeyEnv, "")
 	var out strings.Builder
 	var opened bool
 	flow := loginFlow{
@@ -102,6 +104,7 @@ func TestLoginRefusesWithNoClientID(t *testing.T) {
 // recomputing S256(code_verifier) at the token endpoint the way Linear
 // would. Writes a loadable token file and prints the identity.
 func TestLoginHappyPath(t *testing.T) {
+	t.Setenv(childenv.LinearAPIKeyEnv, "")
 	challengeCh := make(chan string, 1)
 	var out strings.Builder
 
@@ -151,8 +154,42 @@ func TestLoginHappyPath(t *testing.T) {
 	}
 }
 
+// A failed identity read does not fail the login: the token is already on
+// disk and good, and telling the operator to log in again over this would
+// burn a second authorization for a login that already succeeded.
+func TestLoginSucceedsEvenWhenIdentityConfirmationFails(t *testing.T) {
+	t.Setenv(childenv.LinearAPIKeyEnv, "")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"access_token":"access-1","refresh_token":"refresh-1","expires_in":3600}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	flow := baseLoginFlow(t, srv, func(rawURL string) error {
+		redirectURI, state, _ := authorizeParts(t, rawURL)
+		resp := getCallback(t, redirectURI, url.Values{"state": {state}, "code": {"auth-code-1"}})
+		resp.Body.Close()
+		return nil
+	})
+	flow.newViewer = func(hc *http.Client, accessToken string) viewerReader {
+		return fakeViewer{err: errors.New("linear: rate limited")}
+	}
+
+	var out strings.Builder
+	if err := login(context.Background(), &out, flow); err != nil {
+		t.Fatalf("login: %v, want no error — the token is already stored", err)
+	}
+	if !strings.Contains(out.String(), "could not confirm the identity") {
+		t.Errorf("output %q does not say identity confirmation failed", out.String())
+	}
+	tok := readToken(t, flow.store)
+	if tok.AccessToken != "access-1" {
+		t.Errorf("stored token = %+v, want the token kept despite the identity failure", tok)
+	}
+}
+
 // A mismatched state is a hard error: no retry, nothing stored.
 func TestLoginStateMismatchFailsWithNothingStored(t *testing.T) {
+	t.Setenv(childenv.LinearAPIKeyEnv, "")
 	var out strings.Builder
 	var tokenCalls int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -182,6 +219,7 @@ func TestLoginStateMismatchFailsWithNothingStored(t *testing.T) {
 
 // error= on the callback is a crisp refusal, verbatim, and nothing stored.
 func TestLoginErrorParamIsACrispRefusal(t *testing.T) {
+	t.Setenv(childenv.LinearAPIKeyEnv, "")
 	var out strings.Builder
 	var tokenCalls int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -211,6 +249,7 @@ func TestLoginErrorParamIsACrispRefusal(t *testing.T) {
 // A request to any path but /callback 404s and does not complete the flow —
 // the real callback, hit afterwards, still succeeds.
 func TestLoginStrayPathDoesNotCompleteTheFlow(t *testing.T) {
+	t.Setenv(childenv.LinearAPIKeyEnv, "")
 	challengeCh := make(chan string, 1)
 	var out strings.Builder
 
@@ -261,6 +300,7 @@ func TestLoginStrayPathDoesNotCompleteTheFlow(t *testing.T) {
 // No callback within the injected deadline fires the timeout, nothing
 // stored.
 func TestLoginTimesOutWithoutACallback(t *testing.T) {
+	t.Setenv(childenv.LinearAPIKeyEnv, "")
 	var out strings.Builder
 	var tokenCalls int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -282,6 +322,7 @@ func TestLoginTimesOutWithoutACallback(t *testing.T) {
 
 // A 400 from the token endpoint surfaces its body, and nothing is stored.
 func TestLoginSurfacesTokenEndpointRefusal(t *testing.T) {
+	t.Setenv(childenv.LinearAPIKeyEnv, "")
 	var out strings.Builder
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"invalid_grant"}`, http.StatusBadRequest)
@@ -309,6 +350,7 @@ func TestLoginSurfacesTokenEndpointRefusal(t *testing.T) {
 
 // The loopback listener is closed before login returns, not after.
 func TestLoginListenerRefusesConnectionsAfterReturn(t *testing.T) {
+	t.Setenv(childenv.LinearAPIKeyEnv, "")
 	challengeCh := make(chan string, 1)
 	var out strings.Builder
 	var port string
