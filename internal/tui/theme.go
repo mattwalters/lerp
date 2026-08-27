@@ -223,13 +223,17 @@ var (
 // inner is the width a panel w columns wide has left for its rows.
 func (p padding) inner(w int) int { return w - 2 - p.left - p.right }
 
+// moreMarker is the "⋯ n more" line standing in for rows cut by a window.
+func moreMarker(n int) string {
+	return styleFaint.Render(fmt.Sprintf("⋯ %d more", n))
+}
+
 // fitRows cuts a row list down to a body of ih lines, standing in for what
 // it dropped with a faint "⋯ n more" — so a deep list can never push a panel
 // out of shape.
 func fitRows(rows []string, ih int) []string {
 	if over := len(rows) - ih; over > 0 && ih >= 1 {
-		return append(append([]string{}, rows[:ih-1]...),
-			styleFaint.Render(fmt.Sprintf("⋯ %d more", over+1)))
+		return append(append([]string{}, rows[:ih-1]...), moreMarker(over+1))
 	}
 	return rows
 }
@@ -419,13 +423,12 @@ func windowRows(rows []string, cur cursor, ih int) []string {
 	}
 	at := clampIndex(cur.at, len(rows))
 	end := min(at+max(1, cur.span), len(rows)) // one past the row's last line
-	more := func(n int) string { return styleFaint.Render(fmt.Sprintf("⋯ %d more", n)) }
 	if end <= ih-1 {
-		return append(append([]string{}, rows[:ih-1]...), more(len(rows)-(ih-1)))
+		return append(append([]string{}, rows[:ih-1]...), moreMarker(len(rows)-(ih-1)))
 	}
 	if lo := len(rows) - (ih - 1); at >= lo {
 		lo = skipContinuation(cur, lo)
-		return append([]string{more(lo)}, rows[lo:]...)
+		return append([]string{moreMarker(lo)}, rows[lo:]...)
 	}
 	// The window ends just past the selected row, so a row drawing several
 	// lines keeps all of them. Where it cannot — a body of three lines has
@@ -434,9 +437,9 @@ func windowRows(rows []string, cur cursor, ih int) []string {
 	n := max(1, ih-2)
 	lo := skipContinuation(cur, max(0, min(at, end-n)))
 	hi := min(len(rows), lo+n)
-	out := append([]string{more(lo)}, rows[lo:hi]...)
+	out := append([]string{moreMarker(lo)}, rows[lo:hi]...)
 	if len(out) < ih {
-		out = append(out, more(len(rows)-hi))
+		out = append(out, moreMarker(len(rows)-hi))
 	}
 	return out
 }

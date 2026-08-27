@@ -205,6 +205,20 @@ type lane struct {
 	pulse *pulse
 }
 
+// newLane constructs an active lane from an event, capturing the fields every
+// active state shares so no literal misses an edit.
+func newLane(state laneState, ev loop.Event) *lane {
+	return &lane{
+		state:    state,
+		runID:    ev.RunID,
+		ticketID: ev.TicketID,
+		ticket:   ev.Ticket,
+		queue:    ev.Queue,
+		logPath:  ev.LogPath,
+		since:    eventSince(ev),
+	}
+}
+
 const (
 	// pollEvery is the redraw-and-tail cadence, independent of the loop's
 	// ticks; it is also the animation clock for the heartbeat frames.
@@ -1564,16 +1578,13 @@ func (m *model) apply(ev loop.Event) {
 	changed := panel(-1) // which panel's lens data this event feeds
 	switch ev.Type {
 	case loop.EventProvisioning:
-		m.lanes[ev.Lane] = &lane{state: laneProvisioning, runID: ev.RunID, ticketID: ev.TicketID,
-			ticket: ev.Ticket, queue: ev.Queue, logPath: ev.LogPath, since: eventSince(ev)}
+		m.lanes[ev.Lane] = newLane(laneProvisioning, ev)
 		changed = panelWork
 	case loop.EventStarted:
-		m.lanes[ev.Lane] = &lane{state: laneRunning, runID: ev.RunID, ticketID: ev.TicketID,
-			ticket: ev.Ticket, queue: ev.Queue, logPath: ev.LogPath, since: eventSince(ev)}
+		m.lanes[ev.Lane] = newLane(laneRunning, ev)
 		changed = panelWork
 	case loop.EventAdopted:
-		m.lanes[ev.Lane] = &lane{state: laneAdopted, runID: ev.RunID, ticketID: ev.TicketID,
-			queue: ev.Queue, logPath: ev.LogPath, since: eventSince(ev)}
+		m.lanes[ev.Lane] = newLane(laneAdopted, ev)
 		changed = panelWork
 	case loop.EventExited:
 		// How the run ended goes on the status bar, and only there: see
@@ -2936,20 +2947,44 @@ func (m *model) boardEmpty() bool {
 	return !m.mainOpen() && !m.searching && m.search == "" && m.boardEmptySettled
 }
 
+// attentionState is what the inbox panel is doing: loading, empty, filtered, or showing rows.
+type attentionState int
+
+const (
+	attentionLoading attentionState = iota
+	attentionEmpty
+	attentionFiltered
+	attentionPopulated
+)
+
+func (m model) attentionState() attentionState {
+	switch {
+	case !m.attentionSeen:
+		return attentionLoading
+	case len(m.attention) == 0:
+		return attentionEmpty
+	case len(m.shown) == 0:
+		return attentionFiltered
+	default:
+		return attentionPopulated
+	}
+}
+
 // attentionEmptyLine is the one line the inbox panel draws instead of a
 // table, empty when there is a table to draw. It is the single reading of
 // that question: the header sits above rows only when there are rows, and
 // the two can never disagree about which the panel is showing.
 func (m *model) attentionEmptyLine() string {
-	switch {
-	case !m.attentionSeen:
+	switch m.attentionState() {
+	case attentionLoading:
 		return styleFaint.Render("reading the board…")
-	case len(m.attention) == 0:
+	case attentionEmpty:
 		return styleFaint.Render("the inbox is empty")
-	case len(m.shown) == 0:
+	case attentionFiltered:
 		return styleFaint.Render(m.emptyNote())
+	default:
+		return ""
 	}
-	return ""
 }
 
 // The inbox table's column names. Six columns and no names is a table the
@@ -3007,11 +3042,15 @@ func headerCell(label string, w int) string {
 	return padTo(styleFaint.Render(label), w)
 }
 
+// widestPriority is the widest label priorityCell renders, which priorityW
+// must be wide enough to hold.
+const widestPriority = "Urgent"
+
 // The two columns that are the same width on every row: wide enough for the
 // widest value each can hold, and for the header that names it.
 const (
 	leverageW = len(hdrLeverage) // wider than ⊘ or ↓n
-	priorityW = len(hdrPriority) // wider than "Urgent"
+	priorityW = len(hdrPriority) // wider than widestPriority
 )
 
 // A column earns its width only while the title still reads as one. Below
@@ -3194,7 +3233,7 @@ func priorityCell(p int) string {
 	label, style := "—", styleFaint
 	switch p {
 	case 1:
-		label, style = "Urgent", styleAttention
+		label, style = widestPriority, styleAttention
 	case 2:
 		label = "High"
 	case 3:
@@ -3332,19 +3371,47 @@ func (m model) workPanel(w, h int) string {
 	return panelBox(panelTitle(2, "work", keys, extra), keys, w, h, rows, padList, nil)
 }
 
+// workState is what the work panel is doing: loading, no queues, empty, or showing rows.
+type workState int
+
+const (
+	workLoading workState = iota
+	workNoQueues
+	workEmpty
+	workPopulated
+)
+
+func (m *model) workState() workState {
+	groups := m.workGroups()
+	if len(groups) == 0 {
+		if m.queues == nil {
+			return workLoading
+		}
+		return workNoQueues
+	}
+	n := 0
+	for _, g := range groups {
+		n += len(g.rows)
+	}
+	if n == 0 {
+		return workEmpty
+	}
+	return workPopulated
+}
+
 // workListRows renders the merged list: each queue's header, then its
 // tickets — running first, then what runs next — and where the cursor sits
 // among the rendered lines, for the focus window. A ticket a lane holds
 // draws two lines, so the cursor carries that span rather than a bare index.
 func (m *model) workListRows(width int) ([]string, cursor) {
 	none := cursor{at: -1}
-	groups := m.workGroups()
-	if len(groups) == 0 {
-		if m.queues == nil {
-			return []string{styleFaint.Render("waiting for the first pass…")}, none
-		}
+	switch m.workState() {
+	case workLoading:
+		return []string{styleFaint.Render("waiting for the first pass…")}, none
+	case workNoQueues:
 		return []string{styleFaint.Render("no queues configured")}, none
 	}
+	groups := m.workGroups()
 	n := 0
 	for _, g := range groups {
 		n += len(g.rows)
@@ -3805,19 +3872,21 @@ const labelGutter = "        "
 // ticketLines). Promote is the one action here; everything else about the
 // item happens in Linear.
 func (m model) attentionDetail(width int) (string, []int, int) {
-	if !m.attentionSeen {
+	switch m.attentionState() {
+	case attentionLoading:
 		return styleFaint.Render("reading the board…"), nil, 0
-	}
-	if len(m.attention) == 0 {
+	case attentionEmpty:
 		text := styleFaint.Render("the inbox is empty — that is the goal state") + "\n" +
 			styleFaint.Render("(shows "+loop.AttentionDefinition+")")
 		return text, nil, 0
-	}
-	if len(m.shown) == 0 {
+	case attentionFiltered:
 		text := styleFaint.Render(m.emptyNote()) + "\n" + styleFaint.Render(m.emptyHint())
 		return text, nil, 0
 	}
 	it := m.selectedAttention()
+	if it == nil {
+		return "", nil, 0
+	}
 	// These lines come from the pass and always render first, whatever the
 	// read of the ticket itself is doing: a failed fetch must never cost the
 	// operator the pane that works today.
@@ -3941,17 +4010,22 @@ func wrapText(s string, width int) []string {
 // it sits in pickup order and what, if anything, gates it. With nothing
 // queued it says how tickets enter each queue instead.
 func (m model) workDetail() string {
-	r := m.selectedWork()
-	if r == nil {
-		if m.queues == nil {
-			return styleFaint.Render("waiting for the first pass…")
-		}
+	switch m.workState() {
+	case workLoading:
+		return styleFaint.Render("waiting for the first pass…")
+	case workNoQueues:
+		return styleFaint.Render("no queues configured")
+	case workEmpty:
 		lines := []string{styleFaint.Render("nothing is running and every queue is empty"), ""}
 		for _, q := range m.queues {
 			lines = append(lines, styleTicket.Render(q.Name)+
 				styleFaint.Render(fmt.Sprintf(` — tickets enter when moved to "%s"`, q.Status)))
 		}
 		return strings.Join(lines, "\n")
+	}
+	r := m.selectedWork()
+	if r == nil {
+		return ""
 	}
 	queue := r.queue + styleFaint.Render(" · off the board")
 	if r.status != "" {

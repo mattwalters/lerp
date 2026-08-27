@@ -443,3 +443,20 @@ func channels(t *testing.T, hex string) (r, g, b float64) {
 	}
 	return out[0], out[1], out[2]
 }
+
+func TestMoreMarker(t *testing.T) {
+	got := moreMarker(3)
+	want := styleFaint.Render("⋯ 3 more")
+	if got != want {
+		t.Errorf("moreMarker(3) = %q, want %q", got, want)
+	}
+
+	rows := []string{"row 1", "row 2", "row 3", "row 4"}
+	fitted := fitRows(rows, 3)
+	if len(fitted) != 3 {
+		t.Fatalf("fitRows returned %d rows, want 3", len(fitted))
+	}
+	if fitted[2] != moreMarker(2) {
+		t.Errorf("fitRows last row = %q, want %q", fitted[2], moreMarker(2))
+	}
+}
