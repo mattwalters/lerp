@@ -42,3 +42,65 @@ func TestOpenRefusesWhatOpenableRefuses(t *testing.T) {
 		t.Fatal("Open of a non-Linear URL returned no error")
 	}
 }
+
+// When LERP_OPEN=desktop is set, non-Linear URLs are still refused.
+func TestOpenRefusesWhatOpenableRefusesUnderDesktop(t *testing.T) {
+	t.Setenv(OpenEnv, "desktop")
+	if err := Open("file:///etc/passwd"); err == nil {
+		t.Fatal("Open of a non-Linear URL returned no error under LERP_OPEN=desktop")
+	}
+}
+
+// When LERP_OPEN=desktop is set, rewrite swaps the scheme for linear://.
+// Any other value or unset leaves the URL untouched.
+func TestRewriteSwapsSchemeForDesktop(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		url  string
+		mode string
+		want string
+	}{
+		{
+			name: "desktop mode rewrites https to linear",
+			url:  "https://linear.app/acme/issue/LERP-1/first",
+			mode: "desktop",
+			want: "linear://linear.app/acme/issue/LERP-1/first",
+		},
+		{
+			name: "desktop mode preserves query and fragment",
+			url:  "https://linear.app/acme/issue/LERP-1?filter=true#anchor",
+			mode: "desktop",
+			want: "linear://linear.app/acme/issue/LERP-1?filter=true#anchor",
+		},
+		{
+			name: "oauth authorize url stays https under desktop mode",
+			url:  "https://linear.app/oauth/authorize?response_type=code&client_id=123",
+			mode: "desktop",
+			want: "https://linear.app/oauth/authorize?response_type=code&client_id=123",
+		},
+		{
+			name: "unset mode leaves url untouched",
+			url:  "https://linear.app/acme/issue/LERP-1/first",
+			mode: "",
+			want: "https://linear.app/acme/issue/LERP-1/first",
+		},
+		{
+			name: "other mode leaves url untouched",
+			url:  "https://linear.app/acme/issue/LERP-1/first",
+			mode: "browser",
+			want: "https://linear.app/acme/issue/LERP-1/first",
+		},
+		{
+			name: "case-sensitive mode check does not rewrite for uppercase",
+			url:  "https://linear.app/acme/issue/LERP-1/first",
+			mode: "DESKTOP",
+			want: "https://linear.app/acme/issue/LERP-1/first",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := rewrite(tc.url, tc.mode); got != tc.want {
+				t.Errorf("rewrite(%q, %q) = %q, want %q", tc.url, tc.mode, got, tc.want)
+			}
+		})
+	}
+}

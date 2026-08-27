@@ -90,6 +90,7 @@ source archive with no `.git` — reports the literal `dev`.
 | --- | --- |
 | `LINEAR_API_KEY` | the Linear personal API key. Every command needs a credential, and this is one of two ways to hold one — set, it wins over the token `lerp login` stores. A personal API key defaults to your full workspace access, but Linear can restrict one at creation to specific teams and to permission scopes — give lerp a key restricted to the teams it serves, or create it on a dedicated Linear automation account for harder isolation. Lerp drops it from its own environment after reading it, and never passes it to a provision, dispose or runner command. |
 | `LERP_BACKGROUND` | `light` or `dark`, saying which half of the palette to draw. Read once at startup; any other value is an error rather than a shrug. |
+| `LERP_OPEN` | `desktop` to rewrite ticket URLs to Linear's `linear://` deep-link scheme on `o`, opening directly in Linear's desktop app instead of bouncing through the browser. Unset or any other value keeps the default `https://` behavior. |
 | `NO_COLOR` | set to any value, turns colour off entirely. |
 
 Which half of the palette you get is otherwise decided by asking the terminal
