@@ -162,7 +162,8 @@ func blockingHandler(t *testing.T) http.HandlerFunc {
 						{"type":"blocks","relatedIssue":{"identifier":"LERP-1","state":{"type":"unstarted"}}}
 					]}}}`)
 			default:
-				t.Fatalf("unexpected GetIssue id %v", req.Variables["id"])
+				t.Errorf("unexpected GetIssue id %v", req.Variables["id"])
+				writeData(t, w, "{}")
 			}
 		case strings.Contains(req.Query, "IssueStates"):
 			writeData(t, w, `{"issue":{"team":{"states":{"nodes":[{"id":"st-done","name":"Done"}]}}}}`)
@@ -170,7 +171,8 @@ func blockingHandler(t *testing.T) http.HandlerFunc {
 			bDone.Store(true)
 			writeData(t, w, `{"issueUpdate":{"success":true}}`)
 		default:
-			t.Fatalf("unexpected query: %s", req.Query)
+			t.Errorf("unexpected query: %s", req.Query)
+			writeData(t, w, "{}")
 		}
 	}
 }
@@ -201,7 +203,9 @@ func contractCases() []contractCase {
 			return func(w http.ResponseWriter, r *http.Request) {
 				req := decodeRequest(t, r)
 				if !strings.Contains(req.Query, "IssueStates") {
-					t.Fatalf("unexpected query: %s", req.Query)
+					t.Errorf("unexpected query: %s", req.Query)
+					writeData(t, w, "{}")
+					return
 				}
 				writeData(t, w, `{"issue":{"team":{"states":{"nodes":[
 					{"id":"st-1","name":"Todo"},
@@ -237,7 +241,9 @@ func contractCases() []contractCase {
 				// regression that dropped the real filter would still get
 				// these hand-picked fixtures back and never notice.
 				if !strings.Contains(req.Query, `nin: ["completed", "canceled"]`) {
-					t.Fatalf("query does not exclude finished states: %q", req.Query)
+					t.Errorf("query does not exclude finished states: %q", req.Query)
+					writeData(t, w, "{}")
+					return
 				}
 				switch {
 				// LERP-3, assigned but canceled, and LERP-2, unassigned but
@@ -255,7 +261,8 @@ func contractCases() []contractCase {
 						 "assignee":null,"inverseRelations":{"nodes":[]}}
 					]}}`)
 				default:
-					t.Fatalf("unexpected query: %s", req.Query)
+					t.Errorf("unexpected query: %s", req.Query)
+					writeData(t, w, "{}")
 				}
 			}
 		},

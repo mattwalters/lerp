@@ -269,11 +269,15 @@ func TestFakeTeamStates(t *testing.T) {
 // name the team does not have, the semantic drift LERP-90 exists to close —
 // is covered by the "move to a status absent from the team" contract case,
 // against both clients. What only the fake needs to prove is the opt-in: a
-// team nothing has declared states for stays permissive, so the many tests
-// that move issues through ad hoc statuses without modeling a whole board
-// are unaffected.
+// team nothing has declared states for stays permissive, keyed on the
+// issue's own team rather than on whether any team has declared anything —
+// so the many tests that move issues through ad hoc statuses without
+// modeling a whole board are unaffected even when another team in the same
+// fake does declare states.
 func TestFakeMoveIssueUndeclaredTeamStaysPermissive(t *testing.T) {
 	f := newTestFake()
+	f.SetTeamStates("LERP", "Todo", "In Progress", "Done")
+	// iss-4 belongs to PROSE, which has declared nothing.
 	if err := f.MoveIssue(context.Background(), "iss-4", "Whatever"); err != nil {
 		t.Errorf("MoveIssue on an undeclared team: %v, want no error", err)
 	}
@@ -310,22 +314,9 @@ func TestFakeSetStatusCategory(t *testing.T) {
 	}
 }
 
-func TestFakeNotFound(t *testing.T) {
-	f := NewFake()
-	ctx := context.Background()
-	ops := map[string]func() error{
-		"GetIssue":       func() error { _, err := f.GetIssue(ctx, "nope"); return err },
-		"MoveIssue":      func() error { return f.MoveIssue(ctx, "nope", "Todo") },
-		"AssignIssue":    func() error { return f.AssignIssue(ctx, "nope", "u") },
-		"UnassignIssue":  func() error { return f.UnassignIssue(ctx, "nope") },
-		"CommentOnIssue": func() error { return f.CommentOnIssue(ctx, "nope", "hi") },
-	}
-	for name, op := range ops {
-		if err := op(); !errors.Is(err, ErrNotFound) {
-			t.Errorf("%s err = %v, want ErrNotFound", name, err)
-		}
-	}
-}
+// Every op's ErrNotFound on a nonexistent issue, against both clients, is
+// the "issue not found" contract case in contract_test.go — this file no
+// longer duplicates it.
 
 // The delta read is the fake's stand-in for the real one, so it has to be
 // unfiltered in the same way: whatever the team holds, whoever it belongs
