@@ -454,9 +454,6 @@ func hasDimMark(view string) bool {
 	return false
 }
 
-// emptyBoard is a model past the splash with both panels genuinely empty —
-// nothing waiting on the operator and no ticket, running or queued, in any
-// lane — and settled: the pass that reported that has also concluded, which
 // emptyBoard is a model past the splash with the inbox genuinely empty —
 // nothing waiting on the operator — and settled: the pass that reported that
 // has also concluded, which is what actually licenses the mark (see
@@ -724,6 +721,42 @@ func TestTheWordmarkHidesWhenBacklogUnfolds(t *testing.T) {
 	}
 }
 
+// A poll pass landing while the backlog is unfolded reports the same backlog
+// items, but must not demote inboxEmptySettled — fold state is a view
+// preference, not data arrival. Refolding the backlog restores the mark
+// immediately, without having to wait for the next poll pass to settle.
+func TestTheWordmarkRestoresImmediatelyOnRefoldAfterPassLanded(t *testing.T) {
+	forceColour(t)
+	m, _, _ := newTestModel(t, 2)
+	m = pastTheSplash(t, m)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-10", Title: "backlog 1", Relevance: loop.StatusBacklog},
+	}}})
+	m = update(t, m, tickedMsg{})
+	if !hasDimMark(m.View()) {
+		t.Fatalf("setup: mark not showing with folded backlog:\n%s", m.View())
+	}
+	// Press 'B' to unfold backlog:
+	m = update(t, m, keyMsg("B"))
+	if hasDimMark(m.View()) {
+		t.Fatalf("the mark remained on screen after unfolding the backlog:\n%s", m.View())
+	}
+	// A pass lands while unfolded:
+	m = update(t, m, tickMsg{})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-10", Title: "backlog 1", Relevance: loop.StatusBacklog},
+	}}})
+	m = update(t, m, tickedMsg{})
+	if hasDimMark(m.View()) {
+		t.Fatalf("the mark showed while backlog was unfolded:\n%s", m.View())
+	}
+	// Press 'B' to fold backlog again: mark should return immediately without another tick
+	m = update(t, m, keyMsg("B"))
+	if !hasDimMark(m.View()) {
+		t.Fatalf("the mark did not reappear immediately after re-folding the backlog when a pass landed mid-browse:\n%s", m.View())
+	}
+}
+
 // A pass can empty the inbox out from under a search box the operator still
 // has open — the EventAttention handler deliberately leaves the query alone
 // while m.searching, rather than snatch it out from under whatever they are
@@ -790,6 +823,46 @@ func TestTheWordmarkStaysOffScreenBehindALeftoverQuery(t *testing.T) {
 	}
 	if hasDimMark(m.View()) {
 		t.Fatalf("the mark drew over a leftover search filter:\n%s", m.View())
+	}
+}
+
+// Filtering the inbox to a specific project (P) shows a scoped view
+// (attentionFiltered) with the filtered empty note, and keeps the wordmark off
+// screen. Cycling back to all projects restores the mark.
+func TestTheWordmarkStaysOffScreenBehindProjectFilter(t *testing.T) {
+	forceColour(t)
+	m, _, _ := newTestModel(t, 2)
+	m = pastTheSplash(t, m)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-10", Title: "backlog 1", Project: "Core", Relevance: loop.StatusBacklog},
+	}}})
+	m = update(t, m, tickedMsg{})
+	if !hasDimMark(m.View()) {
+		t.Fatalf("setup: mark not showing with folded backlog:\n%s", m.View())
+	}
+	// Unfold to reach the project cycle, scope to "Core", and refold:
+	m = update(t, m, keyMsg("B"))
+	m = update(t, m, keyMsg("P"))
+	if m.project != "Core" {
+		t.Fatalf("setup: P did not scope to project Core: %q", m.project)
+	}
+	m = update(t, m, keyMsg("B"))
+	if m.project != "Core" || len(m.shown) != 0 {
+		t.Fatalf("setup: folding changed the scope: %q, %d rows", m.project, len(m.shown))
+	}
+	if hasDimMark(m.View()) {
+		t.Fatalf("the mark drew behind an active project scope:\n%s", m.View())
+	}
+	if !strings.Contains(m.View(), "nothing in Core") {
+		t.Fatalf("expected 'nothing in Core' note:\n%s", m.View())
+	}
+	// Press 'P' to cycle back to all projects:
+	m = update(t, m, keyMsg("P"))
+	if m.project != "" {
+		t.Fatalf("setup: P did not cycle back to all projects: %q", m.project)
+	}
+	if !hasDimMark(m.View()) {
+		t.Fatalf("the mark did not reappear after clearing project filter:\n%s", m.View())
 	}
 }
 
