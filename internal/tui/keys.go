@@ -167,10 +167,11 @@ type rowKeys struct {
 // forty columns wide, so a key that does nothing here costs one that does.
 //
 // The order is what survives a narrow panel, since bubbles drops hints off
-// the end to fit: what acts on the row under the cursor first, then the two
-// display cycles, whose state the panel title already carries in words. All
-// five fit from about 120 columns; under that the cycles go first and the
-// ellipsis says where to look for them.
+// the end to fit: what acts on the row or document under the cursor first
+// (promote, open, fold), then the two display cycles last, since sort and
+// project's own state is already carried in the panel title in words where
+// fold's is not. All seven fit from about 120 columns; under that the
+// cycles go first and the ellipsis says where to look for them.
 func (k keymap) panelHelp(p panel, live rowKeys) []key.Binding {
 	var b []key.Binding
 	switch p {
@@ -194,12 +195,12 @@ func (k keymap) panelHelp(p panel, live rowKeys) []key.Binding {
 		if live.hasURL {
 			b = append(b, short(k.Open, "open"))
 		}
+		if live.canFold {
+			b = append(b, k.Fold, k.FoldAll)
+		}
 		b = append(b, short(k.Sort, "sort"))
 		if live.projects {
 			b = append(b, short(k.Project, "project"))
-		}
-		if live.canFold {
-			b = append(b, k.Fold, k.FoldAll)
 		}
 	case panelWork:
 		if live.canEject {

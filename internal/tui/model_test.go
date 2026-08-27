@@ -4913,6 +4913,63 @@ func TestFoldedLengthInteractsWithScrolling(t *testing.T) {
 	}
 }
 
+// Regression test for a bug caught in round 2 review: panelHelp appended
+// the fold hints after sort and project, so bubbles' truncate-from-the-end
+// behavior dropped them first — on an ordinary terminal width, before sort
+// or project ever did. Sort and project's own state is already carried in
+// the panel title in words (panelHelp's own stated rule for what may drop
+// first); fold's is not, so it must survive a narrow panel at least as long
+// as they do.
+func TestFoldHintSurvivesBeforeTheDisplayCycles(t *testing.T) {
+	k := newKeymap()
+	b := k.panelHelp(panelAttention, rowKeys{canFold: true, projects: true, canPromote: true, hasURL: true})
+	pos := func(key string) int {
+		for i, bind := range b {
+			if bind.Help().Key == key {
+				return i
+			}
+		}
+		return -1
+	}
+	foldPos, sortPos, projectPos := pos("z"), pos("s"), pos("P")
+	if foldPos == -1 || sortPos == -1 || projectPos == -1 {
+		t.Fatalf("expected fold, sort and project hints all present, got %v", b)
+	}
+	if foldPos > sortPos || foldPos > projectPos {
+		t.Fatalf("fold hint at %d should come before sort (%d) and project (%d), so a narrow panel drops them first", foldPos, sortPos, projectPos)
+	}
+}
+
+// Regression test for a bug caught in round 2 review: toggleFold's forward
+// scan finds nothing once the viewport is scrolled past the last heading's
+// section — into the comments, which own no heading — so z went dead even
+// though foldable() was still true and still advertising it in the key
+// hints. It should fall back to the nearest section behind the cursor
+// instead of doing nothing.
+func TestFoldKeyFallsBackPastTheLastSection(t *testing.T) {
+	m, _, reader := newReadingTestModel(t)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+	m = update(t, m, keyMsg("enter"))
+	comments := []linear.Comment{{Author: "a", Body: strings.Repeat("comment line\n\n", 60)}}
+	m = selectAndRead(t, m, 0, linear.IssueDetail{Body: "# Plan\n\nstep one", Comments: comments}, nil, reader)
+	m.vp.GotoBottom()
+
+	top := clampIndex(m.vp.YOffset, len(m.foldOwner))
+	for i := top; i < len(m.foldOwner); i++ {
+		if m.foldOwner[i] >= 0 {
+			t.Fatalf("test setup: the viewport's top is still inside a section, not past every one of them")
+		}
+	}
+
+	m = update(t, m, keyMsg("z"))
+	it := m.selectedAttention()
+	d := m.details[it.TicketID]
+	if d == nil || !d.folded[0] {
+		t.Fatalf("z should have folded the nearest section behind the cursor rather than doing nothing")
+	}
+}
+
 // Done-when: a comments fetch that fails never blanks the lines that work
 // today, and still points at Linear.
 func TestTicketDetailFailureKeepsThePaneThatWorks(t *testing.T) {

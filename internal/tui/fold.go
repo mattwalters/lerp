@@ -219,6 +219,13 @@ func (m *model) foldable() bool {
 // scrolling: the viewport's top is pinned to the pane's own header lines
 // then, which own no heading themselves, and the first one reading would
 // reach is the answer, not a dead key.
+//
+// A forward scan alone goes dead once the viewport is scrolled past the
+// last heading's section — into the comments, or the pane's own trailing
+// lines, all owned by nobody — even though foldable() is still true and
+// still advertising the key. Falling back to the nearest heading behind the
+// cursor covers that case: there is always one, since foldable() already
+// means the document has at least one heading.
 func (m *model) toggleFold() {
 	it := m.selectedAttention()
 	if it == nil {
@@ -228,11 +235,20 @@ func (m *model) toggleFold() {
 	if d == nil || len(m.foldOwner) == 0 {
 		return
 	}
+	top := clampIndex(m.vp.YOffset, len(m.foldOwner))
 	idx := -1
-	for i := clampIndex(m.vp.YOffset, len(m.foldOwner)); i < len(m.foldOwner); i++ {
+	for i := top; i < len(m.foldOwner); i++ {
 		if m.foldOwner[i] >= 0 {
 			idx = m.foldOwner[i]
 			break
+		}
+	}
+	if idx < 0 {
+		for i := top; i >= 0; i-- {
+			if m.foldOwner[i] >= 0 {
+				idx = m.foldOwner[i]
+				break
+			}
 		}
 	}
 	if idx < 0 {
