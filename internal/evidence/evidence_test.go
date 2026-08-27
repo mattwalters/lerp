@@ -26,6 +26,9 @@ func TestRecordsRoundTripAndRemove(t *testing.T) {
 		Workspace:      "/tmp/lerp-8",
 		LogPath:        "/tmp/lerp-8.log",
 		SessionID:      "session",
+		Runner:         "claude",
+		Vendor:         "anthropic",
+		Model:          "claude-3-5-sonnet-20241022",
 	}
 	got, err := e.Create(want)
 	if err != nil {
@@ -50,7 +53,8 @@ func TestRecordsRoundTripAndRemove(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.TicketID != want.TicketID || got.Lane != want.Lane || got.RunID == "" {
+	if got.TicketID != want.TicketID || got.Lane != want.Lane || got.RunID == "" ||
+		got.Runner != want.Runner || got.Vendor != want.Vendor || got.Model != want.Model {
 		t.Errorf("record = %#v, want the original run facts", got)
 	}
 	if got.ExitPath != filepath.Join(runDir, "exit") {

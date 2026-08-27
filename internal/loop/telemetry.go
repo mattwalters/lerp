@@ -19,6 +19,11 @@ import (
 // everything else here comes from config and the evidence record the same
 // way on both paths, plus one read of the run's own log.
 //
+// Runner identity (name, vendor, and configured model) is read from the
+// evidence record so a run that settled under a changed config still
+// attributes its work to the runner that started it; records predating those
+// fields fall back to settle-time config.
+//
 // ticket is a parameter rather than read off record.Ticket internally
 // because a caller holding a freshly-read issue has a better source than a
 // record field that is empty on any run started before it existed (like
@@ -40,7 +45,11 @@ func buildTelemetryRun(repo *config.RepoConfig, repoDir string, record evidence.
 		ExitCode:   exitCode,
 		Status:     status,
 	}
-	if queue, ok := repo.Queues[queueName]; ok {
+	if record.Runner != "" {
+		line.Runner = record.Runner
+		line.Vendor = record.Vendor
+		line.Model = record.Model
+	} else if queue, ok := repo.Queues[queueName]; ok {
 		line.Runner = queue.Runner
 		if runner, ok := repo.Runners[queue.Runner]; ok {
 			line.Vendor = runner.Vendor

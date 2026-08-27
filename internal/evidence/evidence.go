@@ -62,6 +62,13 @@ type Record struct {
 	// TicketID's opaque Linear id. It is what {{ticket}} expands to, so the
 	// resume command eject hands over reads like the command lerp ran.
 	Ticket string `json:"ticket,omitempty"`
+	// Runner is the name of the runner configured for the queue when the run
+	// started. Empty on records predating the field.
+	Runner string `json:"runner,omitempty"`
+	// Vendor is the runner's vendor as configured at start time.
+	Vendor string `json:"vendor,omitempty"`
+	// Model is the runner's model as configured at start time.
+	Model string `json:"model,omitempty"`
 }
 
 // ErrLocked reports that another lerp process is running in this clone.

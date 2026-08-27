@@ -1636,8 +1636,9 @@ func (r *Reconciler) executeLane(ctx context.Context, lr *laneRun, c candidate) 
 	// disk with the record, before the agent starts, because a run this
 	// process will not live to see — one a later lerp adopts — can only be
 	// ejected if its session id was recorded. A runner whose command never
-	// asks for one gets "", and its runs are not ejectable.
-	sessionID, err := run.NewSessionID(r.o.Repo.Runners[c.queue.Runner])
+	runnerName := c.queue.Runner
+	runnerConfig := r.o.Repo.Runners[runnerName]
+	sessionID, err := run.NewSessionID(runnerConfig)
 	if err != nil {
 		return fail(fmt.Errorf("session id for issue %s: %w", issue.ID, err))
 	}
@@ -1649,6 +1650,9 @@ func (r *Reconciler) executeLane(ctx context.Context, lr *laneRun, c candidate) 
 		Ticket:         issue.Identifier,
 		Queue:          c.name,
 		StartingStatus: c.queue.Status,
+		Runner:         runnerName,
+		Vendor:         runnerConfig.Vendor,
+		Model:          runnerConfig.Model,
 		SessionID:      sessionID,
 	})
 	if err != nil {
