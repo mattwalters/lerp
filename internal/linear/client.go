@@ -169,7 +169,6 @@ type Client interface {
 	MoveIssue(ctx context.Context, issueID, statusName string) error
 	AssignIssue(ctx context.Context, issueID, userID string) error
 	UnassignIssue(ctx context.Context, issueID string) error
-	CommentOnIssue(ctx context.Context, issueID, bodyMarkdown string) error
 	Viewer(ctx context.Context) (string, error)
 }
 

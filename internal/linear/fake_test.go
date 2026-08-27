@@ -176,28 +176,21 @@ func TestFakeMoveIssue(t *testing.T) {
 
 func TestFakeComments(t *testing.T) {
 	f := newTestFake()
-	ctx := context.Background()
-	if err := f.CommentOnIssue(ctx, "iss-1", "first"); err != nil {
-		t.Fatalf("CommentOnIssue: %v", err)
-	}
-	if err := f.CommentOnIssue(ctx, "iss-1", "second"); err != nil {
-		t.Fatalf("CommentOnIssue: %v", err)
-	}
+	f.AddComment("iss-1", "first")
+	f.AddComment("iss-1", "second")
 	if got, want := f.Comments("iss-1"), []string{"first", "second"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("Comments = %v, want %v", got, want)
 	}
 }
 
-// What CommentOnIssue writes, GetIssueDetail reads back — the fake\'s half
-// of the pane\'s promise that a parked ticket shows the verdict that parked
+// What AddComment writes, GetIssueDetail reads back — the fake's half
+// of the pane's promise that a parked ticket shows the verdict that parked
 // it.
 func TestFakeIssueDetail(t *testing.T) {
 	f := newTestFake()
 	ctx := context.Background()
 	f.SetDescription("iss-1", "the body")
-	if err := f.CommentOnIssue(ctx, "iss-1", "the verdict"); err != nil {
-		t.Fatalf("CommentOnIssue: %v", err)
-	}
+	f.AddComment("iss-1", "the verdict")
 	detail, err := f.GetIssueDetail(ctx, "iss-1")
 	if err != nil {
 		t.Fatalf("GetIssueDetail: %v", err)
@@ -218,7 +211,7 @@ func TestFakeIssueDetail(t *testing.T) {
 }
 
 // SetViewer is how a test puts the fake's claim protocol in someone else's
-// name; Comments (via CommentOnIssue) is the other reader of viewerID.
+// name; AddComment is the other reader of viewerID.
 func TestFakeSetViewer(t *testing.T) {
 	f := NewFake()
 	f.AddIssue("LERP", Issue{ID: "iss-1", Identifier: "LERP-1", Title: "First", Status: "Todo"})
@@ -232,9 +225,7 @@ func TestFakeSetViewer(t *testing.T) {
 	if id != "someone-else" {
 		t.Errorf("Viewer = %q, want someone-else", id)
 	}
-	if err := f.CommentOnIssue(ctx, "iss-1", "hi"); err != nil {
-		t.Fatalf("CommentOnIssue: %v", err)
-	}
+	f.AddComment("iss-1", "hi")
 	detail, err := f.GetIssueDetail(ctx, "iss-1")
 	if err != nil {
 		t.Fatalf("GetIssueDetail: %v", err)
@@ -375,7 +366,7 @@ func TestFakeMutationsBumpUpdatedAt(t *testing.T) {
 		{"move", func(f *Fake) error { return f.MoveIssue(ctx, "iss-1", "Done") }},
 		{"assign", func(f *Fake) error { return f.AssignIssue(ctx, "iss-1", "user-9") }},
 		{"unassign", func(f *Fake) error { return f.UnassignIssue(ctx, "iss-1") }},
-		{"comment", func(f *Fake) error { return f.CommentOnIssue(ctx, "iss-1", "hello") }},
+		{"comment", func(f *Fake) error { f.AddComment("iss-1", "hello"); return nil }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newTestFake()

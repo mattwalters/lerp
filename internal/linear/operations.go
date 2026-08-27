@@ -553,28 +553,6 @@ func (c *HTTP) UnassignIssue(ctx context.Context, issueID string) error {
 	return nil
 }
 
-const commentCreateMutation = `
-mutation CommentOnIssue($issueId: String!, $body: String!) {
-  commentCreate(input: { issueId: $issueId, body: $body }) { success }
-}`
-
-// CommentOnIssue posts a markdown comment — how stage-boundary artifacts
-// reach Linear (SCOPE.md invariant 7).
-func (c *HTTP) CommentOnIssue(ctx context.Context, issueID, bodyMarkdown string) error {
-	var resp struct {
-		CommentCreate struct {
-			Success bool `json:"success"`
-		} `json:"commentCreate"`
-	}
-	if err := c.do(ctx, commentCreateMutation, map[string]any{"issueId": issueID, "body": bodyMarkdown}, &resp); err != nil {
-		return fmt.Errorf("comment on issue: %w", err)
-	}
-	if !resp.CommentCreate.Success {
-		return fmt.Errorf("comment on issue %s: linear reported failure", issueID)
-	}
-	return nil
-}
-
 const viewerQuery = `
 query Viewer {
   viewer { id }

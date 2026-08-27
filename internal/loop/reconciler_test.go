@@ -2580,7 +2580,7 @@ func TestForceStartRefusesWhenTheEvidenceCannotBeRead(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.alive[orphan.RunID] = true
-	runs := filepath.Join(h.root, ".lerp", "runs")
+	runs := h.evidence.RunsDir()
 	if err := os.Chmod(runs, 0o300); err != nil {
 		t.Fatal(err)
 	}
@@ -2650,10 +2650,8 @@ func TestReconcilerIssueDetail(t *testing.T) {
 	h := newHarness(t, 1, nil)
 	h.fake.AddIssue("LERP", linear.Issue{ID: "loose", Identifier: "LERP-4", Status: "Backlog"})
 	h.fake.SetDescription("loose", "the body")
+	h.fake.AddComment("loose", "the verdict")
 	ctx := context.Background()
-	if err := h.fake.CommentOnIssue(ctx, "loose", "the verdict"); err != nil {
-		t.Fatalf("CommentOnIssue: %v", err)
-	}
 
 	detail, err := h.rec.IssueDetail(ctx, "loose")
 	if err != nil {

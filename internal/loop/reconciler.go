@@ -1250,6 +1250,15 @@ func (r *Reconciler) adopt(record evidence.Record) {
 // wedge the lane, its terminal event never emitted.
 const reapDisposeTimeout = 2 * time.Minute
 
+// disposeBounded runs the configured dispose command bounded by
+// reapDisposeTimeout, detached from ctx's cancellation so that a loop or lane
+// shutting down still finishes cleaning up its workspace.
+func (r *Reconciler) disposeBounded(ctx context.Context, id workspace.Identity) {
+	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), reapDisposeTimeout)
+	defer cancel()
+	r.o.Dispose(dctx, r.o.RepoDir, r.o.Repo.Dispose, id, r.o.Log)
+}
+
 // reap cleans up after a run whose process is dead: dispose the workspace,
 // settle the ticket, and remove the local record.
 //
@@ -1270,9 +1279,7 @@ func (r *Reconciler) reap(ctx context.Context, record evidence.Record) bool {
 	// empty path would be a command nobody asked for.
 	if record.Workspace != "" {
 		id := workspace.Identity{Lane: record.Lane, TicketID: record.TicketID, Workspace: record.Workspace}
-		dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), reapDisposeTimeout)
-		r.o.Dispose(dctx, r.o.RepoDir, r.o.Repo.Dispose, id, r.o.Log)
-		cancel()
+		r.disposeBounded(ctx, id)
 	}
 	ev, tel, ok := r.settleDead(ctx, record)
 	if !ok {
@@ -1638,9 +1645,7 @@ func (r *Reconciler) provisionAndRun(ctx context.Context, lr *laneRun, c candida
 		if ejected {
 			return
 		}
-		dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), reapDisposeTimeout)
-		defer cancel()
-		r.o.Dispose(dctx, r.o.RepoDir, r.o.Repo.Dispose, id, r.o.Log)
+		r.disposeBounded(ctx, id)
 	}()
 
 	fail := func(err error) (Event, bool, *telemetry.Run, bool) {

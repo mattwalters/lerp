@@ -321,3 +321,12 @@ const (
 	maxTarget = 80
 	maxResult = 120
 )
+
+// sessionTag shortens a session or thread UUID to the prefix a human uses to
+// tell two runs apart.
+func sessionTag(id string) string {
+	if i := strings.IndexByte(id, '-'); i > 0 {
+		return id[:i]
+	}
+	return short(id, 8)
+}
