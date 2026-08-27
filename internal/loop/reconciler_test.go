@@ -59,9 +59,29 @@ func newHarness(t *testing.T, lanes int, execute ExecuteFunc) *harness {
 func newHarnessWith(t *testing.T, lanes int, execute ExecuteFunc, fake *linear.Fake, client linear.Client) *harness {
 	t.Helper()
 	root := t.TempDir()
+	return buildHarness(t, lanes, execute, evidence.New(root), root, fake, client)
+}
+
+// newSecondLerp is another reconciler over the same clone — same evidence
+// store, same board — with its own lanes, events, and liveness map. It is
+// how a test plays the successor process that finds another lerp's records
+// on disk.
+func newSecondLerp(t *testing.T, h *harness, lanes int) *harness {
+	t.Helper()
+	next := buildHarness(t, lanes, nil, h.evidence, h.root, h.fake, h.fake)
+	t.Cleanup(func() { waitIdle(t, next.rec) })
+	return next
+}
+
+// buildHarness is the reconciler wiring newHarnessWith and newSecondLerp
+// both need, over an evidence store and board the caller has already
+// decided are fresh or shared — an injectable added here reaches both
+// callers instead of silently unwiring whichever one it was not added to.
+func buildHarness(t *testing.T, lanes int, execute ExecuteFunc, ev *evidence.Evidence, root string, fake *linear.Fake, client linear.Client) *harness {
+	t.Helper()
 	h := &harness{
 		fake:     fake,
-		evidence: evidence.New(root),
+		evidence: ev,
 		root:     root,
 		events:   make(chan Event, 64),
 		alive:    map[string]bool{},
@@ -96,49 +116,6 @@ func newHarnessWith(t *testing.T, lanes int, execute ExecuteFunc, fake *linear.F
 	}
 	h.rec = rec
 	return h
-}
-
-// newSecondLerp is another reconciler over the same clone — same evidence
-// store, same board — with its own lanes, events, and liveness map. It is
-// how a test plays the successor process that finds another lerp's records
-// on disk.
-func newSecondLerp(t *testing.T, h *harness, lanes int) *harness {
-	t.Helper()
-	next := &harness{
-		fake:     h.fake,
-		evidence: h.evidence,
-		root:     h.root,
-		events:   make(chan Event, 64),
-		alive:    map[string]bool{},
-		logs:     &logBuffer{},
-	}
-	rec, err := NewReconciler(ReconcilerOptions{
-		Client:   h.fake,
-		Repo:     testRepo(),
-		RepoDir:  "/repo",
-		Evidence: next.evidence,
-		Lanes:    lanes,
-		Events:   func(ev Event) { next.events <- ev },
-		Log:      next.logs,
-		Execute: func(context.Context, run.Invocation) (run.Result, error) {
-			return run.Result{ExitCode: 0}, nil
-		},
-		Provision: func(context.Context, string, string, workspace.Identity, io.Writer) error {
-			return nil
-		},
-		Dispose: func(_ context.Context, _ string, _ string, id workspace.Identity, _ io.Writer) {
-			next.mu.Lock()
-			next.disposed = append(next.disposed, id)
-			next.mu.Unlock()
-		},
-		Alive: func(record evidence.Record) bool { return next.alive[record.RunID] },
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	next.rec = rec
-	t.Cleanup(func() { waitIdle(t, rec) })
-	return next
 }
 
 // logBuffer is a Log a test can read while lanes are still writing to it.

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -231,14 +230,21 @@ func newTestModelWith(t *testing.T, lanes int, statuses []string, promoter *reco
 		Lanes:    lanes,
 		Events:   events,
 	})
-	resized, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
-	return resized.(model), ticker, events
+	m = resize(t, m, 100, 30)
+	return m, ticker, events
 }
 
 func update(t *testing.T, m model, msg tea.Msg) model {
 	t.Helper()
 	next, _ := m.Update(msg)
 	return next.(model)
+}
+
+// resize is update for the one message every test sends before the model has
+// anything worth asserting on: a window size.
+func resize(t *testing.T, m model, w, h int) model {
+	t.Helper()
+	return update(t, m, tea.WindowSizeMsg{Width: w, Height: h})
 }
 
 // pastTheSplash lands the first pass on a fresh model, the weakest of the
@@ -268,6 +274,23 @@ func openMain(t *testing.T, m model) model {
 		t.Fatal("enter did not open the main pane")
 	}
 	return m
+}
+
+// looseAttention is the stock one-item inbox the promote-picker and
+// pane-geometry tests share: a single ticket, LERP-4, that nothing has
+// routed to a queue yet.
+func looseAttention(status string) loop.Event {
+	return loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-4", TicketID: "loose", Title: "Nobody's routed this", Status: status},
+	}}
+}
+
+// openInboxOn is "1" then looseAttention, for the tests that put the inbox
+// in focus and then feed it that fixture in that order.
+func openInboxOn(t *testing.T, m model, status string) model {
+	t.Helper()
+	m = update(t, m, keyMsg("1"))
+	return update(t, m, eventMsg{ev: looseAttention(status)})
 }
 
 // updateCmd is update for the messages whose command is the assertion — the
@@ -581,8 +604,7 @@ func TestWorkPanelShowsWhatRunsNext(t *testing.T) {
 func TestWorkPanelPutsRunningAtTheTopOfItsQueue(t *testing.T) {
 	m, _, _ := newTestModel(t, 3)
 	m = pastTheSplash(t, m)
-	resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
-	m = resized.(model)
+	m = resize(t, m, 120, 40)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
 		{Team: "LERP", Name: "implement", Status: "Implementing", Tickets: []loop.QueueTicket{
 			{ID: "id-49", Identifier: "LERP-49", Title: "the log tail", Assigned: true},
@@ -653,14 +675,7 @@ func TestTheLensFollowsTheRowNotThePanel(t *testing.T) {
 		t.Fatalf("the pending row's detail is missing:\n%s", view)
 	}
 
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.WriteString("more from the agent\n"); err != nil {
-		t.Fatal(err)
-	}
-	f.Close()
+	appendLog(t, path, "more from the agent\n")
 	m = update(t, m, pollMsg{})
 
 	m = update(t, m, keyMsg("up"))
@@ -972,8 +987,8 @@ func TestInboxTableNamesItsColumns(t *testing.T) {
 	// must not depend on which panel has focus. A header that appeared on
 	// tab would be exactly the header that comes and goes.
 	one, _, _ := newTestModel(t, 1)
-	resized, _ := one.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
-	one = update(t, resized.(model), keyMsg("1"))
+	one = resize(t, one, 120, 24)
+	one = update(t, one, keyMsg("1"))
 	one = update(t, one, eventMsg{ev: loop.Event{Type: loop.EventAttention,
 		Attention: []loop.AttentionItem{{Ticket: "LERP-1", Title: "waiting", Reason: "unclaimed"}}}})
 	tickets := make([]loop.QueueTicket, 40)
@@ -1007,8 +1022,8 @@ func TestInboxTableNamesItsColumns(t *testing.T) {
 // standing in one means, and the overlay is the one place with the room.
 func TestHelpOverlayDecodesTheInboxMarks(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
-	resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
-	m = update(t, resized.(model), keyMsg("?"))
+	m = resize(t, m, 120, 30)
+	m = update(t, m, keyMsg("?"))
 
 	view := ansi.Strip(m.View())
 	for _, want := range []struct{ glyph, says string }{
@@ -1038,8 +1053,8 @@ func TestHelpOverlayDecodesTheInboxMarks(t *testing.T) {
 	// pane that only ever showed its first screen would be a pane the
 	// legend is not in.
 	short, _, _ := newTestModel(t, 1)
-	small, _ := short.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-	short = update(t, small.(model), keyMsg("?"))
+	short = resize(t, short, 80, 24)
+	short = update(t, short, keyMsg("?"))
 	reached := false
 	for i := 0; i < 8 && !reached; i++ {
 		reached = strings.Contains(ansi.Strip(short.View()), "never named")
@@ -1065,8 +1080,7 @@ func TestTheHelpOverlayIsNotWrittenOverByALiveLog(t *testing.T) {
 
 	m, _, _ := newTestModel(t, 1)
 	m = pastTheSplash(t, m)
-	resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
-	m = resized.(model)
+	m = resize(t, m, 120, 30)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
 		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
 			{ID: "t1", Identifier: "LERP-1", Title: "running", Assigned: true},
@@ -1083,14 +1097,7 @@ func TestTheHelpOverlayIsNotWrittenOverByALiveLog(t *testing.T) {
 	// The agent writes while the overlay is up: the poll reads the tail, and
 	// what it reads must not land in the pane the operator is reading.
 	m = update(t, m, keyMsg("?"))
-	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_WRONLY, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.WriteString("brand new agent line\n"); err != nil {
-		t.Fatal(err)
-	}
-	f.Close()
+	appendLog(t, logPath, "brand new agent line\n")
 	m = update(t, m, pollMsg{})
 	if view := m.View(); strings.Contains(view, "brand new agent line") {
 		t.Fatalf("a live log wrote over the help overlay:\n%s", view)
@@ -1121,8 +1128,8 @@ func TestTheHelpOverlayIsNotWrittenOverByALiveLog(t *testing.T) {
 func TestTheHelpOverlayGivesTheTicketPaneBackWhereItWas(t *testing.T) {
 	m, _, reader := newReadingTestModel(t)
 	m = pastTheSplash(t, m)
-	resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
-	m = update(t, resized.(model), keyMsg("1"))
+	m = resize(t, m, 120, 24)
+	m = update(t, m, keyMsg("1"))
 	m = update(t, m, keyMsg("enter")) // the inbox reads a ticket once its pane is open
 	m = update(t, m, eventMsg{ev: threeWaiting()})
 	body := strings.Repeat("a line of the plan\n", 80)
@@ -1162,8 +1169,8 @@ func TestTheHelpOverlayGivesTheTicketPaneBackWhereItWas(t *testing.T) {
 func TestMainPaneScrollbarTracksThePosition(t *testing.T) {
 	m, _, reader := newReadingTestModel(t)
 	m = pastTheSplash(t, m)
-	resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
-	m = update(t, resized.(model), keyMsg("1"))
+	m = resize(t, m, 120, 24)
+	m = update(t, m, keyMsg("1"))
 	m = update(t, m, keyMsg("enter")) // the inbox reads a ticket once its pane is open
 	m = update(t, m, eventMsg{ev: threeWaiting()})
 
@@ -1259,8 +1266,7 @@ func TestReadingTheHelpDoesNotDisturbTheLogBehindIt(t *testing.T) {
 
 	m, _, _ := newTestModel(t, 1)
 	m = pastTheSplash(t, m)
-	resized, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-	m = resized.(model)
+	m = resize(t, m, 80, 24)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
 		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
 			{ID: "t1", Identifier: "LERP-1", Title: "running", Assigned: true},
@@ -2054,10 +2060,7 @@ func TestInboxTitleIsTheLastColumn(t *testing.T) {
 func TestPromotePicker(t *testing.T) {
 	m, _, _, promoter := newPromoteTestModel(t, 1, []string{"Planning", "Implementing"})
 	m = pastTheSplash(t, m)
-	m = update(t, m, keyMsg("1"))
-	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
-		{Ticket: "LERP-4", TicketID: "loose", Title: "Nobody's routed this", Status: "Backlog"},
-	}}})
+	m = openInboxOn(t, m, "Backlog")
 
 	// esc backs out without promoting.
 	m = update(t, m, keyMsg("p"))
@@ -2120,12 +2123,8 @@ func TestPromotePickerFollowsTheKeymap(t *testing.T) {
 	// are six columns each where the arrows were three, and on the stock
 	// hundred-column window the bar would rightly spend that on the count
 	// instead — which TestThePickersLineGivesWayBeforeTheInboxCount is for.
-	resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
-	m = resized.(model)
-	m = update(t, m, keyMsg("1"))
-	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
-		{Ticket: "LERP-4", TicketID: "loose", Title: "Nobody's routed this", Status: "Backlog"},
-	}}})
+	m = resize(t, m, 120, 30)
+	m = openInboxOn(t, m, "Backlog")
 
 	m = update(t, m, keyMsg("p"))
 	if !m.promoting {
@@ -2183,8 +2182,7 @@ func TestThePickersLineGivesWayBeforeTheInboxCount(t *testing.T) {
 		for w := 30; w <= 120; w++ {
 			m, _, _, _ := newPromoteTestModel(t, cfg.lanes, defaultTestStatuses)
 			m = pastTheSplash(t, m)
-			resized, _ := m.Update(tea.WindowSizeMsg{Width: w, Height: 30})
-			m = resized.(model)
+			m = resize(t, m, w, 30)
 			m = update(t, m, keyMsg("1"))
 			var items []loop.AttentionItem
 			for i := range cfg.items {
@@ -2230,10 +2228,7 @@ func TestThePickersLineGivesWayBeforeTheInboxCount(t *testing.T) {
 func TestPromotePickerClosesWhenTheListEmpties(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = pastTheSplash(t, m)
-	m = update(t, m, keyMsg("1"))
-	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
-		{Ticket: "LERP-4", TicketID: "loose", Title: "Nobody's routed this"},
-	}}})
+	m = openInboxOn(t, m, "")
 	m = update(t, m, keyMsg("p"))
 	if !m.promoting {
 		t.Fatal("p did not open the promote picker")
@@ -2338,10 +2333,7 @@ func TestSingleTicketFailureMarksTheCursorsOwnRow(t *testing.T) {
 	promoter := &recordingPromoter{err: errors.New("claimed by another lerp")}
 	m, _, _ := newTestModelWith(t, 1, defaultTestStatuses, promoter, &recordingEjector{}, &recordingStarter{}, &recordingReader{})
 	m = pastTheSplash(t, m)
-	m = update(t, m, keyMsg("1"))
-	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
-		{Ticket: "LERP-4", TicketID: "loose", Title: "Nobody's routed this", Status: "Backlog"},
-	}}})
+	m = openInboxOn(t, m, "Backlog")
 
 	m = update(t, m, keyMsg("p"))
 	next, cmd := updateCmd(t, m, keyMsg("enter"))
@@ -2699,8 +2691,7 @@ func fillBoard(t *testing.T, m model, n int) model {
 // whichever panel the operator is working in.
 func TestInboxTakesTheRoomAndFocusDoesNotMoveIt(t *testing.T) {
 	m, _, _ := newTestModel(t, 3)
-	resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
-	m = resized.(model)
+	m = resize(t, m, 120, 40)
 	items := make([]loop.AttentionItem, 15)
 	for i := range items {
 		items[i] = loop.AttentionItem{Ticket: fmt.Sprintf("LERP-%d", i+1),
@@ -2756,8 +2747,7 @@ func TestInboxTakesTheRoomAndFocusDoesNotMoveIt(t *testing.T) {
 func TestTheInboxStartsWithTheScreen(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = pastTheSplash(t, m)
-	resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
-	m = resized.(model)
+	m = resize(t, m, 120, 30)
 	m = update(t, m, keyMsg("1"))
 	const title = "Enter opens the detail pane; the list has the screen until then"
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
@@ -2905,10 +2895,7 @@ func TestWorkStartsWithTheListOnScreen(t *testing.T) {
 func TestThePickerAndTheOverlayForceThePane(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = pastTheSplash(t, m)
-	m = update(t, m, keyMsg("1"))
-	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
-		{Ticket: "LERP-4", TicketID: "loose", Title: "Nobody's routed this"},
-	}}})
+	m = openInboxOn(t, m, "")
 	if m.mainOpen() {
 		t.Fatal("the inbox pane was open before anything asked for it")
 	}
@@ -3019,11 +3006,8 @@ func TestAWindowTooShortForThePaneKeepsItsScreen(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = pastTheSplash(t, m)
 	m = openMain(t, m) // the pane 12 lines cannot hold
-	resized, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 12})
-	m = resized.(model)
-	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
-		{Ticket: "LERP-4", TicketID: "loose", Title: "Nobody's routed this"},
-	}}})
+	m = resize(t, m, 80, 12)
+	m = update(t, m, eventMsg{ev: looseAttention("")})
 	if !strings.Contains(m.View(), "too small") {
 		t.Fatalf("12 lines held the open pane, so this test is not exercising the case:\n%s", m.View())
 	}
@@ -3154,8 +3138,7 @@ func TestAFocusMoveNeverEditsAPanelsPane(t *testing.T) {
 	m = update(t, m, keyMsg("2"))
 	m = openMain(t, m)
 	m = update(t, m, keyMsg("1"))
-	resized, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 12})
-	m = resized.(model)
+	m = resize(t, m, 80, 12)
 
 	m = update(t, m, keyMsg("2"))
 	if !m.detailOpen[panelWork] {
@@ -3175,8 +3158,7 @@ func TestAFocusMoveNeverEditsAPanelsPane(t *testing.T) {
 	if strings.Contains(m.View(), "too small") {
 		t.Fatalf("esc did not give the window its screen back:\n%s", m.View())
 	}
-	grown, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
-	if m = grown.(model); m.detailOpen[panelWork] {
+	if m = resize(t, m, 120, 40); m.detailOpen[panelWork] {
 		t.Fatal("a window with room reopened a pane the operator closed")
 	}
 
@@ -3190,8 +3172,8 @@ func TestAFocusMoveNeverEditsAPanelsPane(t *testing.T) {
 		t.Fatal("enter did not open the inbox's pane in a window with room")
 	}
 	back = update(t, back, keyMsg("2"))
-	shrunk, _ := back.Update(tea.WindowSizeMsg{Width: 80, Height: 12})
-	back = update(t, shrunk.(model), keyMsg("1"))
+	back = resize(t, back, 80, 12)
+	back = update(t, back, keyMsg("1"))
 	if !back.detailOpen[panelAttention] {
 		t.Fatal("moving focus back to the inbox closed the pane it remembers")
 	}
@@ -3225,8 +3207,8 @@ func TestTheTooSmallScreenNamesTheFilterItWillClearFirst(t *testing.T) {
 
 	// `2` goes back to the log the operator left open: on this window that
 	// lands on the too-small screen.
-	resized, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 12})
-	m = update(t, resized.(model), keyMsg("2"))
+	m = resize(t, m, 80, 12)
+	m = update(t, m, keyMsg("2"))
 	view := m.View()
 	if !strings.Contains(view, "too small") {
 		t.Fatalf("this window holds work's pane after all:\n%s", view)
@@ -3263,8 +3245,7 @@ func TestTheTooSmallScreenNamesTheSelectionItWillDropFirst(t *testing.T) {
 		t.Fatal("test setup: visual mode did not start")
 	}
 
-	resized, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 12})
-	m = resized.(model)
+	m = resize(t, m, 80, 12)
 	view := m.View()
 	if !strings.Contains(view, "too small") {
 		t.Fatalf("this window holds the inbox's pane after all:\n%s", view)
@@ -3397,8 +3378,8 @@ func TestThePanesFloorIsTheGuardsFloor(t *testing.T) {
 		{h: 2*panelFloor + mainFloor + 1, want: true},
 	} {
 		m, _, _ := newTestModel(t, 1)
-		resized, _ := m.Update(tea.WindowSizeMsg{Width: w, Height: tc.h})
-		m = fillBoard(t, resized.(model), 20)
+		m = resize(t, m, w, tc.h)
+		m = fillBoard(t, m, 20)
 		// No setup: lerp opens on the inbox with its pane closed, which is
 		// the screen this floor is measured against.
 		if strings.Contains(m.View(), "too small") {
@@ -3421,11 +3402,8 @@ func TestThePanesFloorIsTheGuardsFloor(t *testing.T) {
 // keys have to respect it too — the picker is modal and writes to Linear.
 func TestAWideButShortWindowStillRefusesThePane(t *testing.T) {
 	m, _, _, promoter := newPromoteTestModel(t, 1, []string{"Planning"})
-	resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 8})
-	m = resized.(model)
-	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
-		{Ticket: "LERP-4", TicketID: "loose", Title: "Nobody's routed this"},
-	}}})
+	m = resize(t, m, 120, 8)
+	m = update(t, m, eventMsg{ev: looseAttention("")})
 	m = update(t, m, keyMsg("1"))
 	if !strings.Contains(m.View(), "too small") {
 		t.Fatalf("8 lines is under every floor and rendered anyway:\n%s", m.View())
@@ -3451,9 +3429,7 @@ func TestAWideButShortWindowStillRefusesThePane(t *testing.T) {
 func TestShrinkingTheWindowClosesWhatTookThePane(t *testing.T) {
 	m, _, _, promoter := newPromoteTestModel(t, 1, []string{"Planning"})
 	m = pastTheSplash(t, m)
-	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
-		{Ticket: "LERP-4", TicketID: "loose", Title: "Nobody's routed this"},
-	}}})
+	m = update(t, m, eventMsg{ev: looseAttention("")})
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, keyMsg("p"))
 	m = update(t, m, keyMsg("?"))
@@ -3461,8 +3437,7 @@ func TestShrinkingTheWindowClosesWhatTookThePane(t *testing.T) {
 		t.Fatal("the picker is not open to begin with")
 	}
 
-	resized, _ := m.Update(tea.WindowSizeMsg{Width: 70, Height: 10})
-	m = resized.(model)
+	m = resize(t, m, 70, 10)
 	if m.promoting || m.helpOn {
 		t.Fatalf("the shrunk window kept the picker (%v) and the overlay (%v)",
 			m.promoting, m.helpOn)
@@ -3484,8 +3459,7 @@ func TestTheTooSmallScreenNamesTheWayOut(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = pastTheSplash(t, m)
 	m = openMain(t, m)
-	resized, _ := m.Update(tea.WindowSizeMsg{Width: 70, Height: 12})
-	m = resized.(model)
+	m = resize(t, m, 70, 12)
 	view := m.View()
 	if !strings.Contains(view, "too small") || !strings.Contains(view, "esc") {
 		t.Fatalf("the too-small screen does not name esc:\n%s", view)
@@ -3500,8 +3474,7 @@ func TestTheTooSmallScreenNamesTheWayOut(t *testing.T) {
 	}
 
 	// Under every floor there is no pane to blame, so no key to offer.
-	resized, _ = m.Update(tea.WindowSizeMsg{Width: 70, Height: 8})
-	if view := resized.(model).View(); strings.Contains(view, "esc") {
+	if view := resize(t, m, 70, 8).View(); strings.Contains(view, "esc") {
 		t.Fatalf("a window under every floor still blames the pane:\n%s", view)
 	}
 }
@@ -3513,8 +3486,8 @@ func TestTheStatusBarKeepsTheCountOverTheHint(t *testing.T) {
 	m, _, _ := newTestModel(t, 3)
 	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("2"))
-	resized, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 30})
-	m = openMain(t, resized.(model))
+	m = resize(t, m, 80, 30)
+	m = openMain(t, m)
 	m = update(t, m, tickedMsg{})
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
 		{Ticket: "LERP-1", Title: "one"}, {Ticket: "LERP-2", Title: "two"},
@@ -3524,8 +3497,7 @@ func TestTheStatusBarKeepsTheCountOverTheHint(t *testing.T) {
 	}
 
 	// Wide enough for both, and then the hint is there.
-	resized, _ = m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
-	view := resized.(model).View()
+	view := resize(t, m, 120, 30).View()
 	if !strings.Contains(view, "2 in the inbox") || !strings.Contains(view, "esc close") {
 		t.Fatalf("120 columns should carry the count and the hint:\n%s", view)
 	}
@@ -3536,18 +3508,14 @@ func TestTheStatusBarKeepsTheCountOverTheHint(t *testing.T) {
 func TestAPanelWithNoRoomForThePickerDoesNotOfferIt(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = pastTheSplash(t, m)
-	resized, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 30})
-	m = resized.(model)
-	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
-		{Ticket: "LERP-4", TicketID: "loose", Title: "Nobody's routed this"},
-	}}})
+	m = resize(t, m, 90, 30)
+	m = update(t, m, eventMsg{ev: looseAttention("")})
 	m = update(t, m, keyMsg("1"))
 	if !strings.Contains(m.View(), "p promote") {
 		t.Fatalf("a window with room does not offer promote:\n%s", m.View())
 	}
 
-	resized, _ = m.Update(tea.WindowSizeMsg{Width: 90, Height: 12})
-	m = resized.(model)
+	m = resize(t, m, 90, 12)
 	m = update(t, m, keyMsg("esc"))
 	view := m.View()
 	if strings.Contains(view, "too small") {
@@ -3644,14 +3612,7 @@ func TestAClosedPaneIsNotRefreshed(t *testing.T) {
 	m = update(t, m, keyMsg("esc"))
 	held := m.vp.View()
 
-	f, err := os.OpenFile(log, os.O_APPEND|os.O_WRONLY, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.WriteString("and more\n"); err != nil {
-		t.Fatal(err)
-	}
-	f.Close()
+	appendLog(t, log, "and more\n")
 	m = update(t, m, pollMsg{})
 	if m.vp.View() != held {
 		t.Fatalf("the poll refreshed a pane nobody is looking at:\n%s", m.vp.View())
@@ -3908,8 +3869,8 @@ func TestAShortPanelKeepsItsRowsOverItsKeys(t *testing.T) {
 	for h := 8; h <= 14; h++ {
 		m, _, _ := newTestModel(t, 1)
 		m = pastTheSplash(t, m)
-		resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: h})
-		m = update(t, resized.(model), keyMsg("1"))
+		m = resize(t, m, 120, h)
+		m = update(t, m, keyMsg("1"))
 		var items []loop.AttentionItem
 		for i := 1; i <= 8; i++ {
 			items = append(items, loop.AttentionItem{
@@ -3973,8 +3934,8 @@ func TestOneRowStillGetsItsKeys(t *testing.T) {
 // share has room, and the selected row survives either way.
 func TestTheFocusedPanelBuysTheLineItsKeysCost(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
-	resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 17})
-	m = update(t, resized.(model), keyMsg("1"))
+	m = resize(t, m, 120, 17)
+	m = update(t, m, keyMsg("1"))
 	m = fillBoard(t, m, 10)
 
 	rows, _ := m.attentionRows(padList.inner(m.geometry().sideW))
@@ -4036,8 +3997,7 @@ func lineWith(t *testing.T, view, want string) string {
 // above the status bar.
 func TestQuietWorkPanelKeepsItsBox(t *testing.T) {
 	m, _, _ := newTestModel(t, 3)
-	resized, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 30})
-	m = resized.(model)
+	m = resize(t, m, 140, 30)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention}})
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
 		{Team: "LERP", Name: "plan", Status: "Planning"},
@@ -4075,8 +4035,7 @@ func TestQuietWorkPanelKeepsItsBox(t *testing.T) {
 // rather than truncating into a column of blank lines.
 func TestWorkTakesTheRoomNeedsYouCannotUse(t *testing.T) {
 	m, _, _ := newTestModel(t, 6)
-	resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
-	m = resized.(model)
+	m = resize(t, m, 120, 30)
 	m = fillBoard(t, m, 20)
 	// Two items waiting, twenty tickets queued: needs-you cannot fill two
 	// thirds of this column and work has more list than a third holds.
@@ -4113,8 +4072,7 @@ func TestWorkTakesTheRoomNeedsYouCannotUse(t *testing.T) {
 // the bottom of the capped panel.
 func TestWorkIsCappedAndScrollsUnderTheCap(t *testing.T) {
 	m, _, _ := newTestModel(t, 6)
-	resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
-	m = resized.(model)
+	m = resize(t, m, 120, 40)
 	m = fillBoard(t, m, 40)
 
 	m = update(t, m, keyMsg("2"))
@@ -4165,8 +4123,8 @@ func TestFlooredPanelStillShowsTheSelection(t *testing.T) {
 		{70, 2*panelFloor + mainFloor + 1},
 	} {
 		m, _, _ := newTestModel(t, 3)
-		resized, _ := m.Update(tea.WindowSizeMsg{Width: tc.w, Height: tc.h})
-		m = fillBoard(t, resized.(model), 40)
+		m = resize(t, m, tc.w, tc.h)
+		m = fillBoard(t, m, 40)
 		m = update(t, m, keyMsg("2"))
 		for i := 0; i < 10; i++ {
 			m = update(t, m, keyMsg("down"))
@@ -4192,8 +4150,7 @@ func TestFlooredPanelStillShowsTheSelection(t *testing.T) {
 // when focus moves onto it.
 func TestStackedLayoutKeepsBothPanelsReadable(t *testing.T) {
 	m, _, _ := newTestModel(t, 3)
-	resized, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 40})
-	m = resized.(model)
+	m = resize(t, m, 80, 40)
 	m = fillBoard(t, m, 20)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 		TicketID: "t0", Ticket: "QUEUED-1", Queue: "implement", LogPath: "/dev/null"}})
@@ -4247,8 +4204,7 @@ func TestStackedLayoutKeepsBothPanelsReadable(t *testing.T) {
 func TestWideMainPaneFillsTheBody(t *testing.T) {
 	m, _, _ := newTestModel(t, 3)
 	m = pastTheSplash(t, m)
-	resized, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
-	m = resized.(model)
+	m = resize(t, m, 140, 40)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
 		{Ticket: "LERP-1", Title: "short", Status: "Backlog", Reason: "waiting"},
 		{Ticket: "LERP-2", Title: "long", Status: "Backlog",
@@ -4312,8 +4268,8 @@ func TestSmallestWindowTheGuardAdmits(t *testing.T) {
 	} {
 		m, _, _ := newTestModel(t, 3)
 		m = update(t, m, keyMsg("2"))
-		resized, _ := m.Update(tea.WindowSizeMsg{Width: tc.w, Height: tc.h})
-		m = fillBoard(t, resized.(model), 20)
+		m = resize(t, m, tc.w, tc.h)
+		m = fillBoard(t, m, 20)
 		// Both panels start with the pane closed, which is the closed case
 		// as it stands; the open ones press for it.
 		if !tc.closed {
@@ -4328,8 +4284,7 @@ func TestSmallestWindowTheGuardAdmits(t *testing.T) {
 			t.Fatalf("width %d closed=%v: view is %d lines tall in a %d-line window:\n%s",
 				tc.w, tc.closed, lines, tc.h, view)
 		}
-		next, _ := m.Update(tea.WindowSizeMsg{Width: tc.w, Height: tc.h - 1})
-		if view := next.(model).View(); !strings.Contains(view, "too small") {
+		if view := resize(t, m, tc.w, tc.h-1).View(); !strings.Contains(view, "too small") {
 			t.Fatalf("width %d closed=%v: a window below the floors rendered anyway:\n%s",
 				tc.w, tc.closed, view)
 		}
@@ -4343,8 +4298,7 @@ func TestViewFitsTheWindow(t *testing.T) {
 		for _, focus := range []string{"1", "2"} {
 			for _, pane := range []string{"esc", "enter"} {
 				m, _, _ := newTestModel(t, 3)
-				resized, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: 30})
-				m = resized.(model)
+				m = resize(t, m, width, 30)
 				m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 					TicketID: "id-42", Ticket: "LERP-42", Queue: "implement", LogPath: "/dev/null"}})
 				m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention}})
@@ -4484,14 +4438,7 @@ func TestSelectingARunningTicketTailsItsLog(t *testing.T) {
 	}
 
 	// Live tail: appended output arrives on the next poll.
-	f, err := os.OpenFile(two, os.O_APPEND|os.O_WRONLY, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.WriteString("and more\n"); err != nil {
-		t.Fatal(err)
-	}
-	f.Close()
+	appendLog(t, two, "and more\n")
 	m = update(t, m, pollMsg{})
 	if !strings.Contains(m.View(), "and more") {
 		t.Fatalf("appended log output did not reach the pane:\n%s", m.View())
@@ -4565,14 +4512,7 @@ func TestLogSurvivesAFocusDetour(t *testing.T) {
 		t.Fatalf("inbox lens still shows the log:\n%s", m.View())
 	}
 
-	f, err := os.OpenFile(one, os.O_APPEND|os.O_WRONLY, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.WriteString("written during the detour\n"); err != nil {
-		t.Fatal(err)
-	}
-	f.Close()
+	appendLog(t, one, "written during the detour\n")
 	m = update(t, m, pollMsg{})
 	m = update(t, m, keyMsg("2"))
 	if !strings.Contains(m.View(), "written during the detour") {
@@ -4663,8 +4603,8 @@ func TestTheWordLaneIsOffTheOperatorsScreen(t *testing.T) {
 		{Width: 120, Height: 40}, {Width: 100, Height: 30}, {Width: 70, Height: 30},
 	} {
 		m, _, _ := newTestModel(t, 2)
-		resized, _ := m.Update(size)
-		m = fillBoard(t, resized.(model), 6)
+		m = resize(t, m, size.Width, size.Height)
+		m = fillBoard(t, m, 6)
 		m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 			TicketID: "t0", Ticket: "QUEUED-1", Queue: "implement", LogPath: "/dev/null"}})
 		m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAdopted, RunID: "r9", Lane: 9,
@@ -5570,8 +5510,7 @@ func TestAPassStartingDoesNotMoveTheHintsEither(t *testing.T) {
 		m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
 			{Ticket: "LERP-1", Title: "one"}, {Ticket: "LERP-2", Title: "two"},
 		}}})
-		sized, _ := m.Update(tea.WindowSizeMsg{Width: w, Height: 30})
-		running := sized.(model)
+		running := resize(t, m, w, 30)
 		if !running.inFlight {
 			t.Fatal("the first pass is not in flight")
 		}
@@ -5600,10 +5539,10 @@ func TestTheHeartbeatIsWholeOrAbsent(t *testing.T) {
 		t.Helper()
 		m, _, _ := newTestModel(t, 2)
 		m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: attn}})
-		sized, _ := m.Update(tea.WindowSizeMsg{Width: w, Height: 30})
-		settled := update(t, sized.(model), tickedMsg{})
+		sized := resize(t, m, w, 30)
+		settled := update(t, sized, tickedMsg{})
 		settled.lastPass = time.Now().Add(-overdueAfter - time.Second)
-		return ansi.Strip(sized.(model).statusBar()), ansi.Strip(settled.statusBar())
+		return ansi.Strip(sized.statusBar()), ansi.Strip(settled.statusBar())
 	}
 
 	// A dozen in the inbox and the pane's key on the right is the crowded
@@ -6067,8 +6006,8 @@ func TestScrolledRunKeepsRowsWhole(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "run.log")
 		writeLog(t, path, nil)
 		m, _, _ := newTestModel(t, 5)
-		resized, _ := m.Update(tea.WindowSizeMsg{Width: size.w, Height: size.h})
-		m = fillBoard(t, resized.(model), 40)
+		m = resize(t, m, size.w, size.h)
+		m = fillBoard(t, m, 40)
 		for lane := 1; lane <= 5; lane++ {
 			m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted,
 				RunID: fmt.Sprintf("r%d", lane), Lane: lane,
@@ -6218,8 +6157,8 @@ func TestRunLineKeepsTheCallWhenNarrow(t *testing.T) {
 	// row has columns to spare.
 	m, _, _ := newTestModel(t, 1)
 	m = pastTheSplash(t, m)
-	resized, _ := m.Update(tea.WindowSizeMsg{Width: narrowWidth, Height: 40})
-	m = openMain(t, resized.(model))
+	m = resize(t, m, narrowWidth, 40)
+	m = openMain(t, m)
 	width := padList.inner(m.geometry().sideW)
 
 	line := ansi.Strip(runLine(r, width))
@@ -6389,8 +6328,7 @@ func TestTheSparklineTakesTheWidthItIsGiven(t *testing.T) {
 
 	m, _, _ := newTestModel(t, 1)
 	m = pastTheSplash(t, m)
-	resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
-	m = resized.(model)
+	m = resize(t, m, 120, 40)
 
 	full := drawnCells(t, r, padList.inner(m.geometry().sideW))
 	if full != sparkCells {
@@ -6446,8 +6384,8 @@ func TestAdoptedRunDrawsTheHistoryItsLogDates(t *testing.T) {
 		datedCall(time.Now().Add(-20*time.Minute), "msg_01", "/a/old.go", 1000)+
 			datedCall(time.Now().Add(-time.Minute), "msg_02", "/a/recent.go", 500)))
 	m, _, _ := newTestModel(t, 3)
-	resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
-	m = fillBoard(t, resized.(model), 3)
+	m = resize(t, m, 120, 40)
+	m = fillBoard(t, m, 3)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAdopted, RunID: "r1", Lane: 1,
 		TicketID: "t0", Ticket: "QUEUED-1", Queue: "implement", LogPath: path,
 		StartedAt: time.Now().Add(-time.Hour)}})
@@ -6484,8 +6422,8 @@ func TestAdoptedRunWithAnUndatedLogDrawsAFreshLine(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "run.log")
 	writeLog(t, path, []byte(strings.Repeat("an hour of work\n", 200)))
 	m, _, _ := newTestModel(t, 3)
-	resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
-	m = fillBoard(t, resized.(model), 3)
+	m = resize(t, m, 120, 40)
+	m = fillBoard(t, m, 3)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAdopted, RunID: "r1", Lane: 1,
 		TicketID: "t0", Ticket: "QUEUED-1", Queue: "implement", LogPath: path,
 		StartedAt: time.Now().Add(-time.Hour)}})
@@ -6511,8 +6449,8 @@ func TestSqueezedRunRowKeepsItsClock(t *testing.T) {
 	writeLog(t, path, []byte("agent at work\n"))
 	for _, size := range []struct{ w, h int }{{80, 24}, {120, 18}, {120, 21}} {
 		m, _, _ := newTestModel(t, 3)
-		resized, _ := m.Update(tea.WindowSizeMsg{Width: size.w, Height: size.h})
-		m = fillBoard(t, resized.(model), 40)
+		m = resize(t, m, size.w, size.h)
+		m = fillBoard(t, m, 40)
 		m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 			TicketID: "t0", Ticket: "QUEUED-1", Queue: "implement", LogPath: path,
 			StartedAt: time.Now().Add(-90 * time.Second)}})
