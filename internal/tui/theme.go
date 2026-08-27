@@ -58,18 +58,26 @@ var (
 	// colorWordmark is the empty-board decoration (LERP-145), pinned below
 	// contrastFloor on purpose: WCAG exempts pure decoration from the
 	// contrast rules outright, and this mark carries no information for
-	// dimness to put at risk (rule 1 — decoration only, forever). It is
-	// deliberately not in palette, and decorativeColors below is what tells
-	// TestPaletteListsEveryColor that absence is the point rather than an
-	// oversight; TestWordmarkIsExemptDecoration in theme_test.go is the
-	// carve-out itself, scoped to this one name.
-	colorWordmark = lipgloss.AdaptiveColor{Light: "#C4C1CC", Dark: "#4A4750"}
+	// dimness to put at risk (rule 1 — decoration only, forever).
+	// TestWordmarkIsExemptDecoration in theme_test.go is the carve-out
+	// itself, scoped to this one name.
+	//
+	// Spelled out per profile like colorSelected, and for the same reason:
+	// the truecolor value is tuned to sit just under the floor, and 16
+	// colours has no slot that dim — termenv's nearest ANSI match for
+	// #4A4750 is bright-black, which most terminals render around #7E7E7E,
+	// well *above* the floor and exactly the "full-brightness wall of ASCII
+	// art" wordmarkVisible exists to rule out. The ANSI slots are left empty
+	// on purpose, which renders no colour at all on that profile —
+	// wordmarkVisible reads that as "cannot dim it" and the panel falls back
+	// to its plain empty-state text, the same as under NO_COLOR. ANSI256
+	// degrades fine on its own (the nearest grey stays under the floor), so
+	// it gets an explicit value rather than also going without.
+	colorWordmark = lipgloss.CompleteAdaptiveColor{
+		Light: lipgloss.CompleteColor{TrueColor: "#C4C1CC", ANSI256: "251"},
+		Dark:  lipgloss.CompleteColor{TrueColor: "#4A4750", ANSI256: "239"},
+	}
 )
-
-// decorativeColors are adaptive colours this package declares that the
-// contrast floor does not bind, by name. One entry today; a second use would
-// mean asking whether it is still true decoration before adding it here.
-var decorativeColors = map[string]bool{"colorWordmark": true}
 
 // contrastFloor is the ratio every colour here has to clear against its
 // backgrounds. WCAG asks 4.5:1 of text (1.4.3) and 3:1 of a graphic or a

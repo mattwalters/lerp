@@ -173,7 +173,7 @@ func TestPaletteListsEveryColor(t *testing.T) {
 		listed[c.name] = true
 	}
 	for name := range declared {
-		if !listed[name] && !decorativeColors[name] {
+		if !listed[name] {
 			t.Errorf("%s is declared but not in palette — an unlisted colour is an unmeasured one", name)
 		}
 	}
@@ -190,17 +190,29 @@ func TestPaletteListsEveryColor(t *testing.T) {
 // merely granted — a rebalance that quietly bought it more contrast would
 // leave the decoration carve-out wider than it needs to be, and a change
 // that took it under a 1:1 ratio would leave decoration nobody can even
-// squint at. Scoped to this one name (see decorativeColors in theme.go):
-// nothing else gets to cite this test for its own exemption, and the floor
-// above stays exactly as strict for everything informational.
+// squint at. Scoped to this one name: nothing else gets to cite this test
+// for its own exemption, and the floor above stays exactly as strict for
+// everything informational.
+//
+// colorWordmark is a CompleteAdaptiveColor rather than an AdaptiveColor —
+// like colorSelected, it needs an escape from automatic degradation rather
+// than a looser one — so it never enters palette or this file's
+// TestPaletteListsEveryColor scan (that walks AdaptiveColor literals only);
+// this test is the whole of what measures it. Only the truecolor values are
+// checked here, contrastRatio taking #rrggbb; the ANSI256 pair was checked
+// by hand against the same backgrounds when it was chosen (theme.go's
+// comment on colorWordmark), and the ANSI slots are left empty on purpose —
+// termenv's nearest 16-colour match runs well above the floor, so no colour
+// at all is the only degradation that stays this dim (wordmarkVisible reads
+// that as "cannot dim it" and the panel falls back to plain text instead).
 func TestWordmarkIsExemptDecoration(t *testing.T) {
 	for _, tc := range []struct {
 		variant     string
 		fg          string
 		backgrounds []string
 	}{
-		{"light", colorWordmark.Light, lightBackgrounds},
-		{"dark", colorWordmark.Dark, darkBackgrounds},
+		{"light truecolor", colorWordmark.Light.TrueColor, lightBackgrounds},
+		{"dark truecolor", colorWordmark.Dark.TrueColor, darkBackgrounds},
 	} {
 		for _, bg := range tc.backgrounds {
 			t.Run(tc.variant+"/"+bg, func(t *testing.T) {

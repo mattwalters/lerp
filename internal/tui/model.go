@@ -355,8 +355,14 @@ type model struct {
 
 	// queues is the loop's latest queue snapshot, replaced wholesale on every
 	// pass; nil until the first pass reports. It is display state only — the
-	// work panel edits nothing (SCOPE: not a Linear client).
-	queues []loop.QueueSnapshot
+	// work panel edits nothing (SCOPE: not a Linear client). queuesSeen is
+	// attentionSeen's counterpart: a pass whose evidence reconcile fails
+	// never reaches fill (Reconciler.Tick), so EventQueues never fires and
+	// m.queues stays exactly as empty as a genuinely idle board — without
+	// this, boardEmpty's contentEmpty (see there) could not tell "nothing is
+	// running" from "the work panel was never read at all".
+	queues     []loop.QueueSnapshot
+	queuesSeen bool
 	// The work panel selects a ticket, not a row: workSel is the selected
 	// ticket's ID, and it survives the row moving — to another queue, into a
 	// lane, up or down its group. workPos is where that row last sat, the
@@ -1384,6 +1390,7 @@ func (m *model) apply(ev loop.Event) {
 		}
 	case loop.EventQueues:
 		m.queues = ev.Queues
+		m.queuesSeen = true
 		changed = panelWork
 	case loop.EventAttention:
 		m.attention = ev.Attention
@@ -2571,18 +2578,22 @@ func (m *model) oneGroup() bool {
 	return true
 }
 
-// contentEmpty is the raw, un-debounced reading behind boardEmpty: the pass
-// has actually reported, so this is the board's own goal state and not the
-// gap before the first read, and neither panel holds a single ticket —
-// nothing waiting on the operator, backlog included, and nothing running or
-// queued in any lane. Read live it is exactly what rule 3 warns against: the
-// inbox and the work panel arrive as two independent events one pass apart
-// from each other, so a frame caught between them can read this true for a
-// beat before the second event arrives and contradicts it. apply and
-// tickedMsg are what turn this into boardEmptySettled, the debounced signal
-// the panel actually draws from.
+// contentEmpty is the raw, un-debounced reading behind boardEmpty: both
+// halves of the pass have actually reported, so this is the board's own
+// goal state and not the gap before either has been read even once, and
+// neither panel holds a single ticket — nothing waiting on the operator,
+// backlog included, and nothing running or queued in any lane. attentionSeen
+// and queuesSeen both matter here: a pass whose evidence reconcile fails
+// never reaches fill (Reconciler.Tick), so a broken pass and a genuinely
+// idle board can otherwise look identical — an empty m.queues by omission
+// rather than by report. Read live it is exactly what rule 3 warns against
+// besides: the inbox and the work panel arrive as two independent events
+// one pass apart from each other, so a frame caught between them can read
+// this true for a beat before the second event arrives and contradicts it.
+// apply and tickedMsg are what turn this into boardEmptySettled, the
+// debounced signal the panel actually draws from.
 func (m *model) contentEmpty() bool {
-	return m.attentionSeen && len(m.attention) == 0 && len(m.workRows()) == 0
+	return m.attentionSeen && m.queuesSeen && len(m.attention) == 0 && len(m.workRows()) == 0
 }
 
 // boardEmpty is the discrete condition that licenses the empty-board

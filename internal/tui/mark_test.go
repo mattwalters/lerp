@@ -266,12 +266,42 @@ func emptyBoard(t *testing.T) model {
 	forceColour(t)
 	m, _, _ := newTestModel(t, 2)
 	m = pastTheSplash(t, m)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: nil}})
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: nil}})
 	m = update(t, m, tickedMsg{})
 	if !m.boardEmptySettled {
 		t.Fatal("setup: the empty pass never settled")
 	}
 	return m
+}
+
+// Reconciler.Tick only reaches fill (and so only ever emits EventQueues) if
+// the evidence reconcile it gates on succeeds — so a pass that keeps failing
+// there leaves m.queues exactly as empty, forever, as a board that has
+// genuinely never had a ticket. Without queuesSeen, contentEmpty could not
+// tell that apart from the goal state, and the mark would decorate a work
+// panel that was never actually read (see model.contentEmpty).
+func TestTheWordmarkWaitsToSeeTheWorkPanelToo(t *testing.T) {
+	forceColour(t)
+	m, _, _ := newTestModel(t, 2)
+	m = pastTheSplash(t, m)
+	// The inbox settles empty, but no EventQueues has ever landed — a pass
+	// stuck failing before fill, not a board that was ever confirmed idle.
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: nil}})
+	m = update(t, m, tickedMsg{})
+	if m.boardEmptySettled {
+		t.Fatal("boardEmptySettled promoted without the work panel ever being read")
+	}
+	if hasDimMark(m.View()) {
+		t.Fatalf("the mark decorated a work panel that was never reported:\n%s", m.View())
+	}
+	// The work panel finally reports (empty) in a later pass: now the board
+	// has actually been read whole, and the mark is licensed.
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: nil}})
+	m = update(t, m, tickedMsg{})
+	if !hasDimMark(m.View()) {
+		t.Fatalf("the mark did not show once both panels had actually reported:\n%s", m.View())
+	}
 }
 
 // The board's own goal state — nothing on the operator, nothing running or
@@ -422,6 +452,7 @@ func TestTheWordmarkStaysOffScreenBehindAnOpenSearch(t *testing.T) {
 	m = pastTheSplash(t, m)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention,
 		Attention: []loop.AttentionItem{{Ticket: "LERP-1", Title: "one"}}}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: nil}})
 	m = update(t, m, keyMsg("/"))
 	if !m.searching {
 		t.Fatal("setup: / did not open the search prompt")
@@ -454,6 +485,7 @@ func TestTheWordmarkStaysOffScreenBehindALeftoverQuery(t *testing.T) {
 	m = pastTheSplash(t, m)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention,
 		Attention: []loop.AttentionItem{{Ticket: "LERP-1", Title: "one"}}}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: nil}})
 	m = update(t, m, keyMsg("/"))
 	m = typeSearch(t, m, "one")
 	// The pass empties the inbox while the box is still open: the handler's
@@ -479,10 +511,17 @@ func TestTheWordmarkStaysOffScreenBehindALeftoverQuery(t *testing.T) {
 // (TestNoColorLeavesTheTextBare) — fine for text that carries information,
 // wrong for a figure whose only claim to being decoration is dimness.
 // wordmarkVisible is what keeps the mark off screen in exactly that case
-// rather than drawing it at full brightness.
+// rather than drawing it at full brightness. The ANSI (16-colour) case is
+// the sharper version of the same bug: colorWordmark's ANSI slots are left
+// empty specifically so this profile renders no colour at all rather than
+// termenv's nearest 16-colour match, which for #4A4750 is bright-black —
+// most terminals draw that around #7E7E7E, well above the contrast floor
+// and exactly the "full-brightness wall of ASCII art" this function exists
+// to keep off screen.
 func TestWordmarkVisibleReadsTheColorProfile(t *testing.T) {
-	render := func(env fakeEnviron) bool {
-		r := lipgloss.NewRenderer(io.Discard, termenv.WithEnvironment(env), termenv.WithTTY(true))
+	render := func(env fakeEnviron, opts ...termenv.OutputOption) bool {
+		opts = append(opts, termenv.WithEnvironment(env), termenv.WithTTY(true))
+		r := lipgloss.NewRenderer(io.Discard, opts...)
 		r.SetHasDarkBackground(true)
 		return wordmarkVisible(r)
 	}
@@ -491,6 +530,9 @@ func TestWordmarkVisibleReadsTheColorProfile(t *testing.T) {
 	}
 	if render(fakeEnviron{"TERM": "xterm-256color", "NO_COLOR": "1"}) {
 		t.Fatal("wordmarkVisible = true under NO_COLOR, want false")
+	}
+	if render(fakeEnviron{"TERM": "xterm"}, termenv.WithProfile(termenv.ANSI)) {
+		t.Fatal("wordmarkVisible = true on a 16-colour profile, want false (the ANSI slot is deliberately empty)")
 	}
 }
 
@@ -525,6 +567,7 @@ func TestTheWordmarkNeverClipsOnATightBoard(t *testing.T) {
 	// that the inbox panel's own floor is nowhere near the mark's height.
 	m = update(t, m, tea.WindowSizeMsg{Width: minWidth, Height: m.minHeight(false)})
 	m = pastTheSplash(t, m)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: nil}})
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: nil}})
 	m = update(t, m, tickedMsg{})
 	if !m.boardEmptySettled {
