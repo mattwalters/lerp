@@ -76,6 +76,16 @@ func TestFilterModalFieldNavigation(t *testing.T) {
 	if m.filtering {
 		t.Fatal("esc did not close filter modal")
 	}
+
+	// Q also closes modal at field level
+	m = update(t, m, keyMsg("F"))
+	if !m.filtering {
+		t.Fatal("F did not open filter modal")
+	}
+	m = update(t, m, keyMsg("q"))
+	if m.filtering {
+		t.Fatal("q did not close filter modal at field level")
+	}
 }
 
 // Done-when: selecting a status filters the inbox by status, renders the status in title,

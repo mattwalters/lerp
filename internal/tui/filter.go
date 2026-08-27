@@ -134,7 +134,7 @@ func (m model) handleFilterFieldKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case msg.Type == tea.KeyCtrlC:
 		return m, tea.Quit
-	case msg.Type == tea.KeyEsc:
+	case msg.Type == tea.KeyEsc || (msg.Type == tea.KeyRunes && len(msg.Runes) == 1 && msg.Runes[0] == 'q'):
 		m.filtering = false
 	case msg.Type == tea.KeyUp || (msg.Type == tea.KeyRunes && len(msg.Runes) == 1 && msg.Runes[0] == 'k'):
 		if m.filterSel > 0 {
