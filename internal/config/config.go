@@ -88,8 +88,9 @@ type RepoConfig struct {
 //
 // Command and Resume hold the resolved templates either way — what a vendor
 // block became, or what the file wrote — so every downstream reader (the
-// five call sites that used to each resolve a vendor themselves) needs no
-// case for vendors at all.
+// five call sites in run.Execute, run.OpensSession, run.NewSessionID,
+// run.ResumeCommand, and logfmt's format sniffing) needs no case for
+// vendors at all.
 type Runner struct {
 	Vendor  string `toml:"vendor"`
 	Command string `toml:"command"`
@@ -296,8 +297,8 @@ func ParseRepoConfig(source, label string) (*RepoConfig, error) {
 }
 
 // resolveVendors fills a vendor runner's Command and Resume from its
-// adapter, once, here — rather than at each of the five call sites that read
-// Runner.Command. Called only after validate has confirmed every Vendor
+// adapter, once, here — rather than at each of the five call sites downstream
+// that read Runner.Command. Called only after validate has confirmed every Vendor
 // names a real adapter.
 func (c *RepoConfig) resolveVendors() {
 	for name, r := range c.Runners {
