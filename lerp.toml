@@ -59,10 +59,38 @@ resume = "cd {{workdir}} && claude --resume {{session}}"
 # and every judgment call in it is a refusal rather than a decision, so the
 # capability it needs is the discipline to stop, not the reach to solve. Lower
 # effort should if anything make that clause easier to honour: less appetite
-# for treating a conflict as a puzzle. Planning and implementing stay on the
-# runner above; this is the only queue pointed here.
+# for treating a conflict as a puzzle. Planning stays on the runner above,
+# implementing has its own below.
 [runners.claude-merge]
 command = "claude -p {{prompt}} --session-id {{session}} --model claude-sonnet-5 --effort medium --output-format stream-json --verbose --permission-mode bypassPermissions"
+resume = "cd {{workdir}} && claude --resume {{session}}"
+
+# Implementing: cheap hands, expensive eyes. Most implement runs execute a
+# plan a human has already read and approved, which is comparatively
+# mechanical, so the hands drop to claude-sonnet-5 — high effort, because
+# thoroughness is still the whole job. Planning keeps the runner above.
+#
+# The eyes go the other way. `--agents` defines the roster of subagents this
+# runner may spawn, inline as JSON, and the only one it defines is the
+# reviewer the implement prompt hands its diff to — pinned UP to
+# claude-opus-5 at high effort. That pass gets the brief and the diff and
+# none of the implementer's reasoning: a small context and pure judgment,
+# which is the one place in this pipeline worth the expensive model. Its
+# tools are read-only, so a reviewer cannot quietly become a second author.
+#
+# The roster lives on the runner line rather than in a checked-in
+# `.claude/agents/` file because a file there loads for *every* headless run
+# in this repo, and an agent's `description` doubles as an auto-delegation
+# trigger — so the merge queue, whose refusal clause is the load-bearing part
+# of it, could hand a conflict to a reviewer instead of stopping. Scoped
+# here, each runner line is the complete spec of its stage, reviewed like
+# code, in the file that already holds the rest of the pipeline.
+#
+# If sonnet turns out to be too little for implementing, the board says so
+# instead of hiding it: review rounds start finding real defects and tickets
+# bounce to "Needs Attention". The revert is one word on the line below.
+[runners.claude-implement]
+command = '''claude -p {{prompt}} --session-id {{session}} --model claude-sonnet-5 --effort high --agents '{"reviewer":{"description":"Reviews a finished diff against the brief it was built from. Give it the brief and the diff and nothing else — no reasoning, no defence. Returns findings rated high, medium or low.","prompt":"You are reading a diff someone else wrote, against the brief they were given. You did not write it and you are not defending it. Whatever reasoning went into it, you do not have it — the diff and the brief are the whole of what you are judging, and that is the point of handing the work to you.\n\nJudge two things, in this order.\n\n1. The brief. Does the diff do what the brief asked, all of it? Work the brief did not ask for is a finding too — scope that grew is as much a defect here as scope that shrank.\n2. The conventions of this repository. Read AGENTS.md and SCOPE.md, and read enough of the surrounding code to know what \"like the code around it\" means here. A change that is correct in isolation and foreign in place is a finding.\n\nRate each finding high, medium or low:\n\n- high — it is wrong, or it will break something a person will hit.\n- medium — it is right but fragile, misleading, or off-brief in a way that will cost the next reader.\n- low — worth saying once, not worth blocking on.\n\nEvery finding names a concrete failure: the input or the state, and what happens. \"This is unclear\" is not a finding; \"a config with two teams reaches this line and the second one is dropped\" is. No style essays, no restating what the diff does, no praise.\n\nFinding nothing is a real answer and often the right one. Do not manufacture a medium to look thorough — a padded review costs the author a round of fixes that were never needed, and teaches them to skim the next one.\n\nReport as a short list, highest rating first, each with the file and line it concerns. If you found nothing, say so in one line.","tools":["Read","Grep","Glob"],"model":"claude-opus-5","effort":"high"}}' --output-format stream-json --verbose --permission-mode bypassPermissions'''
 resume = "cd {{workdir}} && claude --resume {{session}}"
 
 # The agent needs its own Linear access — lerp passes only the ticket
@@ -113,7 +141,7 @@ guessing.
 
 [queues.implement]
 status = "Implementing"
-runner = "claude"
+runner = "claude-implement"
 on_success = "In Review"
 on_failure = "Needs Attention"
 prompt = """
@@ -166,13 +194,11 @@ notifications and its review requests name a pull request by its number and
 its title — so the title is where the identifier has to be.
 
 Now review what you built, before a human has to. Read the diff with fresh
-eyes: hand the brief and the diff — and none of your reasoning — to the
-`reviewer` subagent this repository checks in at `.claude/agents/reviewer.md`,
-which is pinned to its own model rather than inheriting this run's. If your
-runner has no subagents, read the diff back deliberately as the reviewer
-rather than the author. Either way, check it against the brief and against
-this repository's own conventions, and rate what you find high, medium or
-low. Concrete failure scenarios only — no style essays.
+eyes: hand it to the reviewer agent if your runner provides one, or any
+subagent that gets the brief and the diff and none of your reasoning;
+otherwise read it back yourself. Check it against the brief and against this
+repository's own conventions, and rate what you find high, medium or low.
+Concrete failure scenarios only — no style essays.
 
 Post the findings on the pull request, as review comments on the lines they
 concern. Then fix them, push, and answer each thread. Review the result
