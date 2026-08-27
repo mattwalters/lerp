@@ -347,29 +347,36 @@ func TestExitedEventReportsASkippedHop(t *testing.T) {
 	}
 }
 
-// Claude states a run's cost on the same result line that ends its log, so
-// the figure becomes knowable at the exact moment its row is about to be
-// torn down. It has to survive that moment on the exit note or an operator
-// never reads it at all — see finalCost.
+// Claude states a run's cost on the same result line that ends its log, at
+// the exact moment its row is about to be torn down — and the loop's own
+// record of that run, log included, may already be gone by the time a
+// subscriber reacts to EventExited (see runCost in internal/loop). So the
+// event itself carries the final figure, computed by the loop before either
+// of those disappear, and the TUI's only job is to put it on the exit note
+// where it survives the row.
 func TestExitedEventCarriesTheRunsFinalCost(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
-	path := filepath.Join(t.TempDir(), "run.log")
-	if err := os.WriteFile(path, nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
-		TicketID: "id-42", Ticket: "LERP-42", Queue: "implement", LogPath: path}})
-	// The poll is what attaches a pulse to the lane at all (readPulses), the
-	// same as it would in the running app between the run starting and it
-	// exiting.
-	m = update(t, m, pollMsg{})
-
-	appendLog(t, path, `{"type":"result","subtype":"success","num_turns":1,"total_cost_usd":0.42}`+"\n")
+		TicketID: "id-42", Ticket: "LERP-42", Queue: "implement", LogPath: "/dev/null"}})
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventExited, RunID: "r1", Lane: 1,
-		TicketID: "id-42", Ticket: "LERP-42", Queue: "implement", ExitCode: 0}})
+		TicketID: "id-42", Ticket: "LERP-42", Queue: "implement", ExitCode: 0, Cost: 0.42}})
 
 	if view := m.View(); !strings.Contains(view, "LERP-42 exited 0 · $0.42") {
 		t.Fatalf("the exit note does not carry the run's cost:\n%s", view)
+	}
+}
+
+// A skipped hop's note replaces the plain "exited" outcome with the larger
+// story, but the run still cost money either way: the figure must not be
+// lost along with the outcome it replaced. A short note here, deliberately —
+// the real one is long enough to be truncated on its own at this width, which
+// would make the assertion about truncation rather than about the cost.
+func TestSkippedHopNoteStillCarriesCost(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventExited, RunID: "r1", Lane: 1,
+		TicketID: "id-42", Ticket: "LERP-42", Queue: "implement", ExitCode: 0, Note: "hop skipped", Cost: 0.42}})
+	if view := m.View(); !strings.Contains(view, "hop skipped · $0.42") {
+		t.Fatalf("the skipped-hop note does not carry the run's cost:\n%s", view)
 	}
 }
 

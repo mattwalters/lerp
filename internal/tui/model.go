@@ -1516,13 +1516,12 @@ func (m *model) apply(ev loop.Event) {
 		// settle for why the ticket's own row cannot hold it. Cost joins it
 		// for the same reason, and for claude specifically it has nowhere
 		// else it could ever land: the stream settles it on the result line
-		// that ends the log, which is to say at the very moment the row
-		// carrying it is about to disappear. finalCost reads past that line
-		// before the lane goes with it, so the figure survives its own row.
+		// that ends the log, which is to say at the moment the row carrying
+		// it is about to disappear. The loop reads it off the event's own
+		// Cost field, computed before it emitted this event — a subscriber
+		// here is already too late to read the log itself, since the loop's
+		// record (and the log with it) may be gone by the time this arrives.
 		note := fmt.Sprintf("%s exited %d", ev.Ticket, ev.ExitCode)
-		if cost := m.finalCost(ev.Lane); cost >= minCost {
-			note += " · " + costLabel(cost)
-		}
 		if ev.Err != nil {
 			note += " (move failed)"
 		}
@@ -1532,6 +1531,11 @@ func (m *model) apply(ev loop.Event) {
 			// operator's pipeline did not run — so it replaces the plain
 			// outcome rather than crowding the line beside it.
 			note, warn = ev.Note, true
+		}
+		// The run cost money whichever story the note tells, so it joins
+		// either one rather than only the plain outcome.
+		if ev.Cost >= minCost {
+			note += " · " + costLabel(ev.Cost)
 		}
 		m.note(note, warn)
 		m.settle(ev)
@@ -1647,25 +1651,6 @@ func (m *model) apply(ev loop.Event) {
 	if changed == m.focus {
 		m.refreshMain()
 	}
-}
-
-// finalCost gives a lane's log the one read it is owed once the process that
-// wrote it has already exited, before settle discards the pulse holding its
-// running total. That ordering — read, then discard — is what makes this
-// call race-free where reading the row on the fly is not: the process is
-// already gone by the time EventExited arrives, so the file is complete, not
-// a moving target the way it is while an agent still writes to it.
-//
-// Zero for a lane the poller never got to (no pulse) as well as for a runner
-// whose stream never states a cost at all — the two are indistinguishable
-// here, and both mean nothing to add to the note.
-func (m *model) finalCost(laneNum int) float64 {
-	ln := m.lanes[laneNum]
-	if ln == nil || ln.pulse == nil {
-		return 0
-	}
-	ln.pulse.read(time.Now())
-	return ln.pulse.cost
 }
 
 // settle frees the lane a run just left. The log outlives the lane: the

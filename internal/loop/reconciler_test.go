@@ -649,6 +649,41 @@ func TestRunFailureRoutesToOnFailure(t *testing.T) {
 	}
 }
 
+// Claude states a run's cost on the same result line that ends its log, at
+// the exact moment the record naming that log is about to be discarded
+// (Evidence.Remove, right after this event's Event is built but before a
+// subscriber ever sees it) — so the loop has to read it here, while the log
+// still exists, rather than leave it for EventExited's recipient to try.
+func TestExitedEventCarriesTheRunsCostFromItsLog(t *testing.T) {
+	h := newHarness(t, 1, func(_ context.Context, inv run.Invocation) (run.Result, error) {
+		line := `{"type":"result","subtype":"success","num_turns":1,"total_cost_usd":0.42}` + "\n"
+		if err := os.WriteFile(inv.LogPath, []byte(line), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return run.Result{ExitCode: 0}, nil
+	})
+	h.fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Todo"})
+
+	h.rec.Tick(context.Background())
+	exited := h.waitEvents(t, EventExited, 1)
+	if exited[0].Cost != 0.42 {
+		t.Errorf("exit event cost = %v, want 0.42", exited[0].Cost)
+	}
+}
+
+// A runner whose stream never states a cost — the stub here, standing in for
+// codex — must not have the exit event report one anyway.
+func TestExitedEventReportsNoCostForARunnerThatDoesNotStateOne(t *testing.T) {
+	h := newHarness(t, 1, nil)
+	h.fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Todo"})
+
+	h.rec.Tick(context.Background())
+	exited := h.waitEvents(t, EventExited, 1)
+	if exited[0].Cost != 0 {
+		t.Errorf("exit event cost = %v, want 0", exited[0].Cost)
+	}
+}
+
 // Provisioning never starts a lane, so the claim it won has to go back:
 // an assigned ticket is never eligible, so keeping it would strand the ticket
 // in the very queue it came from. The workspace is disposed either way — a
