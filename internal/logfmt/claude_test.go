@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The lines here are real Claude Code stream-json output, trimmed of the
@@ -64,6 +65,25 @@ func TestClaudeDecodesTheStream(t *testing.T) {
 				t.Fatalf("decoded %+v, want %+v", got, tc.want)
 			}
 		})
+	}
+}
+
+// The stream dates its assistant and user lines, and the event carries the
+// date: it is what lets a reader that attached late put the events it is
+// catching up on where they happened. A line that carries none — the system
+// lines do not — reports no time rather than a made-up one.
+func TestClaudeDatesItsLines(t *testing.T) {
+	line := `{"type":"assistant","timestamp":"2026-08-26T23:42:44.170Z",` +
+		`"message":{"content":[{"type":"text","text":"Reading the ticket."}]}}`
+	ev, ok := (&claude{}).Decode(line)
+	if !ok {
+		t.Fatalf("line was not decoded: %s", line)
+	}
+	if want := time.Date(2026, 8, 26, 23, 42, 44, 170_000_000, time.UTC); !ev.Time.Equal(want) {
+		t.Fatalf("the line's time decoded as %v, want %v", ev.Time, want)
+	}
+	if ev, _ := (&claude{}).Decode(claudeText); !ev.Time.IsZero() {
+		t.Fatalf("an undated line invented the time %v", ev.Time)
 	}
 }
 

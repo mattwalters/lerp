@@ -4992,7 +4992,7 @@ func TestProvisioningRowClaimsNoReading(t *testing.T) {
 func TestPulseStartsWhenTheLogDoes(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "late.log")
 	start := time.Now()
-	p := newPulse(path, start, start)
+	p := newPulse(path)
 	for i := 0; i < 20; i++ {
 		p.read(start.Add(time.Duration(i) * sparkBucket))
 	}
@@ -5011,9 +5011,8 @@ func TestPulseStartsWhenTheLogDoes(t *testing.T) {
 // operator is looking at; one that opens on a second line strands it under
 // whatever name happens to be above, where it reads as that ticket's.
 func TestScrolledRunKeepsRowsWhole(t *testing.T) {
-	// The log starts empty and the call arrives after the first poll: a
-	// pulse attaches at the end of the file it finds, so a line written
-	// before the run started is one no row would ever have read.
+	// The log starts empty and the call arrives after the first poll, the
+	// way a live run writes it.
 	call := `{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash",` +
 		`"input":{"command":"go build ./..."}}]}}` + "\n"
 
@@ -5205,9 +5204,9 @@ func TestRunLineKeepsTheCallWhenNarrow(t *testing.T) {
 }
 
 // The first line carries the facts about the whole run — how long it has been
-// going, and what it has spent — in the columns a row can spare for them. A
-// run this process did not start has a total that begins partway through it,
-// and the row says at least rather than reporting a number it knows is short.
+// going, and what it has spent — in the columns a row can spare for them. The
+// figure is the run's own even for an adopted run: the pulse reads the whole
+// log, so there is no partial total to hedge.
 func TestRunningRowCarriesWhatTheRunHasSpent(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	r := workRow{ticket: "LERP-1", title: "one", lane: 1, state: laneRunning,
@@ -5218,17 +5217,12 @@ func TestRunningRowCarriesWhatTheRunHasSpent(t *testing.T) {
 		t.Fatalf("the running row does not say how long or how much: %q", first)
 	}
 	if strings.Contains(first, "≥") {
-		t.Fatalf("a run watched from the start hedges its own total: %q", first)
-	}
-
-	r.state, r.unread = laneAdopted, true
-	if got := ansi.Strip(m.workRowLines(r, false, 80)[0]); !strings.Contains(got, "≥5.2M tok") {
-		t.Fatalf("an adopted run reports a partial total as the run's: %q", got)
+		t.Fatalf("the row hedges a total the whole log was read for: %q", first)
 	}
 
 	// A run that has not been charged for anything yet says nothing about
 	// tokens: "0 tok" is a reading nobody asked for.
-	r.tokens, r.unread = 0, false
+	r.tokens = 0
 	if got := ansi.Strip(m.workRowLines(r, false, 80)[0]); strings.Contains(got, "tok") {
 		t.Fatalf("a run that has spent nothing still reports a total: %q", got)
 	}
@@ -5250,12 +5244,9 @@ func TestSpendReadsInTheColumnsARowHas(t *testing.T) {
 		{999_900, "1.0M tok"},
 		{5_200_000, "5.2M tok"},
 	} {
-		if got := tokenCount(tc.n, false); got != tc.want {
+		if got := tokenCount(tc.n); got != tc.want {
 			t.Errorf("tokenCount(%d) = %q, want %q", tc.n, got, tc.want)
 		}
-	}
-	if got := tokenCount(5_200_000, true); got != "≥5.2M tok" {
-		t.Errorf("a partial total renders as %q", got)
 	}
 }
 
@@ -5337,12 +5328,55 @@ func sparkOf(line string) string {
 	return b.String()
 }
 
-// Done-when, on the row itself: a run adopted from a previous lerp reads as
-// older than this process rather than as one that just started. Quitting
-// under live agents and opening again used to hand an hour-old run the short
-// line of a ten-second-old one — the numbers were right and the shape, which
-// is the part being read, was the one thing a restart lost.
-func TestAdoptedRunDoesNotDrawAFreshLine(t *testing.T) {
+// Done-when, on the row itself: a run adopted from a previous lerp draws the
+// history its log records rather than the short line of one that just
+// started. Quitting under live agents and opening again used to hand an
+// hour-old run the fresh line of a ten-second-old one — the numbers were
+// right and the shape, which is the part being read, was the one thing a
+// restart lost.
+func TestAdoptedRunDrawsTheHistoryItsLogDates(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.log")
+	// A call from before the ring's whole span, then one a minute ago: the
+	// run is older than anything this process watched, and its log says so.
+	writeLog(t, path, []byte(
+		datedCall(time.Now().Add(-20*time.Minute), "msg_01", "/a/old.go", 1000)+
+			datedCall(time.Now().Add(-time.Minute), "msg_02", "/a/recent.go", 500)))
+	m, _, _ := newTestModel(t, 3)
+	resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = fillBoard(t, resized.(model), 3)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAdopted, RunID: "r1", Lane: 1,
+		TicketID: "t0", Ticket: "QUEUED-1", Queue: "implement", LogPath: path,
+		StartedAt: time.Now().Add(-time.Hour)}})
+	m = update(t, m, pollMsg{})
+	m = update(t, m, keyMsg("2"))
+
+	g := m.geometry()
+	lines := strings.Split(ansi.Strip(m.workPanel(g.sideW, g.workH)), "\n")
+	at := slices.IndexFunc(lines, func(l string) bool { return strings.Contains(l, "QUEUED-1") })
+	if at < 0 || at+1 >= len(lines) {
+		t.Fatalf("the adopted row has no reading under it:\n%s", strings.Join(lines, "\n"))
+	}
+	reading := lines[at+1]
+	// The whole ring, where a run that really did just start draws the
+	// single bucket it has: the run predates all of it and the log proves it.
+	if drawn := len([]rune(sparkOf(reading))); drawn != sparkCells {
+		t.Fatalf("the adopted row draws %d buckets on a full-width panel, want %d: %q",
+			drawn, sparkCells, reading)
+	}
+	// The pickup lost nothing the log carries: the run's own last call and
+	// its whole spend, unhedged.
+	if !strings.Contains(reading, "recent.go") {
+		t.Fatalf("the adopted row does not name the run's last call: %q", reading)
+	}
+	if first := lines[at]; !strings.Contains(first, "1.5k tok") || strings.Contains(first, "≥") {
+		t.Fatalf("the adopted row does not carry the run's own total: %q", first)
+	}
+}
+
+// An adopted run whose log dates nothing has no history to draw, and none is
+// invented for it: the line starts as short as a fresh run's and grows from
+// the pickup, exactly as if the run had just started.
+func TestAdoptedRunWithAnUndatedLogDrawsAFreshLine(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "run.log")
 	writeLog(t, path, []byte(strings.Repeat("an hour of work\n", 200)))
 	m, _, _ := newTestModel(t, 3)
@@ -5360,49 +5394,9 @@ func TestAdoptedRunDoesNotDrawAFreshLine(t *testing.T) {
 	if at < 0 || at+1 >= len(lines) {
 		t.Fatalf("the adopted row has no reading under it:\n%s", strings.Join(lines, "\n"))
 	}
-	reading := lines[at+1]
-	// Most of the ring, not a token dot: the run predates the whole of it.
-	if got := strings.Count(reading, string(sparkUnread)); got < sparkCells/2 {
-		t.Fatalf("an hour-old run marks %d buckets unread of a %d-bucket ring: %q",
-			got, sparkCells, reading)
-	}
-	// And the line reaches as far back as the row has room for, where a run
-	// that really did just start draws the single bucket it has.
-	drawn := strings.Count(reading, string(sparkUnread)) + len([]rune(sparkOf(reading)))
-	if drawn != sparkCells {
-		t.Fatalf("the adopted row draws %d buckets on a full-width panel, want %d: %q",
-			drawn, sparkCells, reading)
-	}
-}
-
-// The unread span belongs to an inherited run and to nothing else. A record's
-// StartedAt is stamped before the claim and before the workspace is
-// provisioned, so a run this lerp started — and watched from its first
-// instant — must not draw a slow provision as agent history it missed.
-func TestALocallyStartedRunDrawsNoUnreadHistory(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "run.log")
-	writeLog(t, path, []byte("the agent's first line\n"))
-	m, _, _ := newTestModel(t, 3)
-	resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
-	m = fillBoard(t, resized.(model), 3)
-	// Ninety seconds of claim and provision before the agent runs at all.
-	begun := time.Now().Add(-90 * time.Second)
-	for _, typ := range []loop.EventType{loop.EventProvisioning, loop.EventStarted} {
-		m = update(t, m, eventMsg{ev: loop.Event{Type: typ, RunID: "r1", Lane: 1,
-			TicketID: "t0", Ticket: "QUEUED-1", Queue: "implement", LogPath: path,
-			StartedAt: begun}})
-		m = update(t, m, pollMsg{})
-	}
-	m = update(t, m, keyMsg("2"))
-
-	g := m.geometry()
-	lines := strings.Split(ansi.Strip(m.workPanel(g.sideW, g.workH)), "\n")
-	at := slices.IndexFunc(lines, func(l string) bool { return strings.Contains(l, "QUEUED-1") })
-	if at < 0 || at+1 >= len(lines) {
-		t.Fatalf("the running row has no reading under it:\n%s", strings.Join(lines, "\n"))
-	}
-	if reading := lines[at+1]; strings.ContainsRune(reading, sparkUnread) {
-		t.Fatalf("a run this process started drew history it missed: %q", reading)
+	if drawn := len([]rune(sparkOf(lines[at+1]))); drawn != 1 {
+		t.Fatalf("an undated log drew %d buckets of history nobody dated: %q",
+			drawn, lines[at+1])
 	}
 }
 

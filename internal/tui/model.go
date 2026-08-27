@@ -298,17 +298,15 @@ type workRow struct {
 	state laneState
 	since time.Time
 	// heard is when that run's log last grew, zero while it has none; rate
-	// is its recent activity per bucket, oldest first, for the sparkline,
-	// led by whatever of the run predates the reading (see pulse.window).
+	// is its recent activity per bucket, oldest first, for the sparkline —
+	// history the log dates included (see pulse.window).
 	heard time.Time
 	rate  []int
 	// tool and target are the last tool call the log carried, empty until it
-	// carries one; tokens is what the run has spent, and unread marks a
-	// total that begins partway through it — an adopted run's log has a
-	// stretch this process never read (see pulse.unread).
+	// carries one; tokens is what the run has spent, summed over the whole
+	// log — history included, so an adopted run reports the run's total.
 	tool, target string
 	tokens       int
-	unread       bool
 	// The pickup gate, for a ticket that is not running: where it sits in
 	// its queue's order, and what holds it there.
 	pos, of   int
@@ -1592,20 +1590,11 @@ func (m *model) readPulses() {
 			continue
 		}
 		if ln.pulse == nil {
-			// Only an inherited run has history behind it that nothing here
-			// watched; a run this process started, it has watched from the
-			// beginning. The distinction matters because the record's
-			// StartedAt predates the claim and the provision: on a local run
-			// that span would mark a slow workspace as agent history nobody
-			// read, which is the adopted-run signal fired on a run nothing
-			// was adopted from. On an inherited run the same imprecision
-			// marks the claim and the provision unread along with the run,
-			// which is a span this pulse was not reading either way.
-			started := now
-			if ln.state == laneAdopted {
-				started = ln.since
-			}
-			ln.pulse = newPulse(ln.logPath, started, now)
+			// The pulse reads the log from its start, so a run inherited
+			// from a previous process draws the history its log dates and
+			// reports the run's own totals — a fresh run's log is a line or
+			// two, and costs nothing to read the same way.
+			ln.pulse = newPulse(ln.logPath)
 		}
 		ln.pulse.read(now)
 	}
@@ -1762,7 +1751,7 @@ func (m *model) workGroups() []workGroup {
 		if ln.pulse != nil {
 			row.heard, row.rate = ln.pulse.heard, ln.pulse.window()
 			row.tool, row.target = ln.pulse.tool, ln.pulse.target
-			row.tokens, row.unread = ln.pulse.tokens, ln.pulse.unread > 0
+			row.tokens = ln.pulse.tokens
 		}
 		// A running ticket normally still sits in its queue's listing,
 		// claimed and ineligible: that listing is the group, and it carries
@@ -3065,7 +3054,7 @@ func (m model) workRowLines(r workRow, selected bool, width int) []string {
 	// a reading of the moment.
 	totals := elapsed(r.since)
 	if r.tokens > 0 {
-		totals += " · " + tokenCount(r.tokens, r.unread)
+		totals += " · " + tokenCount(r.tokens)
 	}
 	right := state + " " + styleFaint.Render(totals)
 	lines := []string{splitRow(marker(selected)+dot+" "+name, right, width)}
@@ -3172,12 +3161,10 @@ func lastCall(tool, target string) string {
 // where it changes the reading and not where it is noise, and the cutover to
 // M is a hair under the million so that 999,900 does not draw as 1000k.
 //
-// partial marks a total that begins partway through the run: an adopted run's
-// log has a stretch this process never read, and the tokens spent in it are
-// not recoverable from anywhere. The row says at least rather than reporting
-// a number it knows is short — the same rule the sparkline's unread dots
-// follow.
-func tokenCount(n int, partial bool) string {
+// The figure is the run's own even for a run adopted mid-way: the pulse reads
+// the log from its start, and the log records every call the run was billed
+// for.
+func tokenCount(n int) string {
 	var s string
 	switch {
 	case n >= 999_500:
@@ -3191,11 +3178,7 @@ func tokenCount(n int, partial bool) string {
 	}
 	// The unit stays on: a bare number beside a clock reads as another
 	// duration.
-	s += " tok"
-	if partial {
-		s = "≥" + s
-	}
-	return s
+	return s + " tok"
 }
 
 // mainPanel is the lens: the promote picker while it is open, the ? overlay,

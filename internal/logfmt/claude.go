@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // claude decodes Claude Code's `--output-format stream-json --verbose`
@@ -38,6 +39,7 @@ type claudeLine struct {
 	Subtype         string `json:"subtype"`
 	SessionID       string `json:"session_id"`
 	Model           string `json:"model"`
+	Timestamp       string `json:"timestamp"`
 	EstimatedTokens int    `json:"estimated_tokens"`
 	NumTurns        int    `json:"num_turns"`
 	DurationMS      int64  `json:"duration_ms"`
@@ -100,6 +102,7 @@ func (c *claude) Decode(line string) (Event, bool) {
 				// spent whatever it chose to say. A user line — a tool
 				// result — reports none, so this is zero there.
 				ev.Usage = c.usage(l.Message.ID, l.Message.Usage)
+				ev.Time = l.time()
 				return ev, true
 			}
 		}
@@ -107,7 +110,7 @@ func (c *claude) Decode(line string) (Event, bool) {
 		// The result line carries the run's own total, which is the sum this
 		// stream has been keeping all along. Reporting it as usage would
 		// count the whole run twice at the end of it.
-		return Event{Kind: KindResult, Text: resultLine(l), IsError: l.IsError}, true
+		return Event{Kind: KindResult, Text: resultLine(l), IsError: l.IsError, Time: l.time()}, true
 	}
 	return Event{}, false
 }
@@ -133,6 +136,17 @@ func (c *claude) usage(id string, u claudeUsage) int {
 	c.counted[c.next] = id
 	c.next = (c.next + 1) % len(c.counted)
 	return total
+}
+
+// time is when the stream says the line was written. The system lines carry
+// no timestamp and a malformed one is no time at all — zero, which readers
+// treat as "the runner does not say".
+func (l claudeLine) time() time.Time {
+	t, err := time.Parse(time.RFC3339, l.Timestamp)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
 }
 
 func block(b claudeBlock) (Event, bool) {
