@@ -10,13 +10,16 @@ import (
 	"io"
 	"maps"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
 
+	"github.com/mattwalters/lerp/internal/childenv"
 	"github.com/mattwalters/lerp/internal/config"
 	"github.com/mattwalters/lerp/internal/linear"
+	"github.com/mattwalters/lerp/internal/vendors"
 )
 
 // Board is the small setup-time Linear surface used by Init.
@@ -26,6 +29,23 @@ type Board interface {
 	EnsureTeam(ctx context.Context, key, name string) error
 	TeamStates(ctx context.Context, teamKey string) ([]string, error)
 	EnsureWorkflowStates(ctx context.Context, teamKey string, states []linear.StateSpec) (map[string]string, error)
+}
+
+// CommandRunner runs an external command with context and arguments.
+type CommandRunner func(ctx context.Context, name string, args ...string) error
+
+var defaultCommandRunner CommandRunner = func(ctx context.Context, name string, args ...string) error {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Env = childenv.Inherited()
+	return cmd.Run()
+}
+
+// SetCommandRunner overrides the command runner used for CLI registrations,
+// returning a restore function. Used in tests to avoid running real CLI commands.
+func SetCommandRunner(runner CommandRunner) func() {
+	prev := defaultCommandRunner
+	defaultCommandRunner = runner
+	return func() { defaultCommandRunner = prev }
 }
 
 // Init fits lerp onto the team's existing board, writing this repo's config
@@ -40,6 +60,11 @@ type Board interface {
 // pipeline, stock status names, bypass declined). Either way init reports
 // loudly which statuses it creates and which existing ones it uses; existing
 // statuses are never modified.
+//
+// After writing (or verifying) the pipeline, init checks whether each vendor
+// runner CLI has a Linear MCP server registered. If missing, it offers to
+// register it directly or via the shared mcp-remote bridge, or declines by
+// default and prints the registration commands.
 //
 // The file is written only after the board calls succeed, so a failed board
 // call leaves nothing behind; created reports whether this invocation wrote
@@ -86,9 +111,13 @@ func Init(ctx context.Context, board Board, out io.Writer, answers io.Reader, re
 	if err != nil {
 		return false, fmt.Errorf("read statuses of team %q: %w", teamKey, err)
 	}
+	var in *bufio.Reader
+	if answers != nil {
+		in = bufio.NewReader(answers)
+	}
 	stock := ""
 	if fresh {
-		choices := converse(out, answers, teamKey, existing)
+		choices := converse(out, in, teamKey, existing)
 		stock = choices.Render()
 		// Parsing what we are about to install catches a broken assembly here —
 		// a declined stage, a mapping that folds two queues onto one status —
@@ -107,10 +136,13 @@ func Init(ctx context.Context, board Board, out io.Writer, answers io.Reader, re
 	// Every init, not only a fresh one: an adopter who set this repo up with
 	// an earlier lerp picks the ignore up by repeating init.
 	ignoreStateDir(out, repoRoot)
-	if !fresh {
-		return false, nil
+	if fresh {
+		if created, err = writeRepoConfig(path, teamKey, stock); err != nil {
+			return false, err
+		}
 	}
-	return writeRepoConfig(path, teamKey, stock)
+	offerMCPRegistration(ctx, out, in, repoRoot, cfg, defaultCommandRunner)
+	return created, nil
 }
 
 func loadFor(path, teamKey string) (*config.RepoConfig, error) {
@@ -268,21 +300,20 @@ func ignoresStateDir(gitignore []byte) bool {
 }
 
 // converse runs the short init conversation and returns the choices it
-// collected. A nil answers reader — a piped init, or --yes — takes the stock
+// collected. A nil in reader — a piped init, or --yes — takes the stock
 // answer to everything: every stage included, stock status names, bypass
 // declined. EOF mid-conversation answers the remaining questions the same
 // way each question's default would.
-func converse(out io.Writer, answers io.Reader, teamKey string, existing []string) config.Stock {
+func converse(out io.Writer, in *bufio.Reader, teamKey string, existing []string) config.Stock {
 	s := config.Stock{Teams: []string{teamKey}, Plan: true, Review: true}
 	if len(existing) == 0 {
 		fmt.Fprintf(out, "team %s has no statuses yet\n", teamKey)
 	} else {
 		fmt.Fprintf(out, "team %s has: %s\n", teamKey, strings.Join(existing, ", "))
 	}
-	if answers == nil {
+	if in == nil {
 		return s
 	}
-	in := bufio.NewReader(answers)
 	s.Plan = askYesNo(out, in, "Include a planning stage?", true)
 	s.Review = askYesNo(out, in, "Review each change before it exits?", true)
 	mapStatuses(out, in, teamKey, existing, &s)
@@ -568,5 +599,127 @@ func reportExits(out io.Writer, cfg *config.RepoConfig, categories map[string]st
 		fmt.Fprintf(out, "  still acts on them there, wrong if %q means the work is done. Lerp\n", name)
 		fmt.Fprintf(out, "  will not guess: if that status truly ends work, set its category to Done\n")
 		fmt.Fprintf(out, "  in Linear yourself.\n")
+	}
+}
+
+type mcpCLIState int
+
+const (
+	mcpStateConfigured mcpCLIState = iota
+	mcpStateRegisteredNow
+	mcpStateDeclined
+)
+
+type mcpCLIInfo struct {
+	vendorName string
+	adapter    vendors.Adapter
+	state      mcpCLIState
+}
+
+// offerMCPRegistration checks whether each vendor runner CLI has a Linear MCP
+// registered. If any is missing, it offers to register it directly or via the
+// shared stdio bridge (defaulting to decline / no-op), and summarizes the
+// final state of each CLI.
+func offerMCPRegistration(ctx context.Context, out io.Writer, in *bufio.Reader, repoRoot string, cfg *config.RepoConfig, runner CommandRunner) {
+	seen := make(map[string]bool)
+	var vendorNames []string
+	for _, r := range cfg.Runners {
+		if r.Vendor != "" && !seen[r.Vendor] {
+			seen[r.Vendor] = true
+			vendorNames = append(vendorNames, r.Vendor)
+		}
+	}
+	if len(vendorNames) == 0 {
+		return
+	}
+	slices.Sort(vendorNames)
+
+	var infos []mcpCLIInfo
+	var missingCount int
+	for _, vName := range vendorNames {
+		adapter, ok := vendors.Lookup(vName)
+		if !ok {
+			continue
+		}
+		info := mcpCLIInfo{vendorName: vName, adapter: adapter}
+		if adapter.HasLinearMCP(repoRoot) {
+			info.state = mcpStateConfigured
+		} else {
+			info.state = mcpStateDeclined
+			missingCount++
+		}
+		infos = append(infos, info)
+	}
+
+	if missingCount > 0 && in != nil {
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, "Each runner CLI needs its own Linear MCP server to read tickets and post stage artifacts.")
+		fmt.Fprintln(out, "Registration writes into each CLI's configuration; interactive OAuth authentication")
+		fmt.Fprintln(out, "remains to be done once in each CLI afterward.")
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, "Alternative single-auth bridge:")
+		fmt.Fprintln(out, "  Registering the stdio bridge (`<cli> mcp add linear -- npx -y mcp-remote https://mcp.linear.app/mcp`)")
+		fmt.Fprintln(out, "  shares one OAuth token across all CLIs via ~/.mcp-auth.")
+		fmt.Fprintln(out, "  Caveats: requires Node/npx in agent PATH and caches a single Linear account across all CLIs.")
+		fmt.Fprintln(out)
+		fmt.Fprint(out, "Register Linear MCP for unconfigured CLIs? [y]es (HTTP) / [b]ridge (shared OAuth) / [N]o ")
+		answer, _ := readAnswer(out, in)
+
+		var registerBridge bool
+		var shouldRegister bool
+		switch answer {
+		case "y", "yes":
+			shouldRegister = true
+			registerBridge = false
+		case "b", "bridge":
+			shouldRegister = true
+			registerBridge = true
+		}
+
+		if shouldRegister {
+			for i := range infos {
+				if infos[i].state == mcpStateConfigured {
+					continue
+				}
+				var cmdArgs []string
+				if registerBridge {
+					cmdArgs = infos[i].adapter.MCPRegisterBridge()
+				} else {
+					cmdArgs = infos[i].adapter.MCPRegisterHTTP()
+				}
+				if len(cmdArgs) > 0 {
+					if err := runner(ctx, cmdArgs[0], cmdArgs[1:]...); err == nil {
+						infos[i].state = mcpStateRegisteredNow
+					} else {
+						fmt.Fprintf(out, "could not register %s MCP: %v\n", infos[i].adapter.CLIName(), err)
+					}
+				}
+			}
+		}
+	}
+
+	reportMCPSummary(out, infos)
+}
+
+func reportMCPSummary(out io.Writer, infos []mcpCLIInfo) {
+	fmt.Fprintln(out)
+	for _, info := range infos {
+		cli := info.adapter.CLIName()
+		label := info.vendorName
+		if info.vendorName != cli {
+			label = fmt.Sprintf("%s (%s)", info.vendorName, cli)
+		}
+		switch info.state {
+		case mcpStateConfigured:
+			fmt.Fprintf(out, "%s: Linear MCP already configured\n", label)
+		case mcpStateRegisteredNow:
+			fmt.Fprintf(out, "%s: registered Linear MCP — one-time authentication still needed: %s\n",
+				label, info.adapter.AuthInstruction())
+		case mcpStateDeclined:
+			fmt.Fprintf(out, "%s: Linear MCP not configured\n", label)
+			fmt.Fprintf(out, "  register: %s\n", strings.Join(info.adapter.MCPRegisterHTTP(), " "))
+			fmt.Fprintf(out, "  alternative (shared OAuth): %s\n", strings.Join(info.adapter.MCPRegisterBridge(), " "))
+			fmt.Fprintf(out, "  then authenticate: %s\n", info.adapter.AuthInstruction())
+		}
 	}
 }

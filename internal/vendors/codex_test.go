@@ -1,6 +1,10 @@
 package vendors
 
-import "testing"
+import (
+	"os"
+	"strings"
+	"testing"
+)
 
 func TestCodexCommandDefault(t *testing.T) {
 	got := codex{}.Command(Options{})
@@ -73,5 +77,57 @@ func TestCodexSessionIgnoresOtherEvents(t *testing.T) {
 		if got, ok := (codex{}).Session(line); ok {
 			t.Errorf("Session(%q) = (%q, true), want it dropped", line, got)
 		}
+	}
+}
+
+func TestCodexCLINameAndMCPCommands(t *testing.T) {
+	c := codex{}
+	if got := c.CLIName(); got != "codex" {
+		t.Errorf("CLIName() = %q, want %q", got, "codex")
+	}
+	wantHTTP := "codex mcp add linear --url https://mcp.linear.app/mcp"
+	if got := strings.Join(c.MCPRegisterHTTP(), " "); got != wantHTTP {
+		t.Errorf("MCPRegisterHTTP() = %q, want %q", got, wantHTTP)
+	}
+	wantBridge := "codex mcp add linear -- npx -y mcp-remote https://mcp.linear.app/mcp"
+	if got := strings.Join(c.MCPRegisterBridge(), " "); got != wantBridge {
+		t.Errorf("MCPRegisterBridge() = %q, want %q", got, wantBridge)
+	}
+	if got := c.AuthInstruction(); got != "codex mcp login linear" {
+		t.Errorf("AuthInstruction() = %q, want %q", got, "codex mcp login linear")
+	}
+}
+
+func TestCodexHasLinearMCP(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+
+	c := codex{}
+	if c.HasLinearMCP("") {
+		t.Error("HasLinearMCP = true on empty home, want false")
+	}
+
+	codexDir := dir + "/.codex"
+	if err := os.MkdirAll(codexDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := codexDir + "/config.toml"
+	if err := os.WriteFile(cfgPath, []byte("[mcp_servers.linear]\nurl = \"https://mcp.linear.app/mcp\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !c.HasLinearMCP("") {
+		t.Error("HasLinearMCP = false when ~/.codex/config.toml has linear, want true")
+	}
+
+	// In repo codex config
+	if err := os.WriteFile(cfgPath, []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	repoDir := t.TempDir()
+	if err := os.WriteFile(repoDir+"/codex.toml", []byte("[mcp_servers.linear]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !c.HasLinearMCP(repoDir) {
+		t.Error("HasLinearMCP = false when repo codex.toml has linear, want true")
 	}
 }

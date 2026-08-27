@@ -1,6 +1,11 @@
 package vendors
 
-import "strings"
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+)
 
 // claude adapts Claude Code, headless: `claude -p {{prompt}} --session-id
 // {{session}} --output-format stream-json --verbose` streams every event as
@@ -8,6 +13,96 @@ import "strings"
 // the final result at exit, and the board's log tail stays empty for the
 // whole run.
 type claude struct{}
+
+// CLIName returns the executable name for Claude Code.
+func (claude) CLIName() string {
+	return "claude"
+}
+
+// MCPRegisterHTTP returns the command to register Linear MCP directly via HTTP.
+func (claude) MCPRegisterHTTP() []string {
+	return []string{"claude", "mcp", "add", "--transport", "http", "linear", "https://mcp.linear.app/mcp"}
+}
+
+// MCPRegisterBridge returns the command to register Linear MCP via the mcp-remote bridge.
+func (claude) MCPRegisterBridge() []string {
+	return []string{"claude", "mcp", "add", "linear", "--", "npx", "-y", "mcp-remote", "https://mcp.linear.app/mcp"}
+}
+
+// AuthInstruction returns instructions on how to authenticate after registration.
+func (claude) AuthInstruction() string {
+	return "/mcp in claude"
+}
+
+type claudeConfigFile struct {
+	McpServers               map[string]any `json:"mcpServers"`
+	ClaudeAiMcpEverConnected []string       `json:"claudeAiMcpEverConnected"`
+	Projects                 map[string]struct {
+		McpServers map[string]any `json:"mcpServers"`
+	} `json:"projects"`
+}
+
+// HasLinearMCP checks whether Claude Code has a Linear MCP server registered
+// in ~/.claude.json, ~/.claude/, or project-level .mcp.json.
+func (claude) HasLinearMCP(repoRoot string) bool {
+	home, err := os.UserHomeDir()
+	if err == nil {
+		if checkClaudeFile(filepath.Join(home, ".claude.json")) {
+			return true
+		}
+		if checkClaudeFile(filepath.Join(home, ".claude", "settings.json")) {
+			return true
+		}
+		if checkClaudeFile(filepath.Join(home, ".claude", "mcp.json")) {
+			return true
+		}
+	}
+	if repoRoot != "" {
+		if checkClaudeFile(filepath.Join(repoRoot, ".mcp.json")) {
+			return true
+		}
+	}
+	return false
+}
+
+func checkClaudeFile(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	var cfg claudeConfigFile
+	if err := json.Unmarshal(data, &cfg); err == nil {
+		for name, val := range cfg.McpServers {
+			if isLinearServer(name, val) {
+				return true
+			}
+		}
+		for _, name := range cfg.ClaudeAiMcpEverConnected {
+			if strings.Contains(strings.ToLower(name), "linear") || strings.Contains(name, "mcp.linear.app") {
+				return true
+			}
+		}
+		for _, p := range cfg.Projects {
+			for name, val := range p.McpServers {
+				if isLinearServer(name, val) {
+					return true
+				}
+			}
+		}
+	}
+	// Fallback to searching raw json for generic maps or mcp server definitions
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err == nil {
+		if servers, ok := raw["mcpServers"].(map[string]any); ok {
+			for name, val := range servers {
+				if isLinearServer(name, val) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
 
 // Command appends --model and --effort, in that order, only when set, then
 // Args verbatim and last — so an operator's args can override an earlier

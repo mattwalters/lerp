@@ -1,8 +1,10 @@
 package vendors
 
 import (
+	"encoding/json"
 	"maps"
 	"slices"
+	"strings"
 )
 
 // Options carries what a vendor runner block may set: Model and Effort add
@@ -21,6 +23,11 @@ type Options struct {
 type Adapter interface {
 	Command(Options) string
 	Resume(Options) string
+	CLIName() string
+	HasLinearMCP(repoRoot string) bool
+	MCPRegisterHTTP() []string
+	MCPRegisterBridge() []string
+	AuthInstruction() string
 }
 
 // SessionNamer is implemented by an adapter whose CLI names its own session
@@ -51,4 +58,21 @@ func Lookup(name string) (Adapter, bool) {
 // names what config could have said instead.
 func Names() []string {
 	return slices.Sorted(maps.Keys(adapters))
+}
+
+// isLinearServer reports whether an MCP server name or configuration value
+// references Linear MCP (by server name, URL, or command/args).
+func isLinearServer(name string, val any) bool {
+	if strings.Contains(strings.ToLower(name), "linear") {
+		return true
+	}
+	if val == nil {
+		return false
+	}
+	raw, err := json.Marshal(val)
+	if err != nil {
+		return false
+	}
+	s := strings.ToLower(string(raw))
+	return strings.Contains(s, "mcp.linear.app") || strings.Contains(s, "linear")
 }
