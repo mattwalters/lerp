@@ -217,22 +217,106 @@ func TestFakeIssueDetail(t *testing.T) {
 	}
 }
 
-func TestFakeNotFound(t *testing.T) {
+// SetViewer is how a test puts the fake's claim protocol in someone else's
+// name; Comments (via CommentOnIssue) is the other reader of viewerID.
+func TestFakeSetViewer(t *testing.T) {
 	f := NewFake()
+	f.AddIssue("LERP", Issue{ID: "iss-1", Identifier: "LERP-1", Title: "First", Status: "Todo"})
+	f.SetViewer("someone-else")
+
 	ctx := context.Background()
-	ops := map[string]func() error{
-		"GetIssue":       func() error { _, err := f.GetIssue(ctx, "nope"); return err },
-		"MoveIssue":      func() error { return f.MoveIssue(ctx, "nope", "Todo") },
-		"AssignIssue":    func() error { return f.AssignIssue(ctx, "nope", "u") },
-		"UnassignIssue":  func() error { return f.UnassignIssue(ctx, "nope") },
-		"CommentOnIssue": func() error { return f.CommentOnIssue(ctx, "nope", "hi") },
+	id, err := f.Viewer(ctx)
+	if err != nil {
+		t.Fatalf("Viewer: %v", err)
 	}
-	for name, op := range ops {
-		if err := op(); !errors.Is(err, ErrNotFound) {
-			t.Errorf("%s err = %v, want ErrNotFound", name, err)
-		}
+	if id != "someone-else" {
+		t.Errorf("Viewer = %q, want someone-else", id)
+	}
+	if err := f.CommentOnIssue(ctx, "iss-1", "hi"); err != nil {
+		t.Fatalf("CommentOnIssue: %v", err)
+	}
+	detail, err := f.GetIssueDetail(ctx, "iss-1")
+	if err != nil {
+		t.Fatalf("GetIssueDetail: %v", err)
+	}
+	if len(detail.Comments) != 1 || detail.Comments[0].Author != "someone-else" {
+		t.Errorf("comments = %+v, want one authored someone-else", detail.Comments)
 	}
 }
+
+// SetTeamStates and TeamStates are the fake's mirror of the real client's
+// startup read (loop.Verify) — declared per team, ErrNotFound for a team
+// nothing has declared.
+func TestFakeTeamStates(t *testing.T) {
+	f := NewFake()
+	f.SetTeamStates("LERP", "Backlog", "Todo", "Done")
+
+	names, err := f.TeamStates(context.Background(), "LERP")
+	if err != nil {
+		t.Fatalf("TeamStates: %v", err)
+	}
+	want := []string{"Backlog", "Todo", "Done"}
+	if !reflect.DeepEqual(names, want) {
+		t.Errorf("TeamStates = %v, want %v", names, want)
+	}
+
+	if _, err := f.TeamStates(context.Background(), "NOPE"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("TeamStates(undeclared) = %v, want ErrNotFound", err)
+	}
+}
+
+// The refusal itself — MoveIssue mirroring the real client's rejection of a
+// name the team does not have, the semantic drift LERP-90 exists to close —
+// is covered by the "move to a status absent from the team" contract case,
+// against both clients. What only the fake needs to prove is the opt-in: a
+// team nothing has declared states for stays permissive, keyed on the
+// issue's own team rather than on whether any team has declared anything —
+// so the many tests that move issues through ad hoc statuses without
+// modeling a whole board are unaffected even when another team in the same
+// fake does declare states.
+func TestFakeMoveIssueUndeclaredTeamStaysPermissive(t *testing.T) {
+	f := newTestFake()
+	f.SetTeamStates("LERP", "Todo", "In Progress", "Done")
+	// iss-4 belongs to PROSE, which has declared nothing.
+	if err := f.MoveIssue(context.Background(), "iss-4", "Whatever"); err != nil {
+		t.Errorf("MoveIssue on an undeclared team: %v, want no error", err)
+	}
+}
+
+// SetStatusCategory is how a test declares Linear's category for a status
+// beyond NewFake's stock four — the property that drives filtering and
+// blocked derivation everywhere else in this file.
+func TestFakeSetStatusCategory(t *testing.T) {
+	f := newTestFake()
+	f.SetStatusCategory(CategoryCanceled, "Won't Fix")
+	ctx := context.Background()
+
+	if err := f.MoveIssue(ctx, "iss-1", "Won't Fix"); err != nil {
+		t.Fatalf("MoveIssue: %v", err)
+	}
+	is, err := f.GetIssue(ctx, "iss-1")
+	if err != nil {
+		t.Fatalf("GetIssue: %v", err)
+	}
+	if is.StatusType != CategoryCanceled {
+		t.Errorf("StatusType = %q, want %q", is.StatusType, CategoryCanceled)
+	}
+	// A custom-declared canceled status waits on nobody, same as the stock one.
+	if err := f.AssignIssue(ctx, "iss-1", "user-9"); err != nil {
+		t.Fatalf("AssignIssue: %v", err)
+	}
+	issues, err := f.ListAssignedIssues(ctx, "LERP", "user-9")
+	if err != nil {
+		t.Fatalf("ListAssignedIssues: %v", err)
+	}
+	if len(issues) != 0 {
+		t.Errorf("ListAssignedIssues = %+v, want none: a canceled issue waits on nobody", issues)
+	}
+}
+
+// Every op's ErrNotFound on a nonexistent issue, against both clients, is
+// the "issue not found" contract case in contract_test.go — this file no
+// longer duplicates it.
 
 // The delta read is the fake's stand-in for the real one, so it has to be
 // unfiltered in the same way: whatever the team holds, whoever it belongs
