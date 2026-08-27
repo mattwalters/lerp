@@ -432,6 +432,8 @@ func TestTickAdoptsLiveOrphans(t *testing.T) {
 			}
 		case EventQueues:
 			// Every pass publishes its queue snapshot, full lanes or not.
+		case EventTicked:
+			// Every pass's own last word, whatever else it did.
 		case EventError:
 			t.Fatalf("unexpected error event: %v", ev.Err)
 		default:
@@ -605,8 +607,8 @@ func TestRunAnnouncesProvisioningBeforeStart(t *testing.T) {
 			if ev.Type == EventError {
 				t.Fatalf("unexpected error event: %v", ev.Err)
 			}
-			if ev.Type == EventQueues || ev.Type == EventAttention {
-				continue // every pass emits both; the run's own sequence is under test
+			if ev.Type == EventQueues || ev.Type == EventAttention || ev.Type == EventTicked {
+				continue // every pass emits all three; the run's own sequence is under test
 			}
 			seq = append(seq, ev)
 		case <-deadline:
@@ -1160,6 +1162,47 @@ func TestTickEmitsAttention(t *testing.T) {
 	got = h.waitEvents(t, EventAttention, 1)[0]
 	if len(got.Attention) != 2 || got.Attention[0].Ticket != "LERP-4" {
 		t.Errorf("attention after the operator routed it = %+v, want the two unrouted tickets", got.Attention)
+	}
+}
+
+// EventTicked is Tick's own last word, and a subscriber (the TUI splash,
+// LERP-144) depends on it arriving after everything else a pass emits: it
+// is sent over the same channel as EventQueues and EventAttention, so the
+// channel's own FIFO order — not the wall-clock order of Tick returning
+// versus a subscriber's own goroutine reading the channel — is what a
+// subscriber can rely on.
+func TestEventTickedIsLastEachPass(t *testing.T) {
+	h := newHarness(t, 1, nil)
+	t.Cleanup(func() { waitIdle(t, h.rec) })
+	h.fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Todo"})
+	ctx := context.Background()
+
+	for pass := 0; pass < 2; pass++ {
+		h.rec.Tick(ctx)
+		deadline := time.After(5 * time.Second)
+		sawQueues, sawAttention, sawTicked := false, false, false
+		for !sawTicked {
+			select {
+			case ev := <-h.events:
+				switch ev.Type {
+				case EventQueues:
+					sawQueues = true
+				case EventAttention:
+					sawAttention = true
+				case EventTicked:
+					sawTicked = true
+					if !sawQueues || !sawAttention {
+						t.Fatalf("pass %d: EventTicked arrived before EventQueues (%v) and EventAttention (%v)",
+							pass, sawQueues, sawAttention)
+					}
+				}
+			case <-deadline:
+				t.Fatalf("pass %d: timed out before EventTicked", pass)
+			}
+		}
+		// Drain whatever else this pass emits (EventStarted, from the lane
+		// fill kicked off) so the next pass starts from an empty channel.
+		h.drainEvents()
 	}
 }
 

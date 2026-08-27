@@ -84,22 +84,44 @@ func TestTheSplashSpins(t *testing.T) {
 	}
 }
 
-// The board replaces the splash the moment the first pass reports — whatever
-// it reported. And it never gives the screen back: a later slow pass is the
-// status bar's to report, over a board that has something on it.
-func TestTheBoardTakesTheScreenTheMomentThePassReports(t *testing.T) {
-	m, _, _ := newTestModel(t, 2)
-	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+// The two reads that populate the first pass fail independently, so either
+// one landing alone must not cut to the board — that would draw it with the
+// other half still zero, which is the flicker the splash exists to hide.
+func TestASingleReadDoesNotEndTheSplash(t *testing.T) {
+	for _, ev := range []loop.Event{
+		{Type: loop.EventAttention, Attention: []loop.AttentionItem{{Ticket: "LERP-1", Title: "one"}}},
+		{Type: loop.EventQueues},
+	} {
+		m, _, _ := newTestModel(t, 2)
+		m = update(t, m, eventMsg{ev: ev})
+		if !hasMark(m.View()) {
+			t.Fatalf("%s alone ended the splash:\n%s", ev.Type, m.View())
+		}
+	}
+}
+
+// The board replaces the splash the moment both of the first pass's reads
+// have reported, whatever order they arrive in — the loop runs them
+// sequentially, but nothing here may depend on which finishes first. And it
+// never gives the screen back: a later slow pass is the status bar's to
+// report, over a board that has something on it.
+func TestTheBoardTakesTheScreenWhenBothReadsReport(t *testing.T) {
+	attention := loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
 		{Ticket: "LERP-1", Title: "one"},
-	}}})
+	}}
+	queues := loop.Event{Type: loop.EventQueues}
+
+	m, _, _ := newTestModel(t, 2)
+	m = update(t, m, eventMsg{ev: attention})
+	m = update(t, m, eventMsg{ev: queues})
 	view := m.View()
 	if hasMark(view) {
-		t.Fatalf("the splash outlived the pass that reported the inbox:\n%s", view)
+		t.Fatalf("the splash outlived both reads landing:\n%s", view)
 	}
 	if !strings.Contains(view, "LERP-1") {
 		t.Fatalf("the board did not take the screen:\n%s", view)
 	}
-	// The real cold start: the loop reports the inbox from inside the first
+	// The real cold start: the loop reports both reads from inside the first
 	// pass, so the first board frame anyone ever sees still has that pass in
 	// flight — and the status bar, which the splash was covering until this
 	// frame, has to pick the heartbeat up where the spinner left off.
@@ -118,27 +140,209 @@ func TestTheBoardTakesTheScreenTheMomentThePassReports(t *testing.T) {
 	}
 }
 
+// The same as above with the reads in the other order: the fix is at the
+// "have both landed" seam, not at which one happened to arrive first.
+func TestTheBoardTakesTheScreenWhenBothReadsReportInTheOtherOrder(t *testing.T) {
+	m, _, _ := newTestModel(t, 2)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues}})
+	if !hasMark(m.View()) {
+		t.Fatalf("queues alone ended the splash:\n%s", m.View())
+	}
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-1", Title: "one"},
+	}}})
+	view := m.View()
+	if hasMark(view) {
+		t.Fatalf("the splash outlived both reads landing:\n%s", view)
+	}
+	if !strings.Contains(view, "LERP-1") {
+		t.Fatalf("the board did not take the screen:\n%s", view)
+	}
+}
+
 // A pass that says nothing at all — no queues configured, an empty board —
-// still ends the splash: there is nothing left to wait for, and the panels'
-// own empty states are what have something to say about it.
+// still ends the splash once both reads have reported: there is nothing
+// left to wait for, and the panels' own empty states are what have
+// something to say about it.
 func TestAPassThatReportsNothingStillEndsTheSplash(t *testing.T) {
 	m, _, _ := newTestModel(t, 2)
-	m = update(t, m, tickedMsg{})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention}})
 	if hasMark(m.View()) {
 		t.Fatalf("the splash spins on past a finished pass:\n%s", m.View())
 	}
 }
 
 // A spinner that never stops is the blank screen with extra motion. When the
-// first pass fails rather than lands, the splash gives way and the error
-// goes where errors go — the status bar's transient line.
+// first pass fails rather than lands, the splash gives way once the pass
+// itself is over (EventTicked) and the error goes where errors go — the
+// status bar's transient line. It cannot give way on the error alone: see
+// TestAQueuesErrorDoesNotPreemptAttentionStillPending for why.
 func TestAFailedFirstPassSaysSoRatherThanSpinning(t *testing.T) {
 	m, _, _ := newTestModel(t, 2)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventError,
 		Err: errors.New("attention: read viewer: no route to host")}})
+	if !hasMark(m.View()) {
+		t.Fatalf("the error alone took the screen from the splash:\n%s", m.View())
+	}
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventTicked}})
 	view := m.View()
 	if hasMark(view) {
-		t.Fatalf("a failed first pass is still spinning:\n%s", view)
+		t.Fatalf("a failed first pass is still spinning once it has ended:\n%s", view)
+	}
+	if !strings.Contains(view, "no route to host") {
+		t.Fatalf("the failure never reached the status bar:\n%s", view)
+	}
+}
+
+// A lane's run failing is not one of the first pass's two reads, so it must
+// not settle the splash on its own — the pass itself is still in flight, and
+// nothing here says either read is done.
+func TestALaneFailureDoesNotEndTheSplash(t *testing.T) {
+	m, _, _ := newTestModel(t, 2)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventError, Lane: 1, Ticket: "LERP-2",
+		Err: errors.New("exit status 1")}})
+	if !hasMark(m.View()) {
+		t.Fatalf("a lane failure ended the splash:\n%s", m.View())
+	}
+}
+
+// tickedMsg and EventTicked come from two different goroutines racing a
+// buffered channel (runTick's return versus waitEvent's read of the same
+// pass's own EventTicked), and Tick returning is the cheaper of the two —
+// it can win that race and reach Update first. If tickedMsg alone ended the
+// splash, that win would cut to the board before this pass's real
+// EventQueues or EventAttention — already sitting in the channel behind
+// EventTicked — had been applied: the half-populated frame this ticket
+// exists to remove, just moved to a rarer window. Only EventTicked, ordered
+// after them by the channel itself, may end it.
+func TestTickedMsgAloneDoesNotEndTheSplash(t *testing.T) {
+	m, _, _ := newTestModel(t, 2)
+	m = update(t, m, tickedMsg{})
+	if !hasMark(m.View()) {
+		t.Fatalf("tickedMsg alone ended the splash:\n%s", m.View())
+	}
+}
+
+// A row can be on screen from attention alone, before queues has reported —
+// the gap between the two reads landing, not just the time before either
+// has. Promote, Search and Eject each open a modal that would make View
+// fall through to the board early (see View's splashing && !modal guard),
+// so each has to check splashing itself rather than trust that a row means
+// the pass is over.
+func TestModalKeysStayShutDuringTheSplashGap(t *testing.T) {
+	attention := loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-1", TicketID: "id-1", Title: "one"},
+	}}
+
+	m, _, _, _ := newPromoteTestModel(t, 1, []string{"Planning"})
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: attention})
+	if !hasMark(m.View()) {
+		t.Fatalf("attention alone ended the splash:\n%s", m.View())
+	}
+	m = update(t, m, keyMsg("p"))
+	if m.promoting || !hasMark(m.View()) {
+		t.Fatalf("p opened the promote picker before queues reported: promoting=%v\n%s",
+			m.promoting, m.View())
+	}
+	m = update(t, m, keyMsg("/"))
+	if m.searching || !hasMark(m.View()) {
+		t.Fatalf("/ opened the search box before queues reported: searching=%v\n%s",
+			m.searching, m.View())
+	}
+
+	ejector := &recordingEjector{}
+	e, _ := newEjectTestModel(t, 1, ejector)
+	e = update(t, e, keyMsg("2"))
+	e = update(t, e, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		TicketID: "id-1", Ticket: "LERP-1", Queue: "implement", LogPath: "/dev/null"}})
+	if !hasMark(e.View()) {
+		t.Fatalf("a running lane alone ended the splash:\n%s", e.View())
+	}
+	e = update(t, e, keyMsg("e"))
+	if e.ejecting || !hasMark(e.View()) {
+		t.Fatalf("e opened the eject confirm before attention reported: ejecting=%v\n%s",
+			e.ejecting, e.View())
+	}
+}
+
+// Unlike Promote, Search and Eject, force-start opens no modal — nothing
+// about pressing S flips View's splashing && !modal gate — so the splash
+// stays on screen and the operator cannot see the row they are about to
+// force-start. Without its own check that row is still real: queues alone
+// is enough for selectedWork to return one, before attention has reported.
+// S would claim a ticket and start an agent on a row nobody has seen drawn.
+func TestForceStartStaysShutDuringTheSplashGap(t *testing.T) {
+	m, _, starter := newStartingTestModel(t, 1)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
+			{ID: "t1", Identifier: "LERP-1", Title: "one", Eligible: true},
+		}},
+	}}})
+	if !hasMark(m.View()) {
+		t.Fatalf("queues alone ended the splash:\n%s", m.View())
+	}
+	m = update(t, m, keyMsg("2"))
+	m, cmd := updateCmd(t, m, keyMsg("S"))
+	if cmd != nil {
+		t.Fatal("S produced a force-start command before attention reported")
+	}
+	if got := starter.started(); len(got) != 0 {
+		t.Fatalf("force-started tickets = %v, want none before attention reported", got)
+	}
+	if !hasMark(m.View()) {
+		t.Fatalf("S ended the splash on a row queues alone drew:\n%s", m.View())
+	}
+}
+
+// fill emits its own EventQueues right behind a partial-listing error,
+// regardless of whether that error means anything about the pass as a whole
+// (reconciler.go's fill). An error from one read must not preempt the other
+// read that has not answered yet — success or failure — or the board draws
+// with that other half still zero, which is the flicker this whole ticket
+// removes. Only the pass ending, once both reads have had their turn, may
+// fall back to the error.
+func TestAQueuesErrorDoesNotPreemptAttentionStillPending(t *testing.T) {
+	m, _, _ := newTestModel(t, 2)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventError,
+		Err: errors.New("list queues: no route to host")}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues}})
+	if !hasMark(m.View()) {
+		t.Fatalf("the queues error ended the splash before attention reported:\n%s", m.View())
+	}
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-1", Title: "one"},
+	}}})
+	view := m.View()
+	if hasMark(view) {
+		t.Fatalf("attention landing for real did not end the splash:\n%s", view)
+	}
+	if !strings.Contains(view, "LERP-1") {
+		t.Fatalf("the board did not take the screen:\n%s", view)
+	}
+}
+
+// The mirror of the above: if attention also fails this pass, nothing more
+// is coming for either read, and only then — once EventTicked, the pass's
+// own last word, actually arrives — does the splash give way to the error.
+func TestAPassEndingWithBothReadsUnresolvedFallsBackToTheError(t *testing.T) {
+	m, _, _ := newTestModel(t, 2)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventError,
+		Err: errors.New("list queues: no route to host")}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues}})
+	if !hasMark(m.View()) {
+		t.Fatal("the first queues error ended the splash early")
+	}
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventError,
+		Err: errors.New("attention: read viewer: no route to host")}})
+	if !hasMark(m.View()) {
+		t.Fatal("attention's error ended the splash before the pass was over")
+	}
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventTicked}})
+	view := m.View()
+	if hasMark(view) {
+		t.Fatalf("the splash spins on past a finished, failed pass:\n%s", view)
 	}
 	if !strings.Contains(view, "no route to host") {
 		t.Fatalf("the failure never reached the status bar:\n%s", view)
