@@ -99,6 +99,23 @@ func TestResolveSessionSurvivesALineOverTheScannerBudget(t *testing.T) {
 	}
 }
 
+// A session named past sessionScanBudget lines in is indistinguishable from
+// one that was never reported at all: the scan gives up before reaching it,
+// and resolveSession's error reads the same as the died-early case. This
+// pins that trade-off rather than leaving the budget's far edge unexercised.
+func TestResolveSessionGivesUpAfterTheScanBudget(t *testing.T) {
+	lines := make([]string, sessionScanBudget)
+	for i := range lines {
+		lines[i] = `{"type":"item.completed"}`
+	}
+	lines = append(lines, `{"type":"thread.started","thread_id":"01a03575-0a83-7601-bdcc-1a734ee2b1b2"}`)
+	logPath := writeLog(t, lines...)
+	_, err := resolveSession(codexRunner(t), evidence.Record{RunID: "run", LogPath: logPath})
+	if err == nil || !strings.Contains(err.Error(), "never reported a session id") {
+		t.Fatalf("resolveSession error = %v, want a no-session error past the budget", err)
+	}
+}
+
 // A runner whose session lerp minted resolves from the record alone: no log
 // read at all, so a claude-shaped run is unaffected by anything on disk.
 func TestResolveSessionUsesRecordWithoutTouchingDisk(t *testing.T) {
