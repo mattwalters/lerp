@@ -47,9 +47,9 @@ the tag rather than from whatever was lying around on somebody's laptop.
 
 ## What else you need
 
-Lerp speaks exactly one external API: Linear. Every command reads the API
-key from the `LINEAR_API_KEY` environment variable — create a personal API
-key in Linear's settings and export it. Beyond that key lerp itself needs
+Lerp speaks exactly one external API: Linear, and every command needs a
+credential for it. Today that is a personal API key in the `LINEAR_API_KEY`
+environment variable — create one in Linear's settings and export it. Beyond that key lerp itself needs
 only Git, but the stock pipeline shells out to `claude`
 ([Claude Code](https://docs.claude.com/en/docs/claude-code)) as its runner
 and its implementing prompt opens pull requests with `gh`, so install both

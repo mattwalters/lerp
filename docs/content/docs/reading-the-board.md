@@ -34,11 +34,12 @@ own pickup order, with the ones running now at the top of their own group.
 
 A running row carries its state — provisioning or running — the run's elapsed
 time, and the tokens it has spent, as its own log reports them. A run
-inherited from a previous `lerp` reads as `running` like any other, and shows
-its true age rather than the moment it was adopted; its total covers only the
-stretch this `lerp` has watched, and reads `≥` to say so. Under it, once the
-run has a log, a second line reads how that run is going — see
-[watching a run](watching-a-run.md).
+inherited from a previous `lerp` reads as `running` like any other, and
+carries the run's own age and the run's own total, not the stretch since it
+was adopted: the log it has already written is the evidence, and lerp reads
+it back rather than starting the count over. Under it, once the run has a
+log, a second line reads how that run is going — see [watching a
+run](watching-a-run.md).
 
 A waiting row is shown faint with the reason it waits, blocked or claimed.
 `enter` on one shows where it sits in pickup order and what gates it.

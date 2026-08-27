@@ -80,7 +80,7 @@ a plain `go install` or `go build` — reports `dev`.
 
 | Variable | What it does |
 | --- | --- |
-| `LINEAR_API_KEY` | the Linear personal API key. Required by every command. Lerp drops it from its own environment after reading it, and never passes it to a provision, dispose or runner command. |
+| `LINEAR_API_KEY` | the Linear personal API key, and how lerp authenticates today. Every command needs a credential and this is the one to set. Lerp drops it from its own environment after reading it, and never passes it to a provision, dispose or runner command. |
 | `LERP_BACKGROUND` | `light` or `dark`, saying which half of the palette to draw. Read once at startup; any other value is an error rather than a shrug. |
 | `NO_COLOR` | set to any value, turns colour off entirely. |
 
@@ -108,4 +108,7 @@ this one.
      scoping note. -->
 
 <!-- Slot (LERP-111): the auth section — `lerp login`, the stored token, and
-     how it and LINEAR_API_KEY relate. -->
+     how it and LINEAR_API_KEY relate. `internal/credentials` already
+     resolves both (LINEAR_API_KEY first, then the token file, then an error
+     naming both remedies); what is missing is the command that writes one,
+     and the page saying so. -->

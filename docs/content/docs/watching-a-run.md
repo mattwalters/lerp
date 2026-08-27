@@ -21,6 +21,11 @@ is going: the last call the agent made — a shell command as `$ go test
 ./...`, anything else by tool and target — and a sparkline of its recent
 activity, so a run that has fallen quiet reads as a flat line.
 
+A run adopted from a previous `lerp` gets the same line rather than a fresh
+one: its log's own timestamps are read back into the history, so a run that
+went quiet twenty minutes ago draws the long flat line it earned. A log that
+dates nothing has no times to place, and draws the short line of a fresh run.
+
 The line takes the width the row is given: on a wide terminal's full-width
 list it draws back about a quarter of an hour, and beside an open main pane
 it shows the recent end of that same history. A cell is fifteen seconds
