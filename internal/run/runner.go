@@ -205,24 +205,35 @@ func shellQuote(value string) string {
 
 // ResumeCommand is the runner's own resume command for a recorded run: what
 // eject hands the operator so the headless run becomes their interactive
-// session. It returns "" for a runner with no resume template, which is what
-// makes that runner un-ejectable.
+// session. It returns ("", nil) for a runner with no resume template, which
+// is what makes that runner un-ejectable. It errors when the run's session
+// cannot be resolved — record.SessionID empty and, for a vendor that names
+// its own, nothing found in the run's log either — rather than handing back
+// a resume command with nothing to resume.
 //
 // The same substitution Execute makes, quoted the same way, so what the
 // operator pastes is what lerp would have run. {{ticket}} is the human
 // identifier the run was started for, {{workdir}} its workspace — the one
 // lerp deliberately leaves behind on eject.
-func ResumeCommand(runner config.Runner, record evidence.Record) string {
+func ResumeCommand(runner config.Runner, record evidence.Record) (string, error) {
 	if runner.Resume == "" {
-		return ""
+		return "", nil
 	}
-	return expand(runner.Resume, "", record.Ticket, record.Workspace, record.SessionID)
+	sessionID, err := resolveSession(runner, record)
+	if err != nil {
+		return "", err
+	}
+	return expand(runner.Resume, "", record.Ticket, record.Workspace, sessionID), nil
 }
 
 // OpensSession reports whether runs under this runner get a session id lerp
 // chose — the one thing that can later be resumed. It is the rule NewSessionID
 // applies, asked ahead of a run: a caller deciding whether a run could ever be
 // ejected must get the same answer as the run itself.
+//
+// It is not the only way a run becomes resumable: a vendor whose CLI names
+// its own session instead of accepting one lerp mints is resumable without
+// ever opening one — see CapturesSession.
 func OpensSession(runner config.Runner) bool {
 	return strings.Contains(runner.Command, "{{session}}")
 }

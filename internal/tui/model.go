@@ -3065,7 +3065,7 @@ func (m model) attentionPanel(w, h int) string {
 	if header != "" {
 		rows = append([]string{header}, rows...)
 	}
-	return panelBox(panelTitle(1, "inbox", keys, extra), keys, w, h, rows, padList)
+	return panelBox(panelTitle(1, "inbox", keys, extra), keys, w, h, rows, padList, nil)
 }
 
 // liveLanes counts every lane hosting a live run, including the ones above
@@ -3109,7 +3109,7 @@ func (m model) workPanel(w, h int) string {
 	extra := styleFaint.Render(" · " + m.capacityLabel())
 	rows, sel := m.workListRows(padList.inner(w))
 	rows = m.panelBody(panelWork, rows, sel, padList.inner(w), h-2)
-	return panelBox(panelTitle(2, "work", keys, extra), keys, w, h, rows, padList)
+	return panelBox(panelTitle(2, "work", keys, extra), keys, w, h, rows, padList, nil)
 }
 
 // workListRows renders the merged list: each queue's header, then its
@@ -3372,7 +3372,7 @@ func (m model) mainPanel(w, h int) string {
 	}
 	if m.helpOn {
 		return panelBox(styleTitleFocus.Render("help"), true, w, h,
-			strings.Split(m.vp.View(), "\n"), padMain)
+			strings.Split(m.vp.View(), "\n"), padMain, m.mainScrollbar(h))
 	}
 	title := m.mainTitle()
 	// The pane lights up the same way a panel does — heavy box, title in
@@ -3386,10 +3386,24 @@ func (m model) mainPanel(w, h int) string {
 	// keys the other one has.
 	if m.mainFocused() {
 		return panelBox(styleTitleFocus.Render(title), true, w, h,
-			strings.Split(m.vp.View(), "\n"), padMain)
+			strings.Split(m.vp.View(), "\n"), padMain, m.mainScrollbar(h))
 	}
 	return panelBox(styleFaint.Render(title), false, w, h,
-		strings.Split(m.vp.View(), "\n"), padMain)
+		strings.Split(m.vp.View(), "\n"), padMain, m.mainScrollbar(h))
+}
+
+// mainScrollbar is the pane's position indicator over whatever the viewport
+// currently holds — reused across the ticket lens, the log tail, its raw
+// toggle and the help overlay alike, since all four are this same vp drawn
+// through this same box. h is the panel's outer height, matching panelBox's
+// own ih = h-2, so the two can never disagree about how many rows the thumb
+// has to cover.
+func (m model) mainScrollbar(h int) *scrollbar {
+	sb, ok := scrollThumb(m.vp.TotalLineCount(), h-2, m.vp.YOffset)
+	if !ok {
+		return nil
+	}
+	return &sb
 }
 
 // helpText is the ? overlay: every binding the keymap declares, and then
@@ -3441,7 +3455,7 @@ func (m model) promotePicker(w, h int) string {
 	}
 	// The highlighted status must be on screen before enter can confirm it.
 	rows = windowRows(rows, cursor{at: 2 + m.promoteSel, span: 1}, h-2)
-	return panelBox(styleTitleFocus.Render(title), true, w, h, rows, padMain)
+	return panelBox(styleTitleFocus.Render(title), true, w, h, rows, padMain, nil)
 }
 
 // ejectConfirm is the overlay eject opens: what pressing enter kills, and
@@ -3460,7 +3474,7 @@ func (m model) ejectConfirm(r workRow, w, h int) string {
 		styleFaint.Render("and all, is yours to finish in and yours to remove."),
 	}
 	rows = fitRows(rows, h-2)
-	return panelBox(styleTitleFocus.Render("eject "+r.ticket), true, w, h, rows, padMain)
+	return panelBox(styleTitleFocus.Render("eject "+r.ticket), true, w, h, rows, padMain, nil)
 }
 
 // ejectResult is the panel the eject leaves behind: the workspace it did not
@@ -3491,7 +3505,7 @@ func (m model) ejectResult(ej loop.Ejection, w, h int) string {
 	if ej.Ticket != "" {
 		title += " " + ej.Ticket
 	}
-	return panelBox(styleTitleFocus.Render(title), true, w, h, rows, padMain)
+	return panelBox(styleTitleFocus.Render(title), true, w, h, rows, padMain, nil)
 }
 
 func (m model) mainTitle() string {
