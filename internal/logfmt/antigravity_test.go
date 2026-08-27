@@ -15,6 +15,11 @@ const (
 	antigravityToolDone    = `{"event":"step_update","step_update":{"conversation_id":"c50b4e3f-6b7d-4521-8821-5558448eda5e","step_index":2,"state":"DONE","step_type":"tool","tool_name":"view_file","duration_seconds":0.039356,"tool_info":{"name":"view_file","parameters":{"AbsolutePath":"/tmp/agyprobe2/note.txt"},"output":"2 lines, 21 bytes"}}}`
 	antigravityToolError   = `{"event":"step_update","step_update":{"conversation_id":"69fdb1c8-99f3-4a96-809e-5c3253aecff6","step_index":4,"state":"ERROR","step_type":"tool","tool_name":"write_to_file","duration_seconds":0.048459,"tool_info":{"name":"write_to_file","parameters":{"TargetFile":"/Users/matt/.gemini/antigravity-cli/scratch/marker.txt"},"error":{"type":"TOOL_ERROR","message":"declaring permissions: cortex tool write_to_file: convert tool call for permissions: model output error: invalid tool call error (invalid_args) /Users/matt/.gemini/antigravity-cli/scratch/marker.txt is not a valid artifact path"}}}}`
 	antigravityResultLine1 = `{"event":"result","result":{"conversation_id":"ffd2f49a-85bf-45ab-bfad-80aed96a9b98","status":"SUCCESS","response":"Write a failing test,  \nFix the code to make it green,  \nShip with confidence.\n","duration_seconds":3.630288,"num_turns":1,"usage":{"input_tokens":13817,"output_tokens":332,"thinking_tokens":311,"cache_read_tokens":0,"total_tokens":14149}}}`
+	// The second half of the c50b4e3f conversation antigravityThinkOnly and
+	// antigravityToolStart/Done open: step 3's DONE line and the result that
+	// follows it, from the same captured run.
+	antigravityProseDone2  = `{"event":"step_update","step_update":{"conversation_id":"c50b4e3f-6b7d-4521-8821-5558448eda5e","step_index":3,"state":"DONE","step_type":"agent_response","text_delta":"The contents of note.txt are shown above.","duration_seconds":1.409779,"usage":{"input_tokens":14125,"output_tokens":94,"thinking_tokens":62,"cache_read_tokens":0,"total_tokens":14219}}}`
+	antigravityResultLine2 = `{"event":"result","result":{"conversation_id":"c50b4e3f-6b7d-4521-8821-5558448eda5e","status":"SUCCESS","num_turns":1,"duration_seconds":2.707681,"usage":{"input_tokens":27948,"output_tokens":206,"thinking_tokens":129,"cache_read_tokens":0,"total_tokens":28154}}}`
 )
 
 func TestAntigravityDecodesTheStream(t *testing.T) {
@@ -103,6 +108,34 @@ func TestAntigravityDropsWhatItDoesNotRender(t *testing.T) {
 		if ev, ok := a.Decode(line); ok {
 			t.Fatalf("line %q decoded to %+v, want it dropped", line, ev)
 		}
+	}
+}
+
+// Usage is per step, not a running total agy repeats on every line: a
+// two-step conversation's step usages sum to exactly the result line's own
+// total (13935 + 14219 = 28154, the real numbers a captured run reported).
+// Summing a running total across steps would double-count everything before
+// the last one, so if this ever drifted to cumulative, the assertion below
+// would overshoot rather than match.
+func TestAntigravityUsageIsPerStepNotCumulative(t *testing.T) {
+	a := newAntigravity()
+	first, ok := a.Decode(antigravityThinkOnly)
+	if !ok {
+		t.Fatal("step 1 did not decode")
+	}
+	second, ok := a.Decode(antigravityProseDone2)
+	if !ok {
+		t.Fatal("step 3 did not decode")
+	}
+	result, ok := a.Decode(antigravityResultLine2)
+	if !ok {
+		t.Fatal("the result line did not decode")
+	}
+	if sum := first.Usage + second.Usage; sum != 28154 {
+		t.Errorf("step usages summed to %d, want 28154 (the run's own total)", sum)
+	}
+	if result.Usage != 0 {
+		t.Errorf("result.Usage = %d, want 0: the result line must not add a third count", result.Usage)
 	}
 }
 

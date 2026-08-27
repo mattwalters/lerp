@@ -87,8 +87,11 @@ type RepoConfig struct {
 // placeholder for a session id, handed to the operator on eject.
 //
 // Command and Resume hold the resolved templates either way — what a vendor
-// block became, or what the file wrote — so run.Execute, run.OpensSession
-// and run.ResumeCommand read one shape and need no case for vendors at all.
+// block became, or what the file wrote — so run.Execute and run.OpensSession
+// read one shape and need no case for vendors at all. run.ResumeCommand reads
+// Vendor too, for a runner whose CLI names its own session instead of
+// accepting one lerp mints (run.CapturesSession) — Command and Resume alone
+// do not say which.
 type Runner struct {
 	Vendor  string `toml:"vendor"`
 	Command string `toml:"command"`
