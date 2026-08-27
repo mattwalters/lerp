@@ -87,7 +87,7 @@ For the built-in vendor adapters:
   agy mcp add linear https://mcp.linear.app/mcp
   ```
   Then complete the interactive OAuth authentication in agy's own settings
-  (tokens land in `~/.gemini/antigravity/mcp_oauth_tokens.json` and refresh
+  (tokens land in `~/.gemini/antigravity-cli/mcp_oauth_tokens.json` and refresh
   automatically).
 * **Codex (`codex`)**:
   ```sh
