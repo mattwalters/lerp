@@ -9,7 +9,7 @@ weight: 130
 ```
 usage:
   lerp [-concurrency N]         open the TUI; the loop runs while it is open
-  lerp version                  print the version
+  lerp version, --version       print the version
   lerp login                    sign in to Linear (loopback OAuth); no flags
   lerp logout                   sign out of Linear and revoke the token; no flags
   lerp init --team KEY [--yes]  map lerp's queues onto the team's board and write this repo's lerp.toml
@@ -73,10 +73,16 @@ Piped input implies `--yes`.
 
 ## `lerp version`
 
-Prints the version the binary was stamped with. A release archive carries
-its tag; `make install` stamps `git describe`, dirty tree included, so a
-local build never claims to be a release; anything built without that stamp —
-a plain `go install` or `go build` — reports `dev`.
+`--version` answers the same question. Prints the version the binary was
+stamped with. A release archive carries its tag; `make install` stamps
+`git describe`, dirty tree included, so a local build never claims to be a
+release. A binary built without either of those — `go install
+github.com/mattwalters/lerp/cmd/lerp@vX.Y.Z` chief among them — falls back to
+the module version Go's own toolchain records in the binary: the requested
+version for a `go install pkg@version` build, or a pseudo-version for a plain
+`go build` inside a VCS checkout, `+dirty` appended if the tree had changes.
+Only a build with no VCS info at all — `go build -buildvcs=false`, or a
+source archive with no `.git` — reports the literal `dev`.
 
 ## Environment
 

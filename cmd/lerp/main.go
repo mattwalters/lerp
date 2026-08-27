@@ -26,7 +26,7 @@ import (
 
 const usage = `usage:
   lerp [-concurrency N]         open the TUI; the loop runs while it is open
-  lerp version                  print the version
+  lerp version, --version       print the version
   lerp login                    sign in to Linear (loopback OAuth); no flags
   lerp logout                   sign out of Linear and revoke the token; no flags
   lerp init --team KEY [--yes]  map lerp's queues onto the team's board and write this repo's lerp.toml
@@ -39,7 +39,7 @@ const usage = `usage:
 const defaultLanes = 10
 
 func main() {
-	args := os.Args[1:]
+	args := normalizeArgs(os.Args[1:])
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
 		fs := flag.NewFlagSet("lerp", flag.ExitOnError)
 		lanes := fs.Int("concurrency", defaultLanes, "how many agents may run at once")
@@ -101,6 +101,17 @@ func main() {
 		fmt.Fprintf(os.Stderr, "lerp: unknown command %q\n\n%s", args[0], usage)
 		os.Exit(2)
 	}
+}
+
+// normalizeArgs rewrites the flag-shaped --version, the spelling scripts and
+// --help habits reach for, into the version subcommand. Left alone, it falls
+// into the bare-TUI flag set below and dies as an unknown flag instead of
+// printing anything.
+func normalizeArgs(args []string) []string {
+	if len(args) > 0 && args[0] == "--version" {
+		args[0] = "version"
+	}
+	return args
 }
 
 // openTUI runs the reconciler under the Bubble Tea shell. The TUI is the

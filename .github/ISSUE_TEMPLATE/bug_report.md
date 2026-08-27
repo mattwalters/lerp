@@ -14,9 +14,10 @@ reporting path.
 
 **What happened, and what you expected instead**
 
-**`lerp version`** — a `go install` build reports `dev`, since only
-`make install` stamps the version. If that is what you get, paste
-`go version -m $(command -v lerp)` instead; it names the commit.
+**`lerp version`** — paste what it prints. Only a build with no VCS info at
+all reports the bare `dev`, and that build has no commit to name either; if
+that is what you get, paste `go version -m $(command -v lerp)` instead — it
+still shows the Go version and module path the binary was built with.
 
 **OS** — macOS or Linux, and which version.
 
