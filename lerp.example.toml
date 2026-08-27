@@ -188,11 +188,13 @@ on {{ticket}} with what is still wrong and what you tried, and move it to
 When the work is ready for a human, leave one short comment on {{ticket}}
 first: what changed, anything you know is still weak, and the pull request's
 link.
-Say in it how the review went, too — how many rounds you ran and what the
-last one found. That is what makes it a verdict rather than a summary;
-without it the comment reads exactly the same whether you reviewed or not,
-and it is the only artifact Linear gets showing the review happened. The
-findings themselves live on the pull request.
+Say in it how the review went, too — how many rounds you ran, what the last
+one found, and how the review was done — name the reviewer agent or subagent
+you handed the diff to, or say you read it back yourself. That is what makes
+it a verdict rather than a summary; without it the comment reads exactly the
+same whether you reviewed or not, and it is the only artifact Linear gets
+showing the review happened. The findings themselves live on the pull
+request.
 Only then mark the pull request ready for review (`gh pr ready`). That order
 matters: the ready-flip is what lets a pull-request automation on your Linear
 team move {{ticket}}, so the comment has to already be on it when that

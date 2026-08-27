@@ -175,12 +175,12 @@ lands its ticket in In Review looking finished. The prompt answers that by
 leading with the contract rather than trailing it: a run ends either with a
 verdict on the ticket and the PR marked ready, or in Needs Attention saying
 what stopped it and the PR never marked ready. Nothing enforces that
-mechanically, but the verdict says how the review went — rounds run and what
-the last one found — which is what keeps it from reading the same whether the
-review happened or not, and [the board reads a ticket's
-comments](reading-the-board.md#the-main-pane) into the main pane. The comment
-goes on before the PR is marked ready: on a team configured as [Lerp needs
-the status field](install.md#lerp-needs-the-status-field) asks, nothing is
+mechanically, but the verdict says how the review went — rounds run, what
+the last one found, and how the review was done — which is what keeps it from
+reading the same whether the review happened or not, and [the board reads a
+ticket's comments](reading-the-board.md#the-main-pane) into the main pane. The
+comment goes on before the PR is marked ready: on a team configured as [Lerp
+needs the status field](install.md#lerp-needs-the-status-field) asks, nothing is
 listening for that flip and lerp's own `on_success` makes the hop — but the
 ordering is what makes the run safe on a team that has not done it yet, where
 the flip is exactly what frees an automation to move the ticket.
