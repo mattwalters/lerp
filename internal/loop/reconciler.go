@@ -107,12 +107,13 @@ const (
 	// item clears.
 	EventAttention EventType = "attention"
 	// EventTicked reports that Tick has finished emitting everything this
-	// pass will ever emit. It is always last: Tick sends it after fill and
-	// attention have both returned, over the same channel every other event
-	// this pass produced, so channel order — not wall-clock order in some
-	// other goroutine — is what guarantees it arrives after them. A
-	// subscriber that needs to know "nothing more is coming this pass"
-	// (the TUI splash, see model.go) has to learn that from this event
+	// pass will ever emit — fill and attention having both returned, or
+	// (LERP-44) the pass having been skipped outright because a rate limit
+	// is still in effect. It is always last, over the same channel every
+	// other event this pass produced, so channel order — not wall-clock
+	// order in some other goroutine — is what guarantees it arrives after
+	// them. A subscriber that needs to know "nothing more is coming this
+	// pass" (the TUI splash, see model.go) has to learn that from this event
 	// rather than from Tick's own return: Tick returning and this event
 	// being read off the channel are two different goroutines racing a
 	// buffered channel, and the goroutine that only has to return wins that
@@ -345,11 +346,13 @@ type Reconciler struct {
 	boards map[string]*teamBoard
 
 	// resumeAt is when a pass may next ask Linear anything, set by fail when
-	// an error chain carries *linear.RateLimitError. Guarded by mu: unlike
-	// boards, fail is reachable from goroutines other than the pass's own
-	// (Eject reports its failures the same way), even though only a pass's
-	// Linear reads carry this error today.
-	resumeAt time.Time
+	// an error chain carries *linear.RateLimitError. It has its own lock
+	// rather than sharing mu: fail runs under mu already held when it is
+	// reporting ejectLane's own failures (a filesystem error today, never
+	// this one, but fail has no way to know that) — sharing mu would
+	// deadlock that call the moment it ever did carry one.
+	rateLimitMu sync.Mutex
+	resumeAt    time.Time
 }
 
 // teamBoard is the attention pass's cached reading of one team: the issues
@@ -488,6 +491,12 @@ func (r *Reconciler) Run(ctx context.Context) error {
 // Tick, but production paces it from the TUI instead (tui.Options.Interval
 // drives Engine.Tick directly, no daemon behind it), so the gate has to sit
 // where every caller passes through, not in the loop only one of them uses.
+//
+// The pause has no ceiling of its own: Linear's own Retry-After is trusted
+// whole, however long, rather than clamped — a cap is retry-strategy
+// machinery the ticket asked not to grow. Promote, Eject and ForceStart are
+// still live through a long one; only the pass that starts, adopts and
+// reaps stands down.
 func (r *Reconciler) Tick(ctx context.Context) {
 	if wait, ok := r.paused(); ok {
 		r.emit(Event{Type: EventError, Err: fmt.Errorf("linear: rate limited, resuming in %s", wait.Round(time.Second))})
@@ -505,8 +514,8 @@ func (r *Reconciler) Tick(ctx context.Context) {
 // clears resumeAt once the deadline has passed, so a pass need only check
 // this — no jitter, no retry count, the one deadline the ticket asked for.
 func (r *Reconciler) paused() (time.Duration, bool) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	r.rateLimitMu.Lock()
+	defer r.rateLimitMu.Unlock()
 	if r.resumeAt.IsZero() {
 		return 0, false
 	}
@@ -525,9 +534,9 @@ func (r *Reconciler) pauseFor(d time.Duration) {
 	if d < r.o.Interval {
 		d = r.o.Interval
 	}
-	r.mu.Lock()
+	r.rateLimitMu.Lock()
 	r.resumeAt = time.Now().Add(d)
-	r.mu.Unlock()
+	r.rateLimitMu.Unlock()
 }
 
 // AttentionDefinition is the operator-facing one-line description of the
