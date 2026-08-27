@@ -53,17 +53,28 @@ The same rules the agents work under (see `AGENTS.md`):
   can fail a PR that changed nothing — a newly published
   vulnerability, or a govulncheck release, is about the tree, not your
   diff.
-- The other is `make demo`: it re-records the README's cast from
-  `docs/demo.tape`. It fails if vhs errors, if the demo harness inside
-  the recording exits non-zero — vhs would happily record a cast of
-  that error and exit 0, so the harness reports its own status in a
-  file — or if the GIF comes back over its size cap. Nothing diffs the
-  bytes, so read the failure message before you read your diff; the
-  cap is the usual answer, and the Makefile says what to do about it.
-  Reproduce it locally with `make demo`, which needs
-  [vhs](https://github.com/charmbracelet/vhs). Nothing checks that the
-  cast still shows the *right* thing, so if your change dates it,
-  commit the re-recorded `docs/demo.gif` too.
+- The other is `make casts`: it re-records every tape under
+  `docs/tapes/` — the README's cast among them. It has a workflow of
+  its own and does not run on every PR — installing vhs and its ttyd
+  and ffmpeg dependencies is the slowest thing in the run — so it
+  fires on a PR touching the casts' own inputs (`docs/tapes/**`,
+  `internal/demo/`, the Makefile), on a version tag, and on demand
+  from the Actions tab. It fails if vhs errors, if a demo harness
+  inside a recording exits non-zero — vhs would happily record a cast
+  of that error and exit 0, so the harness reports its own status in a
+  file — if a tape's `Wait+Screen` line never finds the text it names,
+  meaning a keystroke stopped driving the UI it was written against,
+  or if a rendered file comes back over its size cap. Nothing diffs
+  the bytes, so read the failure message before you read your diff;
+  the cap is the usual answer, and the Makefile says what to do about
+  it. Reproduce it locally with `make casts`, which needs
+  [vhs](https://github.com/charmbracelet/vhs); `make demo` does the
+  same for the README's tape alone and additionally moves the result
+  into `docs/demo.gif`. A tape's own `Wait+Screen` lines catch a
+  keystroke that no longer drives the UI, but a change to the TUI a
+  tape never asks anything of re-records nothing if it touches none of
+  the paths above — so if your change dates a cast, run `make demo`
+  and commit `docs/demo.gif` with it.
 - The third is `release-config`: `goreleaser check` and then `make
   snapshot`, which cross-builds the release binaries for macOS and
   Linux without publishing anything. It exists because `.goreleaser.yaml`

@@ -1,13 +1,19 @@
 # The docs site on GitHub Pages.
 #
-# The site root is the latest build and /latest/ is that same build published
-# a second time, so the version picker's "latest" option has a URL of its own.
-# "Latest" means main, not the last release: docs change with the code in the
-# same PR, so the homepage stays editable without cutting one. A release tag
-# additionally freezes a copy under /vX.Y.Z/ that is never rebuilt and appends
-# the tag to versions.json — the same tag push that cuts the binary release
-# mints the docs describing it, so a repo pinned to lerp vX.Y.Z can read the
-# docs that match it.
+# Two kinds of page, two triggers. The manual is versioned documentation and
+# publishes only on tags: /latest/ and /vX.Y.Z/ are both built from the tag's
+# own tree and neither is ever rebuilt from main, so a repo pinned to lerp
+# vX.Y.Z — and `go install …@latest`, which resolves to the last tag, not
+# main — can always read docs that match the binary. The root — the splash
+# page and Why lerp — is marketing, not documentation: it keeps tracking
+# main, rebuilding on every push, because nothing there describes a version
+# and nothing there should wait for a release to change.
+#
+# One Hugo source, staged twice rather than built twice: a main push runs the
+# whole site through Hugo once and then prunes the manual pages back out
+# before deploy, since the templates and content that shape are the same
+# for both destinations. The tag build appends to versions.json, the same
+# manifest the root's own picker reads.
 #
 # One-time setup, in this order: merging this workflow lets its first run of
 # main create the gh-pages branch, and Pages is then pointed at that branch by
@@ -43,7 +49,11 @@ on:
       - "SCOPE.md"
       - "Makefile"
       - ".github/workflows/docs.yml"
-  # A republish of main without a commit to push — after enabling Pages, say.
+  # A republish of the root without a commit to push — after enabling Pages,
+  # say. This cannot touch /latest/: dispatch is a distinct event from push,
+  # so it never satisfies the tag build's condition below. Republishing
+  # /latest/ without cutting a new tag means re-running that tag's own
+  # workflow run (Actions → the run → Re-run jobs), not dispatching this one.
   workflow_dispatch:
 
 permissions:
@@ -68,10 +78,12 @@ jobs:
         with:
           hugo-version: ${{ steps.pin.outputs.version }}
       - run: hugo --source docs --destination "$PWD/public"
-      # The other shape the templates take. A frozen build stamps a version,
-      # links into that tag on GitHub and looks a directory further up for
-      # the manifest — a layout that otherwise first runs on a tag push, the
-      # one run that cannot be repeated without moving the tag.
+      # The other shape the templates take: a versioned build, which stamps
+      # a version, links into that tag on GitHub and looks a directory
+      # further up for the manifest. /latest/ and /vX.Y.Z/ both take this
+      # shape, and both otherwise only run on a tag push — a run that cannot
+      # be repeated without moving the tag, so this is the only gate either
+      # of them gets against a broken template.
       - run: hugo --source docs --destination "$PWD/public-frozen"
         env:
           HUGO_PARAMS_VERSION: v0.0.0
@@ -111,36 +123,98 @@ jobs:
       # No baseURL is passed to any of these builds: every emitted link is
       # relative (see docs/hugo.toml), so the same pages serve from any host
       # and any directory, and only the stamped version label differs between
-      # them. The root is built first because the version directories are
-      # staged inside it.
+      # them. Root and manual are built by different runs of this job now —
+      # a main push builds only the root, a tag push only the manual — so
+      # unlike before, at most one of the two ever runs in the same
+      # execution; neither stages inside the other.
       #
-      # Only from main, because that is what "latest" means. A tag is a commit
-      # main may already have moved past, so rebuilding these from the tag's
-      # tree would roll the homepage back and label it "latest"; a tag stages
-      # only its own frozen copy, and keep_files leaves the rest standing. The
-      # ref is tested rather than the ref type because workflow_dispatch is
-      # not subject to the branch filter on the trigger — its ref dropdown
-      # lists every branch that carries this file, and a dispatch left
-      # pointing at a spike branch would publish that branch as the homepage.
+      # Only from main, because the root is marketing, not a version: it
+      # tracks main's HEAD the same way any other page describing the
+      # project's current state would. A tag is a commit main may already
+      # have moved past, so rebuilding the root from the tag's tree would
+      # roll the homepage back. The ref is tested rather than the ref type
+      # because workflow_dispatch is not subject to the branch filter on the
+      # trigger — its ref dropdown lists every branch that carries this
+      # file, and a dispatch left pointing at a spike branch would publish
+      # that branch as the homepage.
       - name: Build root
         if: github.ref == 'refs/heads/main'
         run: hugo --source docs --destination "$PWD/public"
         env:
-          HUGO_PARAMS_VERSION: latest
+          # Empty, not "latest": the root is unversioned. Stamping it
+          # "latest" would say it is a copy of the manual, which after the
+          # prune step below it no longer is.
+          HUGO_PARAMS_VERSION: ""
 
-      # A level below the root, so the version picker's manifest — and the
-      # other versions it points at — are one directory up from this copy.
-      - name: Build latest
+      # The root build above is the whole site — home, Why lerp, and the
+      # manual alike, because there is one Hugo source and one set of
+      # templates, not two builds to keep in sync. This step throws the
+      # manual pages back out of that build before deploy, leaving the
+      # marketing pages it actually publishes. docs/demo.gif is spared: it
+      # is a static file mounted alongside the manual's section index (see
+      # hugo.toml) but the splash page embeds it too, at the same path GitHub
+      # renders it from in the README, so it stays put.
+      - name: Prune the manual from the root build
         if: github.ref == 'refs/heads/main'
+        run: rm -rf public/docs/index.html public/docs/overview public/readme public/scope
+
+      # Casts are rendered from the tag's own tree, same as the manual below,
+      # so a recording always shows the released binary rather than whatever
+      # merged last. Ahead of the Hugo builds: hugo.toml already mounts
+      # docs/static into every build's static/, so a build that runs after
+      # this step picks up docs/static/casts/ for free and needs no copy of
+      # its own. workflow_dispatch cannot reach this step either, for the
+      # same reason it cannot reach the manual builds below.
+      - name: Set up Go
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      # install-only, same as demo.yml: the render itself stays `make casts`,
+      # the same command a local re-record runs.
+      - uses: charmbracelet/vhs-action@v2
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+      - name: Render casts
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        run: make casts
+
+      # The root is marketing and tracks main (see "Build root" above), so it
+      # never runs a Hugo build on this tag push to pick casts up from a
+      # mount. This is the last release's recordings, staged at the site
+      # root directly — a plain copy, not a build — so the splash page plays
+      # them too. keep_files preserves it between tags: a push to main stages
+      # nothing at public/casts (main renders no casts of its own), so it
+      # goes on serving whatever the last tag put here. Before the first tag
+      # this step has not run yet and the root has no casts at all; deciding
+      # what the splash page does about that is LERP-132's call, not this
+      # one's.
+      - name: Stage this release's casts at the site root
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        run: |
+          mkdir -p public/casts
+          cp -r docs/static/casts/. public/casts/
+
+      # The manual publishes only from a tag, from that tag's own tree —
+      # never from main, which is what keeps a manual that ships with an
+      # installable binary from describing code the binary doesn't have.
+      # workflow_dispatch cannot reach these two steps (it is not a push),
+      # so replaying /latest/ or a frozen version without cutting a new tag
+      # means re-running that tag's own workflow run, not dispatching this
+      # one.
+      #
+      # A level below where the root's version directories used to live, so
+      # the version picker's manifest — and the other versions it points at
+      # — are one directory up from this copy, same as every frozen version.
+      - name: Build latest
+        if: github.event_name == 'push' && github.ref_type == 'tag'
         run: hugo --source docs --destination "$PWD/public/latest"
         env:
           HUGO_PARAMS_VERSION: latest
           HUGO_PARAMS_VERSIONROOT: ".."
 
-      # A tag push additionally publishes the frozen copy that tag owns
-      # forever. Only a push: workflow_dispatch can be aimed at a tag ref
-      # too, and a frozen version is never rebuilt — dispatch republishes
-      # main, and aimed anywhere else it deploys nothing.
+      # The frozen copy this tag owns forever, published alongside /latest/
+      # in the same run: the release that moves /latest/ forward is the same
+      # release that needs a permanent copy of what it moved away from.
       - name: Build ${{ github.ref_name }}
         if: github.event_name == 'push' && github.ref_type == 'tag'
         run: hugo --source docs --destination "$PWD/public/$GITHUB_REF_NAME"
@@ -189,12 +263,13 @@ jobs:
           cat public/versions.json
 
       # keep_files is the point: a deploy adds or overwrites only what it
-      # staged — the root, /latest/, and on a tag /vX.Y.Z/ and versions.json —
-      # while every previously released version's directory stays frozen
-      # exactly where it was. The same property in the other direction: the
-      # root can never shed a page, so a deleted or renamed content file goes
-      # on being served from its last build until someone removes it from the
-      # branch by hand.
+      # staged — the (pruned) root on a main push, or /latest/, /vX.Y.Z/ and
+      # versions.json on a tag push — while everything else already on
+      # gh-pages, including every previously released version's directory,
+      # stays exactly where it was. The same property in the other
+      # direction: the root can never shed a page, so a deleted or renamed
+      # content file goes on being served from its last build until someone
+      # removes it from the branch by hand.
       #
       # Nothing staged means nothing to publish: a run whose builds all
       # skipped — a dispatch pointed at neither main nor a tag push — stops
