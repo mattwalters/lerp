@@ -87,10 +87,8 @@ type RepoConfig struct {
 // placeholder for a session id, handed to the operator on eject.
 //
 // Command and Resume hold the resolved templates either way — what a vendor
-// block became, or what the file wrote — so every downstream reader (the
-// five call sites in run.Execute, run.OpensSession, run.NewSessionID,
-// run.ResumeCommand, and logfmt's format sniffing) needs no case for
-// vendors at all.
+// block became, or what the file wrote — so run.Execute, run.OpensSession
+// and run.ResumeCommand read one shape and need no case for vendors at all.
 type Runner struct {
 	Vendor  string `toml:"vendor"`
 	Command string `toml:"command"`
@@ -297,9 +295,9 @@ func ParseRepoConfig(source, label string) (*RepoConfig, error) {
 }
 
 // resolveVendors fills a vendor runner's Command and Resume from its
-// adapter, once, here — rather than at each of the five call sites downstream
-// that read Runner.Command. Called only after validate has confirmed every Vendor
-// names a real adapter.
+// adapter, once, here — rather than at each call site downstream that reads
+// Runner.Command or Runner.Resume. Called only after validate has confirmed
+// every Vendor names a real adapter.
 func (c *RepoConfig) resolveVendors() {
 	for name, r := range c.Runners {
 		if r.Vendor == "" {

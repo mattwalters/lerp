@@ -48,6 +48,8 @@ dispose = 'git worktree remove --force "$LERP_WORKSPACE"'
 # or an `--allowedTools` list you curate.
 [runners.claude]
 vendor = "claude"
+# model = "opus"
+# effort = "high"
 args = "--permission-mode bypassPermissions"
 # Anything else the adapter doesn't model goes in args, appended after
 # --model/--effort, verbatim and last — so it can override an earlier flag,

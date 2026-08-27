@@ -50,6 +50,8 @@ dispose = 'git worktree remove --force "$LERP_WORKSPACE"'
 # or an `--allowedTools` list you curate.
 [runners.claude]
 vendor = "claude"
+# model = "opus"
+# effort = "high"
 #{{bypass}}
 args = "--permission-mode bypassPermissions"
 #{{/bypass}}
