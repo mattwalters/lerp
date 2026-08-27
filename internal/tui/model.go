@@ -808,7 +808,69 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m model) handleHelpKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case key.Matches(msg, m.keys.Quit):
+		return m, tea.Quit
+	case key.Matches(msg, m.keys.Help), key.Matches(msg, m.keys.Close):
+		m.setHelp(false)
+		return m, nil
+	case key.Matches(msg, m.keys.Attention):
+		m.setFocus(panelAttention)
+		m.helpVp.SetContent(m.helpText())
+		return m, nil
+	case key.Matches(msg, m.keys.Work):
+		m.setFocus(panelWork)
+		m.helpVp.SetContent(m.helpText())
+		return m, nil
+	case key.Matches(msg, m.keys.NextPanel):
+		m.cycleSurface(1)
+		m.helpVp.SetContent(m.helpText())
+		return m, nil
+	case key.Matches(msg, m.keys.PrevPanel):
+		m.cycleSurface(-1)
+		m.helpVp.SetContent(m.helpText())
+		return m, nil
+	case key.Matches(msg, m.keys.Up):
+		if m.mainFocused() {
+			m.scrollMain(-1)
+		} else {
+			m.moveSelection(-1)
+		}
+		return m, nil
+	case key.Matches(msg, m.keys.Down):
+		if m.mainFocused() {
+			m.scrollMain(1)
+		} else {
+			m.moveSelection(1)
+		}
+		return m, nil
+	case key.Matches(msg, m.keys.Raw):
+		if m.logOnScreen() {
+			m.rawLog = !m.rawLog
+			m.refreshLog()
+		}
+		return m, nil
+	case key.Matches(msg, m.keys.PageUp):
+		m.helpVp.HalfViewUp()
+		return m, nil
+	case key.Matches(msg, m.keys.PageDown):
+		m.helpVp.HalfViewDown()
+		return m, nil
+	case key.Matches(msg, m.keys.Top):
+		m.helpVp.GotoTop()
+		return m, nil
+	case key.Matches(msg, m.keys.Bottom):
+		m.helpVp.GotoBottom()
+		return m, nil
+	}
+	return m, nil
+}
+
 func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.helpOn {
+		return m.handleHelpKey(msg)
+	}
 	if m.promoting {
 		return m.handlePromoteKey(msg)
 	}
@@ -1114,6 +1176,8 @@ func (m model) handlePromoteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// and q here means "not this status" and not "not this session". (The
 	// eject overlay answers ctrl+c the other way, with tea.Quit. That
 	// disagreement is older than this switch and is not ours to settle.)
+	case key.Matches(msg, m.keys.Help):
+		m.setHelp(true)
 	case key.Matches(msg, m.keys.Close), key.Matches(msg, m.keys.Quit):
 		m.promoting = false
 	case key.Matches(msg, m.keys.Up):
@@ -1239,6 +1303,8 @@ func (m model) handleEjectKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
 		return m, tea.Quit
+	case "?":
+		m.setHelp(true)
 	case "esc", "q":
 		m.ejecting = false
 		m.ejection = nil
@@ -1346,6 +1412,7 @@ func (m *model) setHelp(on bool) {
 	}
 	m.helpOn = on
 	if on {
+		m.layout()
 		m.helpVp.SetContent(m.helpText())
 		m.helpVp.GotoTop()
 	}
@@ -2530,7 +2597,7 @@ func (m *model) layout() {
 	g := m.geometry()
 	m.vp.Width = max(0, padMain.inner(g.mainW))
 	m.vp.Height = max(1, g.mainH-2)
-	hw, hh := m.modalSize(70, 40)
+	hw, hh := m.modalSize(m.helpContentSize())
 	m.helpVp.Width = max(0, padMain.inner(hw))
 	m.helpVp.Height = max(1, hh-2)
 	m.help.Width = m.helpVp.Width
@@ -2747,6 +2814,44 @@ func (m model) keyHint(p panel, width int) string {
 	return h.ShortHelpView(m.panelKeys(p))
 }
 
+// liveRowKeys computes the liveness of every key and context for where the
+// operator stands across the panels, modals, and main pane.
+func (m model) liveRowKeys() rowKeys {
+	canPromote := len(m.promoteStatuses) > 0 && len(m.shown) > 0
+	canScroll := m.mainOpen()
+	canDetail := m.roomForMain() && m.hasRow(m.focus)
+	canStart := false
+	if m.focus == panelWork {
+		if r := m.selectedWork(); r != nil && r.ticketID != "" && r.lane == 0 {
+			canStart = true
+		}
+	}
+	canSearch := m.focus == panelAttention && len(m.shown) > 0 && !m.splashing()
+	canFold := m.mainOpen() && m.focus == panelAttention && m.foldCount > 0
+
+	return rowKeys{
+		hasLog:     m.logOnScreen(),
+		hasURL:     browser.Openable(m.selectedURL()),
+		filtered:   m.search != "",
+		projects:   m.hasProjects(),
+		canPromote: canPromote,
+		canEject:   m.canEjectSelected(),
+		visual:     m.visual && canPromote,
+		selected:   m.visualSelectionCount(),
+		canFold:    canFold,
+		canScroll:  canScroll,
+		canDetail:  canDetail,
+		canStart:   canStart,
+		canSearch:  canSearch,
+		detailOpen: m.detailOpen[m.focus],
+		inMain:     m.mainFocused(),
+		searching:  m.searching,
+		promoting:  m.promoting,
+		ejecting:   m.ejecting,
+		ejection:   m.ejection != nil,
+	}
+}
+
 // panelKeys is the focused panel's key line as bindings: what the row under
 // its cursor answers to. A panel with no row under the cursor has none —
 // the first frame, before any pass has reported, and the settled empty
@@ -2767,25 +2872,7 @@ func (m *model) panelKeys(p panel) []key.Binding {
 			return nil
 		}
 	}
-	// canPromote also gates the visual-mode line: a range with nowhere to
-	// promote to is the same as no picker to open.
-	canPromote := len(m.promoteStatuses) > 0
-	return m.keys.panelHelp(p, rowKeys{
-		// The raw toggle acts on the log in the pane, so the line offers it
-		// where that log is on screen — the panel line advertises what this
-		// frame answers to, the way it drops p where the picker has no room
-		// to open. Under the ? overlay it is the one moment the pane is
-		// certainly not showing a log, and the key is inert to match.
-		hasLog:     m.logOnScreen(),
-		hasURL:     browser.Openable(m.selectedURL()),
-		filtered:   m.search != "",
-		projects:   m.hasProjects(),
-		canPromote: canPromote,
-		canEject:   m.canEjectSelected(),
-		visual:     m.visual && canPromote,
-		selected:   m.visualSelectionCount(),
-		canFold:    m.foldable(),
-	})
+	return m.keys.panelHelp(p, m.liveRowKeys())
 }
 
 // keyHints reports whether the focused panel is carrying a key line at all:
@@ -3776,12 +3863,22 @@ func (m model) mainScrollbar(h int) *scrollbar {
 	return &sb
 }
 
-// helpText is the ? overlay: every binding the keymap declares, and then
-// the legends for the marks the inbox and the work row draw inside them.
+// helpText is the ? overlay: the live bindings for where the operator stands,
+// grouped into navigation, actions, and display, followed by the focused
+// panel's marks legend.
 func (m model) helpText() string {
-	lines := strings.Split(m.help.View(m.keys), "\n")
-	lines = append(lines, inboxLegend()...)
-	lines = append(lines, workLegend()...)
+	live := m.liveRowKeys()
+	groups := m.keys.contextHelp(m.focus, live)
+	h := m.help
+	h.Width = 0
+	lines := strings.Split(h.FullHelpView(groups), "\n")
+	switch {
+	case live.promoting, live.ejecting, live.ejection:
+	case m.focus == panelWork:
+		lines = append(lines, workLegend()...)
+	default:
+		lines = append(lines, inboxLegend()...)
+	}
 	return strings.Join(lines, "\n")
 }
 
@@ -4312,13 +4409,15 @@ func (m model) statusBar() string {
 		hint = "enter detail · " + hint
 	}
 	// A modal has the keyboard, so its own instructions replace the line.
-	switch {
-	case m.ejecting:
-		hint = "enter eject · esc cancel"
-	case m.ejection != nil:
-		hint = "esc dismiss"
-	case m.searching:
-		hint = "type to filter · enter accept · esc cancel"
+	if !m.helpOn {
+		switch {
+		case m.ejecting:
+			hint = "enter eject · esc cancel"
+		case m.ejection != nil:
+			hint = "esc dismiss"
+		case m.searching:
+			hint = "type to filter · enter accept · esc cancel"
+		}
 	}
 	right := styleFaint.Render(hint)
 
@@ -4332,7 +4431,7 @@ func (m model) statusBar() string {
 	// The picker's line is fitted against that held-open room rather than
 	// into it: a key line is the segment the bar gives up before the
 	// heartbeat, so the picker's hints go before the heartbeat does.
-	if m.promoting {
+	if m.promoting && !m.helpOn {
 		right = m.pickerLine(m.width - lipgloss.Width(left) - slot - 1)
 	}
 	fits := func(slot int) bool {
