@@ -9,12 +9,17 @@ package browser
 import (
 	"fmt"
 	"net/url"
+	"os"
 	"os/exec"
 	"runtime"
 	"strings"
 
 	"github.com/mattwalters/lerp/internal/childenv"
 )
+
+// OpenEnv names the environment variable that opts in to deep-linking into
+// Linear's desktop app instead of the web browser.
+const OpenEnv = "LERP_OPEN"
 
 // linearHost is the only host Open will launch. Every caller today — the
 // TUI's `o`, and login's authorize URL — points at Linear's own web app, so
@@ -51,23 +56,43 @@ func Openable(rawURL string) bool {
 	return u.Scheme == "https" && u.User == nil && strings.EqualFold(u.Host, linearHost)
 }
 
+// rewrite swaps the https:// scheme for linear:// when mode is "desktop",
+// so the OS opener routes the URL straight to Linear's desktop app instead
+// of bouncing through a browser first. Any other mode leaves the URL
+// untouched.
+func rewrite(rawURL, mode string) string {
+	if mode != "desktop" {
+		return rawURL
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL
+	}
+	u.Scheme = "linear"
+	return u.String()
+}
+
 // Open hands rawURL to the OS opener. The opener is a child like any other,
 // so it gets its environment from childenv: a personal `xdg-open` wrapper
 // that logs what it was given must not be logging the operator's Linear key.
+//
+// When LERP_OPEN=desktop is set, the URL is rewritten to Linear's linear://
+// deep-link scheme before being passed to the opener.
 func Open(rawURL string) error {
 	if !Openable(rawURL) {
 		return fmt.Errorf("refusing to open %s: only a plain https://%s link opens from here", rawURL, linearHost)
 	}
+	target := rewrite(rawURL, os.Getenv(OpenEnv))
 	var c *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
-		c = exec.Command("open", rawURL)
+		c = exec.Command("open", target)
 	default:
-		c = exec.Command("xdg-open", rawURL)
+		c = exec.Command("xdg-open", target)
 	}
 	c.Env = childenv.Inherited()
 	if err := c.Start(); err != nil {
-		return fmt.Errorf("open %s: %w", rawURL, err)
+		return fmt.Errorf("open %s: %w", target, err)
 	}
 	go c.Wait()
 	return nil
