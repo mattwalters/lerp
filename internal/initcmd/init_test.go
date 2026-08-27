@@ -453,6 +453,70 @@ func TestInitRejectsExistingConfigForOtherTeam(t *testing.T) {
 	}
 }
 
+func TestInitNormalizesTeamKeyCase(t *testing.T) {
+	for _, teamInput := range []string{"lerp", "  lerp  ", "lErP"} {
+		t.Run(teamInput, func(t *testing.T) {
+			dir := t.TempDir()
+			b := &fakeBoard{existing: linearDefaults}
+			created, err := Init(context.Background(), b, io.Discard, nil, dir, teamInput, "")
+			if err != nil {
+				t.Fatalf("Init error = %v", err)
+			}
+			if !created {
+				t.Error("created = false, want true")
+			}
+			if b.teamKey != "LERP" {
+				t.Errorf("EnsureTeam key = %q, want LERP", b.teamKey)
+			}
+			if b.teamName != "LERP" {
+				t.Errorf("EnsureTeam name = %q, want LERP default", b.teamName)
+			}
+			c, err := config.LoadRepoConfig(filepath.Join(dir, config.RepoConfigFile))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(c.Teams, []string{"LERP"}) {
+				t.Errorf("teams = %v, want [LERP]", c.Teams)
+			}
+		})
+	}
+}
+
+func TestInitRejectsEmptyOrWhitespaceTeamKey(t *testing.T) {
+	for _, empty := range []string{"", "   ", "\t\n"} {
+		t.Run(empty, func(t *testing.T) {
+			dir := t.TempDir()
+			b := &fakeBoard{}
+			_, err := Init(context.Background(), b, nil, nil, dir, empty, "")
+			if err == nil || !strings.Contains(err.Error(), "team key must not be empty") {
+				t.Fatalf("Init(%q) error = %v, want team key must not be empty", empty, err)
+			}
+			if b.teamKey != "" {
+				t.Error("board touched although team key was empty")
+			}
+		})
+	}
+}
+
+func TestInitNormalizesTeamKeyOnRepeat(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, config.RepoConfigFile)
+	if err := os.WriteFile(path, []byte(existingConfig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b := &fakeBoard{existing: []string{"Planning", "Implementing"}}
+	created, err := Init(context.Background(), b, io.Discard, nil, dir, "  lerp  ", "")
+	if err != nil {
+		t.Fatalf("Init error = %v", err)
+	}
+	if created {
+		t.Error("created = true, want false for existing config")
+	}
+	if b.teamKey != "LERP" {
+		t.Errorf("EnsureTeam key = %q, want LERP", b.teamKey)
+	}
+}
+
 // A mapping that folds two queues onto one status is caught by the config
 // loader before anything is written.
 func TestInitRejectsMappingTwoQueuesOntoOneStatus(t *testing.T) {
