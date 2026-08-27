@@ -271,7 +271,7 @@ dispose = "d"
 [runners.mine]
 vendor = "chatgpt"
 ` + pipeline,
-			wantErr: `runner "mine": unknown vendor "chatgpt" (known: claude, codex)`,
+			wantErr: `runner "mine": unknown vendor "chatgpt" (known: antigravity, claude, codex)`,
 		},
 		{
 			name: "model on a command runner",
@@ -513,6 +513,34 @@ on_success = "Done"
 		t.Errorf("Command = %q, want %q", r.Command, want)
 	}
 	if want := "cd {{workdir}} && claude --resume {{session}}"; r.Resume != want {
+		t.Errorf("Resume = %q, want %q", r.Resume, want)
+	}
+}
+
+func TestAntigravityVendorRunnerResolves(t *testing.T) {
+	path := writeFile(t, "lerp.toml", `
+teams = ["LERP"]
+provision = "p"
+dispose = "d"
+
+[runners.agy]
+vendor = "antigravity"
+
+[queues.plan]
+status = "Planning"
+prompt = "p"
+runner = "agy"
+on_success = "Done"
+`)
+	c, err := LoadRepoConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := c.Runners["agy"]
+	if want := "agy -p {{prompt}} --output-format stream-json --add-dir {{workdir}} --print-timeout 24h"; r.Command != want {
+		t.Errorf("Command = %q, want %q", r.Command, want)
+	}
+	if want := "cd {{workdir}} && agy --conversation {{session}}"; r.Resume != want {
 		t.Errorf("Resume = %q, want %q", r.Resume, want)
 	}
 }

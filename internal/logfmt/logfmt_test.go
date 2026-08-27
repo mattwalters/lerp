@@ -50,6 +50,68 @@ func TestStreamSniffsCodex(t *testing.T) {
 	wantKinds(t, events, KindInit, KindToolCall, KindResult)
 }
 
+// agy discriminates on `event`, not `type` — the field claude and codex both
+// use — so this is the regression detect's second probe field exists to
+// prevent: an agy stream must still pick its decoder, and a claude or codex
+// stream must still pick theirs.
+func TestStreamSniffsAntigravity(t *testing.T) {
+	var s Stream
+	events := feed(&s, antigravityInitLine+"\n"+antigravityToolStart+"\n"+antigravityToolDone+"\n")
+	wantKinds(t, events, KindInit, KindToolCall, KindToolResult)
+	if s.Raw() {
+		t.Fatal("a recognized antigravity stream reports itself as raw")
+	}
+}
+
+func TestStreamStillSniffsClaudeAndCodexAlongsideAntigravity(t *testing.T) {
+	var claudeStream Stream
+	events := feed(&claudeStream, claudeInit+"\n")
+	wantKinds(t, events, KindInit)
+	if claudeStream.Raw() {
+		t.Fatal("claude stream fell back to raw once agy's probe field was added")
+	}
+
+	var codexStream Stream
+	events = feed(&codexStream, codexStart+"\n")
+	wantKinds(t, events, KindInit)
+	if codexStream.Raw() {
+		t.Fatal("codex stream fell back to raw once agy's probe field was added")
+	}
+}
+
+// An `event`-keyed line whose value no case here knows is still a JSON event,
+// not text — the same rule a `type`-keyed line already gets.
+func TestStreamHoldsAnUnclaimedEventValue(t *testing.T) {
+	var s Stream
+	lead := `{"event":"something_else","something_else":{}}`
+	if events := feed(&s, lead+"\n"); len(events) != 0 {
+		t.Fatalf("an undecided stream emitted %v", kinds(events))
+	}
+	wantKinds(t, feed(&s, antigravityInitLine+"\n"), KindInit)
+	if s.Raw() {
+		t.Fatal("a leading unclaimed event value made the stream give up on the format")
+	}
+}
+
+// Claude Code's --include-partial-messages carries a *nested object* under
+// an "event" key ({"type":"stream_event","event":{...}}), the same key name
+// agy's discriminator uses for a plain string. That must not make the probe
+// fail to unmarshal at all — which would misread a real claude line as not a
+// JSON event, rather than one this switch simply does not claim (it is held
+// like any other unclaimed event, and a claude line that follows still names
+// the format).
+func TestStreamHoldsAClaudeStreamEventLineWhoseEventKeyIsAnObject(t *testing.T) {
+	var s Stream
+	lead := `{"type":"stream_event","event":{"type":"content_block_delta"},"session_id":"abc"}`
+	if events := feed(&s, lead+"\n"); len(events) != 0 {
+		t.Fatalf("an undecided stream emitted %v", kinds(events))
+	}
+	wantKinds(t, feed(&s, claudeInit+"\n"), KindInit)
+	if s.Raw() {
+		t.Fatal("a claude stream_event line with a nested event object made the stream give up on the format")
+	}
+}
+
 // The board attaches to a log already being written, so the first bytes it
 // reads are the tail of a line. Skipping to the next newline is what keeps
 // that fragment from deciding the format — or from reaching the pane.
