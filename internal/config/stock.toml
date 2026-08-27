@@ -29,16 +29,16 @@ dispose = 'git worktree remove --force "$LERP_WORKSPACE"'
 # Runner
 # --------------------------------------------------------------------------
 
-# Claude Code, headless. {{prompt}} carries the queue's prompt, {{session}} a
-# UUID lerp generates so the run can later be resumed by `resume` below —
-# which is what `eject` hands you when you want to take the wheel yourself.
-# That command starts with `cd {{workdir}}` because Claude Code files a
-# session under the directory it ran in: pasted anywhere else, --resume would
-# not find it. Lerp shell-quotes both values, so it stays one safe command.
-#
-# `--output-format stream-json --verbose` streams every event as a JSON line
-# while the run is live. Without it, `claude -p` prints only the final result
-# at exit, and the board's log tail stays empty for the whole run.
+# The claude adapter supplies the invocation: `claude -p {{prompt}}
+# --session-id {{session}} --output-format stream-json --verbose`, streaming
+# every event as a JSON line while the run is live so the board's log tail
+# does not stay empty for the whole run — plus `--model`/`--effort` when you
+# set them below. {{session}} is a UUID lerp generates so the run can later
+# be resumed — which is what `eject` hands you when you want to take the
+# wheel yourself. Resume comes from the adapter too: `cd {{workdir}} &&
+# claude --resume {{session}}`, starting with `cd` because Claude Code files
+# a session under the directory it ran in — pasted anywhere else, --resume
+# would not find it.
 #
 # PERMISSIONS: with `--permission-mode bypassPermissions`, the agent edits
 # files and runs commands (git, gh, tests) without asking — using your full
@@ -49,8 +49,16 @@ dispose = 'git worktree remove --force "$LERP_WORKSPACE"'
 # either this grant — made deliberately, in review, where this file lives —
 # or an `--allowedTools` list you curate.
 [runners.claude]
-command = "claude -p {{prompt}} --session-id {{session}} --output-format stream-json --verbose --permission-mode bypassPermissions"
-resume = "cd {{workdir}} && claude --resume {{session}}"
+vendor = "claude"
+#{{bypass}}
+args = "--permission-mode bypassPermissions"
+#{{/bypass}}
+# Anything else the adapter doesn't model goes in args, appended after
+# --model/--effort, verbatim and last — so it can override an earlier flag,
+# last-wins like the CLI itself. To step outside the adapter entirely, name a
+# command instead of a vendor:
+# command = "claude -p {{prompt}} --session-id {{session}} --output-format stream-json --verbose"
+# resume = "cd {{workdir}} && claude --resume {{session}}"
 
 # The agent needs its own Linear access — lerp passes only the ticket
 # identifier, never the ticket body, and stage artifacts (the plan in the

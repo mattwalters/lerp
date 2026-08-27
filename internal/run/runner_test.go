@@ -538,6 +538,47 @@ func TestNewSessionIDOnlyWhenTheCommandAsks(t *testing.T) {
 	}
 }
 
+// A vendor block resolves, at config load, to the same shape a hand-written
+// runner fills — so it is ejectable end to end with no case for vendors
+// anywhere in this package: a session id is minted, and the resume template
+// the adapter supplied expands into the pasteable line.
+func TestVendorConfiguredRunnerIsEjectable(t *testing.T) {
+	c, err := config.ParseRepoConfig(`
+teams = ["LERP"]
+provision = "p"
+dispose = "d"
+
+[runners.claude]
+vendor = "claude"
+
+[queues.implement]
+status = "Implementing"
+prompt = "p {{ticket}}"
+runner = "claude"
+on_success = "Done"
+`, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := c.Runners["claude"]
+
+	if !OpensSession(runner) {
+		t.Error("OpensSession = false, want true for a runner whose command asks for {{session}}")
+	}
+	id, err := NewSessionID(runner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !uuidPattern.MatchString(id) {
+		t.Errorf("NewSessionID = %q, want a version 4 UUID", id)
+	}
+	record := evidence.Record{SessionID: id, Ticket: "LERP-1", Workspace: "/tmp/lane"}
+	want := "cd '/tmp/lane' && claude --resume '" + id + "'"
+	if got := ResumeCommand(runner, record); got != want {
+		t.Errorf("ResumeCommand = %q, want %q", got, want)
+	}
+}
+
 // The resume command is pasted into a shell by a human, so it is quoted the
 // way Execute quotes the command it ran — a workspace path with a space in it
 // resumes, and nothing a ticket carries can add a second command to it.

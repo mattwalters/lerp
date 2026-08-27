@@ -9,15 +9,12 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+	"github.com/mattwalters/lerp/internal/vendors"
 )
 
 // RepoConfigFile is the name of the per-repo config file, found at the
 // repo root.
 const RepoConfigFile = "lerp.toml"
-
-// bypassFlag is the permission grant the stock Claude runner carries when the
-// operator accepts it at init. It is stripped verbatim when they decline.
-const bypassFlag = " --permission-mode bypassPermissions"
 
 // stockRepo is the template for the first-run lerp.toml written by lerp
 // init, rendered by Stock.Render. Keep it in the config package so the
@@ -82,13 +79,40 @@ type RepoConfig struct {
 	Queues    map[string]Queue  `toml:"queues"`
 }
 
-// Runner is an adapter to a coding-agent CLI. Command is a template
-// with placeholders for the prompt and working directory; Resume,
-// if set, is a template with a placeholder for a session id, handed
-// to the operator on eject.
+// Runner is an adapter to a coding-agent CLI. Exactly one of Vendor or
+// Command is set in the checked-in file: Vendor names a built-in adapter
+// (SCOPE concept 3), which supplies Command and Resume from Model, Effort
+// and Args; Command is a hand-written template with placeholders for the
+// prompt and working directory, and Resume, if set, is a template with a
+// placeholder for a session id, handed to the operator on eject.
+//
+// Command and Resume hold the resolved templates either way — what a vendor
+// block became, or what the file wrote — so every downstream reader (the
+// five call sites that used to each resolve a vendor themselves) needs no
+// case for vendors at all.
 type Runner struct {
+	Vendor  string `toml:"vendor"`
 	Command string `toml:"command"`
 	Resume  string `toml:"resume"`
+	Model   string `toml:"model"`
+	Effort  string `toml:"effort"`
+	Args    string `toml:"args"`
+}
+
+// vendorOnlyField reports the first of Model, Effort or Args set on a
+// runner, for a command runner where none of them means anything: they
+// configure a vendor adapter, and silently ignoring a typo'd one would hide
+// it rather than refuse it.
+func (r Runner) vendorOnlyField() (string, bool) {
+	switch {
+	case r.Model != "":
+		return "model", true
+	case r.Effort != "":
+		return "effort", true
+	case r.Args != "":
+		return "args", true
+	}
+	return "", false
 }
 
 // Queue is a Linear status with instructions attached: exactly the
@@ -150,7 +174,7 @@ func (s Stock) Render() string {
 	for i, team := range s.Teams {
 		quoted[i] = fmt.Sprintf("%q", team)
 	}
-	rendered := renderSections(stockRepo, map[string]bool{"plan": s.Plan, "review": s.Review})
+	rendered := renderSections(stockRepo, map[string]bool{"plan": s.Plan, "review": s.Review, "bypass": s.Bypass})
 	rendered = strings.NewReplacer(
 		"{{teams}}", strings.Join(quoted, ", "),
 		"{{plan_status}}", orStock(s.PlanStatus, StockPlanStatus),
@@ -159,9 +183,6 @@ func (s Stock) Render() string {
 		"{{exit_status}}", orStock(s.ExitStatus, StockExitStatus),
 		"{{attention_status}}", orStock(s.AttentionStatus, StockAttentionStatus),
 	).Replace(rendered)
-	if !s.Bypass {
-		rendered = strings.ReplaceAll(rendered, bypassFlag, "")
-	}
 	return rendered
 }
 
@@ -270,7 +291,25 @@ func ParseRepoConfig(source, label string) (*RepoConfig, error) {
 	if err := c.validate(label); err != nil {
 		return nil, err
 	}
+	c.resolveVendors()
 	return &c, nil
+}
+
+// resolveVendors fills a vendor runner's Command and Resume from its
+// adapter, once, here — rather than at each of the five call sites that read
+// Runner.Command. Called only after validate has confirmed every Vendor
+// names a real adapter.
+func (c *RepoConfig) resolveVendors() {
+	for name, r := range c.Runners {
+		if r.Vendor == "" {
+			continue
+		}
+		adapter, _ := vendors.Lookup(r.Vendor)
+		opts := vendors.Options{Model: r.Model, Effort: r.Effort, Args: r.Args}
+		r.Command = adapter.Command(opts)
+		r.Resume = adapter.Resume(opts)
+		c.Runners[name] = r
+	}
 }
 
 func (c *RepoConfig) validate(path string) error {
@@ -294,8 +333,21 @@ func (c *RepoConfig) validate(path string) error {
 		return fmt.Errorf("%s: dispose must not be empty", path)
 	}
 	for _, name := range slices.Sorted(maps.Keys(c.Runners)) {
-		if c.Runners[name].Command == "" {
-			return fmt.Errorf("%s: runner %q: command must not be empty", path, name)
+		r := c.Runners[name]
+		if (r.Vendor == "") == (r.Command == "") {
+			return fmt.Errorf("%s: runner %q: set exactly one of vendor or command", path, name)
+		}
+		if r.Vendor == "" {
+			if field, set := r.vendorOnlyField(); set {
+				return fmt.Errorf("%s: runner %q: %s is set on a command runner; it belongs to a vendor", path, name, field)
+			}
+			continue
+		}
+		if _, ok := vendors.Lookup(r.Vendor); !ok {
+			return fmt.Errorf("%s: runner %q: unknown vendor %q (known: %s)", path, name, r.Vendor, strings.Join(vendors.Names(), ", "))
+		}
+		if r.Resume != "" {
+			return fmt.Errorf("%s: runner %q: resume is set by vendor %q; disagree with it by using a command runner instead", path, name, r.Vendor)
 		}
 	}
 	if len(c.Queues) == 0 {

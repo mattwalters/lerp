@@ -237,7 +237,7 @@ when = "always"
 			wantErr: "unknown key(s): queues.plan.when",
 		},
 		{
-			name: "runner without command",
+			name: "runner without vendor or command",
 			toml: `
 teams = ["LERP"]
 provision = "p"
@@ -246,7 +246,84 @@ dispose = "d"
 [runners.mine]
 resume = "mine --resume {{session}}"
 ` + pipeline,
-			wantErr: `runner "mine": command must not be empty`,
+			wantErr: `runner "mine": set exactly one of vendor or command`,
+		},
+		{
+			name: "runner with both vendor and command",
+			toml: `
+teams = ["LERP"]
+provision = "p"
+dispose = "d"
+
+[runners.mine]
+vendor = "claude"
+command = "claude"
+` + pipeline,
+			wantErr: `runner "mine": set exactly one of vendor or command`,
+		},
+		{
+			name: "runner with unknown vendor",
+			toml: `
+teams = ["LERP"]
+provision = "p"
+dispose = "d"
+
+[runners.mine]
+vendor = "chatgpt"
+` + pipeline,
+			wantErr: `runner "mine": unknown vendor "chatgpt" (known: claude)`,
+		},
+		{
+			name: "model on a command runner",
+			toml: `
+teams = ["LERP"]
+provision = "p"
+dispose = "d"
+
+[runners.mine]
+command = "mine {{prompt}}"
+model = "opus"
+` + pipeline,
+			wantErr: `runner "mine": model is set on a command runner; it belongs to a vendor`,
+		},
+		{
+			name: "effort on a command runner",
+			toml: `
+teams = ["LERP"]
+provision = "p"
+dispose = "d"
+
+[runners.mine]
+command = "mine {{prompt}}"
+effort = "high"
+` + pipeline,
+			wantErr: `runner "mine": effort is set on a command runner; it belongs to a vendor`,
+		},
+		{
+			name: "args on a command runner",
+			toml: `
+teams = ["LERP"]
+provision = "p"
+dispose = "d"
+
+[runners.mine]
+command = "mine {{prompt}}"
+args = "--verbose"
+` + pipeline,
+			wantErr: `runner "mine": args is set on a command runner; it belongs to a vendor`,
+		},
+		{
+			name: "resume alongside a vendor",
+			toml: `
+teams = ["LERP"]
+provision = "p"
+dispose = "d"
+
+[runners.mine]
+vendor = "claude"
+resume = "claude --resume {{session}}"
+` + pipeline,
+			wantErr: `runner "mine": resume is set by vendor "claude"; disagree with it by using a command runner instead`,
 		},
 		{
 			name: "queue without status",
@@ -407,6 +484,96 @@ func TestQueueExpandPrompt(t *testing.T) {
 	want := "Work LERP-42 in Implementing; done goes to In Review, trouble to Needs Attention. Close LERP-42."
 	if got != want {
 		t.Errorf("ExpandPrompt = %q, want %q", got, want)
+	}
+}
+
+// A three-line vendor block resolves to the adapter's default command and
+// resume, with nothing downstream needing a case for vendors.
+func TestVendorRunnerResolves(t *testing.T) {
+	path := writeFile(t, "lerp.toml", `
+teams = ["LERP"]
+provision = "p"
+dispose = "d"
+
+[runners.claude]
+vendor = "claude"
+
+[queues.plan]
+status = "Planning"
+prompt = "p"
+runner = "claude"
+on_success = "Done"
+`)
+	c, err := LoadRepoConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := c.Runners["claude"]
+	if want := "claude -p {{prompt}} --session-id {{session}} --output-format stream-json --verbose"; r.Command != want {
+		t.Errorf("Command = %q, want %q", r.Command, want)
+	}
+	if want := "cd {{workdir}} && claude --resume {{session}}"; r.Resume != want {
+		t.Errorf("Resume = %q, want %q", r.Resume, want)
+	}
+}
+
+// Model, Effort and Args each reach the resolved command, singly and
+// together — the override precedence a vendor block's whole point rests on.
+func TestVendorRunnerOverridePrecedence(t *testing.T) {
+	tests := []struct {
+		name  string
+		extra string
+		want  string
+	}{
+		{
+			name:  "model",
+			extra: `model = "opus"`,
+			want:  "claude -p {{prompt}} --session-id {{session}} --output-format stream-json --verbose --model 'opus'",
+		},
+		{
+			name:  "effort",
+			extra: `effort = "high"`,
+			want:  "claude -p {{prompt}} --session-id {{session}} --output-format stream-json --verbose --effort 'high'",
+		},
+		{
+			name:  "args",
+			extra: `args = "--permission-mode bypassPermissions"`,
+			want:  "claude -p {{prompt}} --session-id {{session}} --output-format stream-json --verbose --permission-mode bypassPermissions",
+		},
+		{
+			name: "all three",
+			extra: "model = \"opus\"\n" +
+				"effort = \"high\"\n" +
+				`args = "--permission-mode bypassPermissions"`,
+			want: "claude -p {{prompt}} --session-id {{session}} --output-format stream-json --verbose" +
+				" --model 'opus' --effort 'high' --permission-mode bypassPermissions",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := writeFile(t, "lerp.toml", `
+teams = ["LERP"]
+provision = "p"
+dispose = "d"
+
+[runners.claude]
+vendor = "claude"
+`+tt.extra+`
+
+[queues.plan]
+status = "Planning"
+prompt = "p"
+runner = "claude"
+on_success = "Done"
+`)
+			c, err := LoadRepoConfig(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := c.Runners["claude"].Command; got != tt.want {
+				t.Errorf("Command = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -625,41 +792,52 @@ func firstDiff(got, want string) string {
 		lines, which, long[len(short)])
 }
 
-// Declining the permission grant strips bypassFlag from the whole rendered
-// document, not from the runner commands alone — Render has no idea which
-// occurrence is a command and which is prose. The only thing keeping the
-// PERMISSIONS paragraph out of its way is that the paragraph writes the flag
-// inside backticks, so no space precedes it. Unquote it and the operator who
-// declined — the one whose config is the security-sensitive one — gets a
-// warning with its subject deleted, while the byte pin above, which renders
-// only the accepting case, stays green.
-//
-// Scanning the template rather than a rendering is deliberate: line numbers
-// then name the file a reader has to edit, and occupants of optional sections
-// are covered even when the rendering being checked drops them.
+// Declining the permission grant drops the whole #{{bypass}} section instead
+// of string-replacing the flag out of the rendered document — so the only
+// place the grant can appear as real config is inside that section, and
+// nowhere else can declining reach in and edit text nobody meant it to
+// touch. Comment lines (prose, and the commented-out command = example) are
+// exempt: the PERMISSIONS paragraph is deliberately the one place the flag
+// survives declining, so an operator knows how to widen later.
 func TestBypassFlagAppearsOnlyInRunnerCommands(t *testing.T) {
-	table, inPrompt := "", false
+	const flag = "--permission-mode bypassPermissions"
+	inBypass, found := false, false
 	for i, line := range strings.Split(stockRepo, "\n") {
-		// Prompt bodies are multi-line basic strings, and a prompt that shows
-		// a config snippet contains lines that look exactly like table
-		// headers. Track the quotes first, or such a prompt could name itself
-		// [runners.claude] and take the exemption meant for real runners.
-		if quotes := strings.Count(line, `"""`); quotes%2 == 1 {
-			inPrompt = !inPrompt
-		}
-		if !inPrompt && strings.HasPrefix(line, "[") {
-			table = strings.TrimSuffix(strings.TrimPrefix(line, "["), "]")
-		}
-		// A runner's command is the one place the strip is meant to reach.
-		// Anywhere else — prose, or a prompt body that happens to show an
-		// invocation — declining would edit text nobody meant it to touch.
-		if !strings.Contains(line, bypassFlag) {
+		switch strings.TrimSpace(line) {
+		case "#{{bypass}}":
+			inBypass = true
+			continue
+		case "#{{/bypass}}":
+			inBypass = false
 			continue
 		}
-		if !strings.HasPrefix(table, "runners.") || !strings.HasPrefix(line, "command = ") {
-			t.Errorf("stock.toml line %d has %q outside a runner command, so declining the grant would edit it:\n  %s",
-				i+1, bypassFlag, line)
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			continue // prose and the commented-out escape-hatch example
 		}
+		if !strings.Contains(line, flag) {
+			continue
+		}
+		found = true
+		if !inBypass || !strings.HasPrefix(trimmed, "args = ") {
+			t.Errorf("stock.toml line %d has %q outside the #{{bypass}} section's args line, so declining the grant would not remove it:\n  %s",
+				i+1, flag, line)
+		}
+	}
+	if !found {
+		t.Error("stock.toml never sets the bypass grant")
+	}
+
+	declined := Stock{Teams: []string{"LERP"}}.Render()
+	c, err := ParseRepoConfig(declined, "declined")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(c.Runners["claude"].Command, flag) {
+		t.Errorf("declining the grant left %q in the resolved command %q", flag, c.Runners["claude"].Command)
+	}
+	if !strings.Contains(declined, "PERMISSIONS:") {
+		t.Error("declining the grant lost the PERMISSIONS paragraph")
 	}
 }
 
