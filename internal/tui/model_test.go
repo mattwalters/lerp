@@ -360,6 +360,7 @@ func TestExitedEventReportsASkippedHop(t *testing.T) {
 // where it survives the row.
 func TestExitedEventCarriesTheRunsFinalCost(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 		TicketID: "id-42", Ticket: "LERP-42", Queue: "implement", LogPath: "/dev/null"}})
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventExited, RunID: "r1", Lane: 1,
@@ -377,6 +378,7 @@ func TestExitedEventCarriesTheRunsFinalCost(t *testing.T) {
 // would make the assertion about truncation rather than about the cost.
 func TestSkippedHopNoteStillCarriesCost(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventExited, RunID: "r1", Lane: 1,
 		TicketID: "id-42", Ticket: "LERP-42", Queue: "implement", ExitCode: 0, Note: "hop skipped", Cost: 0.42}})
 	if view := m.View(); !strings.Contains(view, "hop skipped · $0.42") {
@@ -2247,6 +2249,7 @@ func TestPromotePickerClosesWhenTheListEmpties(t *testing.T) {
 // the moment it opened, and a background pass has no door to that decision.
 func TestPromoteCommitsToTheTargetCapturedAtOpen(t *testing.T) {
 	m, _, _, promoter := newPromoteTestModel(t, 1, defaultTestStatuses)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: threeWaiting()}) // cursor starts on id-1
 
@@ -2285,6 +2288,7 @@ func TestPromoteCommitsToTheTargetCapturedAtOpen(t *testing.T) {
 // there, since a range draws nothing while that panel is unfocused.
 func TestEscOnAnotherPanelDoesNotSwallowTheVisualSelection(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: threeWaiting()})
 	m = update(t, m, keyMsg("v"))
@@ -2333,6 +2337,7 @@ func TestSingleTicketFailureMarksTheCursorsOwnRow(t *testing.T) {
 	forceColour(t)
 	promoter := &recordingPromoter{err: errors.New("claimed by another lerp")}
 	m, _, _ := newTestModelWith(t, 1, defaultTestStatuses, promoter, &recordingEjector{}, &recordingStarter{}, &recordingReader{})
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
 		{Ticket: "LERP-4", TicketID: "loose", Title: "Nobody's routed this", Status: "Backlog"},
@@ -2361,6 +2366,7 @@ func TestSingleTicketFailureMarksTheCursorsOwnRow(t *testing.T) {
 // ticket takes, one per target, in order.
 func TestBatchPromoteMovesEverySelectedRow(t *testing.T) {
 	m, _, _, promoter := newPromoteTestModel(t, 1, defaultTestStatuses)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: threeWaiting()})
 
@@ -2406,6 +2412,7 @@ func TestBatchPromoteMovesEverySelectedRow(t *testing.T) {
 func TestMidBatchFailureSettlesTheRest(t *testing.T) {
 	promoter := &recordingPromoter{errs: map[string]error{"id-2": errors.New("claimed by another lerp")}}
 	m, _, _ := newTestModelWith(t, 1, defaultTestStatuses, promoter, &recordingEjector{}, &recordingStarter{}, &recordingReader{})
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: threeWaiting()})
 
@@ -2447,6 +2454,7 @@ func TestMidBatchFailureSettlesTheRest(t *testing.T) {
 // acting on the cursor's own row.
 func TestEscDegradesVisualToSingleTicket(t *testing.T) {
 	m, _, _, promoter := newPromoteTestModel(t, 1, defaultTestStatuses)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: threeWaiting()})
 
@@ -2479,6 +2487,7 @@ func TestDisplayControlsDropTheSelection(t *testing.T) {
 	for _, key := range []string{"s", "P", "B", "/"} {
 		t.Run(key, func(t *testing.T) {
 			m, _, _, promoter := newPromoteTestModel(t, 1, defaultTestStatuses)
+			m = pastTheSplash(t, m)
 			m = update(t, m, keyMsg("1"))
 			m = update(t, m, eventMsg{ev: threeWaiting()})
 
@@ -2516,6 +2525,7 @@ func TestDisplayControlsDropTheSelection(t *testing.T) {
 // that have since changed underneath it.
 func TestVisualEndsWhenTheAnchorLeaves(t *testing.T) {
 	m, _, _, promoter := newPromoteTestModel(t, 1, defaultTestStatuses)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: threeWaiting()})
 
@@ -2551,6 +2561,7 @@ func TestVisualEndsWhenTheAnchorLeaves(t *testing.T) {
 // swaps to the promote-count hint while a range is live.
 func TestVisualRangeRendersTheBandAndTheKeyLine(t *testing.T) {
 	m, _, _, _ := newPromoteTestModel(t, 1, defaultTestStatuses)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: threeWaiting()})
 
@@ -3242,6 +3253,7 @@ func TestTheTooSmallScreenNamesTheFilterItWillClearFirst(t *testing.T) {
 // tests, for the selection instead of a filter.
 func TestTheTooSmallScreenNamesTheSelectionItWillDropFirst(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: threeWaiting()})
 	m = update(t, m, keyMsg("v"))
@@ -3279,6 +3291,7 @@ func TestTheTooSmallScreenNamesTheSelectionItWillDropFirst(t *testing.T) {
 // followed by the path that closes one.
 func TestClearingTheFilterFromAnotherPanelDropsTheSelection(t *testing.T) {
 	m, _, _, promoter := newPromoteTestModel(t, 1, defaultTestStatuses)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: threeWaiting()})
 
@@ -3326,6 +3339,7 @@ func TestClearingTheFilterFromAnotherPanelDropsTheSelection(t *testing.T) {
 // follows when the operator cycles the scope by hand.
 func TestProjectScopeResetDropsTheSelection(t *testing.T) {
 	m, _, _, promoter := newPromoteTestModel(t, 1, defaultTestStatuses)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
 		{Ticket: "LERP-1", TicketID: "id-1", Title: "First", Status: "Backlog", Project: "A"},
@@ -4805,6 +4819,7 @@ func TestTicketDetailShowsBodyAndComments(t *testing.T) {
 // to need paging through.
 func TestFoldKeyTogglesSectionUnderCursor(t *testing.T) {
 	m, _, reader := newReadingTestModel(t)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: threeWaiting()})
 	m = update(t, m, keyMsg("enter"))
@@ -4832,6 +4847,7 @@ func TestFoldKeyTogglesSectionUnderCursor(t *testing.T) {
 // same key opens it back up once everything is already folded.
 func TestFoldAllTogglesTheWholeOutline(t *testing.T) {
 	m, _, reader := newReadingTestModel(t)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: threeWaiting()})
 	m = update(t, m, keyMsg("enter"))
@@ -4862,6 +4878,7 @@ func TestFoldAllTogglesTheWholeOutline(t *testing.T) {
 // followed, since the pop happens exactly because that heading is reached.
 func TestFoldTogglesTheSectionTheCursorIsActuallyIn(t *testing.T) {
 	m, _, reader := newReadingTestModel(t)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: threeWaiting()})
 	m = update(t, m, keyMsg("enter"))
@@ -4895,6 +4912,7 @@ func TestFoldTogglesTheSectionTheCursorIsActuallyIn(t *testing.T) {
 // never grows a "hidden" line nobody asked for.
 func TestFoldKeysAreInertWithNoHeadings(t *testing.T) {
 	m, _, reader := newReadingTestModel(t)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: threeWaiting()})
 	m = update(t, m, keyMsg("enter"))
@@ -4913,6 +4931,7 @@ func TestFoldKeysAreInertWithNoHeadings(t *testing.T) {
 // drops out where there is no log to flip.
 func TestFoldKeyHintsOnlyWhereThereIsSomethingToFold(t *testing.T) {
 	m, _, reader := newReadingTestModel(t)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: threeWaiting()})
 	m = update(t, m, keyMsg("enter"))
@@ -4922,6 +4941,7 @@ func TestFoldKeyHintsOnlyWhereThereIsSomethingToFold(t *testing.T) {
 	}
 
 	m2, _, reader2 := newReadingTestModel(t)
+	m2 = pastTheSplash(t, m2)
 	m2 = update(t, m2, keyMsg("1"))
 	m2 = update(t, m2, eventMsg{ev: threeWaiting()})
 	m2 = update(t, m2, keyMsg("enter"))
@@ -4936,6 +4956,7 @@ func TestFoldKeyHintsOnlyWhereThereIsSomethingToFold(t *testing.T) {
 // clamps to the shorter content rather than to what the fold hid.
 func TestFoldedLengthInteractsWithScrolling(t *testing.T) {
 	m, _, reader := newReadingTestModel(t)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: threeWaiting()})
 	m = update(t, m, keyMsg("enter"))
@@ -4990,6 +5011,7 @@ func TestFoldHintSurvivesBeforeTheDisplayCycles(t *testing.T) {
 // instead of doing nothing.
 func TestFoldKeyFallsBackPastTheLastSection(t *testing.T) {
 	m, _, reader := newReadingTestModel(t)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: threeWaiting()})
 	m = update(t, m, keyMsg("enter"))
@@ -5033,6 +5055,7 @@ func TestFoldKeyFallsBackPastTheLastSection(t *testing.T) {
 // perfectly valid without any re-anchor at all.
 func TestFoldAtTheTopDoesNotScrollThePanesOwnHeaderOffScreen(t *testing.T) {
 	m, _, reader := newReadingTestModel(t)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: threeWaiting()})
 	m = update(t, m, keyMsg("enter"))
@@ -5072,6 +5095,7 @@ func TestFoldAtTheTopDoesNotScrollThePanesOwnHeaderOffScreen(t *testing.T) {
 // in the body itself.
 func TestFoldReanchorsFromTheBlankAfterAHeadingToo(t *testing.T) {
 	m, _, reader := newReadingTestModel(t)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: threeWaiting()})
 	m = update(t, m, keyMsg("enter"))
@@ -5108,6 +5132,7 @@ func TestFoldReanchorsFromTheBlankAfterAHeadingToo(t *testing.T) {
 // viewport to the folded heading's own (unmoved) line.
 func TestFoldReanchorsTheViewportToTheFoldedSection(t *testing.T) {
 	m, _, reader := newReadingTestModel(t)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: threeWaiting()})
 	m = update(t, m, keyMsg("enter"))
