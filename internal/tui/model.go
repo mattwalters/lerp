@@ -782,10 +782,15 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// detail pane. handleSearchKey has esc while the prompt itself is
 		// open, and the filter is not the inbox panel's alone — it is on the
 		// list wherever the operator is standing.
+		//
+		// Visual mode is inbox-only, and unlike the filter it draws nothing
+		// while that panel is unfocused (see attentionRows): esc on the work
+		// panel must not spend itself closing an invisible range instead of
+		// the pane in front of the operator.
 		switch {
 		case m.helpOn:
 			m.setHelp(false)
-		case m.visual:
+		case m.visual && m.focus == panelAttention:
 			m.dropVisual()
 		case m.search != "":
 			m.setSearch("")
@@ -2829,9 +2834,8 @@ const (
 // every row a live range spans besides — the band takes the panel's whole
 // inner width past the title's own cut, which is why it is laid on the
 // assembled line rather than built into any one cell. failed is a batch
-// promote's sticky ✗ (see promoteErr); the cursor's own arrow still wins
-// the gutter where the two coincide, on the row the status bar is already
-// naming the failure for.
+// promote's sticky ✗ (see promoteErr); see attentionMark for how the gutter
+// draws both at once.
 func attentionRow(it loop.AttentionItem, isCursor, banded, failed bool, c attentionColumns, width int, query string) string {
 	id := padTo(highlight(it.Ticket, query, styleTicket), c.id)
 	row := inboxLine(attentionMark(isCursor, failed), id, leverageCell(it), statusCell(it, c.status, query),
@@ -2848,6 +2852,13 @@ func attentionRow(it loop.AttentionItem, isCursor, banded, failed bool, c attent
 // otherwise, or nothing.
 func attentionMark(isCursor, failed bool) string {
 	switch {
+	// The shape stays ▸ — the cursor is never mistaken for a row nobody is
+	// standing on — but a batch that failed on the ticket the cursor already
+	// sits on (the common case: a single promote, or a range's last row)
+	// still needs to be sticky here. The note that also names it fades with
+	// the next clean pass; this does not.
+	case isCursor && failed:
+		return styleErr.Render("▸ ")
 	case isCursor:
 		return marker(true)
 	case failed:

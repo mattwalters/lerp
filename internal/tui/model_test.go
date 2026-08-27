@@ -2095,6 +2095,89 @@ func TestPromotePickerClosesWhenTheListEmpties(t *testing.T) {
 	}
 }
 
+// Done-when: a pass that reorders the list while the picker is still open
+// must not change what gets promoted — the picker committed to its target
+// the moment it opened, and a background pass has no door to that decision.
+func TestPromoteCommitsToTheTargetCapturedAtOpen(t *testing.T) {
+	m, _, _, promoter := newPromoteTestModel(t, 1, defaultTestStatuses)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: threeWaiting()}) // cursor starts on id-1
+
+	m = update(t, m, keyMsg("p"))
+	if !m.promoting {
+		t.Fatal("p did not open the promote picker")
+	}
+
+	// A pass lands while the picker is still open: id-1 (the captured
+	// target) has left the board, so the cursor's own row moves on.
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-2", TicketID: "id-2", Title: "Second", Status: "Backlog"},
+		{Ticket: "LERP-3", TicketID: "id-3", Title: "Third", Status: "Backlog"},
+	}}})
+	if !m.promoting {
+		t.Fatal("the picker closed even though the list is not empty")
+	}
+	if got := m.selectedAttention(); got == nil || got.TicketID == "id-1" {
+		t.Fatalf("test setup: the cursor should have moved off id-1, got %+v", got)
+	}
+
+	next, cmd := updateCmd(t, m, keyMsg("enter"))
+	m = next
+	if cmd == nil {
+		t.Fatal("enter produced no promote command")
+	}
+	cmd()
+	if len(promoter.calls) != 1 || promoter.calls[0].ticketID != "id-1" {
+		t.Fatalf("Promote calls = %+v, want exactly one call for id-1 (the target captured at open)",
+			promoter.calls)
+	}
+}
+
+// Done-when: esc on another panel closes what is in front of the operator
+// rather than spending itself on the inbox's own selection — invisible
+// there, since a range draws nothing while that panel is unfocused.
+func TestEscOnAnotherPanelDoesNotSwallowTheVisualSelection(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+	m = update(t, m, keyMsg("v"))
+	m = update(t, m, keyMsg("j"))
+	if !m.visual {
+		t.Fatal("v did not start visual mode")
+	}
+
+	m = update(t, m, keyMsg("2")) // the work panel
+	m = openMain(t, m)
+	if !m.detailOpen[panelWork] {
+		t.Fatal("test setup: the work pane did not open")
+	}
+
+	m = update(t, m, keyMsg("esc"))
+	if !m.visual {
+		t.Fatal("esc on another panel dropped the inbox's selection instead of closing the pane")
+	}
+	if m.detailOpen[panelWork] {
+		t.Fatal("esc did not close the work pane")
+	}
+}
+
+// Done-when: a batch failure on the ticket the cursor still stands on — the
+// common case, a single promote or a range's last row — is not lost behind
+// the arrow: the shape stays the cursor's ▸, recoloured, since the note
+// that also names the failure fades with the next clean pass and this must
+// not.
+func TestCursorRowStillMarksItsOwnFailure(t *testing.T) {
+	forceColour(t)
+	clean := attentionMark(true, false)
+	failed := attentionMark(true, true)
+	if clean == failed {
+		t.Fatalf("a failed cursor row renders identically to a clean one: %q", clean)
+	}
+	if !strings.Contains(failed, "▸") {
+		t.Fatalf("a failed cursor row lost its arrow: %q", failed)
+	}
+}
+
 // Done-when: v, then movement, then p promotes every row the range spans —
 // not just the cursor's — through the exact same Promote call a single
 // ticket takes, one per target, in order.

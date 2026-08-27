@@ -40,12 +40,14 @@ takes it, and `esc` — or `q` — backs out without writing anything.
 ## Several at once
 
 Press `v` on a row to start a visual-mode range, the way lazygit does; the
-movement keys extend it, and `esc` drops it. `p` opens the same picker once,
-for one target — confirm, and every selected ticket goes through the promote
-above, one at a time. One failing (a race with another lerp claiming it,
-say) never stops the rest: the note says how many of the batch made it, and
-the row that did not carries a `✗` until it promotes cleanly or leaves the
-board.
+movement keys extend it. `esc` drops it, and so does sorting (`s`), scoping
+to a project (`P`), opening the backlog (`B`) or searching (`/`) — anything
+that reorders or narrows the rows the range is drawn over. `p` opens the
+same picker once, for one target — confirm, and every selected ticket goes
+through the promote above, one at a time. One failing (a race with another
+lerp claiming it, say) never stops the rest: the note says how many of the
+batch made it, and the row that did not carries a `✗` until it promotes
+cleanly or leaves the board.
 
 ## After the promote
 
