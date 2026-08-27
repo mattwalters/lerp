@@ -27,9 +27,10 @@ func TestUsageListsLoginAndLogout(t *testing.T) {
 	}
 }
 
-// --version and -version must reach the same case in main's switch as
-// `version`, not fall through to the bare-TUI flag set and die as an unknown
-// flag — a regression a reorder of that dispatch would not otherwise catch.
+// normalizeArgs is the only thing standing between --version/-version and
+// falling through to the bare-TUI flag set as an unknown flag; this pins the
+// rewrite it does, though main still has to call it before its switch for
+// the alias to reach `version` in practice.
 func TestNormalizeArgsAliasesVersionFlag(t *testing.T) {
 	for _, args := range [][]string{{"--version"}, {"-version"}} {
 		got := normalizeArgs(args)

@@ -23,28 +23,12 @@ func TestFromBuildInfo(t *testing.T) {
 			want: "v0.3.1",
 		},
 		{
-			name: "devel build falls back to a shortened vcs revision",
-			info: &debug.BuildInfo{
-				Main: debug.Module{Version: "(devel)"},
-				Settings: []debug.BuildSetting{
-					{Key: "vcs.revision", Value: "abc1234567890def"},
-				},
-			},
-			want: "abc1234",
+			name: "a pseudo-version, dirty suffix included, is the toolchain's own to give",
+			info: &debug.BuildInfo{Main: debug.Module{Version: "v0.0.0-20260827041153-3c6bcf9d86e7+dirty"}},
+			want: "v0.0.0-20260827041153-3c6bcf9d86e7+dirty",
 		},
 		{
-			name: "a dirty tree is marked, not silently reported as clean",
-			info: &debug.BuildInfo{
-				Main: debug.Module{Version: "(devel)"},
-				Settings: []debug.BuildSetting{
-					{Key: "vcs.revision", Value: "abc1234567890def"},
-					{Key: "vcs.modified", Value: "true"},
-				},
-			},
-			want: "abc1234-dirty",
-		},
-		{
-			name: "nothing usable",
+			name: "no VCS info at all leaves devel unusable",
 			info: &debug.BuildInfo{Main: debug.Module{Version: "(devel)"}},
 			want: "",
 		},

@@ -78,11 +78,11 @@ stamped with. A release archive carries its tag; `make install` stamps
 `git describe`, dirty tree included, so a local build never claims to be a
 release. A binary built without either of those — `go install
 github.com/mattwalters/lerp/cmd/lerp@vX.Y.Z` chief among them — falls back to
-the module version Go itself records in the binary, or else its short commit
-hash (`-dirty` appended if the tree was), from the same VCS stamp `git
-describe` reads; only a build with no VCS stamp at all — `go build
--buildvcs=false`, or a source archive with no `.git` — reports the literal
-`dev`.
+the module version Go's own toolchain records in the binary: the requested
+version for a `go install pkg@version` build, or a pseudo-version with a
+`+dirty` suffix for a plain `go build` inside a VCS checkout. Only a build
+with no VCS info at all — `go build -buildvcs=false`, or a source archive
+with no `.git` — reports the literal `dev`.
 
 ## Environment
 
