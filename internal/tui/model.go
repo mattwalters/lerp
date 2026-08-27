@@ -2481,6 +2481,109 @@ const (
 	minWidth = 24
 )
 
+// statusCount holds the ticket count for one workflow status on the summary strip.
+type statusCount struct {
+	status string
+	n      int
+}
+
+// statusCounts builds the per-status ticket counts for the summary strip
+// from what the model already holds: every queue's status (even when empty,
+// so the strip does not reshuffle as a queue drains), plus every status
+// present in attention, deduplicated by ticket ID across both sources and
+// ordered by Linear board position.
+func (m *model) statusCounts() []statusCount {
+	if len(m.queues) == 0 && len(m.attention) == 0 {
+		return nil
+	}
+	counts := make(map[string]int)
+	var statuses []string
+	seenStatus := make(map[string]bool)
+
+	// Queues first: register all queue statuses so even empty queues appear (at 0).
+	for _, q := range m.queues {
+		if q.Status != "" && !seenStatus[q.Status] {
+			seenStatus[q.Status] = true
+			statuses = append(statuses, q.Status)
+		}
+	}
+
+	seenTickets := make(map[string]bool)
+
+	for _, q := range m.queues {
+		for _, tk := range q.Tickets {
+			id := tk.ID
+			if id == "" {
+				id = tk.Identifier
+			}
+			if id != "" {
+				if seenTickets[id] {
+					continue
+				}
+				seenTickets[id] = true
+			}
+			if q.Status != "" {
+				counts[q.Status]++
+			}
+		}
+	}
+
+	for _, it := range m.attention {
+		if it.Status == "" {
+			continue
+		}
+		if !seenStatus[it.Status] {
+			seenStatus[it.Status] = true
+			statuses = append(statuses, it.Status)
+		}
+		id := it.TicketID
+		if id == "" {
+			id = it.Ticket
+		}
+		if id != "" {
+			if seenTickets[id] {
+				continue
+			}
+			seenTickets[id] = true
+		}
+		counts[it.Status]++
+	}
+
+	slices.SortFunc(statuses, func(a, b string) int {
+		return compareStatusPosition(a, b, m.statusIndex)
+	})
+
+	out := make([]statusCount, len(statuses))
+	for i, s := range statuses {
+		out[i] = statusCount{status: s, n: counts[s]}
+	}
+	return out
+}
+
+// stripLine renders the summary strip: "Name n" segments joined by " · ",
+// styled faint, and truncated to the window width.
+func (m *model) stripLine(width int) string {
+	counts := m.statusCounts()
+	if len(counts) == 0 {
+		return ""
+	}
+	parts := make([]string, len(counts))
+	for i, sc := range counts {
+		parts[i] = fmt.Sprintf("%s %d", sc.status, sc.n)
+	}
+	line := strings.Join(parts, " · ")
+	return ansi.Truncate(styleFaint.Render(line), max(0, width), "…")
+}
+
+// showStrip reports whether the summary strip is rendered and given a row
+// in geometry: only when there are counts to display, the window is wide
+// enough to spare a line, and the height is strictly above minHeight.
+func (m *model) showStrip() bool {
+	return len(m.statusCounts()) > 0 &&
+		m.width >= narrowWidth &&
+		m.height > m.minHeight(m.mainOpen())
+}
+
 // minHeight is the shortest window View will draw: both panels' floors and
 // the status bar, plus the main pane's floor when the layout stacks and the
 // pane is on screen — stacked, the pane comes out of the same body. withMain
@@ -2495,7 +2598,11 @@ func (m *model) minHeight(withMain bool) int {
 }
 
 func (m *model) geometry() geometry {
-	g := geometry{bodyH: max(4, m.height-1)}
+	stripRows := 0
+	if m.showStrip() {
+		stripRows = 1
+	}
+	g := geometry{bodyH: max(4, m.height-1-stripRows)}
 	g.wide = m.width >= narrowWidth
 	// Widths first: the row builders lay their rows out to the panel width,
 	// and work's want is counted from those very rows.
@@ -2718,6 +2825,12 @@ func (m model) View() string {
 		}
 	}
 	body = m.composeModal(body)
+	// The strip joins after the modal composite for the same reason the
+	// status bar does: chrome frames the board, and a modal floats over
+	// the board, not the frame.
+	if m.showStrip() {
+		body = lipgloss.JoinVertical(lipgloss.Left, m.stripLine(m.width), body)
+	}
 	return body + "\n" + m.statusBar()
 }
 
