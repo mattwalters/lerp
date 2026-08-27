@@ -240,11 +240,19 @@ func (m *model) foldable() bool {
 // cursor covers that case: there is always one, since foldable() already
 // means the document has at least one heading.
 //
-// Returns the toggled heading's index, or -1 if nothing changed — the
-// caller uses it to re-anchor the viewport to that heading after the
-// refresh, since folding a section the cursor sits inside shifts everything
-// below it and leaves the viewport pointed at whatever scrolled up to fill
-// the gap otherwise.
+// Returns the heading to re-anchor the viewport to, or -1 if the caller
+// should leave the viewport alone. These are not the same thing as "which
+// heading got toggled": re-anchoring only matters when the cursor's own
+// position sat inside that heading's section (found on the forward scan's
+// very first line, at top itself) — that is the one case where folding
+// shifts everything the viewport was showing and leaves it pointed at
+// whatever scrolled up to fill the gap. Reached by scanning past a gap
+// (the pane's own header lines, a blank between sections) or by the
+// backward fallback below, the viewport was already showing valid content
+// before the toggle and moving it would only interrupt wherever the
+// operator actually was — jumping to the very top on the first fold of a
+// ticket still parked at its opening scroll position, or yanking the pane
+// away from the comments the backward fallback exists to leave undisturbed.
 func (m *model) toggleFold() int {
 	it := m.selectedAttention()
 	if it == nil {
@@ -256,6 +264,7 @@ func (m *model) toggleFold() int {
 	}
 	top := clampIndex(m.vp.YOffset, len(m.foldOwner))
 	idx := -1
+	direct := m.foldOwner[top] >= 0
 	for i := top; i < len(m.foldOwner); i++ {
 		if m.foldOwner[i] >= 0 {
 			idx = m.foldOwner[i]
@@ -277,6 +286,9 @@ func (m *model) toggleFold() int {
 		d.folded = make(map[int]bool)
 	}
 	d.folded[idx] = !d.folded[idx]
+	if !direct {
+		return -1
+	}
 	return idx
 }
 
@@ -285,7 +297,7 @@ func (m *model) toggleFold() int {
 // otherwise the pane would show whatever scrolled up to fill the gap the
 // fold left, with the fold itself off-screen and a second press landing on
 // the wrong section entirely (see toggleFold). A no-op for idx < 0, the
-// value toggleFold returns when nothing was toggled.
+// value toggleFold returns whenever re-anchoring is not called for.
 func (m *model) reanchorFold(idx int) {
 	if idx < 0 {
 		return

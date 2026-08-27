@@ -4968,6 +4968,51 @@ func TestFoldKeyFallsBackPastTheLastSection(t *testing.T) {
 	if d == nil || !d.folded[0] {
 		t.Fatalf("z should have folded the nearest section behind the cursor rather than doing nothing")
 	}
+	// Regression: re-anchoring here would yank the operator away from the
+	// comments they were actually reading, back up to a heading off the top
+	// of their screen — the fallback exists so z still does something from
+	// down here, not so it also relocates the reader. layout()'s own clamp
+	// still trims YOffset by however much folding "step one" shortened the
+	// document, so the assertion is AtBottom (still parked at the end of
+	// whatever is left), not an exact offset.
+	if !m.vp.AtBottom() {
+		t.Fatalf("folding via the backward fallback should not move the viewport away from the bottom, got YOffset=%d", m.vp.YOffset)
+	}
+}
+
+// Regression test for a bug the round-4 review caught in the round-3 fix
+// above: re-anchoring fired on every fold, not just the one case that needs
+// it. Folding the very first heading while the viewport still sits at the
+// top of a long ticket — its ordinary resting position right after opening
+// one — jumped the pane down to that heading, scrolling the ticket's own
+// title, status and Linear link off screen even though nothing needed to
+// move: the fold only ever removes content *after* its heading, so the
+// header a plain top-of-document scroll position was already showing stays
+// perfectly valid without any re-anchor at all.
+func TestFoldAtTheTopDoesNotScrollThePanesOwnHeaderOffScreen(t *testing.T) {
+	m, _, reader := newReadingTestModel(t)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+	m = update(t, m, keyMsg("enter"))
+	// Two needs a long body of its own: folding One away entirely would
+	// shrink the whole document below the viewport's height, and the
+	// viewport's own clamp would then force YOffset back to 0 regardless of
+	// whether anything re-anchored it there — hiding the bug this guards
+	// against rather than exercising it.
+	body := "# One\n\n" + strings.Repeat("line of one's own body\n", 40) +
+		"\n# Two\n\n" + strings.Repeat("line of two's own body\n", 200)
+	m = selectAndRead(t, m, 0, linear.IssueDetail{Body: body}, nil, reader)
+	if m.vp.YOffset != 0 {
+		t.Fatalf("test setup: expected the viewport to open at the top, got YOffset=%d", m.vp.YOffset)
+	}
+
+	m = update(t, m, keyMsg("z"))
+	if m.vp.YOffset != 0 {
+		t.Fatalf("folding the first heading from the top should not move the viewport, got YOffset=%d", m.vp.YOffset)
+	}
+	if view := m.View(); !strings.Contains(view, "status") {
+		t.Fatalf("the pane's own header should still be on screen after folding from the top:\n%s", view)
+	}
 }
 
 // Regression test for a bug caught in round 3 review: folding a section the
