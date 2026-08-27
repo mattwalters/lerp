@@ -16,5 +16,7 @@ House rules:
 - Treat scope growth, speculative abstraction, and framework-building
   as bugs.
 - Match the style of surrounding code.
+- When you file a Linear ticket, set a priority and an estimate — your
+  best judgment, stated once, not discussed.
 
 Build and test commands will be documented here once code exists.
