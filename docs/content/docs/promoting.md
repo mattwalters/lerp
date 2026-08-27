@@ -17,15 +17,14 @@ exit, and lerp moves it there.
 
 ## What promoting is for
 
-The pipeline waits wherever a run comes to rest in a status no queue serves —
-the status is the gate, so nothing needs to hold the ticket there. The stock
-pipeline waits twice: in "Plan Review" for you to read the plan, and in "In
-Review" for you to merge the pull request. Promoting is how the ticket leaves
-a gate. So is moving it in Linear; either way the next pass carries it on.
+A run that finishes in a status no queue serves has come to rest at [a
+gate](the-board.md#where-a-run-comes-to-rest), and the stock pipeline has
+two: "Plan Review", where you read the plan, and "In Review", where you merge
+the pull request. Promoting is how a ticket leaves one. So is moving it in
+Linear; either way the next pass carries it on.
 
-Promotion is a human act. Lerp never invents work items of its own, and it
-never promotes a ticket for you — the whole of the routing decision is which
-status a person puts a ticket in.
+Which is the whole of the routing decision, and it is a human's: lerp never
+invents work items of its own, and it never promotes a ticket for you.
 
 ## What it writes
 

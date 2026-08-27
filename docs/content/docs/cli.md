@@ -18,8 +18,8 @@ than only the flags.
 
 ## `lerp`
 
-Bare `lerp` opens the board, and the TUI is the engine: the loop runs while
-it is open, and there is no daemon. It must be run from inside the Git
+Bare `lerp` opens the board — [the screen, and why opening it is what runs
+the loop](reading-the-board.md). It must be run from inside the Git
 repository whose `lerp.toml` it should read.
 
 `-concurrency N` caps how many agents run at once. The default is 10; each

@@ -81,10 +81,9 @@ it.
 ## 3. Promote a ticket
 
 Routing is done by placing a ticket: in Linear, move one into Planning (a big
-feature) or straight into Implementing (a small fix). A ticket is eligible
-for pickup when it sits in a queue's status, has no assignee, and is not
-blocked by an unfinished ticket (Linear's `blockedBy`). Promotion is a human
-act; lerp never invents work items of its own.
+feature) or straight into Implementing (a small fix). Check while you are
+there that nothing makes it [ineligible](the-board.md#the-claim) — an
+assignee left on the ticket is the one that surprises people.
 
 ## 4. Run it
 
@@ -92,12 +91,11 @@ act; lerp never invents work items of its own.
 LINEAR_API_KEY=... lerp
 ```
 
-Bare `lerp` opens the TUI, and the loop runs while it is open: each pass
-claims eligible tickets — assigning one to your Linear user is the claim —
-provisions a disposable workspace per lane (the stock config uses a git
-worktree), runs the queue's agent to exit, and applies the queue's move
-rule. [Reading the board](reading-the-board.md) is the screen you are now
-looking at; [the board](the-board.md) is what it is a picture of.
+Bare `lerp` opens the TUI, and [the loop runs while it is
+open](reading-the-board.md): each pass claims what it can, provisions a
+workspace, runs the queue's agent to exit, and applies the queue's move rule.
+A pass runs every twelve seconds, so the ticket you promoted should be on
+the Work panel with a lane under it almost at once. [The board](the-board.md) is what that screen is a picture of.
 
 Once a ticket is moving, the rest of the manual is the motions on it: you
 will want [promoting](promoting.md) for the gates the stock pipeline waits
