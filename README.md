@@ -13,7 +13,7 @@ coding agents to move them across it.
 
 Linear is the database, the board is the workflow, and lerp is the
 reconciler between them —
-[the model at length](https://lerp.sh/docs/the-board/).
+[the model at length](https://lerp.sh/latest/docs/the-board/).
 
 ## Install
 
@@ -65,13 +65,13 @@ archive them in Linear's settings.
 
 ## The manual
 
-**[The manual](https://lerp.sh/)** is the docs site:
-[install](https://lerp.sh/docs/install/) and the
-[quickstart](https://lerp.sh/docs/quickstart/), the
-[model the board is a picture of](https://lerp.sh/docs/the-board/),
+**[The manual](https://lerp.sh/latest/docs/)** is the docs site:
+[install](https://lerp.sh/latest/docs/install/) and the
+[quickstart](https://lerp.sh/latest/docs/quickstart/), the
+[model the board is a picture of](https://lerp.sh/latest/docs/the-board/),
 a page per motion through the interface, and the reference for
 `lerp.toml`, the command line and
-[troubleshooting](https://lerp.sh/docs/troubleshooting/).
+[troubleshooting](https://lerp.sh/latest/docs/troubleshooting/).
 It is published from this repository, and every release tag freezes the
 copy that shipped with it.
 

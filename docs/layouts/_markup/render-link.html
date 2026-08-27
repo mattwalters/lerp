@@ -35,7 +35,14 @@
     {{- $page = site.GetPage (printf "/%s" (strings.TrimSuffix ".md" (lower $path))) -}}
   {{- end -}}
   {{- if $page -}}
-    {{- $href = $page.RelPermalink -}}
+    {{/* On the unversioned root, the manual subtree is pruned before deploy,
+         so links targeting manual pages (anything other than home and splash
+         pages) reach into /latest/ where the manual is actually served. */}}
+    {{- if and (eq site.Params.version "") (and (not $page.IsHome) (not $page.Params.splash)) -}}
+      {{- $href = printf "/latest%s" $page.RelPermalink -}}
+    {{- else -}}
+      {{- $href = $page.RelPermalink -}}
+    {{- end -}}
   {{- else -}}
     {{- $href = printf "%s/blob/%s/%s" site.Params.repo site.Params.ref $path -}}
   {{- end -}}
