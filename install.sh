@@ -85,7 +85,11 @@ latest_url=$(curl -fsSL -o /dev/null -w '%{url_effective}' \
 case "$latest_url" in
   */releases/tag/*) tag=${latest_url##*/} ;;
   *)
-    echo "install.sh: no published release found for $repo — has one been tagged yet?" >&2
+    # /releases/latest only ever points at a non-prerelease, so this also
+    # fires when the only tags so far are -rc ones — a real state, not an
+    # empty repo, hence pointing at the releases page rather than asserting
+    # nothing has been tagged.
+    echo "install.sh: no stable release found for $repo (prereleases aren't picked up by /releases/latest) — see https://github.com/$repo/releases" >&2
     exit 1
     ;;
 esac
@@ -99,8 +103,14 @@ tmp_bin="$bin_dir/.lerp.tmp.$$"
 trap 'rm -rf "$workdir"; rm -f "$tmp_bin"' EXIT
 
 echo "install.sh: downloading $archive ($tag)"
-curl -fsSL -o "$workdir/$archive" "$base_url/$archive"
-curl -fsSL -o "$workdir/checksums.txt" "$base_url/checksums.txt"
+curl -fsSL -o "$workdir/$archive" "$base_url/$archive" || {
+  echo "install.sh: could not download $base_url/$archive" >&2
+  exit 1
+}
+curl -fsSL -o "$workdir/checksums.txt" "$base_url/checksums.txt" || {
+  echo "install.sh: could not download $base_url/checksums.txt" >&2
+  exit 1
+}
 
 checksum_line=$(grep -F "  $archive" "$workdir/checksums.txt") || {
   echo "install.sh: $archive is not listed in checksums.txt" >&2
@@ -130,7 +140,7 @@ mv "$tmp_bin" "$bin_dir/lerp"
 
 printf 'installed %s to %s\n' "$tag" "$bin_dir/lerp"
 case ":$PATH:" in
-  *":$bin_dir:"*)
+  *":$bin_dir:"* | *":$bin_dir/:"*)
     printf 'PATH resolves lerp to: %s\n' "$(command -v lerp || echo "$bin_dir/lerp")"
     ;;
   *)
