@@ -96,6 +96,12 @@ type Options struct {
 	Interval time.Duration // tick cadence; loop.DefaultInterval when zero
 	Lanes    int           // N: at most this many agents at once
 	Events   <-chan loop.Event
+	// Windows maps a queue name to its runner's configured context window in
+	// tokens, from RepoConfig.ContextWindows. A queue absent from the map has
+	// no configured window, which is the work row's "tokens only, no
+	// percentage" case — the same posture a runner that reports no reading
+	// at all already has.
+	Windows map[string]int
 }
 
 // Validate returns an error naming the first option Run needs and does not
@@ -343,6 +349,13 @@ type workRow struct {
 	tool, target string
 	tokens       int
 	cost         float64
+	// context is the worst live agent's latest context reading, in
+	// input-side tokens, zero until the log reports one; window is that
+	// queue's configured context window from Options.Windows, zero when
+	// unset. Both are needed for the row to draw a percentage — a reading
+	// with no configured window is the same "tokens only" case as a runner
+	// that never reports one.
+	context, window int
 	// The pickup gate, for a ticket that is not running: where it sits in
 	// its queue's order, and what holds it there.
 	pos, of   int
@@ -2031,6 +2044,7 @@ func (m *model) workGroups() []workGroup {
 			row.tool, row.target = ln.pulse.tool, ln.pulse.target
 			row.tokens = ln.pulse.tokens
 			row.cost = ln.pulse.cost
+			row.context = ln.pulse.context
 		}
 		// A running ticket normally still sits in its queue's listing,
 		// claimed and ineligible: that listing is the group, and it carries
@@ -2054,6 +2068,13 @@ func (m *model) workGroups() []workGroup {
 			gi = len(groups) - 1
 		}
 		row.queue, row.status, row.team = groups[gi].name, groups[gi].status, groups[gi].team
+		// The window has to match the runner that is actually producing
+		// row.context — the lane's own queue — not the group the row is
+		// displayed under: a ticket an agent moved mid-run to a different
+		// queue's status would otherwise pair this lane's reading with
+		// another runner's window, a wrong denominator rather than no
+		// percentage at all.
+		row.window = m.o.Windows[ln.queue]
 		groups[gi].rows = append(groups[gi].rows, row)
 		if ln.ticketID != "" {
 			running[ln.ticketID] = true
@@ -3524,6 +3545,12 @@ func (m model) workRowLines(r workRow, selected bool, width int) []string {
 		totals += " · " + costLabel(r.cost)
 	}
 	right := state + " " + styleFaint.Render(totals)
+	// The load figure is styled on its own, not folded into totals above: it
+	// alone earns styleAttention at loadWarn and above, where the rest of
+	// the line stays faint.
+	if load, ok := contextLoad(r.context, r.window); ok {
+		right += styleFaint.Render(" · ") + load
+	}
 	lines := []string{splitRow(marker(selected)+dot+" "+name, right, width)}
 	if reading := runLine(r, width); reading != "" {
 		lines = append(lines, reading)
@@ -3679,6 +3706,36 @@ func costLabel(c float64) string {
 	}
 }
 
+// loadWarn is the load fraction at and above which a work row's context
+// reading draws the ⚠ glyph instead of a plain percentage. 80% because that
+// is where what is left of the window is smaller than one large tool result
+// and the reply to it; half a window is a normal working state and stays
+// unmarked.
+const loadWarn = 0.80
+
+// contextLoad renders the worst agent's context reading as a fraction of its
+// queue's configured window, or reports ok false when either half of the
+// fraction is unknown. No configured window is not a wrong percentage, it is
+// no percentage at all — the same posture cost keeps for a runner that
+// stays silent (see minCost): callers gate on this rather than on either
+// figure alone.
+//
+// The glyph decision is made against the rounded whole percent, the same
+// one that gets printed — not the raw fraction — so a reading like 79.5%
+// cannot draw as "80%" in styleFaint: whatever the row prints, the glyph
+// agrees with what the operator is looking at.
+func contextLoad(context, window int) (string, bool) {
+	if context <= 0 || window <= 0 {
+		return "", false
+	}
+	pct := int(float64(context)/float64(window)*100 + 0.5)
+	label := fmt.Sprintf("%d%%", pct)
+	if pct >= int(loadWarn*100) {
+		return styleAttention.Render("⚠ " + label), true
+	}
+	return styleFaint.Render(label), true
+}
+
 // mainPanel is the lens: the promote picker while it is open, the ? overlay,
 // otherwise the selected row's log, or a read-only detail when it has none.
 func (m model) mainPanel(w, h int) string {
@@ -3728,9 +3785,12 @@ func (m model) mainScrollbar(h int) *scrollbar {
 }
 
 // helpText is the ? overlay: every binding the keymap declares, and then
-// the legend for the marks the inbox draws inside its columns.
+// the legends for the marks the inbox and the work row draw inside them.
 func (m model) helpText() string {
-	return strings.Join(append(strings.Split(m.help.View(m.keys), "\n"), inboxLegend()...), "\n")
+	lines := strings.Split(m.help.View(m.keys), "\n")
+	lines = append(lines, inboxLegend()...)
+	lines = append(lines, workLegend()...)
+	return strings.Join(lines, "\n")
 }
 
 // inboxLegend spells out the three marks the inbox table draws inside its
@@ -3749,6 +3809,17 @@ func inboxLegend() []string {
 		rows = append(rows, "  "+padTo(l.glyph, 2)+"  "+styleFaint.Render(l.says))
 	}
 	return rows
+}
+
+// workLegend spells out the one mark the work row draws beyond its plain
+// figures: the ⚠ a run's context load carries at loadWarn and above. It is
+// its own section rather than folded into inboxLegend — the same glyph
+// means something different here — rendered exactly as the row renders it,
+// the same rule that made the inbox's glyph explain itself.
+func workLegend() []string {
+	return []string{"", styleFaint.Render("work marks"),
+		"  " + padTo(styleAttention.Render("⚠"), 2) + "  " +
+			styleFaint.Render(fmt.Sprintf("a run's context load has crossed %.0f%%", loadWarn*100))}
 }
 
 // promotePicker renders the target-status list for the captured targets —

@@ -492,3 +492,36 @@ func TestPulseBillsOneCallOnce(t *testing.T) {
 		t.Fatalf("the last call is %q %q, want Read b.go", p.tool, p.target)
 	}
 }
+
+// context is a reading, not a sum like tokens and cost: it survives the
+// history/live boundary as whatever the log's latest line said, replaced by
+// a later one rather than accumulated, and it is lost with everything else
+// when the log is rewritten under the pulse.
+func TestPulseTracksContext(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.log")
+	appendLog(t, path,
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"working"}],`+
+			`"usage":{"input_tokens":1000,"output_tokens":10}}}`+"\n")
+	now := time.Now()
+	p := newPulse(path)
+	p.read(now) // history: the line above predates this pulse's attach
+	if p.context != 1000 {
+		t.Fatalf("history reported context %d, want 1000", p.context)
+	}
+
+	appendLog(t, path,
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"still working"}],`+
+			`"usage":{"input_tokens":40000,"output_tokens":10}}}`+"\n")
+	p.read(now)
+	if p.context != 40000 {
+		t.Fatalf("a live line reported context %d, want 40000", p.context)
+	}
+
+	// A rewritten log takes it with everything else: it is a reading of a
+	// file that is gone.
+	writeLog(t, path, []byte("a wholly new log\n"))
+	p.read(now.Add(sparkBucket))
+	if p.context != 0 {
+		t.Fatalf("the rewritten log kept a context of %d", p.context)
+	}
+}

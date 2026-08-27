@@ -212,6 +212,7 @@ func tuiOptions(rec *loop.Reconciler, repo *config.RepoConfig, events <-chan loo
 	return tui.Options{
 		Engine:   rec,
 		Statuses: repo.PromoteTargets(),
+		Windows:  repo.ContextWindows(),
 		Interval: interval,
 		Lanes:    lanes,
 		Events:   events,

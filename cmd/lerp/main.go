@@ -207,6 +207,7 @@ func openTUI(ctx context.Context, lanes int) error {
 	return tui.Run(ctx, tui.Options{
 		Engine:   rec,
 		Statuses: repo.PromoteTargets(),
+		Windows:  repo.ContextWindows(),
 		Interval: loop.DefaultInterval,
 		Lanes:    lanes,
 		Events:   events,

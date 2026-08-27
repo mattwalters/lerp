@@ -71,7 +71,15 @@ type Event struct {
 	// stream states cost on exactly one line for the whole run, so treating
 	// that one figure as the delta is correct without any bookkeeping to get
 	// wrong — see claude.go's result case.
-	Cost    float64
+	Cost float64
+	// Context is how full the fullest agent in the run is as of this line, in
+	// input-side tokens (input + cache creation + cache read) — the reading a
+	// configured window turns into a percentage. Like Usage it is the
+	// line's rather than a kind's, but it is a latest value, not a delta: a
+	// reader takes the newest one rather than summing them. Zero when the
+	// runner does not say — a vendor whose stream carries no per-call
+	// input-side figure at all, or any line before the first one that does.
+	Context int
 	IsError bool
 	// Time is when the runner says the line was written, zero for a runner
 	// that does not date its lines. Like Usage it is the line's rather than

@@ -18,6 +18,9 @@ dispose = 'rm -rf "$LERP_WORKSPACE"'
 # wrote the script; it is on the environment every command here inherits.
 [runners.agent]
 command = 'sh "$LERP_DEMO_DIR/agent.sh"'
+# Exercises the key on a command runner too: the fixture log's own readings
+# stay well under it, so the cast draws a real, unalarming load figure.
+context = 200000
 
 [queues.plan]
 status = "Planning"
