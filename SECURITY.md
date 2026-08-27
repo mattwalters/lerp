@@ -15,11 +15,14 @@ your machine.** Everything below is that sentence in detail.
 
 Lerp reads one config file, `lerp.toml` at the repo root, and that file
 contains shell commands: `provision`, `dispose`, and every runner's
-`command`. Cloning a repository and running `lerp` in it executes those
-commands — the same trust class as running `make` in a strange
-repository. A runner's `resume` is a fourth: lerp never runs it, it
-prints it for you to paste when you eject a run — which makes your
-paste the trigger and the file's author the one who chose the command.
+`command` — or, for a runner that names a built-in `vendor` instead,
+the `args` line it hands that vendor's adapter, which reaches the same
+place a hand-written `command` would. Cloning a repository and running
+`lerp` in it executes those commands — the same trust class as running
+`make` in a strange repository. A runner's `resume` is a fourth: lerp
+never runs it, it prints it for you to paste when you eject a run —
+which makes your paste the trigger and the file's author the one who
+chose the command.
 
 That is why the file is checked in rather than generated per machine:
 the pipeline, and the permissions it grants, are versioned and reviewed
@@ -68,8 +71,10 @@ that concrete: the agent edits files and runs commands without asking,
 as your user. `lerp init` asks before including that flag and defaults
 to leaving it out — but that is a default, not a fact about your repo:
 the shipped `lerp.example.toml`, and any config copied from another
-repo, carries the flag. Read the `command` line in your own
-`lerp.toml`; that is the only place the answer lives. Declining has a
+repo, carries the flag. Read your own `lerp.toml`'s `[runners.claude]`
+block: the flag sits on its `args` line for the stock vendor runner, or
+inside `command` for a hand-written one — either way, that block is the
+only place the answer lives. Declining has a
 cost — a headless run then fails at the first tool it is not allowed to
 use unless you curate an `--allowedTools` list — but it is a real
 grant, and the checked-in `lerp.toml` is where you make it
@@ -82,11 +87,13 @@ operator's job, and it takes both halves of the config: `provision` and
 `dispose` build and tear the sandbox down — a container, a VM, a
 throwaway user account instead of a worktree — and the runner
 `command` has to be the thing that *enters* it (`docker exec ...`, an
-`ssh` into the VM). Lerp always starts the runner itself with `sh -c`
-on the host, in the workspace directory, so the natural half-step —
-keep provisioning the worktree, add a container beside it, leave the
-`command` reading `claude -p ...` — leaves the container idle and the
-agent on your machine. Nothing in lerp's
+`ssh` into the VM). A vendor runner cannot express that: it names an
+adapter, not an entry point, so containerizing means writing the
+runner as `command` by hand instead of `vendor`. Lerp always starts the
+runner itself with `sh -c` on the host, in the workspace directory, so
+the natural half-step — keep provisioning the worktree, add a
+container beside it, leave the runner reading `claude -p ...` — leaves
+the container idle and the agent on your machine. Nothing in lerp's
 defaults does any of this for you.
 
 ### What lerp itself does
