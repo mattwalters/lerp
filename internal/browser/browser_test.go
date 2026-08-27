@@ -73,6 +73,12 @@ func TestRewriteSwapsSchemeForDesktop(t *testing.T) {
 			want: "linear://linear.app/acme/issue/LERP-1?filter=true#anchor",
 		},
 		{
+			name: "oauth authorize url stays https under desktop mode",
+			url:  "https://linear.app/oauth/authorize?response_type=code&client_id=123",
+			mode: "desktop",
+			want: "https://linear.app/oauth/authorize?response_type=code&client_id=123",
+		},
+		{
 			name: "unset mode leaves url untouched",
 			url:  "https://linear.app/acme/issue/LERP-1/first",
 			mode: "",

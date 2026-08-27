@@ -57,15 +57,19 @@ func Openable(rawURL string) bool {
 }
 
 // rewrite swaps the https:// scheme for linear:// when mode is "desktop",
-// so the OS opener routes the URL straight to Linear's desktop app instead
-// of bouncing through a browser first. Any other mode leaves the URL
-// untouched.
+// so the OS opener routes ticket URLs straight to Linear's desktop app
+// instead of bouncing through a browser first. OAuth authorization pages
+// (/oauth/...) stay on https:// so the PKCE loopback redirect can complete
+// in the browser. Any other mode leaves the URL untouched.
 func rewrite(rawURL, mode string) string {
 	if mode != "desktop" {
 		return rawURL
 	}
 	u, err := url.Parse(rawURL)
 	if err != nil {
+		return rawURL
+	}
+	if strings.HasPrefix(u.Path, "/oauth/") || u.Path == "/oauth" {
 		return rawURL
 	}
 	u.Scheme = "linear"
