@@ -457,10 +457,12 @@ func hasDimMark(view string) bool {
 // emptyBoard is a model past the splash with both panels genuinely empty —
 // nothing waiting on the operator and no ticket, running or queued, in any
 // lane — and settled: the pass that reported that has also concluded, which
-// is what actually licenses the mark (see model.boardEmptySettled). The
-// window is the test default, 100x30, wide enough that the inbox panel
-// alone clears the mark's fit test many times over (see
-// TestWordmarkFitsRequiresRoomOnEverySide).
+// emptyBoard is a model past the splash with the inbox genuinely empty —
+// nothing waiting on the operator — and settled: the pass that reported that
+// has also concluded, which is what actually licenses the mark (see
+// model.inboxEmptySettled). The window is the test default, 100x30, wide
+// enough that the inbox panel alone clears the mark's fit test many times
+// over (see TestWordmarkFitsRequiresRoomOnEverySide).
 func emptyBoard(t *testing.T) model {
 	t.Helper()
 	// wordmarkVisible (mark.go) is what keeps the mark off a NO_COLOR
@@ -473,38 +475,36 @@ func emptyBoard(t *testing.T) model {
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: nil}})
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: nil}})
 	m = update(t, m, tickedMsg{})
-	if !m.boardEmptySettled {
+	if !m.inboxEmptySettled {
 		t.Fatal("setup: the empty pass never settled")
 	}
 	return m
 }
 
-// Reconciler.Tick only reaches fill (and so only ever emits EventQueues) if
-// the evidence reconcile it gates on succeeds — so a pass that keeps failing
-// there leaves m.queues exactly as empty, forever, as a board that has
-// genuinely never had a ticket. Without queuesSeen, contentEmpty could not
-// tell that apart from the goal state, and the mark would decorate a work
-// panel that was never actually read (see model.contentEmpty).
-func TestTheWordmarkWaitsToSeeTheWorkPanelToo(t *testing.T) {
+// Reconciler.Tick only reaches attention if earlier operations succeed.
+// Without attentionSeen, inboxContentEmpty could not tell an inbox that was
+// never read apart from an empty one. Once EventAttention reports (empty)
+// and the pass settles, the wordmark is licensed — whether or not EventQueues
+// has reported, because the mark decorates the inbox, not the bare board.
+func TestTheWordmarkWaitsToSeeTheInboxPanel(t *testing.T) {
 	forceColour(t)
 	m, _, _ := newTestModel(t, 2)
 	m = pastTheSplash(t, m)
-	// The inbox settles empty, but no EventQueues has ever landed — a pass
-	// stuck failing before fill, not a board that was ever confirmed idle.
-	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: nil}})
-	m = update(t, m, tickedMsg{})
-	if m.boardEmptySettled {
-		t.Fatal("boardEmptySettled promoted without the work panel ever being read")
-	}
-	if hasDimMark(m.View()) {
-		t.Fatalf("the mark decorated a work panel that was never reported:\n%s", m.View())
-	}
-	// The work panel finally reports (empty) in a later pass: now the board
-	// has actually been read whole, and the mark is licensed.
+	// The work panel reports, but no EventAttention has ever landed.
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: nil}})
 	m = update(t, m, tickedMsg{})
+	if m.inboxEmptySettled {
+		t.Fatal("inboxEmptySettled promoted without the inbox panel ever being read")
+	}
+	if hasDimMark(m.View()) {
+		t.Fatalf("the mark decorated an inbox that was never reported:\n%s", m.View())
+	}
+	// The inbox reports (empty) in a later pass: now the inbox has actually
+	// been read, and the mark is licensed.
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: nil}})
+	m = update(t, m, tickedMsg{})
 	if !hasDimMark(m.View()) {
-		t.Fatalf("the mark did not show once both panels had actually reported:\n%s", m.View())
+		t.Fatalf("the mark did not show once the inbox panel reported empty:\n%s", m.View())
 	}
 }
 
@@ -552,75 +552,50 @@ func TestTheWordmarkLeavesRoomForTheEmptyStateLine(t *testing.T) {
 	}
 }
 
-// A pass reports the inbox and the work panel as two separate events, one
-// Linear round trip apart, and rule 3 is explicit that the mark's fit
-// condition is evaluated on settled layout changes, never mid-report: a
-// frame caught between the two must not show the mark on the strength of
-// only one of them having landed empty, or a run concluding — work empties
-// before the inbox reports the finished ticket — would flash it on for the
-// gap.
-func TestTheWordmarkWaitsForBothEventsToSettle(t *testing.T) {
+// An inbox event arriving mid-pass does not promote the mark until tickedMsg —
+// content only earns the decoration once the pass that reported it has actually finished.
+func TestTheWordmarkPromotesOnlyOnSettledPass(t *testing.T) {
 	forceColour(t)
 	m, _, _ := newTestModel(t, 2)
 	m = pastTheSplash(t, m)
-	// One ticket running: neither panel is empty yet.
-	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
-		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
-			{ID: "t1", Identifier: "LERP-1", Title: "ship the thing", Eligible: true},
-		}},
+	// One ticket in inbox: not empty yet.
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-1", Title: "ship the thing", Relevance: loop.StatusFailed},
 	}}})
+	m = update(t, m, tickedMsg{})
+	if hasDimMark(m.View()) {
+		t.Fatal("setup: the mark is already showing with an inbox ticket")
+	}
+	// Next pass: inbox empties mid-pass, but pass is still in flight:
+	m = update(t, m, tickMsg{})
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: nil}})
+	if hasDimMark(m.View()) {
+		t.Fatalf("the mark showed mid-pass, before the pass settled:\n%s", m.View())
+	}
+	// Pass concludes:
 	m = update(t, m, tickedMsg{})
-	if hasDimMark(m.View()) {
-		t.Fatal("setup: the mark is already showing with a ticket in flight")
-	}
-	// The run concludes: the work panel empties first, mid-pass — the inbox
-	// has not yet reported the ticket the run just finished.
-	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
-		{Team: "LERP", Name: "implement", Status: "Todo"},
-	}}})
-	if hasDimMark(m.View()) {
-		t.Fatalf("the mark showed mid-pass, before the inbox reported:\n%s", m.View())
-	}
-	// The inbox reports the finished ticket a beat later, in the same pass —
-	// the board is not empty at all, so tickedMsg must not promote it either.
-	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention,
-		Attention: []loop.AttentionItem{{Ticket: "LERP-1", Title: "ship the thing"}}}})
-	m = update(t, m, tickedMsg{})
-	if hasDimMark(m.View()) {
-		t.Fatalf("the mark showed once the pass settled non-empty:\n%s", m.View())
-	}
-	if !strings.Contains(m.View(), "LERP-1") {
-		t.Fatalf("the finished ticket never reached the inbox:\n%s", m.View())
+	if !hasDimMark(m.View()) {
+		t.Fatalf("the mark did not show once the pass settled:\n%s", m.View())
 	}
 }
 
-// loop.listQueues drops a queue it cannot read rather than skipping the
-// event, so a Linear outage on the work panel's read publishes an empty
-// snapshot indistinguishable from an actually idle one. Promoting on that
-// pass would light the mark up over an error and hide it again the moment a
-// later, successful pass reads the same tickets back — the "reappears
-// mid-churn" flap rule 3 rules out. passHadErr is what tells the two apart.
+// A failed pass must not promote the mark over an error (rule 3). passHadErr
+// is what tells a clean pass apart from a failed one.
 func TestTheWordmarkDoesNotPromoteOverAFailedPass(t *testing.T) {
 	forceColour(t)
 	m, _, _ := newTestModel(t, 2)
 	m = pastTheSplash(t, m)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: nil}})
-	// The queue listing fails: contentEmpty reads true (both sides have
-	// "reported", and the failed read came back empty) but the pass carried
-	// an error.
-	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: nil}})
-	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventError, Err: errors.New("list queues: no route to host")}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventError, Err: errors.New("list attention: no route to host")}})
 	m = update(t, m, tickedMsg{})
-	if m.boardEmptySettled {
-		t.Fatal("boardEmptySettled promoted over a pass that errored")
+	if m.inboxEmptySettled {
+		t.Fatal("inboxEmptySettled promoted over a pass that errored")
 	}
 	if hasDimMark(m.View()) {
 		t.Fatalf("the mark showed over a failed pass:\n%s", m.View())
 	}
-	// A later pass reads the same (still empty) board cleanly: tickMsg
-	// resets passHadErr the way a real pass boundary would, and only now is
-	// the board actually confirmed idle.
+	// A later pass reads cleanly: tickMsg resets passHadErr, and only now is
+	// the inbox confirmed empty.
 	m = update(t, m, tickMsg{})
 	m = update(t, m, tickedMsg{})
 	if !hasDimMark(m.View()) {
@@ -649,7 +624,7 @@ func TestTheWordmarkHidesBehindAnOpenPane(t *testing.T) {
 func TestTheWordmarkHidesWhenTheInboxHasSomething(t *testing.T) {
 	m := emptyBoard(t)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention,
-		Attention: []loop.AttentionItem{{Ticket: "LERP-1", Title: "one"}}}})
+		Attention: []loop.AttentionItem{{Ticket: "LERP-1", Title: "one", Relevance: loop.StatusFailed}}}})
 	view := m.View()
 	if hasDimMark(view) {
 		t.Fatalf("the mark outlived an inbox row landing:\n%s", view)
@@ -659,18 +634,93 @@ func TestTheWordmarkHidesWhenTheInboxHasSomething(t *testing.T) {
 	}
 }
 
-// The same rule from the work side: a queued ticket is exactly as much "the
-// board has something on it" as a row in the inbox, even with the inbox
-// itself still clear.
-func TestTheWordmarkHidesWhenWorkHasATicket(t *testing.T) {
-	m := emptyBoard(t)
+// The screenshot case (LERP-151): the inbox holds only the empty-state line
+// and the folded-backlog summary ("N waiting to enter the pipeline — B to browse"),
+// with three lanes running below in the work panel. The mark renders centered
+// in the inbox body, clear of both text lines by the margin.
+func TestTheWordmarkShowsWithRunningLanesAndFoldedBacklog(t *testing.T) {
+	forceColour(t)
+	m, _, _ := newTestModel(t, 4)
+	m = pastTheSplash(t, m)
+	// Three lanes running in work panel:
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
-		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
-			{ID: "t1", Identifier: "LERP-1", Title: "ship the thing", Eligible: true},
+		{Team: "LERP", Name: "implement", Status: "Implementing", Tickets: []loop.QueueTicket{
+			{ID: "t1", Identifier: "LERP-1", Title: "run one", Eligible: false},
+			{ID: "t2", Identifier: "LERP-2", Title: "run two", Eligible: false},
+			{ID: "t3", Identifier: "LERP-3", Title: "run three", Eligible: false},
 		}},
 	}}})
+	// Inbox has folded backlog tickets:
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-10", Title: "backlog 1", Relevance: loop.StatusBacklog},
+		{Ticket: "LERP-11", Title: "backlog 2", Relevance: loop.StatusBacklog},
+	}}})
+	m = update(t, m, tickedMsg{})
+	if !m.inboxEmptySettled {
+		t.Fatal("inboxEmptySettled did not promote with folded backlog and running lanes")
+	}
+	view := m.View()
+	if !hasDimMark(view) {
+		t.Fatalf("the mark did not render in the inbox with folded backlog and running lanes:\n%s", view)
+	}
+	if !strings.Contains(view, "nothing is waiting on you") {
+		t.Errorf("empty-state line missing from view:\n%s", view)
+	}
+	if !strings.Contains(view, "2 waiting to enter the pipeline") {
+		t.Errorf("backlog summary line missing from view:\n%s", view)
+	}
+	// Verify mark is clear of both lines (drawn below them):
+	stripped := ansi.Strip(view)
+	lines := strings.Split(stripped, "\n")
+	textAt, summaryAt, markAt := -1, -1, -1
+	for i, line := range lines {
+		if strings.Contains(line, "nothing is waiting on you") {
+			textAt = i
+		}
+		if strings.Contains(line, "2 waiting to enter the pipeline") {
+			summaryAt = i
+		}
+		if strings.Contains(line, strings.TrimLeft(strings.Split(markBlock, "\n")[0], " ")) {
+			markAt = i
+		}
+	}
+	if textAt < 0 || summaryAt < 0 || markAt < 0 {
+		t.Fatalf("expected empty line, summary line, and mark on screen:\n%s", stripped)
+	}
+	if markAt <= summaryAt {
+		t.Errorf("the mark drew at or above the summary line (summary at %d, mark at %d):\n%s", summaryAt, markAt, stripped)
+	}
+	if markAt-summaryAt-1 < wordmarkMargin {
+		t.Errorf("the mark did not clear the summary line by the margin (summary at %d, mark at %d, clear lines %d, want >= %d):\n%s",
+			summaryAt, markAt, markAt-summaryAt-1, wordmarkMargin, stripped)
+	}
+}
+
+// Unfolding the backlog puts rows on screen, which immediately hides the mark.
+// Folding it back restores the mark.
+func TestTheWordmarkHidesWhenBacklogUnfolds(t *testing.T) {
+	forceColour(t)
+	m, _, _ := newTestModel(t, 2)
+	m = pastTheSplash(t, m)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-10", Title: "backlog 1", Relevance: loop.StatusBacklog},
+	}}})
+	m = update(t, m, tickedMsg{})
+	if !hasDimMark(m.View()) {
+		t.Fatalf("setup: mark not showing with folded backlog:\n%s", m.View())
+	}
+	// Press 'B' to unfold backlog:
+	m = update(t, m, keyMsg("B"))
 	if hasDimMark(m.View()) {
-		t.Fatalf("the mark outlived a ticket landing in the work panel:\n%s", m.View())
+		t.Fatalf("the mark remained on screen after unfolding the backlog:\n%s", m.View())
+	}
+	if !strings.Contains(m.View(), "LERP-10") {
+		t.Fatalf("backlog item not shown after unfold:\n%s", m.View())
+	}
+	// Press 'B' to fold backlog again:
+	m = update(t, m, keyMsg("B"))
+	if !hasDimMark(m.View()) {
+		t.Fatalf("the mark did not reappear after re-folding the backlog:\n%s", m.View())
 	}
 }
 
@@ -681,7 +731,7 @@ func TestTheWordmarkHidesWhenWorkHasATicket(t *testing.T) {
 // panel's own footer, not the main pane), so the wordmark must know to stay
 // off screen on its own rather than draw over it. The pass is explicitly
 // settled with tickedMsg here — otherwise the assertion would pass for the
-// wrong reason, boardEmptySettled never having caught up rather than the
+// wrong reason, inboxEmptySettled never having caught up rather than the
 // search guard actually holding.
 func TestTheWordmarkStaysOffScreenBehindAnOpenSearch(t *testing.T) {
 	forceColour(t)
@@ -696,7 +746,7 @@ func TestTheWordmarkStaysOffScreenBehindAnOpenSearch(t *testing.T) {
 	}
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: nil}})
 	m = update(t, m, tickedMsg{})
-	if !m.boardEmptySettled {
+	if !m.inboxEmptySettled {
 		t.Fatal("setup: the emptied pass never settled")
 	}
 	view := m.View()
@@ -713,7 +763,7 @@ func TestTheWordmarkStaysOffScreenBehindAnOpenSearch(t *testing.T) {
 // that leaves a gap right after: the operator closes the box themselves
 // with enter, which accepts the query and keeps it (closeSearch(true)), and
 // no further pass has arrived since to run the clearing logic at all. The
-// query outlives the box, unresolved, until the next pass — and boardEmpty
+// query outlives the box, unresolved, until the next pass — and inboxEmpty
 // must keep deferring to the panel's own key hint (which still offers to
 // clear it) for exactly that long.
 func TestTheWordmarkStaysOffScreenBehindALeftoverQuery(t *testing.T) {
@@ -807,7 +857,7 @@ func TestTheWordmarkNeverClipsOnATightBoard(t *testing.T) {
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: nil}})
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: nil}})
 	m = update(t, m, tickedMsg{})
-	if !m.boardEmptySettled {
+	if !m.inboxEmptySettled {
 		t.Fatal("setup: the empty pass never settled")
 	}
 	view := m.View()
