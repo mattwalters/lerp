@@ -105,6 +105,6 @@ your hands after all.
   groups and an advisory `flock` that Windows does not have as such. WSL2 is
   Linux as far as lerp is concerned, and that is the answer there.
 
-Still here? [The README](README.md) is the working manual, and
-[SCOPE.md](SCOPE.md) is the fence every one of the claims above is enforced
-by.
+Still here? [The manual](docs/) is install to a first promoted ticket and a
+page per motion after that, and [SCOPE.md](SCOPE.md) is the fence every one
+of the claims above is enforced by.

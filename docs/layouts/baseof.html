@@ -10,9 +10,9 @@
 <body>
   {{/* Two pages stand outside the manual: the home splash, and the Why page,
        which is a pitch and marked `splash` in its own front matter. They drop
-       both rails and carry their own links; everything else — README and
-       SCOPE included, mounted rather than written — is a page of the manual
-       and gets the three-region shell. */}}
+       both rails and carry their own links; everything else — SCOPE
+       included, mounted rather than written — is a page of the manual and
+       gets the three-region shell. */}}
   {{ $manual := and (not .IsHome) (not .Params.splash) }}
   {{/* Looked up rather than spelled as a path, so a header link can never
        outlive the page it points at: with no page this fails the build,

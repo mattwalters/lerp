@@ -41,11 +41,11 @@ on:
     tags: ["v*.*.*"]
   pull_request:
     paths:
-      # The site is the repo's own markdown, so a README or SCOPE edit is a
-      # content change and gets the same build gate as a template edit. The
-      # Makefile is here because it holds the Hugo pin both jobs read.
+      # SCOPE.md is mounted into the site, so an edit to it is a content
+      # change and gets the same build gate as a template edit. The README is
+      # not mounted and is deliberately absent. The Makefile is here because
+      # it holds the Hugo pin both jobs read.
       - "docs/**"
-      - "README.md"
       - "SCOPE.md"
       - "Makefile"
       - ".github/workflows/docs.yml"

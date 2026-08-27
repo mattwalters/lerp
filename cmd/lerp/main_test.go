@@ -2,6 +2,8 @@ package main
 
 import (
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -22,6 +24,31 @@ func TestUsageListsLoginAndLogout(t *testing.T) {
 		if !strings.Contains(usage, want) {
 			t.Errorf("usage does not mention %q:\n%s", want, usage)
 		}
+	}
+}
+
+// cliPage is the manual's reference page for the command line, which opens
+// with this usage text verbatim.
+const cliPage = "docs/content/docs/cli.md"
+
+// The manual quotes the usage block as the whole of lerp's surface, and a
+// quoted string with nothing holding it to its source goes stale on the
+// first flag, with a green gate — the same reasoning that pins the
+// skipped-hop note to the page that quotes it, and lerp.example.toml to the
+// stock config. Add a subcommand or move -concurrency's default and this
+// fails here rather than on a reader's screen.
+//
+// The block is found by its own first line rather than by position, so
+// rewriting the prose around it costs nothing.
+func TestTheManualQuotesTheUsage(t *testing.T) {
+	page, err := os.ReadFile(filepath.Join("..", "..", cliPage))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(page), strings.TrimSuffix(usage, "\n")) {
+		t.Errorf("%s does not quote main.go's usage. It should read:\n\n%s\n"+
+			"main.go is the source. Change the usage there, then update the\n"+
+			"block that opens %s.", cliPage, usage, cliPage)
 	}
 }
 
