@@ -91,11 +91,12 @@ type Engine interface {
 
 // Options wires the shell to the loop.
 type Options struct {
-	Engine   Engine
-	Statuses []string      // promote targets: configured queue statuses, plus the pipeline's exits
-	Interval time.Duration // tick cadence; loop.DefaultInterval when zero
-	Lanes    int           // N: at most this many agents at once
-	Events   <-chan loop.Event
+	Engine         Engine
+	Statuses       []string      // Linear workflow states in board order
+	PromoteTargets []string      // promote targets: configured queue statuses, plus the pipeline's exits
+	Interval       time.Duration // tick cadence; loop.DefaultInterval when zero
+	Lanes          int           // N: at most this many agents at once
+	Events         <-chan loop.Event
 	// Windows maps a queue name to its runner's configured context window in
 	// tokens, from RepoConfig.ContextWindows. A queue absent from the map has
 	// no configured window, which is the work row's "tokens only, no
@@ -507,8 +508,14 @@ type model struct {
 	// the project filter. A display default, not a rule about process.
 	detailOpen [2]bool
 
+	// statusIndex is Linear board position for workflow states (from o.Statuses).
+	statusIndex map[string]int
+	// promoteStatuses is the sorted promote picker list: promote targets
+	// ordered by board position, with unknown statuses sinking to the end.
+	promoteStatuses []string
+
 	// promoting is the promote picker's open/closed state; promoteSel is its
-	// selected index into o.Statuses. Opened by "p" on a selected inbox
+	// selected index into promoteStatuses. Opened by "p" on a selected inbox
 	// item, closed by confirming, cancelling, or the list going empty.
 	promoting  bool
 	promoteSel int
@@ -609,6 +616,18 @@ func newModel(ctx context.Context, o Options) model {
 	h.Styles.ShortDesc = styleFaint
 	h.Styles.ShortSeparator = styleFaint
 	h.Styles.Ellipsis = styleFaint
+	statusIndex := make(map[string]int, len(o.Statuses))
+	for i, s := range o.Statuses {
+		if _, exists := statusIndex[s]; !exists {
+			statusIndex[s] = i
+		}
+	}
+	rawTargets := o.PromoteTargets
+	if len(rawTargets) == 0 {
+		rawTargets = o.Statuses
+	}
+	promoteStatuses := sortPromoteTargets(rawTargets, statusIndex)
+
 	// Focus opens on the inbox: the loop runs the board on its own, so what
 	// the operator is at the terminal for the moment they open it is what
 	// needs them, and it agrees with the panel numbering. The pane defaults
@@ -617,7 +636,9 @@ func newModel(ctx context.Context, o Options) model {
 	// column an open pane squeezes out of it, and the log is one `2` away
 	// with no `enter` behind it, because work's pane stays open.
 	m := model{o: o, ctx: ctx, focus: panelAttention, lanes: make(map[int]*lane),
-		details: make(map[string]*ticketDetail), lastLog: make(map[string]string),
+		statusIndex:     statusIndex,
+		promoteStatuses: promoteStatuses,
+		details:         make(map[string]*ticketDetail), lastLog: make(map[string]string),
 		promoteErr: make(map[string]string),
 		vp:         viewport.New(0, 0), follow: true, keys: newKeymap(), help: h,
 		sortMode:    defaultSort,
@@ -894,7 +915,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// reported, and opening the picker on it would flip View's modal
 		// bypass early — the board drawn with m.queues still nil, the very
 		// half-populated frame this ticket exists to prevent.
-		if m.focus == panelAttention && len(m.shown) > 0 && len(m.o.Statuses) > 0 &&
+		if m.focus == panelAttention && len(m.shown) > 0 && len(m.promoteStatuses) > 0 &&
 			m.roomForMain() && !m.splashing() {
 			m.promoteTargets = m.capturePromoteTargets()
 			m.promoting = true
@@ -903,7 +924,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Visual):
 		// Live exactly where p is live: visual mode exists to feed the
 		// picker, so it is not offered where the picker cannot open.
-		if m.focus == panelAttention && len(m.shown) > 0 && len(m.o.Statuses) > 0 && m.roomForMain() && !m.visual {
+		if m.focus == panelAttention && len(m.shown) > 0 && len(m.promoteStatuses) > 0 && m.roomForMain() && !m.visual {
 			if it := m.selectedAttention(); it != nil {
 				m.visual, m.visualAnchor = true, it.Ticket
 			}
@@ -1103,14 +1124,14 @@ func (m model) handlePromoteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.promoteSel--
 		}
 	case key.Matches(msg, m.keys.Down):
-		if m.promoteSel < len(m.o.Statuses)-1 {
+		if m.promoteSel < len(m.promoteStatuses)-1 {
 			m.promoteSel++
 		}
 	case key.Matches(msg, m.keys.Detail):
 		targets := m.promoteTargets
 		m.promoting = false
 		if len(targets) > 0 {
-			cmd = m.doPromote(targets, m.o.Statuses[m.promoteSel])
+			cmd = m.doPromote(targets, m.promoteStatuses[m.promoteSel])
 		}
 	}
 	// The picker and the lens under it are the same box now, so this is not
@@ -2141,7 +2162,7 @@ func (m *model) resort() {
 	if it := m.selectedAttention(); it != nil {
 		selected = it.Ticket
 	}
-	m.shown = sortAttention(filterAttention(m.attention, m.project, m.search, m.backlogOpen), m.sortMode)
+	m.shown = sortAttention(filterAttention(m.attention, m.project, m.search, m.backlogOpen), m.sortMode, m.statusIndex)
 	i := slices.IndexFunc(m.shown, func(it loop.AttentionItem) bool { return it.Ticket == selected })
 	if selected == "" || i < 0 {
 		m.attnSel = clampIndex(m.attnSel, len(m.shown))
@@ -2229,7 +2250,7 @@ func (m *model) foldedRows() []loop.AttentionItem {
 // sortAttention orders a copy of items for the mode. Every mode falls
 // through to leverage and then to the identifier, so no two rows are ever
 // in an arbitrary order and no mode needs a second sort key configured.
-func sortAttention(items []loop.AttentionItem, mode sortMode) []loop.AttentionItem {
+func sortAttention(items []loop.AttentionItem, mode sortMode, statusIndex map[string]int) []loop.AttentionItem {
 	out := slices.Clone(items)
 	slices.SortFunc(out, func(a, b loop.AttentionItem) int {
 		switch mode {
@@ -2239,11 +2260,12 @@ func sortAttention(items []loop.AttentionItem, mode sortMode) []loop.AttentionIt
 			}
 		case sortStatus:
 			// Pipeline-relevance first, so the statuses a run left a ticket
-			// in sort above the ones the pipeline never named.
+			// in sort above the ones the pipeline never named, then by Linear
+			// board position.
 			if c := cmp.Compare(a.Relevance, b.Relevance); c != 0 {
 				return c
 			}
-			if c := strings.Compare(a.Status, b.Status); c != 0 {
+			if c := compareStatusPosition(a.Status, b.Status, statusIndex); c != 0 {
 				return c
 			}
 		case sortProject:
@@ -2252,6 +2274,52 @@ func sortAttention(items []loop.AttentionItem, mode sortMode) []loop.AttentionIt
 			}
 		}
 		return compareLeverage(a, b)
+	})
+	return out
+}
+
+// compareStatusPosition orders statuses by their index in statusIndex
+// (Linear board order). Unknown statuses sink to the end, ordered
+// alphabetically among themselves.
+func compareStatusPosition(a, b string, statusIndex map[string]int) int {
+	if a == b {
+		return 0
+	}
+	ia, oka := statusIndex[a]
+	ib, okb := statusIndex[b]
+	switch {
+	case oka && okb:
+		if c := cmp.Compare(ia, ib); c != 0 {
+			return c
+		}
+		return strings.Compare(a, b)
+	case oka && !okb:
+		return -1
+	case !oka && okb:
+		return 1
+	default:
+		return strings.Compare(a, b)
+	}
+}
+
+// sortPromoteTargets orders promote targets by their position in Linear board
+// order (from statusIndex). Unknown statuses sink to the end in their original
+// relative order.
+func sortPromoteTargets(targets []string, statusIndex map[string]int) []string {
+	out := slices.Clone(targets)
+	slices.SortStableFunc(out, func(a, b string) int {
+		ia, oka := statusIndex[a]
+		ib, okb := statusIndex[b]
+		switch {
+		case oka && okb:
+			return cmp.Compare(ia, ib)
+		case oka && !okb:
+			return -1
+		case !oka && okb:
+			return 1
+		default:
+			return 0
+		}
 	})
 	return out
 }
@@ -2739,7 +2807,7 @@ func (m *model) panelKeys(p panel) []key.Binding {
 	// canPromote also gates the visual-mode line: a range with nowhere to
 	// promote to is the same as no picker to open, and the line must not
 	// advertise a p that roomForMain would refuse.
-	canPromote := len(m.o.Statuses) > 0 && m.roomForMain()
+	canPromote := len(m.promoteStatuses) > 0 && m.roomForMain()
 	return m.keys.panelHelp(p, rowKeys{
 		// The raw toggle acts on the log in the pane, so the line offers it
 		// where that log is on screen — the panel line advertises what this
@@ -3814,7 +3882,7 @@ func (m model) promotePicker(w, h int) string {
 		first = fmt.Sprintf("%d tickets selected", len(targets))
 	}
 	rows := []string{first, ""}
-	for i, status := range m.o.Statuses {
+	for i, status := range m.promoteStatuses {
 		if i == m.promoteSel {
 			rows = append(rows, styleFocus.Render("▸ "+status))
 		} else {
