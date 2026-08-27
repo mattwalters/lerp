@@ -42,17 +42,23 @@ var (
 	colorRunning      = lipgloss.AdaptiveColor{Light: "#0B6E85", Dark: "#22D3EE"}
 	colorProvisioning = lipgloss.AdaptiveColor{Light: "#9A5E07", Dark: "#F2B84B"}
 	colorAttention    = lipgloss.AdaptiveColor{Light: "#C4275B", Dark: "#F2618E"}
-	// colorFaint stays as it was: a near-neutral grey (well under 15%
-	// saturation in both variants), not a purple accent, so the retune
-	// leaves it alone rather than tinting a colour nobody reads as purple.
-	colorFaint = lipgloss.AdaptiveColor{Light: "#6E697C", Dark: "#9490A9"}
+	// colorFaint is neutralised rather than tinted: it draws every unfocused
+	// panel border, sitting right beside the new focused-green one, so the
+	// old violet cast (low-saturation, but a cast all the same) was the one
+	// leftover a side-by-side comparison would still catch. True grey (no
+	// hue at all) reads as neither colour and needs no design decision about
+	// which one it leans toward. Picked at the same relative luminance as
+	// the value it replaces, so every contrast number pinned elsewhere in
+	// this file (faint against black/white, faint against colorSelected's
+	// band) still holds to the same precision.
+	colorFaint = lipgloss.AdaptiveColor{Light: "#6C6C6C", Dark: "#939393"}
 	// colorSelected is the band under the row the cursor is on. It is a
 	// background, so it is not read — it is read *through*, by every colour
 	// a row already carries. The tint is therefore the quietest one that
 	// still finds itself across a panel, and it is priced against styleFaint,
-	// the combination with the least to spare: faint keeps 5.08:1 on the dark
-	// band against 6.82:1 on black, and 4.28:1 on the light one against
-	// 5.28:1 on white — both re-derived at the same design point the purple
+	// the combination with the least to spare: faint keeps 5.09:1 on the dark
+	// band against 6.84:1 on black, and 4.26:1 on the light one against
+	// 5.25:1 on white — both re-derived at the same design point the purple
 	// held (same lightness step off black/white as before), just re-hued to
 	// green. Adaptive, because the same tint that reads as a band on a dark
 	// terminal is a smudge on a light one.
@@ -91,7 +97,7 @@ var (
 	// to its plain empty-state text, the same as under NO_COLOR. ANSI256
 	// degrades fine on its own (both variants' nearest 256 match stays under
 	// the floor, even though the light variant's nearest is a pale cube
-	// green rather than a grey), so it gets an explicit value rather than
+	// cyan rather than a grey), so it gets an explicit value rather than
 	// also going without.
 	colorWordmark = lipgloss.CompleteAdaptiveColor{
 		Light: lipgloss.CompleteColor{TrueColor: "#C1CDC5", ANSI256: "251"},
