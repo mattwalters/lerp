@@ -4812,6 +4812,43 @@ func TestFoldAllTogglesTheWholeOutline(t *testing.T) {
 	}
 }
 
+// Regression test for a bug caught in review: pressing z with the cursor
+// inside a flat section's own body — not on its heading line, and not yet
+// into the next sibling — must fold that section, not the next one.
+// Popping the closed-ancestor stack before crediting the preceding text to
+// it would misattribute a section's own trailing body to whatever heading
+// followed, since the pop happens exactly because that heading is reached.
+func TestFoldTogglesTheSectionTheCursorIsActuallyIn(t *testing.T) {
+	m, _, reader := newReadingTestModel(t)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+	m = update(t, m, keyMsg("enter"))
+	body := "# One\n\n" + strings.Repeat("line of one's own body\n", 20) + "\n# Two\n\nsecond body"
+	m = selectAndRead(t, m, 0, linear.IssueDetail{Body: body}, nil, reader)
+
+	line := -1
+	for i, o := range m.foldOwner {
+		if o == 0 {
+			line = i
+			break
+		}
+	}
+	if line == -1 {
+		t.Fatalf("no rendered line is owned by One: %v", m.foldOwner)
+	}
+	// A few lines into One's own body, well clear of its heading line, so
+	// this exercises body ownership rather than the heading-line case.
+	m.vp.SetYOffset(line + 3)
+	m = update(t, m, keyMsg("z"))
+	view := m.View()
+	if strings.Contains(view, "line of one's own body") {
+		t.Fatalf("z should have folded One, whose body the cursor sat inside:\n%s", view)
+	}
+	if !strings.Contains(view, "second body") {
+		t.Fatalf("folding One must not touch Two:\n%s", view)
+	}
+}
+
 // The fold keys are inert without a heading to act on: a plain ticket body
 // never grows a "hidden" line nobody asked for.
 func TestFoldKeysAreInertWithNoHeadings(t *testing.T) {

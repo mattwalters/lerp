@@ -3,6 +3,8 @@ package tui
 import (
 	"fmt"
 	"strings"
+
+	"github.com/charmbracelet/lipgloss"
 )
 
 // Folding lets a long ticket body read first as an outline of its headings
@@ -117,20 +119,34 @@ func foldBody(body string, width int, folded map[int]bool) (lines []string, owne
 		if h.line < pos {
 			continue // inside a folded ancestor's section — invisible
 		}
-		for len(stack) > 0 && ends[stack[len(stack)-1]] <= h.line {
-			stack = stack[:len(stack)-1]
-		}
+		// The text between pos and this heading belongs to whichever
+		// section was still open when it was written — the current top of
+		// stack — which has to be read before popping anything: popping
+		// first would credit this text to an ancestor two levels up, since
+		// the section it actually trails is exactly the one about to close.
 		parent := -1
 		if len(stack) > 0 {
 			parent = stack[len(stack)-1]
 		}
 		emit(strings.Join(src[pos:h.line], "\n"), parent)
+		for len(stack) > 0 && ends[stack[len(stack)-1]] <= h.line {
+			stack = stack[:len(stack)-1]
+		}
 		blank()
 		if folded[i] {
 			hidden := len(renderMarkdown(strings.Join(src[h.line+1:ends[i]], "\n"), width))
-			headingLines := renderMarkdown(src[h.line], width)
-			if n := len(headingLines); n > 0 {
-				headingLines[n-1] += styleFaint.Render(fmt.Sprintf(" ⋯ %d hidden", hidden))
+			suffix := styleFaint.Render(fmt.Sprintf(" ⋯ %d hidden", hidden))
+			// Budgeted before wrapping, not appended after: appending to an
+			// already-wrapped line can push it past width, and panelBox
+			// truncates rather than rewraps — the count would vanish and
+			// take the tail of the heading's own text with it.
+			headingWidth := width
+			if hidden > 0 {
+				headingWidth = max(1, width-lipgloss.Width(suffix))
+			}
+			headingLines := renderMarkdown(src[h.line], headingWidth)
+			if n := len(headingLines); n > 0 && hidden > 0 {
+				headingLines[n-1] += suffix
 			}
 			for _, l := range headingLines {
 				lines = append(lines, l)
@@ -142,6 +158,19 @@ func foldBody(body string, width int, folded map[int]bool) (lines []string, owne
 		for _, l := range renderMarkdown(src[h.line], width) {
 			lines = append(lines, l)
 			owner = append(owner, i)
+		}
+		// The blank line renderMarkdown would draw between this heading and
+		// its body (r.blank(), called as the continuous parser reaches that
+		// blank source line) is otherwise lost: the body is a fresh,
+		// independent renderMarkdown call whose own out starts empty, so
+		// its leading blank line no-ops exactly the way blank() above
+		// exists to work around. Unlike blank(), this one is conditional on
+		// the source actually having one — a heading tight against its
+		// body ("# A\nbody", no blank) draws no air here either, matching
+		// the continuous render exactly.
+		if h.line+1 < len(src) && strings.TrimSpace(src[h.line+1]) == "" {
+			lines = append(lines, "")
+			owner = append(owner, -1)
 		}
 		pos = h.line + 1
 		stack = append(stack, i)
@@ -220,7 +249,10 @@ func (m *model) foldAll() {
 	if d == nil {
 		return
 	}
-	hs := headings(strings.Split(d.body, "\n"))
+	// TrimSpace to match foldBody's own parse (via ticketLines): a body
+	// that is all leading blank lines before its first heading must count
+	// the same headings either way, or Z's hint and Z's action disagree.
+	hs := headings(strings.Split(strings.TrimSpace(d.body), "\n"))
 	if len(hs) == 0 {
 		return
 	}
