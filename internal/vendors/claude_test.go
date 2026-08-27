@@ -40,9 +40,9 @@ func TestClaudeCommandQuotesMetacharactersInModel(t *testing.T) {
 // value, and an operator relies on that to override an earlier flag on a
 // last-wins CLI.
 func TestClaudeCommandArgsAppendedLastAndVerbatim(t *testing.T) {
-	got := claude{}.Command(Options{Model: "sonnet", Args: "--permission-mode bypassPermissions --model opus"})
+	got := claude{}.Command(Options{Model: "sonnet", Args: "--allowedTools Read --model opus"})
 	want := "claude -p {{prompt}} --session-id {{session}} --output-format stream-json --verbose" +
-		" --model 'sonnet' --permission-mode bypassPermissions --model opus"
+		" --model 'sonnet' --allowedTools Read --model opus"
 	if got != want {
 		t.Errorf("Command = %q, want %q", got, want)
 	}
