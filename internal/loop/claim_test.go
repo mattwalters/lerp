@@ -63,7 +63,7 @@ func TestClaimForQueueReleasesATicketMovedDuringTheClaim(t *testing.T) {
 	f.AddIssue("LERP", linear.Issue{ID: "iss-1", Identifier: "LERP-1", Status: "Todo"})
 
 	client := movedOnAssign{Client: f, move: func(issueID string) {
-		if err := f.MoveIssue(ctx, issueID, "Escalated"); err != nil {
+		if _, err := f.MoveIssue(ctx, issueID, "Escalated"); err != nil {
 			t.Error(err)
 		}
 	}}
@@ -94,7 +94,7 @@ func TestClaimForQueueLeavesAColleaguesClaimOnAMovedTicket(t *testing.T) {
 	f.AddIssue("LERP", linear.Issue{ID: "iss-1", Identifier: "LERP-1", Status: "Todo"})
 
 	moved := movedOnAssign{Client: f, move: func(issueID string) {
-		if err := f.MoveIssue(ctx, issueID, "Escalated"); err != nil {
+		if _, err := f.MoveIssue(ctx, issueID, "Escalated"); err != nil {
 			t.Error(err)
 		}
 	}}
@@ -188,7 +188,7 @@ func TestClaimForQueueReportsAFailedReleaseOfAMovedTicket(t *testing.T) {
 	f.AddIssue("LERP", linear.Issue{ID: "iss-1", Identifier: "LERP-1", Status: "Todo"})
 
 	moved := movedOnAssign{Client: f, move: func(issueID string) {
-		if err := f.MoveIssue(ctx, issueID, "Escalated"); err != nil {
+		if _, err := f.MoveIssue(ctx, issueID, "Escalated"); err != nil {
 			t.Error(err)
 		}
 	}}

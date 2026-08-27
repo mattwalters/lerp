@@ -338,12 +338,12 @@ type Reconciler struct {
 
 	// boards is what the attention pass reads instead of re-listing the
 	// whole backlog every 12 seconds: one cached reading of each team's
-	// board, kept current by a delta read per pass. It is owned by the pass
-	// — attention is called only from Tick, which is the loop's own
-	// goroutine and never runs concurrently with itself — so unlike active
-	// and ejected it needs no lock. Nothing durable lives here (SCOPE.md
+	// board, kept current by a delta read per pass and patched immediately
+	// on Promote. Protected by boardsMu because Promote runs from a TUI
+	// goroutine concurrently with Tick. Nothing durable lives here (SCOPE.md
 	// invariant 1): losing it to a restart costs one full re-list.
-	boards map[string]*teamBoard
+	boardsMu sync.Mutex
+	boards   map[string]*teamBoard
 
 	// resumeAt is when a pass may next ask Linear anything, set by fail when
 	// an error chain carries *linear.RateLimitError. It has its own lock
@@ -588,6 +588,20 @@ func (r *Reconciler) attention(ctx context.Context) {
 		r.fail(fmt.Errorf("attention: read viewer: %w", err))
 		return
 	}
+	for _, team := range r.o.Repo.Teams {
+		if _, err := r.refreshBoard(ctx, team, viewerID); err != nil {
+			r.fail(err)
+			return
+		}
+	}
+	r.emitAttention()
+}
+
+// emitAttention recomputes what needs the operator from the cached boards and
+// emits it as one EventAttention carrying the whole list, in identifier order.
+// It is called after a pass refreshes the boards, and after Promote patches the
+// cache.
+func (r *Reconciler) emitAttention() {
 	served := r.o.Repo.WatchedStatuses()
 	relevance := statusRelevance(r.o.Repo)
 	var items []AttentionItem
@@ -620,11 +634,11 @@ func (r *Reconciler) attention(ctx context.Context) {
 			Blocks:    issue.Blocks,
 		})
 	}
+	r.boardsMu.Lock()
 	for _, team := range r.o.Repo.Teams {
-		board, err := r.refreshBoard(ctx, team, viewerID)
-		if err != nil {
-			r.fail(err)
-			return
+		board := r.boards[team]
+		if board == nil {
+			continue
 		}
 		for _, issue := range board.issues {
 			// The board holds only unassigned tickets and the operator's
@@ -634,6 +648,7 @@ func (r *Reconciler) attention(ctx context.Context) {
 			add(issue, issue.AssigneeID != "")
 		}
 	}
+	r.boardsMu.Unlock()
 	countUnblocks(items)
 	sort.Slice(items, func(i, j int) bool { return items[i].Ticket < items[j].Ticket })
 	r.emit(Event{Type: EventAttention, Attention: items})
@@ -651,6 +666,7 @@ func (r *Reconciler) attention(ctx context.Context) {
 // gone away. The attempt is still counted, so a delta that keeps failing
 // escalates to the re-list rather than retrying forever.
 func (r *Reconciler) refreshBoard(ctx context.Context, team, viewerID string) (*teamBoard, error) {
+	r.boardsMu.Lock()
 	board := r.boards[team]
 	// A zero cursor is not a cheap delta but the most expensive query lerp
 	// can send: unfiltered by state, "everything since the beginning" is the
@@ -658,29 +674,38 @@ func (r *Reconciler) refreshBoard(ctx context.Context, team, viewerID string) (*
 	// full listing came back empty — an inbox with nothing in it — and the
 	// answer is to keep asking the two listings, which for that board are
 	// two empty pages.
-	if board == nil || board.since.IsZero() || board.deltas >= r.o.ResyncEvery {
+	relist := board == nil || board.since.IsZero() || board.deltas >= r.o.ResyncEvery
+	var since time.Time
+	if !relist {
+		board.deltas++
+		since = board.since
+	}
+	r.boardsMu.Unlock()
+	if relist {
 		return r.relistBoard(ctx, team, viewerID)
 	}
-	// Counted before the read, so failures count too. A delta that keeps
-	// failing — a gateway error, a query Linear stopped accepting, or
-	// (paced far slower, on its own resumeAt rather than every interval —
-	// see Tick) a 429 — would otherwise never let the counter reach
-	// ResyncEvery, and the re-list that is this board's only other source
-	// would never run again: the inbox would freeze at whatever the cold
-	// start saw, for the life of the process, while the pass kept reissuing
-	// the same failing read. Escalating to the two listings after
-	// ResyncEvery attempts is the fallback that leaves, and they are
-	// cheaper than the delta that is failing: filtered by state and
-	// assignee, where it is filtered by neither.
-	board.deltas++
 	// Asked from behind the cursor, never from the cursor itself: see
 	// deltaOverlap. The answers are deduped by issue id, so a row this
 	// window returns again simply replaces itself.
-	delta, err := r.o.Client.ListTeamIssuesUpdatedSince(ctx, team, board.since.Add(-deltaOverlap))
+	delta, err := r.o.Client.ListTeamIssuesUpdatedSince(ctx, team, since.Add(-deltaOverlap))
 	if err != nil {
 		return nil, fmt.Errorf("attention: read changes for team %s: %w", team, err)
 	}
+	r.boardsMu.Lock()
+	defer r.boardsMu.Unlock()
+	board = r.boards[team]
+	if board == nil {
+		return nil, nil
+	}
 	for _, issue := range delta {
+		if issue.UpdatedAt.After(board.since) {
+			board.since = issue.UpdatedAt
+		}
+		if cached, ok := board.issues[issue.ID]; ok {
+			if issue.UpdatedAt.Before(cached.UpdatedAt) {
+				continue
+			}
+		}
 		if inboxCanDraw(issue, viewerID) {
 			board.issues[issue.ID] = issue
 		} else {
@@ -689,9 +714,6 @@ func (r *Reconciler) refreshBoard(ctx context.Context, team, viewerID string) (*
 			// gets — which is why the delta query filters on nothing but the
 			// team and the timestamp.
 			delete(board.issues, issue.ID)
-		}
-		if issue.UpdatedAt.After(board.since) {
-			board.since = issue.UpdatedAt
 		}
 	}
 	return board, nil
@@ -732,6 +754,8 @@ func (r *Reconciler) relistBoard(ctx context.Context, team, viewerID string) (*t
 		return nil, fmt.Errorf("attention: list claimed tickets for team %s: %w", team, err)
 	}
 	board := &teamBoard{issues: make(map[string]linear.Issue, len(unassigned)+len(assigned))}
+	r.boardsMu.Lock()
+	defer r.boardsMu.Unlock()
 	// The cursor only ever moves forward, across a re-list included. Taking
 	// it from these rows alone would walk it backwards on every resync — the
 	// listings return what the inbox can draw, which on a team that churns on
@@ -845,20 +869,48 @@ func countUnblocks(items []AttentionItem) {
 // releaseClaim, which verifies the assignee is the operating user first and
 // leaves a colleague's claim alone.
 func (r *Reconciler) Promote(ctx context.Context, ticketID, status string) error {
-	if err := r.o.Client.MoveIssue(ctx, ticketID, status); err != nil {
+	updated, err := r.o.Client.MoveIssue(ctx, ticketID, status)
+	if err != nil {
 		return err
 	}
-	if !r.o.Repo.WatchedStatuses()[status] {
-		return nil
+	released := false
+	if r.o.Repo.WatchedStatuses()[status] {
+		viewerID, err := r.o.Client.Viewer(ctx)
+		if err != nil {
+			return fmt.Errorf("promote %s: read viewer: %w", ticketID, err)
+		}
+		if err := releaseClaim(ctx, r.o.Client, ticketID, viewerID); err != nil {
+			return fmt.Errorf("promote %s: %w", ticketID, err)
+		}
+		released = true
 	}
-	viewerID, err := r.o.Client.Viewer(ctx)
-	if err != nil {
-		return fmt.Errorf("promote %s: read viewer: %w", ticketID, err)
-	}
-	if err := releaseClaim(ctx, r.o.Client, ticketID, viewerID); err != nil {
-		return fmt.Errorf("promote %s: %w", ticketID, err)
-	}
+	r.patchBoardIssue(ticketID, status, updated.StatusType, updated.UpdatedAt, released)
+	r.emitAttention()
 	return nil
+}
+
+// patchBoardIssue updates a cached issue's status, category, timestamp and
+// claim in place, so the inbox reflects Promote writes immediately without
+// waiting for a network pass.
+func (r *Reconciler) patchBoardIssue(ticketID, status, statusType string, updatedAt time.Time, released bool) {
+	r.boardsMu.Lock()
+	defer r.boardsMu.Unlock()
+	for _, board := range r.boards {
+		if cached, ok := board.issues[ticketID]; ok {
+			cached.Status = status
+			if statusType != "" {
+				cached.StatusType = statusType
+			}
+			if !updatedAt.IsZero() {
+				cached.UpdatedAt = updatedAt
+			}
+			if released {
+				cached.AssigneeID = ""
+			}
+			board.issues[ticketID] = cached
+			break
+		}
+	}
 }
 
 // Ejection is what eject hands back: the run it stopped, and the command

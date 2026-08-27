@@ -42,7 +42,7 @@ func TestFakeListAssignedIssues(t *testing.T) {
 	}
 	// A finished assigned issue waits on nobody, exactly as the real
 	// query's state-type filter behaves.
-	if err := f.MoveIssue(ctx, "iss-3", "Done"); err != nil {
+	if _, err := f.MoveIssue(ctx, "iss-3", "Done"); err != nil {
 		t.Fatalf("MoveIssue: %v", err)
 	}
 
@@ -67,7 +67,7 @@ func TestFakeListUnassignedIssues(t *testing.T) {
 	}
 	// An unassigned but finished issue waits on nobody, exactly as the real
 	// query's state-type filter behaves.
-	if err := f.MoveIssue(ctx, "iss-2", "Done"); err != nil {
+	if _, err := f.MoveIssue(ctx, "iss-2", "Done"); err != nil {
 		t.Fatalf("MoveIssue: %v", err)
 	}
 
@@ -106,7 +106,7 @@ func TestFakeBlocking(t *testing.T) {
 	}
 
 	// Completing the blocker unblocks the issue.
-	if err := f.MoveIssue(context.Background(), "iss-3", "Done"); err != nil {
+	if _, err := f.MoveIssue(context.Background(), "iss-3", "Done"); err != nil {
 		t.Fatalf("MoveIssue: %v", err)
 	}
 	is, err = f.GetIssue(context.Background(), "iss-1")
@@ -118,7 +118,7 @@ func TestFakeBlocking(t *testing.T) {
 	}
 	// A finished issue is held up by nothing, so it drops off what its
 	// blocker blocks — the forward half of the same rule.
-	if err := f.MoveIssue(context.Background(), "iss-1", "Done"); err != nil {
+	if _, err := f.MoveIssue(context.Background(), "iss-1", "Done"); err != nil {
 		t.Fatalf("MoveIssue: %v", err)
 	}
 	blocker, err = f.GetIssue(context.Background(), "iss-3")
@@ -161,8 +161,12 @@ func TestFakeClaimProtocol(t *testing.T) {
 func TestFakeMoveIssue(t *testing.T) {
 	f := newTestFake()
 	ctx := context.Background()
-	if err := f.MoveIssue(ctx, "iss-1", "In Progress"); err != nil {
+	got, err := f.MoveIssue(ctx, "iss-1", "In Progress")
+	if err != nil {
 		t.Fatalf("MoveIssue: %v", err)
+	}
+	if got.Status != "In Progress" || got.UpdatedAt.IsZero() {
+		t.Errorf("returned issue = %+v, want status In Progress with UpdatedAt", got)
 	}
 	is, _ := f.GetIssue(ctx, "iss-1")
 	if is.Status != "In Progress" {
@@ -269,7 +273,7 @@ func TestFakeMoveIssueUndeclaredTeamStaysPermissive(t *testing.T) {
 	f := newTestFake()
 	f.SetTeamStates("LERP", "Todo", "In Progress", "Done")
 	// iss-4 belongs to PROSE, which has declared nothing.
-	if err := f.MoveIssue(context.Background(), "iss-4", "Whatever"); err != nil {
+	if _, err := f.MoveIssue(context.Background(), "iss-4", "Whatever"); err != nil {
 		t.Errorf("MoveIssue on an undeclared team: %v, want no error", err)
 	}
 }
@@ -282,7 +286,7 @@ func TestFakeSetStatusCategory(t *testing.T) {
 	f.SetStatusCategory(CategoryCanceled, "Won't Fix")
 	ctx := context.Background()
 
-	if err := f.MoveIssue(ctx, "iss-1", "Won't Fix"); err != nil {
+	if _, err := f.MoveIssue(ctx, "iss-1", "Won't Fix"); err != nil {
 		t.Fatalf("MoveIssue: %v", err)
 	}
 	is, err := f.GetIssue(ctx, "iss-1")
@@ -342,7 +346,7 @@ func TestFakeListTeamIssuesUpdatedSince(t *testing.T) {
 	// Finishing a ticket is a change like any other, and it comes back —
 	// which is the only way a caller holding a cached board learns to drop
 	// it.
-	if err := f.MoveIssue(ctx, "iss-1", "Done"); err != nil {
+	if _, err := f.MoveIssue(ctx, "iss-1", "Done"); err != nil {
 		t.Fatal(err)
 	}
 	got, err := f.ListTeamIssuesUpdatedSince(ctx, "LERP", cursor.Add(time.Second))
@@ -363,7 +367,7 @@ func TestFakeMutationsBumpUpdatedAt(t *testing.T) {
 		name  string
 		write func(*Fake) error
 	}{
-		{"move", func(f *Fake) error { return f.MoveIssue(ctx, "iss-1", "Done") }},
+		{"move", func(f *Fake) error { _, err := f.MoveIssue(ctx, "iss-1", "Done"); return err }},
 		{"assign", func(f *Fake) error { return f.AssignIssue(ctx, "iss-1", "user-9") }},
 		{"unassign", func(f *Fake) error { return f.UnassignIssue(ctx, "iss-1") }},
 		{"comment", func(f *Fake) error { f.AddComment("iss-1", "hello"); return nil }},

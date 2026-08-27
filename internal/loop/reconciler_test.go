@@ -879,7 +879,8 @@ func TestAClaimProtocolFailureKeepsTheRecordThatRepairsIt(t *testing.T) {
 func TestRunRespectsAgentMove(t *testing.T) {
 	var h *harness
 	h = newHarness(t, 1, func(context.Context, run.Invocation) (run.Result, error) {
-		return run.Result{ExitCode: 0}, h.fake.MoveIssue(context.Background(), "one", "Escalated")
+		_, err := h.fake.MoveIssue(context.Background(), "one", "Escalated")
+		return run.Result{ExitCode: 0}, err
 	})
 	h.fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Todo"})
 
@@ -896,7 +897,8 @@ func TestRunRespectsAgentMove(t *testing.T) {
 func TestRunReportsTheHopItSkipped(t *testing.T) {
 	var h *harness
 	h = newHarness(t, 1, func(context.Context, run.Invocation) (run.Result, error) {
-		return run.Result{ExitCode: 0}, h.fake.MoveIssue(context.Background(), "one", "In Progress")
+		_, err := h.fake.MoveIssue(context.Background(), "one", "In Progress")
+		return run.Result{ExitCode: 0}, err
 	})
 	h.fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Todo"})
 
@@ -924,7 +926,8 @@ func TestRunReportsTheHopItSkipped(t *testing.T) {
 func TestRunReportsASkippedHopWithoutBlamingAnAutomation(t *testing.T) {
 	var h *harness
 	h = newHarness(t, 1, func(context.Context, run.Invocation) (run.Result, error) {
-		return run.Result{ExitCode: 0}, h.fake.MoveIssue(context.Background(), "one", "Needs Help")
+		_, err := h.fake.MoveIssue(context.Background(), "one", "Needs Help")
+		return run.Result{ExitCode: 0}, err
 	})
 	h.fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Todo"})
 
@@ -944,7 +947,8 @@ func TestRunReportsNothingWhenNoHopWasSkipped(t *testing.T) {
 	for name, move := range map[string]func(*harness) error{
 		"ticket did not move": func(*harness) error { return nil },
 		"agent made the hop itself": func(h *harness) error {
-			return h.fake.MoveIssue(context.Background(), "one", "Done")
+			_, err := h.fake.MoveIssue(context.Background(), "one", "Done")
+			return err
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -1145,7 +1149,7 @@ func TestTickEmitsAttention(t *testing.T) {
 
 	// The operator routes the ticket (in Linear, not in lerp) into a queue's
 	// own status, and the next pass agrees only the unrouted ticket remains.
-	if err := h.fake.MoveIssue(ctx, "help", "Todo"); err != nil {
+	if _, err := h.fake.MoveIssue(ctx, "help", "Todo"); err != nil {
 		t.Fatal(err)
 	}
 	h.rec.Tick(ctx)
@@ -1611,7 +1615,7 @@ func TestAttentionEvictsThroughTheDelta(t *testing.T) {
 	if err := h.fake.AssignIssue(ctx, "taken", "somebody-else"); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.fake.MoveIssue(ctx, "finished", "Done"); err != nil {
+	if _, err := h.fake.MoveIssue(ctx, "finished", "Done"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1622,9 +1626,9 @@ func TestAttentionEvictsThroughTheDelta(t *testing.T) {
 	}
 }
 
-// Done-when: lerp's own writes reach the inbox as fast as anyone else's. A
-// promote moves the ticket, which bumps its updatedAt, so the next delta
-// carries it — no special case anywhere for changes this process made.
+// Done-when: lerp's own writes reach the inbox immediately on promote and hold
+// on subsequent passes. A promote writes through to the cached board, releases
+// any claim if moving to a served status, and emits EventAttention at once.
 func TestAttentionSeesOurOwnPromoteOnTheNextPass(t *testing.T) {
 	h, _ := newCountingHarness(t)
 	h.fake.AddIssue("LERP", linear.Issue{ID: "parked", Identifier: "LERP-1", Status: "Needs Help",
@@ -1638,14 +1642,140 @@ func TestAttentionSeesOurOwnPromoteOnTheNextPass(t *testing.T) {
 	if err := h.rec.Promote(ctx, "parked", "Todo"); err != nil {
 		t.Fatalf("Promote: %v", err)
 	}
+	// Write-through emits immediately on Promote.
+	if got := h.waitEvents(t, EventAttention, 1)[0]; len(got.Attention) != 0 {
+		t.Errorf("immediately after promote = %+v, want an empty inbox", got.Attention)
+	}
 
 	h.rec.Tick(ctx)
 	if got := h.waitEvents(t, EventAttention, 1)[0]; len(got.Attention) != 0 {
-		t.Errorf("after promoting into a queue = %+v, want an empty inbox", got.Attention)
+		t.Errorf("after subsequent pass = %+v, want an empty inbox", got.Attention)
 	}
 	// The same pass filled a lane with the ticket it just promoted, which is
 	// the point of promoting into a queue. Let that run finish before the
 	// test's temporary evidence store goes away underneath it.
+	waitIdle(t, h.rec)
+}
+
+// Done-when: Promote writes through to the cached board and emits EventAttention
+// immediately without waiting for a pass or making any network reads.
+func TestPromoteWritesThroughToAttentionImmediatelyWithoutNetworkRead(t *testing.T) {
+	h, counting := newCountingHarness(t)
+	h.fake.AddIssue("LERP", linear.Issue{ID: "parked", Identifier: "LERP-1", Status: "Needs Help",
+		AssigneeID: "fake-viewer"})
+	h.fake.AddIssue("LERP", linear.Issue{ID: "loose", Identifier: "LERP-2", Status: "Backlog"})
+	ctx := context.Background()
+
+	// Cold start pass populates the board cache.
+	h.rec.Tick(ctx)
+	if got := h.waitEvents(t, EventAttention, 1)[0]; len(got.Attention) != 2 {
+		t.Fatalf("cold start = %+v, want 2 tickets", got.Attention)
+	}
+
+	listingsBefore := counting.listings.Load()
+	deltasBefore := counting.deltas.Load()
+
+	// Promoting into an unserved status parks the ticket deliberately, preserving the claim.
+	// EventAttention is emitted immediately from the cache with zero board network reads.
+	if err := h.rec.Promote(ctx, "loose", "Needs Help"); err != nil {
+		t.Fatalf("Promote: %v", err)
+	}
+
+	ev := h.waitEvents(t, EventAttention, 1)[0]
+	if len(ev.Attention) != 2 {
+		t.Fatalf("attention immediately after promote = %+v, want 2 tickets", ev.Attention)
+	}
+	var promoted *AttentionItem
+	for i := range ev.Attention {
+		if ev.Attention[i].TicketID == "loose" {
+			promoted = &ev.Attention[i]
+			break
+		}
+	}
+	if promoted == nil {
+		t.Fatalf("promoted ticket not found in attention items: %+v", ev.Attention)
+	}
+	if promoted.Status != "Needs Help" {
+		t.Errorf("promoted status = %q, want Needs Help", promoted.Status)
+	}
+	if promoted.Relevance != StatusFailed {
+		t.Errorf("promoted relevance = %v, want StatusFailed", promoted.Relevance)
+	}
+
+	// Verify no board listing or delta queries were made during Promote.
+	if got := counting.listings.Load(); got != listingsBefore {
+		t.Errorf("listings during Promote = %d, want %d", got, listingsBefore)
+	}
+	if got := counting.deltas.Load(); got != deltasBefore {
+		t.Errorf("deltas during Promote = %d, want %d", got, deltasBefore)
+	}
+}
+
+type staleDeltaClient struct {
+	linear.Client
+	delta func(ctx context.Context, teamKey string, since time.Time) ([]linear.Issue, error)
+}
+
+func (s *staleDeltaClient) ListTeamIssuesUpdatedSince(ctx context.Context, teamKey string, since time.Time) ([]linear.Issue, error) {
+	if s.delta != nil {
+		return s.delta(ctx, teamKey, since)
+	}
+	return s.Client.ListTeamIssuesUpdatedSince(ctx, teamKey, since)
+}
+
+// Done-when: a subsequent delta pass returning a stale snapshot of a promoted issue
+// does not overwrite the write-through cache (no reversion flicker).
+func TestPromoteHoldsPatchAgainstStaleDelta(t *testing.T) {
+	fake := linear.NewFake()
+	fake.SetViewer("fake-viewer")
+	fake.AddIssue("LERP", linear.Issue{ID: "parked", Identifier: "LERP-1", Status: "Needs Help",
+		AssigneeID: "fake-viewer"})
+
+	var returnStale atomic.Bool
+	staleSnapshot := linear.Issue{
+		ID:         "parked",
+		Identifier: "LERP-1",
+		Status:     "Needs Help",
+		AssigneeID: "fake-viewer",
+		UpdatedAt:  time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), // older timestamp
+	}
+
+	client := &staleDeltaClient{
+		Client: fake,
+		delta: func(ctx context.Context, teamKey string, since time.Time) ([]linear.Issue, error) {
+			if returnStale.Load() {
+				return []linear.Issue{staleSnapshot}, nil
+			}
+			return fake.ListTeamIssuesUpdatedSince(ctx, teamKey, since)
+		},
+	}
+
+	h := newHarnessWith(t, 1, nil, fake, client)
+	ctx := context.Background()
+
+	// Cold start pass.
+	h.rec.Tick(ctx)
+	if got := h.waitEvents(t, EventAttention, 1)[0]; len(got.Attention) != 1 {
+		t.Fatalf("cold start = %+v, want 1 ticket", got.Attention)
+	}
+
+	// Promote into a queue status (served).
+	if err := h.rec.Promote(ctx, "parked", "Todo"); err != nil {
+		t.Fatalf("Promote: %v", err)
+	}
+	// Immediately emitted EventAttention shows empty inbox.
+	if got := h.waitEvents(t, EventAttention, 1)[0]; len(got.Attention) != 0 {
+		t.Fatalf("immediately after promote = %+v, want empty inbox", got.Attention)
+	}
+
+	// Now arm the stale delta return.
+	returnStale.Store(true)
+
+	// Next pass runs delta read, which returns the stale row.
+	h.rec.Tick(ctx)
+	if got := h.waitEvents(t, EventAttention, 1)[0]; len(got.Attention) != 0 {
+		t.Errorf("after stale delta = %+v, want empty inbox (no reversion flicker)", got.Attention)
+	}
 	waitIdle(t, h.rec)
 }
 
@@ -1893,7 +2023,7 @@ func TestAttentionHealsStaleBlockersOnResync(t *testing.T) {
 	// The blocker finishes. It leaves the inbox at once, because the delta
 	// carries its own change — but nothing carries the blocked ticket's.
 	h.fake.Advance(time.Hour)
-	if err := h.fake.MoveIssue(ctx, "blocker", "Done"); err != nil {
+	if _, err := h.fake.MoveIssue(ctx, "blocker", "Done"); err != nil {
 		t.Fatal(err)
 	}
 	h.rec.Tick(ctx)
@@ -2419,7 +2549,7 @@ func TestForceStartRefusals(t *testing.T) {
 	}, {
 		name: "resting in a status no queue serves",
 		setup: func(_ *testing.T, h *harness) {
-			if err := h.fake.MoveIssue(ctx, "one", "Needs Help"); err != nil {
+			if _, err := h.fake.MoveIssue(ctx, "one", "Needs Help"); err != nil {
 				panic(err)
 			}
 		},

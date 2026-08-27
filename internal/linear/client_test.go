@@ -353,16 +353,20 @@ func TestMoveIssue(t *testing.T) {
 			]}}}}`)
 		case strings.Contains(req.Query, "MoveIssue"):
 			moved = req
-			writeData(t, w, `{"issueUpdate":{"success":true}}`)
+			writeData(t, w, `{"issueUpdate":{"success":true,"issue":{"id":"iss-1","identifier":"LERP-1","title":"T","updatedAt":"2026-08-27T18:00:00Z","state":{"name":"In Progress","type":"started"}}}}`)
 		default:
 			t.Errorf("unexpected query %q", req.Query)
 		}
 	})
-	if err := c.MoveIssue(context.Background(), "iss-1", "In Progress"); err != nil {
+	got, err := c.MoveIssue(context.Background(), "iss-1", "In Progress")
+	if err != nil {
 		t.Fatalf("MoveIssue: %v", err)
 	}
 	if moved.Variables["id"] != "iss-1" || moved.Variables["stateId"] != "st-2" {
 		t.Errorf("mutation variables = %v, want id iss-1 stateId st-2", moved.Variables)
+	}
+	if got.Status != "In Progress" || got.StatusType != "started" || got.UpdatedAt.IsZero() {
+		t.Errorf("got = %+v, want status In Progress with StatusType and UpdatedAt", got)
 	}
 }
 
@@ -370,7 +374,7 @@ func TestMoveIssueUnknownStatus(t *testing.T) {
 	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 		writeData(t, w, `{"issue":{"team":{"states":{"nodes":[{"id":"st-1","name":"Todo"}]}}}}`)
 	})
-	err := c.MoveIssue(context.Background(), "iss-1", "Nonexistent")
+	_, err := c.MoveIssue(context.Background(), "iss-1", "Nonexistent")
 	if err == nil || !strings.Contains(err.Error(), `no state named "Nonexistent"`) {
 		t.Errorf("err = %v, want unknown-state error", err)
 	}

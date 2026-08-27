@@ -359,19 +359,19 @@ func (f *Fake) GetIssueDetail(_ context.Context, issueID string) (IssueDetail, e
 // with SetTeamStates. A team nothing has declared accepts any name, so the
 // many tests that move issues through ad hoc statuses without modeling a
 // whole board keep working unchanged.
-func (f *Fake) MoveIssue(_ context.Context, issueID, statusName string) error {
+func (f *Fake) MoveIssue(_ context.Context, issueID, statusName string) (Issue, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	fi, ok := f.issues[issueID]
 	if !ok {
-		return fmt.Errorf("move issue %s: %w", issueID, ErrNotFound)
+		return Issue{}, fmt.Errorf("move issue %s: %w", issueID, ErrNotFound)
 	}
 	if states, declared := f.teamStates[fi.team]; declared && !slices.Contains(states, statusName) {
-		return fmt.Errorf("move issue %s: no state named %q on its team", issueID, statusName)
+		return Issue{}, fmt.Errorf("move issue %s: no state named %q on its team", issueID, statusName)
 	}
 	fi.issue.Status = statusName
 	f.touch(fi)
-	return nil
+	return f.view(fi), nil
 }
 
 func (f *Fake) AssignIssue(_ context.Context, issueID, userID string) error {

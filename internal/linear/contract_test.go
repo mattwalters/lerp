@@ -96,7 +96,7 @@ func notFoundOps() map[string]func(ctx context.Context, c Client) error {
 	return map[string]func(ctx context.Context, c Client) error{
 		"GetIssue":       func(ctx context.Context, c Client) error { _, err := c.GetIssue(ctx, "nope"); return err },
 		"GetIssueDetail": func(ctx context.Context, c Client) error { _, err := c.GetIssueDetail(ctx, "nope"); return err },
-		"MoveIssue":      func(ctx context.Context, c Client) error { return c.MoveIssue(ctx, "nope", "Todo") },
+		"MoveIssue":      func(ctx context.Context, c Client) error { _, err := c.MoveIssue(ctx, "nope", "Todo"); return err },
 		"AssignIssue":    func(ctx context.Context, c Client) error { return c.AssignIssue(ctx, "nope", "u") },
 		"UnassignIssue":  func(ctx context.Context, c Client) error { return c.UnassignIssue(ctx, "nope") },
 	}
@@ -214,7 +214,8 @@ func contractCases() []contractCase {
 			}
 		},
 		run: func(ctx context.Context, c Client) (any, error) {
-			return nil, c.MoveIssue(ctx, "iss-1", "Nonexistent")
+			_, err := c.MoveIssue(ctx, "iss-1", "Nonexistent")
+			return nil, err
 		},
 		wantErrContains: `no state named "Nonexistent" on its team`,
 	})
@@ -298,7 +299,7 @@ func contractCases() []contractCase {
 			if err != nil {
 				return nil, err
 			}
-			if err := c.MoveIssue(ctx, "iss-b", "Done"); err != nil {
+			if _, err := c.MoveIssue(ctx, "iss-b", "Done"); err != nil {
 				return nil, err
 			}
 			a2, err := c.GetIssue(ctx, "iss-a")

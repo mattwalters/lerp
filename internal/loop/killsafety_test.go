@@ -180,7 +180,7 @@ func TestKillSafetyAgentKilledMidRun(t *testing.T) {
 	// starts from its beginning: while the new agent works, the ticket is
 	// back in its queue status, claimed again — never lost, never in an
 	// in-between state.
-	if err := h.fake.MoveIssue(ctx, "blocker", "Done"); err != nil {
+	if _, err := h.fake.MoveIssue(ctx, "blocker", "Done"); err != nil {
 		t.Fatal(err)
 	}
 	h.rec.Tick(ctx)
@@ -238,7 +238,7 @@ func TestKillSafetyLerpKilledMidRun(t *testing.T) {
 
 	// One agent concludes by moving its ticket — a branch, not on_success —
 	// and exits cleanly. The other exits cleanly without concluding.
-	if err := h.fake.MoveIssue(ctx, "moved", "Escalated"); err != nil {
+	if _, err := h.fake.MoveIssue(ctx, "moved", "Escalated"); err != nil {
 		t.Fatal(err)
 	}
 	mover.finish()
@@ -681,7 +681,7 @@ func TestAdoptedRunSettlesFromItsRecordedExitStatus(t *testing.T) {
 			h.drainEvents()
 
 			if tc.movedTo != "" {
-				if err := h.fake.MoveIssue(ctx, "tkt", tc.movedTo); err != nil {
+				if _, err := h.fake.MoveIssue(ctx, "tkt", tc.movedTo); err != nil {
 					t.Fatal(err)
 				}
 			}

@@ -158,7 +158,7 @@ func conclude(ctx context.Context, client linear.Client, issue linear.Issue, que
 	final := current.Status
 	switch {
 	case final == queue.Status:
-		if err := client.MoveIssue(ctx, issue.ID, target); err != nil {
+		if _, err := client.MoveIssue(ctx, issue.ID, target); err != nil {
 			return "", final, fmt.Errorf("move issue %s to %q: %w", issue.ID, target, err)
 		}
 		final = target
