@@ -1282,7 +1282,9 @@ func (r *Reconciler) reap(ctx context.Context, record evidence.Record) bool {
 		r.fail(fmt.Errorf("reap run %s: %w", record.RunID, err))
 		return false
 	}
-	r.o.Telemetry(tel)
+	if tel != nil {
+		r.o.Telemetry(*tel)
+	}
 	r.emit(ev)
 	return true
 }
@@ -1312,8 +1314,12 @@ func (r *Reconciler) reap(ctx context.Context, record evidence.Record) bool {
 // settleDead also returns the telemetry.Run reap writes once it has removed
 // the record — one line for every settled run, whichever of the branches
 // below decided it, all built by the one shared assembly helper in
-// telemetry.go.
-func (r *Reconciler) settleDead(ctx context.Context, record evidence.Record) (Event, telemetry.Run, bool) {
+// telemetry.go. It is nil for a record whose agent never ran: a claim
+// protocol failure keeps a record with no PID ever attached, and eject
+// disowns a record by blanking its TicketID — both land in the fallback
+// branch below alongside a genuinely killed run, and neither is a run
+// telemetry has anything to measure.
+func (r *Reconciler) settleDead(ctx context.Context, record evidence.Record) (Event, *telemetry.Run, bool) {
 	reaped := Event{Type: EventReaped, RunID: record.RunID, Lane: record.Lane,
 		TicketID: record.TicketID, Queue: record.Queue, LogPath: record.LogPath}
 	code, recorded := evidence.ExitStatus(record)
@@ -1334,37 +1340,46 @@ func (r *Reconciler) settleDead(ctx context.Context, record evidence.Record) (Ev
 	if !recorded || !configured || queue.Status != record.StartingStatus || record.TicketID == "" {
 		if err := r.releaseDead(ctx, record); err != nil {
 			r.fail(fmt.Errorf("reap run %s: %w", record.RunID, err))
-			return Event{}, telemetry.Run{}, false
+			return Event{}, nil, false
+		}
+		if record.PID == 0 || record.TicketID == "" {
+			// PID 0: Attach never ran, so no agent ever started — a claim
+			// protocol failure kept this record for exactly this repair.
+			// Blank TicketID: eject's Disown left this behind, and eject
+			// already owns not reporting anything for it.
+			return reaped, nil, true
 		}
 		// No move rule ran, so there is nothing to say about where the ticket
 		// rested: status is absent.
-		return reaped, buildTelemetryRun(r.o.Repo, r.o.RepoDir, record, record.Queue, at, durationMS, exitCode, ""), true
+		tel := buildTelemetryRun(r.o.Repo, r.o.RepoDir, record, record.Ticket, record.Queue, at, durationMS, exitCode, "")
+		return reaped, &tel, true
 	}
 
 	issue, err := r.o.Client.GetIssue(ctx, record.TicketID)
 	if errors.Is(err, linear.ErrNotFound) {
 		// The ticket itself is gone; nothing to settle, and so nothing to
 		// report as its resting status.
-		return reaped, buildTelemetryRun(r.o.Repo, r.o.RepoDir, record, record.Queue, at, durationMS, exitCode, ""), true
+		tel := buildTelemetryRun(r.o.Repo, r.o.RepoDir, record, record.Ticket, record.Queue, at, durationMS, exitCode, "")
+		return reaped, &tel, true
 	}
 	if err != nil {
 		r.fail(fmt.Errorf("reap run %s: read ticket %s: %w", record.RunID, record.TicketID, err))
-		return Event{}, telemetry.Run{}, false
+		return Event{}, nil, false
 	}
 	viewerID, err := r.o.Client.Viewer(ctx)
 	if err != nil {
 		r.fail(fmt.Errorf("reap run %s: read viewer: %w", record.RunID, err))
-		return Event{}, telemetry.Run{}, false
+		return Event{}, nil, false
 	}
 	note, final, moveErr := conclude(ctx, r.o.Client, issue, queue, r.o.Repo, code, viewerID, r.o.Log)
 	if moveErr != nil {
 		r.fail(fmt.Errorf("reap run %s: %w", record.RunID, moveErr))
-		return Event{}, telemetry.Run{}, false
+		return Event{}, nil, false
 	}
-	tel := buildTelemetryRun(r.o.Repo, r.o.RepoDir, record, record.Queue, at, durationMS, exitCode, final)
+	tel := buildTelemetryRun(r.o.Repo, r.o.RepoDir, record, issue.Identifier, record.Queue, at, durationMS, exitCode, final)
 	return Event{Type: EventExited, RunID: record.RunID, Lane: record.Lane,
 		TicketID: record.TicketID, Ticket: issue.Identifier, Queue: record.Queue,
-		LogPath: record.LogPath, ExitCode: code, Note: note, Cost: runCost(record.LogPath)}, tel, true
+		LogPath: record.LogPath, ExitCode: code, Note: note, Cost: runCost(record.LogPath)}, &tel, true
 }
 
 // releaseDead releases the claim of a dead run that never said how it ended,
@@ -1717,7 +1732,7 @@ func (r *Reconciler) provisionAndRun(ctx context.Context, lr *laneRun, c candida
 	// as a note: the run log alone is not somewhere anyone is looking.
 	note, final, moveErr := conclude(ctx, r.o.Client, issue, c.queue, r.o.Repo, result.ExitCode, viewerID, r.o.Log)
 	exitCode := result.ExitCode
-	settled := buildTelemetryRun(r.o.Repo, r.o.RepoDir, record, c.name, time.Now().UTC(), result.Duration.Milliseconds(), &exitCode, final)
+	settled := buildTelemetryRun(r.o.Repo, r.o.RepoDir, record, issue.Identifier, c.name, time.Now().UTC(), result.Duration.Milliseconds(), &exitCode, final)
 	return Event{Type: EventExited, RunID: record.RunID, Lane: lr.lane, TicketID: issue.ID,
 		Ticket: issue.Identifier, Queue: c.name, LogPath: record.LogPath,
 		ExitCode: result.ExitCode, Note: note, Err: moveErr, Cost: runCost(record.LogPath)}, false, &settled, true

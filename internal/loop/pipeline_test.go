@@ -66,8 +66,11 @@ func TestConcludeReportsWhereTheTicketRested(t *testing.T) {
 		if err != nil {
 			t.Fatalf("conclude: %v", err)
 		}
-		if final != "Todo" {
-			t.Errorf("final = %q, want Todo", final)
+		// Not "Todo": this branch never reads the board, so guessing the
+		// ticket stayed put would be exactly the zero-faking telemetry rules
+		// out — the agent could have moved it itself before exiting.
+		if final != "" {
+			t.Errorf("final = %q, want empty: nothing was observed", final)
 		}
 	})
 

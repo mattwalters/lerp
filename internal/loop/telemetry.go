@@ -14,21 +14,26 @@ import (
 
 // buildTelemetryRun assembles the line telemetry gets for one finished run.
 // provisionAndRun and settleDead each know something the other does not —
-// when the run ended, how long it took, its exit code, and where the ticket
-// came to rest — and hand those in; everything else here comes from config
-// and the evidence record the same way on both paths, plus one read of the
-// run's own log.
+// when the run ended, how long it took, its exit code, where the ticket came
+// to rest, and the human ticket identifier itself — and hand those in;
+// everything else here comes from config and the evidence record the same
+// way on both paths, plus one read of the run's own log.
+//
+// ticket is a parameter rather than read off record.Ticket internally
+// because a caller holding a freshly-read issue has a better source than a
+// record field that is empty on any run started before it existed (like
+// evidence.Record.ExitPath was).
 //
 // durationMS zero and exitCode nil both mean "unknown" rather than zero: an
 // omitempty on the first and a pointer on the second are what let the line
 // this returns tell the two apart from a real zero-length run or a clean
 // exit.
-func buildTelemetryRun(repo *config.RepoConfig, repoDir string, record evidence.Record, queueName string, at time.Time, durationMS int64, exitCode *int, status string) telemetry.Run {
+func buildTelemetryRun(repo *config.RepoConfig, repoDir string, record evidence.Record, ticket, queueName string, at time.Time, durationMS int64, exitCode *int, status string) telemetry.Run {
 	line := telemetry.Run{
 		At:         at,
 		Repo:       repoDir,
-		Team:       telemetryTeam(record.Ticket),
-		Ticket:     record.Ticket,
+		Team:       telemetryTeam(ticket),
+		Ticket:     ticket,
 		Queue:      queueName,
 		Session:    record.SessionID,
 		DurationMS: durationMS,
@@ -83,5 +88,16 @@ func exitTiming(record evidence.Record, recorded bool) (at time.Time, durationMS
 		return time.Now().UTC(), 0
 	}
 	mtime := fi.ModTime().UTC()
-	return mtime, mtime.Sub(record.StartedAt).Milliseconds()
+	// A record predating StartedAt (see reconciler.go's own IsZero check on
+	// it) has nothing to subtract from, and Sub against the zero time would
+	// saturate to Duration's ~292-year max rather than report "unknown".
+	// Clock skew across machines can put mtime before StartedAt too; either
+	// way a duration that isn't positive is not a real measurement.
+	if record.StartedAt.IsZero() {
+		return mtime, 0
+	}
+	if d := mtime.Sub(record.StartedAt); d > 0 {
+		return mtime, d.Milliseconds()
+	}
+	return mtime, 0
 }

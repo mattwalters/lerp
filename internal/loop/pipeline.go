@@ -128,7 +128,11 @@ func conclude(ctx context.Context, client linear.Client, issue linear.Issue, que
 			fmt.Fprintf(log, "%s exited %d and its queue has no on_failure route: leaving it claimed for a human\n",
 				issue.Identifier, exitCode)
 		}
-		return "", queue.Status, nil
+		// No GetIssue here — the ticket is assumed still in queue.Status for
+		// the claim-holding decision above, but an agent that moved it itself
+		// before exiting non-zero would make that a guess, not an
+		// observation. Best-effort past the first read means "" here too.
+		return "", "", nil
 	}
 
 	current, err := client.GetIssue(ctx, issue.ID)

@@ -113,8 +113,12 @@ func TestTelemetryRecordsAReapedRunWithAnExitFile(t *testing.T) {
 // report, and none of the three is faked as zero.
 func TestTelemetryRecordsAKilledRunWithNoExitFile(t *testing.T) {
 	h := newHarness(t, 1, nil)
+	// PID set, as Attach would have left it once the agent actually started —
+	// the fact this run has none to distinguish it from a claim protocol
+	// failure, which also reaps through the same fallback branch but never
+	// got this far (see TestTelemetryWritesNothingForARecordWhoseAgentNeverStarted).
 	if _, err := h.evidence.Create(evidence.Record{
-		Lane: 1, TicketID: "orphan", Ticket: "LERP-1", Queue: "todo", StartingStatus: "Todo",
+		Lane: 1, PID: 99999, TicketID: "orphan", Ticket: "LERP-1", Queue: "todo", StartingStatus: "Todo",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -145,6 +149,62 @@ func TestTelemetryRecordsAKilledRunWithNoExitFile(t *testing.T) {
 	}
 	if withoutExitCode != 1 {
 		t.Fatalf("telemetry entries with no exit code = %d, want exactly 1 (the reap)", withoutExitCode)
+	}
+}
+
+// A claim protocol failure keeps a record for the next pass to repair, but
+// provisionAndRun and its Execute callback never ran for it: no PID was ever
+// attached. Reaping that record must not report a run that never happened —
+// distinct from TestTelemetryRecordsAKilledRunWithNoExitFile, whose record
+// does carry a PID because its agent genuinely started.
+func TestTelemetryWritesNothingForARecordWhoseAgentNeverStarted(t *testing.T) {
+	h := newHarness(t, 1, nil)
+	if _, err := h.evidence.Create(evidence.Record{
+		Lane: 1, TicketID: "orphan", Ticket: "LERP-1", Queue: "todo", StartingStatus: "Todo",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	h.fake.AddIssue("LERP", linear.Issue{
+		ID: "orphan", Identifier: "LERP-1", Status: "Todo", AssigneeID: "fake-viewer",
+	})
+
+	h.rec.Tick(context.Background())
+	h.waitEvents(t, EventReaped, 1)
+	waitIdle(t, h.rec)
+
+	// The released claim makes the ticket eligible again, and its re-run gets
+	// its own (unrelated) telemetry line with a real exit code — the
+	// assertion below is scoped to entries that look like the reap itself.
+	for _, run := range h.telemetryRuns() {
+		if run.Ticket == "LERP-1" && run.ExitCode == nil {
+			t.Errorf("telemetry recorded a run whose agent never started: %+v", run)
+		}
+	}
+}
+
+// Eject's Disown blanks a record's TicketID and Workspace, leaving it behind
+// for reap if Remove never runs (a crash between the two, or a Remove that
+// itself fails). Its ejected mark does not survive a restart, so a successor
+// process reaps it as an ordinary dead record — and must write nothing for
+// it, the same as the eject that meant to own it would have.
+func TestTelemetryWritesNothingForADisownedRecord(t *testing.T) {
+	h := newHarness(t, 1, nil)
+	record, err := h.evidence.Create(evidence.Record{
+		Lane: 1, PID: 99999, TicketID: "tkt", Ticket: "LERP-1", Queue: "todo", StartingStatus: "Todo",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.evidence.Disown(record.RunID); err != nil {
+		t.Fatal(err)
+	}
+
+	h.rec.Tick(context.Background())
+	h.waitEvents(t, EventReaped, 1)
+	waitIdle(t, h.rec)
+
+	if got := h.telemetryRuns(); len(got) != 0 {
+		t.Errorf("telemetry runs after reaping a disowned record = %+v, want none", got)
 	}
 }
 
@@ -244,4 +304,44 @@ func TestTelemetryWriteFailureLeavesSettlementUntouched(t *testing.T) {
 	if !strings.Contains(logs.String(), "telemetry:") {
 		t.Errorf("log = %q, want the telemetry write failure reported", logs.String())
 	}
+}
+
+// exitTiming must never turn "no real measurement" into a number: Sub
+// against a zero StartedAt would otherwise saturate to Duration's ~292-year
+// max, and clock skew that puts the exit file's mtime before StartedAt would
+// otherwise go negative. Both are wrong in the same way zero-faking is —
+// they claim a measurement telemetry does not have.
+func TestExitTimingOmitsAnImpossibleDuration(t *testing.T) {
+	dir := t.TempDir()
+	exitPath := filepath.Join(dir, "exit")
+	if err := os.WriteFile(exitPath, []byte("0"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("StartedAt predates the field", func(t *testing.T) {
+		record := evidence.Record{ExitPath: exitPath}
+		at, durationMS := exitTiming(record, true)
+		if at.IsZero() {
+			t.Error("at is zero, want the exit file's mtime")
+		}
+		if durationMS != 0 {
+			t.Errorf("duration = %dms, want 0 (absent), not a saturated ~292-year span", durationMS)
+		}
+	})
+
+	t.Run("clock skew puts the exit file before StartedAt", func(t *testing.T) {
+		record := evidence.Record{ExitPath: exitPath, StartedAt: time.Now().Add(time.Hour)}
+		_, durationMS := exitTiming(record, true)
+		if durationMS != 0 {
+			t.Errorf("duration = %dms, want 0 (absent), not negative", durationMS)
+		}
+	})
+
+	t.Run("an ordinary run reports a positive duration", func(t *testing.T) {
+		record := evidence.Record{ExitPath: exitPath, StartedAt: time.Now().Add(-time.Minute)}
+		_, durationMS := exitTiming(record, true)
+		if durationMS <= 0 {
+			t.Errorf("duration = %dms, want positive", durationMS)
+		}
+	})
 }
