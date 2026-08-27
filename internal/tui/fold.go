@@ -135,6 +135,14 @@ func foldBody(body string, width int, folded map[int]bool) (lines []string, owne
 		blank()
 		if folded[i] {
 			hidden := len(renderMarkdown(strings.Join(src[h.line+1:ends[i]], "\n"), width))
+			// The same leading-blank loss the unfolded branch works around
+			// below applies here too: renderMarkdown's fresh call drops a
+			// blank line immediately at its own start, so the count would
+			// otherwise read one line short of what unfolding actually
+			// reveals.
+			if h.line+1 < ends[i] && strings.TrimSpace(src[h.line+1]) == "" {
+				hidden++
+			}
 			suffix := styleFaint.Render(fmt.Sprintf(" ⋯ %d hidden", hidden))
 			// Budgeted before wrapping, not appended after: appending to an
 			// already-wrapped line can push it past width, and panelBox

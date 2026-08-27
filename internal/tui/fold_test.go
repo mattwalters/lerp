@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -98,6 +99,25 @@ func TestFoldOwnerOfASectionsOwnBodyIsThatSection(t *testing.T) {
 	}
 	if !strings.Contains(got, "second body") {
 		t.Fatalf("folding heading 0 must not touch Two's section:\n%s", got)
+	}
+}
+
+// The hidden count is how many lines unfolding would reveal — which has to
+// include the blank line between the heading and its body, or the count
+// reads one short of what the operator actually gets back on unfold. That
+// blank is the first line of the very text being measured, and a fresh
+// renderMarkdown call drops a leading blank the same way it would if this
+// were the unfolded path (see the fix above it in fold.go).
+func TestFoldHiddenCountIncludesTheBlankAfterTheHeading(t *testing.T) {
+	folded := "# A\n\nbody of A"
+	unfolded := strings.Join(renderMarkdown(folded, 40), "\n")
+	wantHidden := strings.Count(unfolded, "\n") // lines after the heading itself
+
+	lines, _, _ := foldBody(folded, 40, map[int]bool{0: true})
+	got := strings.Join(lines, "\n")
+	want := fmt.Sprintf("⋯ %d hidden", wantHidden)
+	if !strings.Contains(got, want) {
+		t.Fatalf("hidden count should be %q (matching what unfolding reveals: %q):\n%s", want, unfolded, got)
 	}
 }
 
