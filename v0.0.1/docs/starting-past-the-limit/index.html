@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Overview · lerp</title>
+  <title>Starting past the limit · lerp</title>
   <meta name="description" content="A small, reliable CLI that orchestrates software work through Linear.">
   <link rel="stylesheet" href="../../style.css">
 </head>
@@ -26,7 +26,7 @@
     
     
     <span class="version">
-      <span class="version-label">latest</span>
+      <span class="version-label">v0.0.1</span>
       <select id="version-picker" hidden aria-label="Documentation version"></select>
     </span>
     
@@ -56,7 +56,7 @@
       
       
       
-      <a href="../../docs/overview/" class="active" aria-current="page">Overview</a>
+      <a href="../../docs/overview/">Overview</a>
       
       
       
@@ -146,7 +146,7 @@
       
       
       
-      <a href="../../docs/starting-past-the-limit/">Starting past the limit</a>
+      <a href="../../docs/starting-past-the-limit/" class="active" aria-current="page">Starting past the limit</a>
       
       <h5>Reference</h5>
       
@@ -194,34 +194,32 @@
       
 
 <div class="prose">
-  <h1 id="overview">Overview</h1>
-<p>Lerp is one binary and one screen. You put tickets on a Linear board; lerp
-runs coding agents to move them across it. <code>lerp init</code> wires a repository to
-a Linear team, and running <code>lerp</code> opens the board that moves the work. There
-is no server, no scheduler and no store of lerp&rsquo;s own.</p>
-<h2 id="what-is-in-the-box">What is in the box</h2>
-<p>The whole surface is the board plus two commands. Bare <code>lerp</code> opens the TUI,
-and the reconciling loop runs while it is open — N lanes, adopting live
-runs, reaping dead ones, repairing drift. Both panels are built, and the
-board&rsquo;s only two write actions are the inbox&rsquo;s <a href="../../docs/promoting/">promote</a>
- and
-the work panel&rsquo;s <a href="../../docs/starting-past-the-limit/">force-start</a>
-. Beyond those,
-<code>lerp init</code> and <code>lerp version</code> complete <a href="../../docs/cli/">the command line</a>
-.</p>
-<p>Everything else about a ticket still happens in Linear. Lerp reads the
-board, runs agents, and moves tickets between statuses; it does not compose
-comments, invent work items, or keep a queue of its own.</p>
-<h2 id="where-to-start">Where to start</h2>
-<p><a href="../../docs/install/">Install</a>
- is the binary and the two prerequisites lerp cannot
-satisfy for you. <a href="../../docs/quickstart/">Quickstart</a>
- is <code>lerp init</code> to a first
-promoted ticket. <a href="../../docs/the-board/">The board</a>
- is the model underneath both, and
-<a href="../../scope/">SCOPE.md</a>
- is the fence around the whole project — read that one
-before proposing a change.</p>
+  <h1 id="starting-past-the-limit">Starting past the limit</h1>
+<p>Select a queued ticket in the <a href="../../docs/reading-the-board/#the-work-panel">Work panel</a>
+
+and press <code>S</code>: it starts now, past the lane limit.</p>
+<!-- Cast slot (LERP-70): a ticket left claimed by a run nothing reaped,
+     force-started from the work panel and taken back over.
+     keys: [S] -->
+<h2 id="what-it-overrides-and-what-it-does-not">What it overrides, and what it does not</h2>
+<p>Force-start overrides the lane count and nothing else. The claim protocol
+still runs, so a blocked ticket, or one somebody else has claimed, is refused
+with the reason — <code>S</code> is not a way around
+<a href="../../docs/the-board/#the-claim">eligibility</a>
+, only around capacity.</p>
+<p>Your own claim is the exception it takes over. That is how a ticket left
+claimed by a run nothing was left to reap gets run again, and it is the fix
+for both of the ways a claim outlives its run: a human who assigned the
+ticket, and a run that died where no lerp was watching. It is also how to
+re-run a failed stage whose queue has no <code>on_failure</code> route, since such a run
+keeps its claim and waits on you.</p>
+<p>Every live run counts against the capacity in the panel title, whichever lane
+it landed on, so a force-start shows up there as <code>· +1 over</code> until one
+finishes.</p>
+<h2 id="not-an-ordering-key">Not an ordering key</h2>
+<p><code>S</code> runs <em>this</em> ticket now; it does not reorder the queue. To change what
+runs next, move tickets in Linear — pickup order is the board&rsquo;s, and lerp
+does not keep a queue of its own to shuffle.</p>
 
 </div>
 
@@ -233,8 +231,8 @@ before proposing a change.</p>
       <h5>On this page</h5>
       <nav id="TableOfContents">
   <ul>
-    <li><a href="#what-is-in-the-box">What is in the box</a></li>
-    <li><a href="#where-to-start">Where to start</a></li>
+    <li><a href="#what-it-overrides-and-what-it-does-not">What it overrides, and what it does not</a></li>
+    <li><a href="#not-an-ordering-key">Not an ordering key</a></li>
   </ul>
 </nav>
     </nav>
@@ -263,7 +261,7 @@ before proposing a change.</p>
             var option = document.createElement("option");
             option.value = v;
             option.textContent = v;
-            option.selected = v === "latest";
+            option.selected = v === "v0.0.1";
             picker.appendChild(option);
           });
           

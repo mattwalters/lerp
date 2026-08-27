@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Overview · lerp</title>
+  <title>Ejecting · lerp</title>
   <meta name="description" content="A small, reliable CLI that orchestrates software work through Linear.">
   <link rel="stylesheet" href="../../style.css">
 </head>
@@ -26,7 +26,7 @@
     
     
     <span class="version">
-      <span class="version-label">latest</span>
+      <span class="version-label">v0.0.1</span>
       <select id="version-picker" hidden aria-label="Documentation version"></select>
     </span>
     
@@ -56,7 +56,7 @@
       
       
       
-      <a href="../../docs/overview/" class="active" aria-current="page">Overview</a>
+      <a href="../../docs/overview/">Overview</a>
       
       
       
@@ -126,7 +126,7 @@
       
       
       
-      <a href="../../docs/ejecting/">Ejecting</a>
+      <a href="../../docs/ejecting/" class="active" aria-current="page">Ejecting</a>
       
       
       
@@ -194,34 +194,37 @@
       
 
 <div class="prose">
-  <h1 id="overview">Overview</h1>
-<p>Lerp is one binary and one screen. You put tickets on a Linear board; lerp
-runs coding agents to move them across it. <code>lerp init</code> wires a repository to
-a Linear team, and running <code>lerp</code> opens the board that moves the work. There
-is no server, no scheduler and no store of lerp&rsquo;s own.</p>
-<h2 id="what-is-in-the-box">What is in the box</h2>
-<p>The whole surface is the board plus two commands. Bare <code>lerp</code> opens the TUI,
-and the reconciling loop runs while it is open — N lanes, adopting live
-runs, reaping dead ones, repairing drift. Both panels are built, and the
-board&rsquo;s only two write actions are the inbox&rsquo;s <a href="../../docs/promoting/">promote</a>
- and
-the work panel&rsquo;s <a href="../../docs/starting-past-the-limit/">force-start</a>
-. Beyond those,
-<code>lerp init</code> and <code>lerp version</code> complete <a href="../../docs/cli/">the command line</a>
-.</p>
-<p>Everything else about a ticket still happens in Linear. Lerp reads the
-board, runs agents, and moves tickets between statuses; it does not compose
-comments, invent work items, or keep a queue of its own.</p>
-<h2 id="where-to-start">Where to start</h2>
-<p><a href="../../docs/install/">Install</a>
- is the binary and the two prerequisites lerp cannot
-satisfy for you. <a href="../../docs/quickstart/">Quickstart</a>
- is <code>lerp init</code> to a first
-promoted ticket. <a href="../../docs/the-board/">The board</a>
- is the model underneath both, and
-<a href="../../scope/">SCOPE.md</a>
- is the fence around the whole project — read that one
-before proposing a change.</p>
+  <h1 id="ejecting">Ejecting</h1>
+<p><code>e</code> on a running row in the <a href="../../docs/reading-the-board/#the-work-panel">Work panel</a>
+
+stops that agent, frees the lane, and hands back the runner&rsquo;s own <code>resume</code>
+command — so the headless run becomes your interactive session, in the
+workspace lerp leaves standing.</p>
+<!-- Cast slot (LERP-70): a run that has gone quiet, ejected; the resume
+     command shown, the lane freed, the ticket untouched.
+     keys: [e] · the resume command · [esc] -->
+<h2 id="what-ejecting-does-not-do">What ejecting does not do</h2>
+<p>Nothing is written to Linear. The ticket keeps its claim and its status,
+because ejecting is taking the work over rather than abandoning it — and a
+claim that stayed put is what keeps the next pass from starting the stage
+again underneath you.</p>
+<p>Nothing is disposed either, so the workspace, its git worktree included, is
+now yours to finish in and yours to remove.</p>
+<h2 id="the-resume-command">The resume command</h2>
+<p>The command is shown until you dismiss it, and it also lands in
+<code>.lerp/loop.log</code>, so it survives the dismissal and the session.</p>
+<p>It comes from the runner&rsquo;s <code>resume</code> line in
+<a href="../../docs/lerp-toml/"><code>lerp.toml</code></a>
+, built from the session ID lerp generated before
+the run started and the workspace it provisioned. A runner with no <code>resume</code>
+in its config cannot be ejected, so <code>e</code> is not offered on its runs at all
+rather than failing when pressed.</p>
+<h2 id="when-to-reach-for-it">When to reach for it</h2>
+<p>Ejecting is the operator&rsquo;s call and nothing else&rsquo;s. A run&rsquo;s activity line and
+sparkline say whether an agent is still working (see <a href="../../docs/watching-a-run/">watching a
+run</a>
+), but lerp sets no threshold on them and never acts
+on one: there is no timeout that ejects a stalled run for you.</p>
 
 </div>
 
@@ -233,8 +236,9 @@ before proposing a change.</p>
       <h5>On this page</h5>
       <nav id="TableOfContents">
   <ul>
-    <li><a href="#what-is-in-the-box">What is in the box</a></li>
-    <li><a href="#where-to-start">Where to start</a></li>
+    <li><a href="#what-ejecting-does-not-do">What ejecting does not do</a></li>
+    <li><a href="#the-resume-command">The resume command</a></li>
+    <li><a href="#when-to-reach-for-it">When to reach for it</a></li>
   </ul>
 </nav>
     </nav>
@@ -263,7 +267,7 @@ before proposing a change.</p>
             var option = document.createElement("option");
             option.value = v;
             option.textContent = v;
-            option.selected = v === "latest";
+            option.selected = v === "v0.0.1";
             picker.appendChild(option);
           });
           

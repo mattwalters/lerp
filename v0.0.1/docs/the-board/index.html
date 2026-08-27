@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>The board · lerp</title>
+  <meta name="description" content="A small, reliable CLI that orchestrates software work through Linear.">
+  <link rel="stylesheet" href="../../style.css">
+</head>
+<body>
+  
+  
+  
+  
+  
+  
+  
+  <header>
+    <a class="brand" href="../../">lerp</a>
+    
+    <a class="nav here" href="../../docs/">Docs</a>
+    
+    <a class="nav" href="../../why/">Why lerp</a>
+    <span class="spacer"></span>
+    <a class="nav" href="https://github.com/mattwalters/lerp">GitHub</a>
+    
+    
+    <span class="version">
+      <span class="version-label">v0.0.1</span>
+      <select id="version-picker" hidden aria-label="Documentation version"></select>
+    </span>
+    
+  </header>
+  <div class="wrap">
+    
+    
+    <nav class="sidenav" aria-label="Manual">
+      
+      
+      
+      <h5>Start</h5>
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/">Documentation</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/overview/">Overview</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/install/">Install</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/quickstart/">Quickstart</a>
+      
+      <h5>Concepts</h5>
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/the-board/" class="active" aria-current="page">The board</a>
+      
+      <h5>The interface</h5>
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/reading-the-board/">Reading the board</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/finding-tickets/">Finding tickets</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/promoting/">Promoting</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/ejecting/">Ejecting</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/watching-a-run/">Watching a run</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/starting-past-the-limit/">Starting past the limit</a>
+      
+      <h5>Reference</h5>
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/lerp-toml/" class="mono">lerp.toml</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/cli/">The command line</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/troubleshooting/">Troubleshooting</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../scope/">SCOPE</a>
+      
+    </nav>
+    
+    <main>
+      
+
+<div class="prose">
+  <h1 id="the-board">The board</h1>
+<p>Lerp has five concepts and no sixth: a <strong>ticket</strong>, a <strong>queue</strong>, a
+<strong>runner</strong>, a <strong>lane</strong>, and <strong>the loop</strong>. Everything the board does is those
+five arranged by where tickets sit. This page is them as an adopter meets
+them; <a href="../../scope/">SCOPE.md</a>
+ is the same five as a fence, with the nine
+invariants and the litmus tests every change to lerp runs through, and it is
+the canonical text where the two ever seem to disagree.</p>
+<h2 id="tickets-and-where-state-lives">Tickets, and where state lives</h2>
+<p>A ticket is a Linear issue, and Linear is the database. All durable state —
+what work exists, what stage it is in, who has claimed it, what was decided —
+lives there, and lerp keeps no store of its own. <a href="../../scope/">SCOPE.md</a>
+
+invariant 1 is what holds that.</p>
+<p>Locally lerp keeps exactly two things: <code>lerp.toml</code> (config, checked in) and
+an evidence store, <code>.lerp/</code> at the repo root (gitignored, by init) — one
+record per run under <code>.lerp/runs</code> (pid, log file, ticket, workspace path, and
+the exit status the run records for itself as it ends), workspaces under
+<code>.lerp/workspaces</code>, an advisory lock at <code>.lerp/lock</code> that keeps it to one
+loop per clone, and the loop&rsquo;s diagnostics in <code>.lerp/loop.log</code>. Local state
+is evidence, never truth: losing all of it may cost compute, never
+correctness.</p>
+<h2 id="queues-and-why-there-is-no-workflow-syntax">Queues, and why there is no workflow syntax</h2>
+<p>A queue is a Linear status with instructions attached: tickets sitting in
+<code>status</code> are picked up, run through <code>runner</code> with <code>prompt</code>, and moved to
+<code>on_success</code> on a clean exit — or to <code>on_failure</code>, if the queue names one,
+when the agent exits non-zero.</p>
+<p>That is the whole of the workflow language. There is deliberately no
+conditional, template, or DAG syntax, because the topology is not in the
+config at all: it is in where tickets sit and where each <code>on_success</code>
+points. A stage whose <code>on_success</code> names a status some queue watches chains
+into that stage; one that names a status no queue watches is a gate, where
+the pipeline waits on a human. Branching is a person or an agent moving a
+ticket. Rewriting the pipeline into a different shape needs no code change
+and no new syntax — see <a href="../../docs/lerp-toml/"><code>lerp.toml</code></a>
+ for the fields and the
+stock arrangement of them.</p>
+<h2 id="runners">Runners</h2>
+<p>A runner is an adapter to a coding-agent CLI, and the contract is the lowest
+common denominator: it takes a prompt and a working directory, runs to exit,
+and its exit code means done or failed. Lerp does not parse an agent&rsquo;s
+output to decide anything — it reads it only to draw it on the screen. What
+the agent writes into Linear, it writes itself, with its own credentials.</p>
+<h2 id="lanes">Lanes</h2>
+<p>A lane is the concurrency unit: lerp runs at most N agents at once, one per
+lane. Each lane is a whole disposable workspace, built by the <code>provision</code>
+command before a run starts and torn down by <code>dispose</code> when the lane is
+reaped — the stock config uses a git worktree, and environment isolation
+(ports, databases, containers) is the repo&rsquo;s own problem, solved in those
+two commands. The default N is 10 and <code>-concurrency</code> changes it; a repo with
+a heavy provision command wants it lower.</p>
+<h2 id="the-loop">The loop</h2>
+<p>Lerp is a reconciler. Desired state is the board; actual state is the agent
+processes running on this machine; and each pass starts, adopts, or reaps
+agents until the two match. A crash is not an error case — it is drift, and
+the loop repairs drift.</p>
+<p>That is why an agent is not lerp&rsquo;s child in any sense that matters. Each one
+is its own process group with its run evidence on disk, so it outlives the
+lerp that started it, and the pass that finds it belongs to whichever lerp is
+open — <a href="../../docs/troubleshooting/#what-happens-on-crash-or-kill">what a crash or a kill actually
+costs</a>
+ is a question that
+page answers.</p>
+<h2 id="the-claim">The claim</h2>
+<p>Assignment is the claim: lerp claims a ticket by assigning it to your Linear
+user, and a claimed ticket is somebody else&rsquo;s work as far as lerp is
+concerned, even when the somebody is you. So a ticket is eligible for pickup
+when three things are true at once — it sits in a queue&rsquo;s status, it has no
+assignee, and it is not blocked by an unfinished ticket (Linear&rsquo;s
+<code>blockedBy</code>).</p>
+<p>The claim is also what makes multiplayer work without a server: each
+developer runs their own lerp against their own clone, and the claim
+arbitrates between them, with no lerp server and no coordination service
+anywhere. The protocol that does it, and what it is allowed to cost when two
+lerps collide, is <a href="../../scope/">SCOPE.md</a>
+ invariant 4 — read it there rather
+than here, because it is the kind of rule that is worth having in one place.</p>
+<p>What falls out for an adopter is that colleagues see claims and stage
+artifacts, the same visibility they have into each other&rsquo;s human work.</p>
+<h2 id="where-a-run-comes-to-rest">Where a run comes to rest</h2>
+<p>Where a finished run leaves the ticket is the whole of the topology. A
+finished run releases the claim wherever it comes to rest. Coming to rest in
+a status some queue serves means the next pass picks the ticket up for that
+stage on its own. Coming to rest in a status no queue serves is the pipeline
+waiting on a human — the status is the gate, so nothing needs to hold the
+ticket there. <a href="../../docs/promoting/">Promote</a>
+ it, or move it in Linear; either way
+the loop carries it on from there.</p>
+<p>Two things call the whole rule off. A ticket an agent or a human moved out of
+the queue&rsquo;s status during the run keeps that move — the hop it skipped is
+reported rather than forced. And a ticket assigned to somebody else by the
+time the run ends is theirs entirely, hop and claim both, since taking over a
+run mid-flight is exactly the way to say so.</p>
+
+</div>
+
+    </main>
+    
+    
+    
+    <nav class="toc" aria-label="On this page">
+      <h5>On this page</h5>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#tickets-and-where-state-lives">Tickets, and where state lives</a></li>
+    <li><a href="#queues-and-why-there-is-no-workflow-syntax">Queues, and why there is no workflow syntax</a></li>
+    <li><a href="#runners">Runners</a></li>
+    <li><a href="#lanes">Lanes</a></li>
+    <li><a href="#the-loop">The loop</a></li>
+    <li><a href="#the-claim">The claim</a></li>
+    <li><a href="#where-a-run-comes-to-rest">Where a run comes to rest</a></li>
+  </ul>
+</nav>
+    </nav>
+    
+  </div>
+  
+  <script>
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    (function () {
+      var here = new URL(".", document.querySelector('link[rel="stylesheet"]').href);
+      var root = new URL(".." + "/", here);
+      fetch(new URL("versions.json", root))
+        .then(function (r) { if (!r.ok) { throw r; } return r.json(); })
+        .then(function (versions) {
+          var picker = document.getElementById("version-picker");
+          ["latest"].concat(versions).forEach(function (v) {
+            var option = document.createElement("option");
+            option.value = v;
+            option.textContent = v;
+            option.selected = v === "v0.0.1";
+            picker.appendChild(option);
+          });
+          
+          
+          
+          
+          
+          
+          picker.addEventListener("change", function () {
+            window.location.href = new URL(picker.value + "/docs/", root);
+          });
+          picker.hidden = false;
+        })
+        .catch(function () {});
+    })();
+  </script>
+  
+</body>
+</html>

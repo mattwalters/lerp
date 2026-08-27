@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Overview · lerp</title>
+  <title>Promoting · lerp</title>
   <meta name="description" content="A small, reliable CLI that orchestrates software work through Linear.">
   <link rel="stylesheet" href="../../style.css">
 </head>
@@ -26,7 +26,7 @@
     
     
     <span class="version">
-      <span class="version-label">latest</span>
+      <span class="version-label">v0.0.1</span>
       <select id="version-picker" hidden aria-label="Documentation version"></select>
     </span>
     
@@ -56,7 +56,7 @@
       
       
       
-      <a href="../../docs/overview/" class="active" aria-current="page">Overview</a>
+      <a href="../../docs/overview/">Overview</a>
       
       
       
@@ -116,7 +116,7 @@
       
       
       
-      <a href="../../docs/promoting/">Promoting</a>
+      <a href="../../docs/promoting/" class="active" aria-current="page">Promoting</a>
       
       
       
@@ -194,34 +194,50 @@
       
 
 <div class="prose">
-  <h1 id="overview">Overview</h1>
-<p>Lerp is one binary and one screen. You put tickets on a Linear board; lerp
-runs coding agents to move them across it. <code>lerp init</code> wires a repository to
-a Linear team, and running <code>lerp</code> opens the board that moves the work. There
-is no server, no scheduler and no store of lerp&rsquo;s own.</p>
-<h2 id="what-is-in-the-box">What is in the box</h2>
-<p>The whole surface is the board plus two commands. Bare <code>lerp</code> opens the TUI,
-and the reconciling loop runs while it is open — N lanes, adopting live
-runs, reaping dead ones, repairing drift. Both panels are built, and the
-board&rsquo;s only two write actions are the inbox&rsquo;s <a href="../../docs/promoting/">promote</a>
+  <h1 id="promoting">Promoting</h1>
+<p>Routing is done by placing a ticket, and promoting is that act from the
+board: select a row in the <a href="../../docs/reading-the-board/#the-inbox-panel">Inbox</a>
  and
-the work panel&rsquo;s <a href="../../docs/starting-past-the-limit/">force-start</a>
-. Beyond those,
-<code>lerp init</code> and <code>lerp version</code> complete <a href="../../docs/cli/">the command line</a>
-.</p>
-<p>Everything else about a ticket still happens in Linear. Lerp reads the
-board, runs agents, and moves tickets between statuses; it does not compose
-comments, invent work items, or keep a queue of its own.</p>
-<h2 id="where-to-start">Where to start</h2>
-<p><a href="../../docs/install/">Install</a>
- is the binary and the two prerequisites lerp cannot
-satisfy for you. <a href="../../docs/quickstart/">Quickstart</a>
- is <code>lerp init</code> to a first
-promoted ticket. <a href="../../docs/the-board/">The board</a>
- is the model underneath both, and
-<a href="../../scope/">SCOPE.md</a>
- is the fence around the whole project — read that one
-before proposing a change.</p>
+press <code>p</code>, pick a target from the configured queue statuses or a pipeline
+exit, and lerp moves it there.</p>
+<!-- Cast slot (LERP-70): a plan read in the main pane, then promoted out of
+     the gate into the next queue and picked up on the following pass.
+     keys: [enter] · [p] · pick a status · [enter] -->
+<h2 id="what-promoting-is-for">What promoting is for</h2>
+<p>A run that finishes in a status no queue serves has come to rest at <a href="../../docs/the-board/#where-a-run-comes-to-rest">a
+gate</a>
+, and the stock pipeline has
+two: &ldquo;Plan Review&rdquo;, where you read the plan, and &ldquo;In Review&rdquo;, where you merge
+the pull request. Promoting is how a ticket leaves one. So is moving it in
+Linear; either way the next pass carries it on.</p>
+<p>Which is the whole of the routing decision, and it is a human&rsquo;s: lerp never
+invents work items of its own, and it never promotes a ticket for you.</p>
+<h2 id="what-it-writes">What it writes</h2>
+<p>The move and nothing else. That MoveIssue and
+<a href="../../docs/starting-past-the-limit/">force-start</a>
+&rsquo;s claim are the only writes any
+view makes; everything else about a ticket still happens in Linear, and <code>o</code>
+opens the selected ticket there.</p>
+<p><code>p</code> drops out of the key line where there is no status to promote into. Inside
+the picker, <code>↑</code>/<code>↓</code> pick a target, <code>enter</code> takes it, and <code>esc</code> — or <code>q</code> — backs
+out without writing anything.</p>
+<h2 id="several-at-once">Several at once</h2>
+<p>Press <code>v</code> on a row to start a visual-mode range, the way lazygit does; the
+movement keys extend it. <code>esc</code> drops it, and so does sorting (<code>s</code>), scoping
+to a project (<code>P</code>), slicing to a status (<code>]</code>/<code>[</code>) or searching (<code>/</code>) — anything
+that reorders or narrows the rows the range is drawn over. <code>p</code> opens the
+same picker once, for one target — confirm, and every selected ticket goes
+through the promote above, one at a time. One failing (a race with another
+lerp claiming it, say) never stops the rest: the note says how many of the
+batch made it, and the row that did not carries a <code>✗</code> until it promotes
+cleanly or leaves the board.</p>
+<h2 id="after-the-promote">After the promote</h2>
+<p>A promoted ticket is <a href="../../docs/the-board/#the-claim">eligible</a>
+ the moment it is
+sitting in a queue&rsquo;s status unassigned and unblocked, so the next pass picks
+it up on its own. If it does not, <a href="../../docs/troubleshooting/#why-isnt-my-ticket-being-picked-up">troubleshooting</a>
+
+walks the three conditions.</p>
 
 </div>
 
@@ -233,8 +249,10 @@ before proposing a change.</p>
       <h5>On this page</h5>
       <nav id="TableOfContents">
   <ul>
-    <li><a href="#what-is-in-the-box">What is in the box</a></li>
-    <li><a href="#where-to-start">Where to start</a></li>
+    <li><a href="#what-promoting-is-for">What promoting is for</a></li>
+    <li><a href="#what-it-writes">What it writes</a></li>
+    <li><a href="#several-at-once">Several at once</a></li>
+    <li><a href="#after-the-promote">After the promote</a></li>
   </ul>
 </nav>
     </nav>
@@ -263,7 +281,7 @@ before proposing a change.</p>
             var option = document.createElement("option");
             option.value = v;
             option.textContent = v;
-            option.selected = v === "latest";
+            option.selected = v === "v0.0.1";
             picker.appendChild(option);
           });
           

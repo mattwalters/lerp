@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Overview · lerp</title>
+  <title>Watching a run · lerp</title>
   <meta name="description" content="A small, reliable CLI that orchestrates software work through Linear.">
   <link rel="stylesheet" href="../../style.css">
 </head>
@@ -56,7 +56,7 @@
       
       
       
-      <a href="../../docs/overview/" class="active" aria-current="page">Overview</a>
+      <a href="../../docs/overview/">Overview</a>
       
       
       
@@ -136,7 +136,7 @@
       
       
       
-      <a href="../../docs/watching-a-run/">Watching a run</a>
+      <a href="../../docs/watching-a-run/" class="active" aria-current="page">Watching a run</a>
       
       
       
@@ -194,34 +194,46 @@
       
 
 <div class="prose">
-  <h1 id="overview">Overview</h1>
-<p>Lerp is one binary and one screen. You put tickets on a Linear board; lerp
-runs coding agents to move them across it. <code>lerp init</code> wires a repository to
-a Linear team, and running <code>lerp</code> opens the board that moves the work. There
-is no server, no scheduler and no store of lerp&rsquo;s own.</p>
-<h2 id="what-is-in-the-box">What is in the box</h2>
-<p>The whole surface is the board plus two commands. Bare <code>lerp</code> opens the TUI,
-and the reconciling loop runs while it is open — N lanes, adopting live
-runs, reaping dead ones, repairing drift. Both panels are built, and the
-board&rsquo;s only two write actions are the inbox&rsquo;s <a href="../../docs/promoting/">promote</a>
- and
-the work panel&rsquo;s <a href="../../docs/starting-past-the-limit/">force-start</a>
-. Beyond those,
-<code>lerp init</code> and <code>lerp version</code> complete <a href="../../docs/cli/">the command line</a>
-.</p>
-<p>Everything else about a ticket still happens in Linear. Lerp reads the
-board, runs agents, and moves tickets between statuses; it does not compose
-comments, invent work items, or keep a queue of its own.</p>
-<h2 id="where-to-start">Where to start</h2>
-<p><a href="../../docs/install/">Install</a>
- is the binary and the two prerequisites lerp cannot
-satisfy for you. <a href="../../docs/quickstart/">Quickstart</a>
- is <code>lerp init</code> to a first
-promoted ticket. <a href="../../docs/the-board/">The board</a>
- is the model underneath both, and
-<a href="../../scope/">SCOPE.md</a>
- is the fence around the whole project — read that one
-before proposing a change.</p>
+  <h1 id="watching-a-run">Watching a run</h1>
+<p>A run says how it is going twice: once on its row, in a line you get without
+asking, and once in full when you open its log.</p>
+<!-- Cast slot (LERP-70): a lane's log tailing live — tool calls landing one
+     line each, pgup into the scrollback, r for the raw output, end back to
+     following.
+     keys: [enter] · [pgup] · [r] · [end] · [esc] -->
+<h2 id="the-activity-line">The activity line</h2>
+<p>Under a running row, once the run has a log, a second line reads how that run
+is going: the last call the agent made — a shell command as <code>$ go test ./...</code>, anything else by tool and target — and a sparkline of its recent
+activity, so a run that has fallen quiet reads as a flat line.</p>
+<p>A run adopted from a previous <code>lerp</code> gets the same line rather than a fresh
+one: its log&rsquo;s own timestamps are read back into the history, so a run that
+went quiet twenty minutes ago draws the long flat line it earned. A log that
+dates nothing has no times to place, and draws the short line of a fresh run.</p>
+<p>The line takes the width the row is given: on a wide terminal&rsquo;s full-width
+list it draws back about a quarter of an hour, and beside an open main pane
+it shows the recent end of that same history. A cell is fifteen seconds
+wherever it is drawn, so a narrow row reaches less far back rather than
+reading more coarsely.</p>
+<p>Those are numbers to read, not a timeout. Lerp sets no threshold on them and
+never acts on one; <a href="../../docs/ejecting/">ejecting</a>
+ a run that has stopped making
+progress stays the operator&rsquo;s call.</p>
+<h2 id="the-log">The log</h2>
+<p><code>enter</code> on a running ticket opens a live tail of its log in the main pane,
+with scrollback that survives the run&rsquo;s exit, and <code>esc</code> gives the screen
+back.</p>
+<p>The tail reads as agent activity rather than as bytes: tool calls one line
+each, prose as prose, and thinking collapsed to a single line with its token
+count. A runner whose output lerp does not recognize is shown exactly as it
+was written, with no configuration.</p>
+<p><code>pgup</code>/<code>pgdn</code> scroll it, <code>end</code> resumes following, and <code>r</code> toggles the pane to
+the runner&rsquo;s raw output and back. The log on disk is untouched either way —
+the raw view is the same file, undecorated.</p>
+<h2 id="what-the-loop-itself-is-doing">What the loop itself is doing</h2>
+<p>Agent output goes to each run&rsquo;s own log, which is what the pane tails. The
+loop&rsquo;s own diagnostics — provision, dispose, adopt, reap — go somewhere else:
+<code>.lerp/loop.log</code>, appended to across sessions. That is where to look when a
+run never started rather than when a run is going badly.</p>
 
 </div>
 
@@ -233,8 +245,9 @@ before proposing a change.</p>
       <h5>On this page</h5>
       <nav id="TableOfContents">
   <ul>
-    <li><a href="#what-is-in-the-box">What is in the box</a></li>
-    <li><a href="#where-to-start">Where to start</a></li>
+    <li><a href="#the-activity-line">The activity line</a></li>
+    <li><a href="#the-log">The log</a></li>
+    <li><a href="#what-the-loop-itself-is-doing">What the loop itself is doing</a></li>
   </ul>
 </nav>
     </nav>
