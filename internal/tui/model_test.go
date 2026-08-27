@@ -6025,6 +6025,24 @@ func TestContextLoadCarriesTheGlyphAtThreshold(t *testing.T) {
 	}
 }
 
+// The glyph decision and the printed number must never disagree: a reading
+// that rounds up to 80% has to carry the glyph, even though its raw
+// fraction (79.5%) sits just under loadWarn — a row reading "80%" in plain
+// faint text, unflagged, would be a lie by omission.
+func TestContextLoadGlyphAgreesWithItsOwnRounding(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	r := workRow{ticket: "LERP-1", title: "one", lane: 1, state: laneRunning,
+		since: time.Now().Add(-90 * time.Second), heard: time.Now(), context: 159000, window: 200000}
+
+	got := ansi.Strip(m.workRowLines(r, false, 80)[0])
+	if !strings.Contains(got, "80%") {
+		t.Fatalf("159000/200000 did not round to 80%%: %q", got)
+	}
+	if !strings.Contains(got, "⚠") {
+		t.Fatalf("a reading that prints 80%% does not carry the glyph: %q", got)
+	}
+}
+
 // A reading with no configured window is the same "tokens only" case a
 // runner that reports no reading at all already has: no percentage, and no
 // stray separator left dangling for the figure that never came.

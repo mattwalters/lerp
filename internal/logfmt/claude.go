@@ -21,15 +21,16 @@ type claude struct {
 	// agents holds each live agent's latest input-side reading, keyed by
 	// parent_tool_use_id ("" for the top-level agent) — a reading, not a
 	// sum, so a later line for the same agent simply replaces its entry.
-	// agentOrder is the insertion order of the distinct agents seen so far,
-	// a ring like counted, and agentSeen is how many of its slots hold a
-	// real agent: past trackedAgents the oldest agent's entry is evicted
-	// rather than the map growing without bound, the same trade counted
-	// makes for message ids.
+	// agentOrder is the insertion order of the distinct agents currently
+	// tracked, a ring like counted: past trackedAgents live agents at once,
+	// the oldest entry is evicted rather than the map growing without
+	// bound. The gate is the map's own live size, not a running count of
+	// every agent ever seen — a completion already shrinks it, so a run
+	// whose subagents come and go one at a time, however many over its
+	// life, never forces the top-level agent's own entry out to make room.
 	agents     map[string]int
 	agentOrder [trackedAgents]string
 	agentNext  int
-	agentSeen  int
 }
 
 // trackedAgents bounds the agent map the same way countedMessages bounds the
@@ -196,20 +197,22 @@ func (c *claude) usage(id string, u claudeUsage) int {
 }
 
 // track records agent's latest input-side reading, evicting the oldest
-// tracked agent once trackedAgents distinct agents have been seen. A repeat
-// of an agent already tracked only updates its value — the ring only turns
-// for a genuinely new agent, so an agent already retired by a completion
-// notification and never seen again does not hold a slot forever, but one
-// still running never loses its place to its own repeated lines.
+// tracked agent once trackedAgents are live at the same time. A repeat of an
+// agent already tracked only updates its value — the ring only turns for a
+// genuinely new agent, so one still running never loses its place to its own
+// repeated lines. The gate is len(c.agents), the map's live size, rather
+// than a count that only grows: a retirement already frees a slot, so
+// evicting is reserved for a run with that many agents genuinely in flight
+// at once, not one that has merely run that many subagents, one after
+// another, over its life — the top-level agent's own entry, alive for the
+// whole run, would otherwise be the first ever evicted.
 func (c *claude) track(agent string, tokens int) {
 	if c.agents == nil {
 		c.agents = make(map[string]int, trackedAgents)
 	}
 	if _, seen := c.agents[agent]; !seen {
-		if c.agentSeen == trackedAgents {
+		if len(c.agents) >= trackedAgents {
 			delete(c.agents, c.agentOrder[c.agentNext])
-		} else {
-			c.agentSeen++
 		}
 		c.agentOrder[c.agentNext] = agent
 		c.agentNext = (c.agentNext + 1) % trackedAgents

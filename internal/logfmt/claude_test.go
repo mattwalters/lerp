@@ -360,3 +360,30 @@ func TestClaudeTracksAgentCapEvicts(t *testing.T) {
 		t.Fatalf("the worst-of figure read %d once the cap evicted the huge agent, want 1", ev.Context)
 	}
 }
+
+// A run whose subagents come and go one at a time — never more than a
+// couple live together — must never evict the top-level agent to make room,
+// however many subagents it runs through over its life: each completion
+// already frees the slot the next subagent needs, so the cap only ever
+// engages for agents genuinely in flight at once. The gate is the map's
+// live size, not a count of every agent ever seen — the latter would make
+// the top-level agent, alive for the whole run and inserted first, the
+// deterministic first eviction once enough subagents had passed through.
+func TestClaudeSequentialSubagentsNeverEvictTheTopLevelAgent(t *testing.T) {
+	dec := &claude{}
+	dec.Decode(claudeAgentLine("", 150000))
+
+	for i := range trackedAgents * 3 {
+		id := fmt.Sprintf("toolu_sub_%d", i)
+		dec.Decode(claudeAgentLine(id, 500))
+		dec.Decode(claudeTaskNotification(id, "completed"))
+	}
+
+	ev, ok := dec.Decode(claudeAgentLine("", 151000))
+	if !ok {
+		t.Fatal("line was not decoded")
+	}
+	if ev.Context != 151000 {
+		t.Fatalf("after %d sequential subagents the top-level agent's own line read Context %d, want its own 151000 — its entry was evicted", trackedAgents*3, ev.Context)
+	}
+}

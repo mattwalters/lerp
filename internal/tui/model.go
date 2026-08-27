@@ -3541,16 +3541,21 @@ const loadWarn = 0.80
 // no percentage at all — the same posture cost keeps for a runner that
 // stays silent (see minCost): callers gate on this rather than on either
 // figure alone.
+//
+// The glyph decision is made against the rounded whole percent, the same
+// one that gets printed — not the raw fraction — so a reading like 79.5%
+// cannot draw as "80%" in styleFaint: whatever the row prints, the glyph
+// agrees with what the operator is looking at.
 func contextLoad(context, window int) (string, bool) {
 	if context <= 0 || window <= 0 {
 		return "", false
 	}
-	frac := float64(context) / float64(window)
-	pct := fmt.Sprintf("%.0f%%", frac*100)
-	if frac >= loadWarn {
-		return styleAttention.Render("⚠ " + pct), true
+	pct := int(float64(context)/float64(window)*100 + 0.5)
+	label := fmt.Sprintf("%d%%", pct)
+	if pct >= int(loadWarn*100) {
+		return styleAttention.Render("⚠ " + label), true
 	}
-	return styleFaint.Render(pct), true
+	return styleFaint.Render(label), true
 }
 
 // mainPanel is the lens: the promote picker while it is open, the ? overlay,
