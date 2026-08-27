@@ -842,3 +842,21 @@ func TestAuthErrorSendsNoRequest(t *testing.T) {
 		t.Errorf("requests = %d, want 0", requests)
 	}
 }
+
+// Every query that decodes into issueNode must carry the common issue fields,
+// so adding a field to Issue cannot silently leave some queries returning zero
+// values.
+func TestQueriesShareCommonIssueFields(t *testing.T) {
+	queries := map[string]string{
+		"listIssuesQuery":                 listIssuesQuery,
+		"listAssignedIssuesQuery":         listAssignedIssuesQuery,
+		"listUnassignedIssuesQuery":       listUnassignedIssuesQuery,
+		"listTeamIssuesUpdatedSinceQuery": listTeamIssuesUpdatedSinceQuery,
+		"getIssueQuery":                   getIssueQuery,
+	}
+	for name, q := range queries {
+		if !strings.Contains(q, issueCommonFields) {
+			t.Errorf("%s does not contain issueCommonFields", name)
+		}
+	}
+}

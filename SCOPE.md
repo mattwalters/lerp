@@ -230,17 +230,19 @@ conversation, not an extension of this one.
    column: the vocabulary is the operator's own, never a category invented
    here. It opens on what is blocked on a human — a failed run, a run
    finished at a gate, a ticket that left the pipeline — with the tickets
-   that have not entered the pipeline yet folded to a summary line behind
-   one key: being blocked-on is an interrupt, pulling from the backlog is a
-   sit-down motion. A claimed ticket resting in an intake status is never
-   folded — no pass can pick it up again while the claim stands (invariant
-   4), so it is blocked on a human wherever Linear files it. Sorting it (by
-   leverage, priority, status or project), scoping it to one project,
-   searching it (`/`, a plain substring over the rows on screen) and
-   unfolding that backlog are display over the one list the pass already
-   fetched, session-only, with no saved views and no filter syntax;
-   filtering that changed *which* tickets were fetched would not be. Select
-   a ticket, or a run of adjacent ones held with visual mode (`v`), and
+   that have not entered the pipeline yet standing as a summary line and
+   reachable as a slice of their own: being blocked-on is an interrupt,
+   pulling from the backlog is a sit-down motion. A claimed ticket resting
+   in an intake status is never folded — no pass can pick it up again while
+   the claim stands (invariant 4), so it is blocked on a human wherever
+   Linear files it. Sorting it (by leverage, priority, status or project),
+   scoping it to one project or priority (`F`, a field and then a value off
+   the rows already on screen), searching it (`/`, a plain substring over
+   the rows on screen) and slicing it to one status are display over the one
+   list the pass already fetched — so the cycle offers only statuses that
+   list already contains (Linear's unstarted and active categories),
+   session-only, with no saved views and no filter syntax; filtering that
+   changed *which* tickets were fetched would not be. Select a ticket, or a run of adjacent ones held with visual mode (`v`), and
    press `p` to promote it: pick a target from the configured queue
    statuses or a pipeline exit, and lerp moves it there. A promote into a
    status some queue serves also releases the claim the parked ticket was

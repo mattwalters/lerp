@@ -41,7 +41,7 @@ out without writing anything.
 
 Press `v` on a row to start a visual-mode range, the way lazygit does; the
 movement keys extend it. `esc` drops it, and so does sorting (`s`), scoping
-to a project (`P`), opening the backlog (`B`) or searching (`/`) — anything
+to a project (`P`), slicing to a status (`]`/`[`) or searching (`/`) — anything
 that reorders or narrows the rows the range is drawn over. `p` opens the
 same picker once, for one target — confirm, and every selected ticket goes
 through the promote above, one at a time. One failing (a race with another

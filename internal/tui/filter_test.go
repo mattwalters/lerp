@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -30,7 +31,6 @@ func TestFilterModalFieldNavigation(t *testing.T) {
 	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: filterTestBoard()})
-	m = browseBacklog(t, m)
 
 	// Press F to open modal
 	m = update(t, m, keyMsg("F"))
@@ -88,14 +88,15 @@ func TestFilterModalFieldNavigation(t *testing.T) {
 	}
 }
 
-// Done-when: selecting a status filters the inbox by status, renders the status in title,
-// and shows the correct count.
+// Done-when: selecting a status sets the status slice — the one control over
+// that axis — renders it in the title, and shows the correct count. The value
+// list is built over the whole pass, so a status the all-slice folds away
+// (Backlog here) is still offered and still reachable.
 func TestFilterByStatus(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: filterTestBoard()})
-	m = browseBacklog(t, m)
 
 	// F -> move to status -> enter
 	m = update(t, m, keyMsg("F"))
@@ -116,16 +117,35 @@ func TestFilterByStatus(t *testing.T) {
 	if m.filtering {
 		t.Fatal("enter did not close modal")
 	}
-	if m.filterField != filterFieldStatus || m.filterValue != "Needs Attention" {
-		t.Fatalf("filter = %v %q, want status 'Needs Attention'", m.filterField, m.filterValue)
+	if m.slice != "Needs Attention" {
+		t.Fatalf("slice = %q, want 'Needs Attention'", m.slice)
+	}
+	if m.filterField != filterFieldNone {
+		t.Fatalf("status also landed in the filter slot: %v %q", m.filterField, m.filterValue)
 	}
 	if len(m.shown) != 1 || m.shown[0].Ticket != "LERP-1" {
 		t.Fatalf("shown = %+v, want 1 ticket LERP-1", m.shown)
 	}
 
 	panel := m.attentionPanel(96, 14)
-	if !strings.Contains(panel, "● 1/5") || !strings.Contains(panel, "status Needs Attention") {
-		t.Fatalf("title missing status filter indicator:\n%s", panel)
+	if !strings.Contains(panel, "● 1") || !strings.Contains(panel, "Needs Attention") {
+		t.Fatalf("title missing status slice indicator:\n%s", panel)
+	}
+
+	// The Backlog rows the all-slice folds away are still on the status list
+	// and still reachable — the list is built over the pass, not the slice.
+	m = update(t, m, keyMsg("F"))
+	if m.filterFieldCur != filterFieldStatus {
+		t.Fatalf("F reopened on %v, want the status list the slice is set from", m.filterFieldCur)
+	}
+	var offered []string
+	for _, it := range m.filterValues(filterFieldStatus) {
+		if !it.isAll {
+			offered = append(offered, it.label)
+		}
+	}
+	if !slices.Contains(offered, "Backlog") {
+		t.Fatalf("status list offers %v, want it to include the folded Backlog rows", offered)
 	}
 }
 
@@ -135,7 +155,6 @@ func TestFilterByPriority(t *testing.T) {
 	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: filterTestBoard()})
-	m = browseBacklog(t, m)
 
 	// Filter by Urgent (1)
 	m = update(t, m, keyMsg("F"))
@@ -143,7 +162,8 @@ func TestFilterByPriority(t *testing.T) {
 	m = update(t, m, keyMsg("down")) // priority
 	m = update(t, m, keyMsg("enter"))
 
-	// Values: [all priority (5), Urgent (1), High (1), Medium (1), Low (1), no priority (1)]
+	// The all-slice folds the two unclaimed Backlog rows away, so the values
+	// are [all priority (3), Urgent (1), Low (1), no priority (1)].
 	m = update(t, m, keyMsg("down")) // Urgent
 	m = update(t, m, keyMsg("enter"))
 
@@ -164,8 +184,8 @@ func TestFilterByPriority(t *testing.T) {
 	if m.filterSel != 1 {
 		t.Fatalf("reopened filterSel = %d, want 1 (Urgent)", m.filterSel)
 	}
-	// Navigate down to "no priority" (index 5)
-	for range 4 {
+	// Navigate down to "no priority" (index 3)
+	for range 2 {
 		m = update(t, m, keyMsg("down"))
 	}
 	m = update(t, m, keyMsg("enter"))
@@ -188,7 +208,6 @@ func TestFilterByNoProject(t *testing.T) {
 	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: filterTestBoard()})
-	m = browseBacklog(t, m)
 
 	// P shortcut opens project values
 	m = update(t, m, keyMsg("P"))
@@ -217,7 +236,6 @@ func TestFilterTypeAhead(t *testing.T) {
 	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: filterTestBoard()})
-	m = browseBacklog(t, m)
 
 	m = update(t, m, keyMsg("P"))
 	// Type "tool"
@@ -237,8 +255,8 @@ func TestFilterTypeAhead(t *testing.T) {
 	if m.filterField != filterFieldProject || m.filterValue != "Tools" {
 		t.Fatalf("filter = %v %q, want Tools", m.filterField, m.filterValue)
 	}
-	if len(m.shown) != 2 {
-		t.Fatalf("shown = %d tickets, want 2 (LERP-3, LERP-5)", len(m.shown))
+	if len(m.shown) != 1 || m.shown[0].Ticket != "LERP-5" {
+		t.Fatalf("shown = %+v, want the one unfolded Tools row (LERP-5)", m.shown)
 	}
 }
 
@@ -249,7 +267,6 @@ func TestFilterEscBacksOut(t *testing.T) {
 	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: filterTestBoard()})
-	m = browseBacklog(t, m)
 
 	m = update(t, m, keyMsg("F"))
 	m = update(t, m, keyMsg("enter")) // project values
@@ -275,13 +292,13 @@ func TestFilterEscBacksOut(t *testing.T) {
 	}
 }
 
-// Done-when: selecting "all <field>" clears the active filter.
+// Done-when: selecting "all <field>" clears what that field set — the slice
+// for status, the slot for everything else.
 func TestFilterClearViaAllOption(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: filterTestBoard()})
-	m = browseBacklog(t, m)
 
 	// Set status filter to Backlog
 	m = update(t, m, keyMsg("F"))
@@ -290,8 +307,8 @@ func TestFilterClearViaAllOption(t *testing.T) {
 	m = update(t, m, keyMsg("b")) // Backlog
 	m = update(t, m, keyMsg("enter"))
 
-	if m.filterField != filterFieldStatus || m.filterValue != "Backlog" {
-		t.Fatalf("filter = %v %q, want Backlog", m.filterField, m.filterValue)
+	if m.slice != "Backlog" {
+		t.Fatalf("slice = %q, want Backlog", m.slice)
 	}
 
 	// Reopen with F (opens at status values with Backlog selected)
@@ -302,11 +319,11 @@ func TestFilterClearViaAllOption(t *testing.T) {
 	}
 	m = update(t, m, keyMsg("enter"))
 
-	if m.filterField != filterFieldNone || m.filterValue != "" {
-		t.Fatalf("filter did not clear: field=%v, val=%q", m.filterField, m.filterValue)
+	if m.slice != "" {
+		t.Fatalf("the slice did not clear: %q", m.slice)
 	}
-	if len(m.shown) != 5 {
-		t.Fatalf("shown = %d, want all 5 rows", len(m.shown))
+	if len(m.shown) != 3 {
+		t.Fatalf("shown = %d, want the 3 rows the all-slice shows", len(m.shown))
 	}
 }
 
@@ -316,7 +333,6 @@ func TestFilterPassReset(t *testing.T) {
 	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: filterTestBoard()})
-	m = browseBacklog(t, m)
 
 	// Filter by Priority Urgent
 	m = update(t, m, keyMsg("F"))

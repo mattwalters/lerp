@@ -33,8 +33,10 @@ type keymap struct {
 	Sort       key.Binding
 	Filter     key.Binding
 	Project    key.Binding
-	// Backlog unfolds the inbox's summary line into the rows it stands for.
-	Backlog key.Binding
+	// Slice advances the inbox to the next status slice in Linear board
+	// order; SliceBack reverses it.
+	Slice     key.Binding
+	SliceBack key.Binding
 	// Search opens the inbox's prompt; ClearSearch is the way back out of a
 	// filter the prompt already closed on.
 	Search      key.Binding
@@ -94,14 +96,12 @@ func newKeymap() keymap {
 		// widest key and the widest description are added together, so the
 		// detail pane's and the search's own keys cost this one three
 		// characters back.
-		ForceStart: key.NewBinding(key.WithKeys("S"), key.WithHelp("S", "start past the limit")),
-		Sort:       key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort inbox")),
-		Filter:     key.NewBinding(key.WithKeys("F"), key.WithHelp("F", "filter inbox")),
-		Project:    key.NewBinding(key.WithKeys("P"), key.WithHelp("P", "project (shortcut)")),
-		// B, not b: b is already half of pgup, and a letter that means two
-		// things depending on which panel has focus is what splitting S from
-		// s was avoiding.
-		Backlog:     key.NewBinding(key.WithKeys("B"), key.WithHelp("B", "browse the backlog")),
+		ForceStart:  key.NewBinding(key.WithKeys("S"), key.WithHelp("S", "start past the limit")),
+		Sort:        key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort inbox")),
+		Filter:      key.NewBinding(key.WithKeys("F"), key.WithHelp("F", "filter inbox")),
+		Project:     key.NewBinding(key.WithKeys("P"), key.WithHelp("P", "project (shortcut)")),
+		Slice:       key.NewBinding(key.WithKeys("]"), key.WithHelp("]", "next slice")),
+		SliceBack:   key.NewBinding(key.WithKeys("["), key.WithHelp("[", "previous slice")),
 		Search:      key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "search inbox")),
 		ClearSearch: key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "clear search")),
 		Open:        key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "open in Linear")),
@@ -131,7 +131,7 @@ func (k keymap) FullHelp() [][]key.Binding {
 		{k.Attention, k.Work, k.NextPanel, k.PrevPanel,
 			k.Up, k.Down, k.PageUp, k.PageDown, k.Top, k.Bottom},
 		{k.Detail, k.Close, k.Promote, k.Visual, k.VisualAll, k.Eject, k.ForceStart, k.Open, k.Help, k.Quit},
-		{k.Sort, k.Filter, k.Project, k.Backlog, k.Search, k.ClearSearch, k.Raw, k.Fold, k.FoldAll},
+		{k.Sort, k.Filter, k.Project, k.Slice, k.SliceBack, k.Search, k.ClearSearch, k.Raw, k.Fold, k.FoldAll},
 	}
 }
 
@@ -244,7 +244,11 @@ func (k keymap) contextHelp(p panel, live rowKeys) [][]key.Binding {
 		}
 		act = append(act, k.Help, k.Quit)
 
-		disp = append(disp, k.Sort, k.Filter, k.Project, k.Backlog)
+		disp = append(disp, k.Sort, k.Filter)
+		if live.projects {
+			disp = append(disp, k.Project)
+		}
+		disp = append(disp, k.Slice, k.SliceBack)
 		if live.canSearch {
 			disp = append(disp, k.Search)
 		}

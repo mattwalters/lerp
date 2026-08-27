@@ -111,20 +111,13 @@ type updateResult struct {
 	} `json:"issueUpdate"`
 }
 
-const listIssuesQuery = `
-query ListIssues($team: String!, $state: String!, $after: String) {
-  issues(
-    first: 50
-    after: $after
-    filter: { team: { key: { eq: $team } }, state: { name: { eq: $state } } }
-  ) {
-    pageInfo { hasNextPage endCursor }
-    nodes {
+// issueCommonFields is the GraphQL field selection shared by every query
+// that decodes an issue into issueNode.
+const issueCommonFields = `
       id
       identifier
       title
       url
-      state { name }
       assignee { id }
       priority
       inverseRelations(first: 50) {
@@ -138,7 +131,31 @@ query ListIssues($team: String!, $state: String!, $after: String) {
           type
           relatedIssue { identifier state { type } }
         }
-      }
+      }`
+
+// issueNodeFields is the issue selection for the per-queue and single-issue
+// reads (ListIssues, GetIssue).
+const issueNodeFields = `
+      state { name }` + issueCommonFields
+
+// inboxIssueNodeFields is the issue selection for the attention-pass and
+// delta reads (ListAssignedIssues, ListUnassignedIssues,
+// ListTeamIssuesUpdatedSince), adding state categories, project names, and
+// timestamps for the inbox table and cache.
+const inboxIssueNodeFields = `
+      updatedAt
+      state { name type }
+      project { name }` + issueCommonFields
+
+const listIssuesQuery = `
+query ListIssues($team: String!, $state: String!, $after: String) {
+  issues(
+    first: 50
+    after: $after
+    filter: { team: { key: { eq: $team } }, state: { name: { eq: $state } } }
+  ) {
+    pageInfo { hasNextPage endCursor }
+    nodes {` + issueNodeFields + `
     }
   }
 }`
@@ -165,28 +182,7 @@ query ListAssignedIssues($team: String!, $assignee: ID!, $after: String) {
     }
   ) {
     pageInfo { hasNextPage endCursor }
-    nodes {
-      id
-      identifier
-      title
-      url
-      updatedAt
-      state { name type }
-      assignee { id }
-      priority
-      project { name }
-      inverseRelations(first: 50) {
-        nodes {
-          type
-          issue { identifier state { type } }
-        }
-      }
-      relations(first: 50) {
-        nodes {
-          type
-          relatedIssue { identifier state { type } }
-        }
-      }
+    nodes {` + inboxIssueNodeFields + `
     }
   }
 }`
@@ -215,28 +211,7 @@ query ListUnassignedIssues($team: String!, $after: String) {
     }
   ) {
     pageInfo { hasNextPage endCursor }
-    nodes {
-      id
-      identifier
-      title
-      url
-      updatedAt
-      state { name type }
-      assignee { id }
-      priority
-      project { name }
-      inverseRelations(first: 50) {
-        nodes {
-          type
-          issue { identifier state { type } }
-        }
-      }
-      relations(first: 50) {
-        nodes {
-          type
-          relatedIssue { identifier state { type } }
-        }
-      }
+    nodes {` + inboxIssueNodeFields + `
     }
   }
 }`
@@ -263,28 +238,7 @@ query ListTeamIssuesUpdatedSince($team: String!, $since: DateTimeOrDuration!, $a
     }
   ) {
     pageInfo { hasNextPage endCursor }
-    nodes {
-      id
-      identifier
-      title
-      url
-      updatedAt
-      state { name type }
-      assignee { id }
-      priority
-      project { name }
-      inverseRelations(first: 50) {
-        nodes {
-          type
-          issue { identifier state { type } }
-        }
-      }
-      relations(first: 50) {
-        nodes {
-          type
-          relatedIssue { identifier state { type } }
-        }
-      }
+    nodes {` + inboxIssueNodeFields + `
     }
   }
 }`
@@ -347,26 +301,7 @@ func (c *HTTP) listIssues(ctx context.Context, query string, vars map[string]any
 
 const getIssueQuery = `
 query GetIssue($id: String!) {
-  issue(id: $id) {
-    id
-    identifier
-    title
-    url
-    state { name }
-    assignee { id }
-    priority
-    inverseRelations(first: 50) {
-      nodes {
-        type
-        issue { identifier state { type } }
-      }
-    }
-    relations(first: 50) {
-      nodes {
-        type
-        relatedIssue { identifier state { type } }
-      }
-    }
+  issue(id: $id) {` + issueNodeFields + `
   }
 }`
 

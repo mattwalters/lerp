@@ -844,17 +844,19 @@ func board() loop.Event {
 	}}
 }
 
-// browseBacklog presses B on the inbox panel. The fixture is half backlog
-// rows and the panel opens folded, so every test below that is about the
-// whole of it — the sort order, the grouping, the columns, the filters —
-// asks for the rest of the list the way an operator does. The tests about
-// what the panel says on sight do not call it.
+// browseBacklog presses ] on the inbox panel until the Backlog slice is reached.
 func browseBacklog(t *testing.T, m model) model {
 	t.Helper()
-	m = update(t, m, keyMsg("B"))
-	if !m.backlogOpen {
-		t.Fatal("B did not expand the backlog")
+	if m.slice == "Backlog" {
+		return m
 	}
+	for range 10 {
+		m = update(t, m, keyMsg("]"))
+		if m.slice == "Backlog" {
+			return m
+		}
+	}
+	t.Fatal("] did not reach the Backlog slice")
 	return m
 }
 
@@ -894,7 +896,6 @@ func TestInboxRowsCarryTheRealStatus(t *testing.T) {
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: board()})
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues}})
-	m = browseBacklog(t, m)
 
 	panel := m.attentionPanel(96, 14)
 	view := m.View()
@@ -903,7 +904,7 @@ func TestInboxRowsCarryTheRealStatus(t *testing.T) {
 			t.Fatalf("the view still says %q:\n%s", gone, view)
 		}
 	}
-	for _, want := range []string{"Needs Attention", "Backlog", "In Review"} {
+	for _, want := range []string{"Needs Attention", "In Review", "In Progress"} {
 		if !strings.Contains(panel, want) {
 			t.Fatalf("inbox panel is missing the status %q:\n%s", want, panel)
 		}
@@ -917,7 +918,7 @@ func TestInboxRowsCarryTheRealStatus(t *testing.T) {
 	if !strings.Contains(rowOf(t, panel, "LERP-60"), "⚠") {
 		t.Fatalf("the one ticket that left the pipeline is unmarked:\n%s", panel)
 	}
-	for _, unmarked := range []string{"LERP-1", "LERP-48", "LERP-22", "LERP-23", "LERP-70"} {
+	for _, unmarked := range []string{"LERP-1", "LERP-48"} {
 		if strings.Contains(rowOf(t, panel, unmarked), "⚠") {
 			t.Fatalf("%s did not leave the pipeline, but the row marks it:\n%s", unmarked, panel)
 		}
@@ -931,6 +932,18 @@ func TestInboxRowsCarryTheRealStatus(t *testing.T) {
 	}
 	if got := rowOf(t, panel, "LERP-60"); !strings.Contains(got, "—") {
 		t.Fatalf("a ticket in no project does not read as one:\n%s", got)
+	}
+
+	// Backlog slice carries the backlog rows under their real status without warning marks.
+	m = browseBacklog(t, m)
+	panelBacklog := m.attentionPanel(96, 14)
+	if !strings.Contains(panelBacklog, "Backlog") {
+		t.Fatalf("backlog slice missing Backlog status:\n%s", panelBacklog)
+	}
+	for _, unmarked := range []string{"LERP-22", "LERP-23", "LERP-70"} {
+		if strings.Contains(rowOf(t, panelBacklog, unmarked), "⚠") {
+			t.Fatalf("%s is in backlog, but marked as left pipeline:\n%s", unmarked, panelBacklog)
+		}
 	}
 }
 
@@ -1351,7 +1364,6 @@ func TestInboxSortModesCycle(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: board()})
-	m = browseBacklog(t, m)
 
 	// Status is the default: pipeline-relevance first — a failure route,
 	// then where a clean run comes to rest, then the statuses the pipeline
@@ -1359,7 +1371,7 @@ func TestInboxSortModesCycle(t *testing.T) {
 	// a header per status carrying the note that explains the rank, and
 	// leverage ordering the rows inside a group.
 	panel := m.attentionPanel(96, 18)
-	want := []string{"LERP-1", "LERP-48", "LERP-60", "LERP-22", "LERP-70", "LERP-23"}
+	want := []string{"LERP-1", "LERP-48", "LERP-60"}
 	if got := order(panel, want...); !slices.Equal(got, want) {
 		t.Fatalf("status order = %v, want %v:\n%s", got, want, panel)
 	}
@@ -1367,7 +1379,7 @@ func TestInboxSortModesCycle(t *testing.T) {
 		t.Fatalf("the panel title does not name the sort mode:\n%s", panel)
 	}
 	for _, note := range []string{"a run failed here", "a run finished here",
-		"the pipeline never names it", "waiting to enter the pipeline"} {
+		"the pipeline never names it"} {
 		if !strings.Contains(panel, note) {
 			t.Fatalf("status headers do not carry %q:\n%s", note, panel)
 		}
@@ -1376,7 +1388,7 @@ func TestInboxSortModesCycle(t *testing.T) {
 	// Project, alphabetically, with the unfiled ticket last.
 	m = update(t, m, keyMsg("s"))
 	panel = m.attentionPanel(96, 16)
-	want = []string{"LERP-22", "LERP-1", "LERP-23", "LERP-48", "LERP-60", "LERP-70"}
+	want = []string{"LERP-1", "LERP-48", "LERP-60"}
 	if got := order(panel, want...); !slices.Equal(got, want) {
 		t.Fatalf("project order = %v, want %v:\n%s", got, want, panel)
 	}
@@ -1389,7 +1401,7 @@ func TestInboxSortModesCycle(t *testing.T) {
 	// no headers.
 	m = update(t, m, keyMsg("s"))
 	panel = m.attentionPanel(96, 14)
-	want = []string{"LERP-22", "LERP-48", "LERP-1", "LERP-60", "LERP-70", "LERP-23"}
+	want = []string{"LERP-48", "LERP-1", "LERP-60"}
 	if got := order(panel, want...); !slices.Equal(got, want) {
 		t.Fatalf("leverage order = %v, want %v:\n%s", got, want, panel)
 	}
@@ -1403,9 +1415,7 @@ func TestInboxSortModesCycle(t *testing.T) {
 	// Priority, then leverage.
 	m = update(t, m, keyMsg("s"))
 	panel = m.attentionPanel(96, 14)
-	// Priority is the primary key here, so the blocked LERP-23 outranks the
-	// routable LERP-60 that leverage put above it.
-	want = []string{"LERP-48", "LERP-22", "LERP-1", "LERP-23", "LERP-60", "LERP-70"}
+	want = []string{"LERP-48", "LERP-1", "LERP-60"}
 	if got := order(panel, want...); !slices.Equal(got, want) {
 		t.Fatalf("priority order = %v, want %v:\n%s", got, want, panel)
 	}
@@ -1483,9 +1493,10 @@ func TestInboxProjectFilter(t *testing.T) {
 	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: board()})
-	m = browseBacklog(t, m)
 
-	// Projects list in name order: OSS readiness, then TUI redesign.
+	// Project values list in name order: Open-source readiness, then TUI
+	// redesign, with the no-project bucket under them and the all-project
+	// row above.
 	m = update(t, m, keyMsg("P"))
 	m = update(t, m, keyMsg("down"))
 	m = update(t, m, keyMsg("enter"))
@@ -1496,10 +1507,10 @@ func TestInboxProjectFilter(t *testing.T) {
 	if strings.Contains(panel, "LERP-48") || strings.Contains(panel, "LERP-60") {
 		t.Fatalf("the filter kept tickets from other projects:\n%s", panel)
 	}
-	if !strings.Contains(panel, "LERP-22") {
+	if !strings.Contains(panel, "LERP-1") {
 		t.Fatalf("the filter dropped a ticket in the scoped project:\n%s", panel)
 	}
-	if !strings.Contains(panel, "3/6") || !strings.Contains(panel, "project Open-source readiness") {
+	if !strings.Contains(panel, "1/3") || !strings.Contains(panel, "project Open-source readiness") {
 		t.Fatalf("the panel title does not say what it is scoped to:\n%s", panel)
 	}
 
@@ -1517,7 +1528,7 @@ func TestInboxProjectFilter(t *testing.T) {
 	m = update(t, m, keyMsg("up"))
 	m = update(t, m, keyMsg("up"))
 	m = update(t, m, keyMsg("enter")) // "all project" is at top
-	if m.filterField != filterFieldNone || m.filterValue != "" || len(m.shown) != 6 {
+	if m.filterField != filterFieldNone || m.filterValue != "" || len(m.shown) != 3 {
 		t.Fatalf("the filter did not clear back to every project: %v %q, %d rows", m.filterField, m.filterValue, len(m.shown))
 	}
 
@@ -1527,7 +1538,7 @@ func TestInboxProjectFilter(t *testing.T) {
 	m = update(t, m, keyMsg("down"))
 	m = update(t, m, keyMsg("enter"))
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
-		{Ticket: "LERP-9", TicketID: "id-9", Title: "Something else", Status: "Backlog",
+		{Ticket: "LERP-9", TicketID: "id-9", Title: "Something else", Status: "Needs Attention",
 			Project: "Another project", Relevance: loop.StatusUnnamed},
 	}}})
 	if m.filterField != filterFieldNone {
@@ -1558,63 +1569,62 @@ func TestInboxOpensOnWhatIsBlockedOnYou(t *testing.T) {
 		}
 	}
 	// The count, the reason and the key, in the backlog tier's own words.
-	if !strings.Contains(panel, "3 waiting to enter the pipeline — B to browse") {
+	if !strings.Contains(panel, "3 waiting to enter the pipeline — ] to browse") {
 		t.Fatalf("the fold does not say what it is holding back:\n%s", panel)
 	}
 	// A long enough blocked-on-you list windows the summary away behind
 	// "⋯ n more", so the key has to be somewhere that never scrolls.
-	if got := ansi.Strip(update(t, m, keyMsg("?")).View()); !strings.Contains(got, "browse the backlog") {
-		t.Fatalf("the ? overlay does not carry the fold's key:\n%s", got)
+	if got := ansi.Strip(update(t, m, keyMsg("?")).View()); !strings.Contains(got, "next slice") {
+		t.Fatalf("the ? overlay does not carry the slice's key:\n%s", got)
 	}
 }
 
-// Done-when: B expands the fold in place — the same panel, the same table,
-// the same pinned header, the backlog rows under their own status group
-// header — and B again puts it back. Not a tab and not a second view.
-func TestBacklogExpandsInPlace(t *testing.T) {
+// Done-when: ] cycles to the Backlog slice in place — the same panel, the
+// same table, the same pinned header, the backlog rows — and cycling back
+// puts all statuses back. Not a tab and not a second view.
+func TestBacklogSliceInPlace(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: board()})
 
 	m = browseBacklog(t, m)
 	panel := m.attentionPanel(96, 18)
-	want := []string{"LERP-1", "LERP-48", "LERP-60", "LERP-22", "LERP-70", "LERP-23"}
+	want := []string{"LERP-22", "LERP-70", "LERP-23"}
 	if got := order(panel, want...); !slices.Equal(got, want) {
-		t.Fatalf("expanded order = %v, want the whole list in the sort's own order:\n%s", got, panel)
+		t.Fatalf("backlog slice order = %v, want the backlog rows in sort order:\n%s", got, panel)
 	}
-	// Same table: the column header is still pinned above it, and the rows
-	// arrive under the status group header the sort would give them anyway.
-	for _, keep := range []string{hdrTicket, hdrStatus, "Backlog — waiting to enter the pipeline"} {
+	// Same table: the column header is still pinned above it.
+	for _, keep := range []string{hdrTicket, hdrStatus} {
 		if !strings.Contains(panel, keep) {
-			t.Fatalf("the expanded panel is missing %q:\n%s", keep, panel)
+			t.Fatalf("the backlog slice panel is missing %q:\n%s", keep, panel)
 		}
 	}
 	// Nothing left folded is nothing left to say.
 	if strings.Contains(panel, "to browse") {
-		t.Fatalf("the summary line survived the expansion:\n%s", panel)
+		t.Fatalf("the summary line survived the slice switch:\n%s", panel)
 	}
 	// The way back is in the title, beside the other controls a key changed.
-	if !strings.Contains(panel, "· backlog") {
-		t.Fatalf("the title does not say the backlog is expanded:\n%s", panel)
+	if !strings.Contains(panel, "· Backlog") {
+		t.Fatalf("the title does not name the active slice:\n%s", panel)
 	}
 
-	m = update(t, m, keyMsg("B"))
-	if m.backlogOpen {
-		t.Fatal("B a second time did not fold the backlog back")
+	// Cycle until back to all:
+	for m.slice != "" {
+		m = update(t, m, keyMsg("]"))
 	}
 	panel = m.attentionPanel(96, 18)
 	if got := shownTickets(m); len(got) != 3 {
-		t.Fatalf("folding back left %v, want the three blocked on a human", got)
+		t.Fatalf("cycling back left %v, want the three blocked on a human", got)
 	}
-	if strings.Contains(panel, "· backlog") {
-		t.Fatalf("the folded title still says the backlog is expanded:\n%s", panel)
+	if strings.Contains(panel, "· Backlog") {
+		t.Fatalf("the all-slice title still names the Backlog slice:\n%s", panel)
 	}
 }
 
 // Done-when: "● n in the inbox" counts only what is blocked on a human, so
-// it is the same number folded or not — that is what makes it mean
-// "something to look up at". The panel's own count is the other question,
-// what is in this panel, and follows the fold.
+// it is the same number whichever slice is active — that is what makes it
+// mean "something to look up at". The panel's own count is the other
+// question, what is in this panel, and follows the slice.
 func TestTheInboxCountIsWhatIsBlockedOnYou(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = pastTheSplash(t, m)
@@ -1625,20 +1635,20 @@ func TestTheInboxCountIsWhatIsBlockedOnYou(t *testing.T) {
 		t.Fatalf("the status bar counts the backlog into the inbox:\n%s", got)
 	}
 	if panel := m.attentionPanel(96, 18); !strings.Contains(panel, "● 3") {
-		t.Fatalf("the folded panel title does not count its rows:\n%s", panel)
+		t.Fatalf("the all-slice panel title does not count its rows:\n%s", panel)
 	}
 
 	m = browseBacklog(t, m)
 	if got := m.View(); !strings.Contains(got, "● 3 in the inbox") {
-		t.Fatalf("expanding the backlog moved the status bar's count:\n%s", got)
+		t.Fatalf("slicing to the backlog moved the status bar's count:\n%s", got)
 	}
-	if panel := m.attentionPanel(96, 18); !strings.Contains(panel, "● 6") {
-		t.Fatalf("the expanded panel title does not count what it shows:\n%s", panel)
+	if panel := m.attentionPanel(96, 18); !strings.Contains(panel, "● 3") {
+		t.Fatalf("the backlog slice panel title does not count what it shows:\n%s", panel)
 	}
 }
 
-// Done-when: an expanded backlog row is a row like any other — enter reads
-// it and p promotes it. The fold is display over the list the pass already
+// Done-when: a backlog slice row is a row like any other — enter reads it
+// and p promotes it. The slice is display over the list the pass already
 // fetched, not a second class of row.
 func TestExpandedBacklogRowsTakeTheKeys(t *testing.T) {
 	m, _, _, promoter := newPromoteTestModel(t, 1, []string{"Planning", "Implementing"})
@@ -1647,21 +1657,18 @@ func TestExpandedBacklogRowsTakeTheKeys(t *testing.T) {
 	m = update(t, m, eventMsg{ev: board()})
 	m = browseBacklog(t, m)
 
-	// Down to LERP-22, the first backlog row under the status default.
-	for range 3 {
-		m = update(t, m, keyMsg("j"))
-	}
+	// Cursor is on LERP-22, the first row of the Backlog slice.
 	if got := m.selectedAttention().Ticket; got != "LERP-22" {
-		t.Fatalf("the cursor reached %s, want the first expanded backlog row", got)
+		t.Fatalf("the cursor reached %s, want the first backlog slice row", got)
 	}
 	m = openMain(t, m)
 	if got := m.View(); !strings.Contains(got, "GoReleaser: tagged releases") {
-		t.Fatalf("enter on an expanded backlog row opened nothing:\n%s", got)
+		t.Fatalf("enter on a backlog slice row opened nothing:\n%s", got)
 	}
 
 	m = update(t, m, keyMsg("p"))
 	if !m.promoting {
-		t.Fatal("p did not open the promote picker on an expanded backlog row")
+		t.Fatal("p did not open the promote picker on a backlog slice row")
 	}
 	next, cmd := m.Update(keyMsg("enter"))
 	m = next.(model)
@@ -1673,10 +1680,10 @@ func TestExpandedBacklogRowsTakeTheKeys(t *testing.T) {
 	}
 }
 
-// Done-when: a project whose every row is in the backlog does not appear
-// on the project list while the backlog is folded — cycling to it would scope
-// to "nothing in X" — a filter that hides the whole panel is the thing the
-// project list already refuses to do.
+// Done-when: the project value list offers only projects with a row the
+// active slice lets through. Scoping to one whose every ticket is outside
+// the slice would scope the panel to "nothing in X" — a filter that hides
+// the whole panel is the thing the project list already refuses to offer.
 func TestProjectFilterSkipsAProjectThatIsAllBacklog(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = pastTheSplash(t, m)
@@ -1706,8 +1713,8 @@ func TestProjectFilterSkipsAProjectThatIsAllBacklog(t *testing.T) {
 		t.Fatalf("P scoped to %v %q, want back to every project", m.filterField, m.filterValue)
 	}
 
-	// Expanding puts the project back on the list: the rows are on screen,
-	// so scoping to them shows something.
+	// Slicing to Backlog puts the Later project on the list: its rows are on
+	// screen there, so scoping to them shows something.
 	m = browseBacklog(t, m)
 	vals = m.filterValues(filterFieldProject)
 	valNames = nil
@@ -1716,27 +1723,29 @@ func TestProjectFilterSkipsAProjectThatIsAllBacklog(t *testing.T) {
 			valNames = append(valNames, it.label)
 		}
 	}
-	if !slices.Equal(valNames, []string{"Later", "Shipping"}) {
-		t.Fatalf("the expanded project list offers %v, want both projects", valNames)
+	if !slices.Equal(valNames, []string{"Later"}) {
+		t.Fatalf("the Backlog slice's project list offers %v, want Later", valNames)
 	}
 
-	// Scope to the backlog-only project, then fold it away underneath: the
-	// scope is a choice the operator made and the fold is not a reason to
-	// take it back. The panel is showing
-	// nothing and the only text on it is the hint that says so.
+	// Scope to the backlog-only project, then slice back to all underneath:
+	// the scope is a choice the operator made and the slice moving off it is
+	// not a reason to take it back. The panel is showing nothing and the
+	// only text on it is the hint that says so.
 	m = update(t, m, keyMsg("P"))
 	m = update(t, m, keyMsg("down"))
 	m = update(t, m, keyMsg("enter"))
 	if m.filterField != filterFieldProject || m.filterValue != "Later" {
 		t.Fatalf("P scoped to %v %q, want the backlog-only project", m.filterField, m.filterValue)
 	}
-	m = update(t, m, keyMsg("B"))
+	for m.slice != "" {
+		m = update(t, m, keyMsg("]"))
+	}
 	if m.filterField != filterFieldProject || m.filterValue != "Later" || len(m.shown) != 0 {
-		t.Fatalf("folding changed the scope: %v %q, %d rows", m.filterField, m.filterValue, len(m.shown))
+		t.Fatalf("slicing changed the scope: %v %q, %d rows", m.filterField, m.filterValue, len(m.shown))
 	}
 	// Both keys: either one can be why the panel is empty, and the note
 	// above the hint does not say which.
-	for _, want := range []string{"F clears or changes the filter", "B browses the backlog"} {
+	for _, want := range []string{"F clears or changes the filter", "] browses the backlog"} {
 		if got := m.emptyHint(); !strings.Contains(got, want) {
 			t.Fatalf("the empty panel's hint = %q, want it to name %q", got, want)
 		}
@@ -1744,19 +1753,21 @@ func TestProjectFilterSkipsAProjectThatIsAllBacklog(t *testing.T) {
 	m = update(t, m, keyMsg("P"))
 	m = update(t, m, keyMsg("enter"))
 	if m.filterField != filterFieldNone || m.filterValue != "" {
-		t.Fatalf("clearing from a folded-away project went to %v %q, want every project", m.filterField, m.filterValue)
+		t.Fatalf("clearing from a sliced-away project went to %v %q, want every project", m.filterField, m.filterValue)
 	}
 
 	// And a pass does not take the scope away on its own: the project did
-	// not stop existing, it went behind the fold.
-	m = update(t, m, keyMsg("B")) // expanded, so Later is on the list again
+	// not stop existing, it went into a different slice.
+	m = browseBacklog(t, m)
 	m = update(t, m, keyMsg("P"))
 	m = update(t, m, keyMsg("down"))
 	m = update(t, m, keyMsg("enter"))
 	if m.filterField != filterFieldProject || m.filterValue != "Later" {
 		t.Fatalf("P scoped to %v %q, want the backlog-only project", m.filterField, m.filterValue)
 	}
-	m = update(t, m, keyMsg("B")) // and now folded away under the scope
+	for m.slice != "" {
+		m = update(t, m, keyMsg("]"))
+	}
 	m = update(t, m, eventMsg{ev: allBacklogProject()})
 	if m.filterField != filterFieldProject || m.filterValue != "Later" {
 		t.Fatalf("a pass cleared the scope to %v %q, though the board did not change", m.filterField, m.filterValue)
@@ -1764,7 +1775,7 @@ func TestProjectFilterSkipsAProjectThatIsAllBacklog(t *testing.T) {
 }
 
 // allBacklogProject is a board with one ticket blocked on a human and a
-// whole project behind the fold: the shape that separates "the fold is
+// whole project in the backlog: the shape that separates "the fold is
 // hiding this project" from "the pass no longer has it".
 func allBacklogProject() loop.Event {
 	return loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
@@ -1795,7 +1806,7 @@ func TestAFoldedBacklogDoesNotClaimTheGoalState(t *testing.T) {
 	if strings.Contains(panel, "the inbox is empty") {
 		t.Fatalf("the fold claimed the goal state:\n%s", panel)
 	}
-	if !strings.Contains(panel, "1 waiting to enter the pipeline — B to browse") {
+	if !strings.Contains(panel, "1 waiting to enter the pipeline — ] to browse") {
 		t.Fatalf("the one line that is on you is precisely when the key must show:\n%s", panel)
 	}
 	if got := m.View(); strings.Contains(got, "in the inbox") {
@@ -1824,21 +1835,21 @@ func TestAFoldedBacklogDoesNotClaimTheGoalState(t *testing.T) {
 	}
 }
 
-// Done-when: a pass does not reset the fold. It is model state like the sort
-// and the project scope, and a list that re-folded itself every few seconds
+// Done-when: a pass does not reset the slice. It is model state like the sort
+// and the project scope, and a list that re-sliced itself every few seconds
 // would take the rows back out from under the operator's hands.
-func TestAPassDoesNotResetTheFold(t *testing.T) {
+func TestAPassDoesNotResetTheSlice(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: board()})
 	m = browseBacklog(t, m)
 
 	m = update(t, m, eventMsg{ev: board()})
-	if !m.backlogOpen {
-		t.Fatal("a pass folded the backlog back")
+	if m.slice != "Backlog" {
+		t.Fatalf("a pass reset the slice to %q", m.slice)
 	}
-	if got := len(m.shown); got != 6 {
-		t.Fatalf("the list after a pass has %d rows, want the whole expanded list", got)
+	if got := len(m.shown); got != 3 {
+		t.Fatalf("the list after a pass has %d rows, want the 3 backlog rows", got)
 	}
 }
 
@@ -1870,7 +1881,7 @@ func TestAClaimedTicketInIntakeIsNeverFolded(t *testing.T) {
 	}
 	// And the one beside it, which nobody has claimed, is behind the fold.
 	panel := m.attentionPanel(96, 14)
-	if !strings.Contains(panel, "1 waiting to enter the pipeline — B to browse") {
+	if !strings.Contains(panel, "1 waiting to enter the pipeline — ] to browse") {
 		t.Fatalf("the unclaimed intake row is not folded:\n%s", panel)
 	}
 	if strings.Contains(panel, "nothing is waiting on you") {
@@ -1976,23 +1987,23 @@ func TestInboxTitleIsTheLastColumn(t *testing.T) {
 	m = browseBacklog(t, m)
 
 	panel := m.attentionPanel(120, 14)
-	row := ansi.Strip(rowOf(t, panel, "LERP-1"))
+	row := ansi.Strip(rowOf(t, panel, "LERP-22"))
 	cols := []struct{ name, cell string }{
-		{"identifier", "LERP-1"}, {"leverage", "\u2193" + "0"}, {"status", "Needs Attention"},
-		{"project", "Open-source readiness"}, {"priority", "Medium"}, {"title", "Fix the build"},
+		{"identifier", "LERP-22"}, {"leverage", "\u2193" + "2"}, {"status", "Backlog"},
+		{"project", "Open-source readiness"}, {"priority", "High"}, {"title", "GoReleaser: tagged releases"},
 	}
 	for i := 1; i < len(cols); i++ {
 		if strings.Index(row, cols[i].cell) <= strings.Index(row, cols[i-1].cell) {
 			t.Fatalf("the %s column is not left of the %s column:\n%s", cols[i-1].name, cols[i].name, row)
 		}
 	}
-	if got := strings.Trim(row, " \u2502\u2503"); !strings.HasSuffix(got, "Fix the build") {
+	if got := strings.Trim(row, " \u2502\u2503"); !strings.HasSuffix(got, "GoReleaser: tagged releases") {
 		t.Fatalf("something follows the title, so it is not the last column:\n%s", row)
 	}
 
 	// Elastic: the same row in a narrower panel spends the width on the fixed
 	// columns and cuts the title at the right edge.
-	narrow := ansi.Strip(rowOf(t, m.attentionPanel(90, 14), "LERP-22"))
+	narrow := ansi.Strip(rowOf(t, m.attentionPanel(60, 14), "LERP-22"))
 	if !strings.HasSuffix(strings.Trim(narrow, " \u2502\u2503"), "\u2026") {
 		t.Fatalf("the narrower panel did not cut the title at the right edge:\n%s", narrow)
 	}
@@ -2002,7 +2013,7 @@ func TestInboxTitleIsTheLastColumn(t *testing.T) {
 	// the title itself has been cut to less than they cost. Sweeping every
 	// width crosses both boundaries of the elision ladder, where the row
 	// prefix actually changes.
-	const full22, status22 = "GoReleaser: tagged releases", "Backlog \u26a0"
+	const full22, status22 = "GoReleaser: tagged releases", "Backlog"
 	for w := 24; w <= 120; w++ {
 		row := ansi.Strip(rowOf(t, m.attentionPanel(w, 14), "LERP-22"))
 		body := strings.Trim(row, " \u2502\u2503")
@@ -2104,8 +2115,8 @@ func TestInboxTitleIsTheLastColumn(t *testing.T) {
 	// one whose leverage cell is the ⊘ rather than a count.
 	at := -1
 	for _, tc := range []struct{ ticket, title string }{
-		{"LERP-1", "Fix the build"}, {"LERP-48", "Read the ticket in the TUI"},
-		{"LERP-60", "Unfiled work"}, {"LERP-23", "curl install"},
+		{"LERP-22", "GoReleaser: tagged releases"}, {"LERP-70", "Unprioritized work"},
+		{"LERP-23", "curl install"},
 	} {
 		row := ansi.Strip(rowOf(t, panel, tc.ticket))
 		start := strings.Index(row, tc.title)
@@ -2604,7 +2615,7 @@ func TestEscDegradesVisualToSingleTicket(t *testing.T) {
 // over drop the selection — a range whose endpoints stay put while the rows
 // between them change is a promote of tickets the operator never saw.
 func TestDisplayControlsDropTheSelection(t *testing.T) {
-	for _, key := range []string{"s", "F", "P", "B", "/"} {
+	for _, key := range []string{"s", "F", "P", "]", "[", "/"} {
 		t.Run(key, func(t *testing.T) {
 			m, _, _, promoter := newPromoteTestModel(t, 1, defaultTestStatuses)
 			m = pastTheSplash(t, m)
@@ -8387,7 +8398,7 @@ func TestStripIgnoresTheSearchAndProjectFilters(t *testing.T) {
 
 	// Apply search filter
 	m.search = "alpha"
-	m.shown = filterAttention(m.attention, m.filterField, m.filterValue, m.search, m.backlogOpen)
+	m.shown = filterAttention(m.attention, m.filterField, m.filterValue, m.search, m.slice)
 	if len(m.shown) >= len(m.attention) {
 		t.Fatalf("search filter did not narrow shown items (%d shown)", len(m.shown))
 	}
@@ -8402,7 +8413,7 @@ func TestStripIgnoresTheSearchAndProjectFilters(t *testing.T) {
 	m.search = ""
 	m.filterField = filterFieldProject
 	m.filterValue = "ProjB"
-	m.shown = filterAttention(m.attention, m.filterField, m.filterValue, m.search, m.backlogOpen)
+	m.shown = filterAttention(m.attention, m.filterField, m.filterValue, m.search, m.slice)
 	if len(m.shown) >= len(m.attention) {
 		t.Fatalf("project filter did not narrow shown items (%d shown)", len(m.shown))
 	}
@@ -8520,5 +8531,195 @@ func TestStripSurvivesAnOpenModal(t *testing.T) {
 	after := strings.Split(m.View(), "\n")[0]
 	if after != before {
 		t.Fatalf("help modal disturbed the strip row:\nbefore: %q\nafter:  %q", before, after)
+	}
+}
+
+func TestStatusSliceCyclesLinearBoardOrder(t *testing.T) {
+	statuses := []string{"Triage", "Backlog", "Planning", "Plan Review", "Implementing", "In Review", "Needs Attention", "Done", "Canceled"}
+	m, _, _ := newTestModelWith(t, 1, statuses, &recordingPromoter{}, &recordingEjector{}, &recordingStarter{}, &recordingReader{})
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-1", Status: "Needs Attention", Relevance: loop.StatusFailed},
+		{Ticket: "LERP-2", Status: "Backlog", Relevance: loop.StatusBacklog},
+		{Ticket: "LERP-3", Status: "In Review", Relevance: loop.StatusFinished},
+	}}})
+
+	// Start at all:
+	if m.slice != "" {
+		t.Fatalf("expected initial slice to be empty, got %q", m.slice)
+	}
+
+	// ] cycles through present statuses in Linear board order:
+	m = update(t, m, keyMsg("]"))
+	if m.slice != "Backlog" {
+		t.Fatalf("expected slice Backlog, got %q", m.slice)
+	}
+	m = update(t, m, keyMsg("]"))
+	if m.slice != "In Review" {
+		t.Fatalf("expected slice In Review, got %q", m.slice)
+	}
+	m = update(t, m, keyMsg("]"))
+	if m.slice != "Needs Attention" {
+		t.Fatalf("expected slice Needs Attention, got %q", m.slice)
+	}
+	m = update(t, m, keyMsg("]"))
+	if m.slice != "" {
+		t.Fatalf("expected slice to cycle back to all, got %q", m.slice)
+	}
+}
+
+func TestStatusSliceCyclesBackwards(t *testing.T) {
+	statuses := []string{"Triage", "Backlog", "Planning", "Plan Review", "Implementing", "In Review", "Needs Attention", "Done", "Canceled"}
+	m, _, _ := newTestModelWith(t, 1, statuses, &recordingPromoter{}, &recordingEjector{}, &recordingStarter{}, &recordingReader{})
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-1", Status: "Needs Attention", Relevance: loop.StatusFailed},
+		{Ticket: "LERP-2", Status: "Backlog", Relevance: loop.StatusBacklog},
+		{Ticket: "LERP-3", Status: "In Review", Relevance: loop.StatusFinished},
+	}}})
+
+	// [ walks backwards:
+	m = update(t, m, keyMsg("["))
+	if m.slice != "Needs Attention" {
+		t.Fatalf("expected slice Needs Attention, got %q", m.slice)
+	}
+	m = update(t, m, keyMsg("["))
+	if m.slice != "In Review" {
+		t.Fatalf("expected slice In Review, got %q", m.slice)
+	}
+	m = update(t, m, keyMsg("["))
+	if m.slice != "Backlog" {
+		t.Fatalf("expected slice Backlog, got %q", m.slice)
+	}
+	m = update(t, m, keyMsg("["))
+	if m.slice != "" {
+		t.Fatalf("expected slice to cycle back to all, got %q", m.slice)
+	}
+}
+
+func TestStatusSliceResetsWhenStatusLeavesPass(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: board()})
+	m = browseBacklog(t, m)
+
+	// Move cursor down to second row in Backlog slice
+	m = update(t, m, keyMsg("j"))
+	if m.attnSel != 1 || m.slice != "Backlog" {
+		t.Fatalf("expected slice Backlog and attnSel 1, got slice %q attnSel %d", m.slice, m.attnSel)
+	}
+
+	// New pass arrives with no Backlog items:
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-1", Title: "Fix the build", Status: "Needs Attention", Relevance: loop.StatusFailed},
+	}}})
+	if m.slice != "" {
+		t.Fatalf("expected slice to reset to empty when status left the pass, got %q", m.slice)
+	}
+	if m.selectedAttention() == nil || m.selectedAttention().Ticket != "LERP-1" {
+		t.Fatalf("selection was stranded after status left pass: %+v", m.selectedAttention())
+	}
+}
+
+func TestStatusSliceTitleAndCount(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: board()})
+
+	// All-slice title:
+	panel := m.attentionPanel(96, 14)
+	if !strings.Contains(panel, "● 3") || strings.Contains(panel, "· Backlog") {
+		t.Fatalf("all-slice title unexpected:\n%s", panel)
+	}
+
+	// Backlog slice:
+	m = browseBacklog(t, m)
+	panel = m.attentionPanel(96, 14)
+	if !strings.Contains(panel, "● 3") || !strings.Contains(panel, "· Backlog") {
+		t.Fatalf("backlog slice title unexpected:\n%s", panel)
+	}
+
+	// Project filter on Backlog slice:
+	m = update(t, m, keyMsg("P"))
+	m = update(t, m, keyMsg("down"))
+	m = update(t, m, keyMsg("enter"))
+	panel = m.attentionPanel(96, 14)
+	if !strings.Contains(panel, "● 2/3") || !strings.Contains(panel, "· project Open-source readiness") || !strings.Contains(panel, "· Backlog") {
+		t.Fatalf("project-filtered slice title unexpected:\n%s", panel)
+	}
+
+	// Search on Backlog slice:
+	m = update(t, m, keyMsg("P")) // reopens on the active project
+	m = update(t, m, keyMsg("up"))
+	m = update(t, m, keyMsg("enter")) // "all project" clears it
+	m = typeSearch(t, update(t, m, keyMsg("/")), "curl")
+	panel = m.attentionPanel(96, 14)
+	if !strings.Contains(panel, "● 1/3") || !strings.Contains(panel, "· /curl") || !strings.Contains(panel, "· Backlog") {
+		t.Fatalf("searched slice title unexpected:\n%s", panel)
+	}
+}
+
+func TestStatusSliceBacklogSummaryOnlyOnAllSlice(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: board()})
+
+	// On all-slice, backlog summary is present:
+	if len(m.foldedRows()) != 3 || len(m.backlogSummary()) == 0 {
+		t.Fatalf("backlog summary missing on all-slice: %d folded rows", len(m.foldedRows()))
+	}
+
+	// On Backlog slice, foldedRows and backlogSummary are nil:
+	m = browseBacklog(t, m)
+	if len(m.foldedRows()) != 0 || len(m.backlogSummary()) != 0 {
+		t.Fatalf("backlog summary appeared on Backlog slice: %v", m.backlogSummary())
+	}
+}
+
+func TestProjectFilterVisualAllPromoteInBacklogSlice(t *testing.T) {
+	m, _, _, promoter := newPromoteTestModel(t, 1, []string{"Planning", "Implementing"})
+	m = pastTheSplash(t, m)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: board()})
+
+	// Scope to Backlog slice:
+	m = browseBacklog(t, m)
+	// Scope to "Open-source readiness" project:
+	m = update(t, m, keyMsg("P"))
+	m = update(t, m, keyMsg("down"))
+	m = update(t, m, keyMsg("enter"))
+	if m.filterField != filterFieldProject || m.filterValue != "Open-source readiness" {
+		t.Fatalf("expected project scope Open-source readiness, got %v %q", m.filterField, m.filterValue)
+	}
+	if got := shownTickets(m); !slices.Equal(got, []string{"LERP-22", "LERP-23"}) {
+		t.Fatalf("shown = %v, want the two OSS backlog tickets", got)
+	}
+
+	// Select all rows with 'V':
+	m = update(t, m, keyMsg("V"))
+	if !m.visual {
+		t.Fatal("V did not enter visual mode")
+	}
+	if got := m.visualSelectionCount(); got != 2 {
+		t.Fatalf("visual selected count = %d, want 2", got)
+	}
+
+	// Promote:
+	m = update(t, m, keyMsg("p"))
+	if !m.promoting {
+		t.Fatal("p did not open promote picker")
+	}
+	next, cmd := m.Update(keyMsg("enter"))
+	m = next.(model)
+	if cmd == nil {
+		t.Fatal("enter produced no promote command")
+	}
+	cmd()
+	if len(promoter.calls) != 2 {
+		t.Fatalf("promoter calls = %d, want 2", len(promoter.calls))
+	}
+	if promoter.calls[0].ticketID != "id-22" || promoter.calls[1].ticketID != "id-23" {
+		t.Fatalf("promoter calls = %+v, want id-22 and id-23", promoter.calls)
 	}
 }

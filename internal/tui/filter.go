@@ -70,26 +70,53 @@ func newFilterInput() textinput.Model {
 	return ti
 }
 
-// openFilter opens the filter modal. If a filter is already active, it opens
-// directly at the value level for that field with the active value selected.
-// Otherwise it opens at the field level.
+// activeValue is what the given field is currently narrowed to, and whether
+// it is narrowed at all. Status answers from the slice and everything else
+// from the slot, which is the same split applyFilter writes through.
+func (m *model) activeValue(field filterField) (string, bool) {
+	if field == filterFieldStatus {
+		return m.slice, m.slice != ""
+	}
+	if m.filterField != field {
+		return "", false
+	}
+	return m.filterValue, true
+}
+
+// descend opens the value list for one field, putting the cursor on the
+// value that field is already narrowed to so reopening a filter lands on it
+// rather than on the all-row above it.
+func (m *model) descend(field filterField) {
+	m.filterLevel = filterLevelValue
+	m.filterFieldCur = field
+	m.filterInput.SetValue("")
+	m.filterInput.Focus()
+	m.filterSel = 0
+	value, active := m.activeValue(field)
+	if !active {
+		return
+	}
+	for i, it := range m.filterValues(field) {
+		if !it.isAll && it.value == value {
+			m.filterSel = i
+			break
+		}
+	}
+}
+
+// openFilter opens the filter modal. If something is already narrowing the
+// inbox — the slot, or the slice the status row writes — it opens directly
+// at that field's value list with the active value selected. Otherwise it
+// opens at the field level.
 func (m *model) openFilter() {
 	m.dropVisual()
 	m.filtering = true
-	if m.filterField != filterFieldNone {
-		m.filterLevel = filterLevelValue
-		m.filterFieldCur = m.filterField
-		m.filterInput.SetValue("")
-		m.filterInput.Focus()
-		values := m.filterValues(m.filterField)
-		m.filterSel = 0
-		for i, it := range values {
-			if !it.isAll && it.value == m.filterValue {
-				m.filterSel = i
-				break
-			}
-		}
-	} else {
+	switch {
+	case m.filterField != filterFieldNone:
+		m.descend(m.filterField)
+	case m.slice != "":
+		m.descend(filterFieldStatus)
+	default:
 		m.filterLevel = filterLevelField
 		m.filterFieldCur = filterFieldNone
 		m.filterSel = 0
@@ -102,20 +129,7 @@ func (m *model) openFilter() {
 func (m *model) openProjectFilter() {
 	m.dropVisual()
 	m.filtering = true
-	m.filterLevel = filterLevelValue
-	m.filterFieldCur = filterFieldProject
-	m.filterInput.SetValue("")
-	m.filterInput.Focus()
-	values := m.filterValues(filterFieldProject)
-	m.filterSel = 0
-	if m.filterField == filterFieldProject {
-		for i, it := range values {
-			if !it.isAll && it.value == m.filterValue {
-				m.filterSel = i
-				break
-			}
-		}
-	}
+	m.descend(filterFieldProject)
 }
 
 // handleFilterKey drives the filter modal, swallowing keys while it is open.
@@ -145,21 +159,7 @@ func (m model) handleFilterFieldKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.filterSel++
 		}
 	case msg.Type == tea.KeyEnter:
-		field := filterFieldsList[m.filterSel]
-		m.filterLevel = filterLevelValue
-		m.filterFieldCur = field
-		m.filterInput.SetValue("")
-		m.filterInput.Focus()
-		values := m.filterValues(field)
-		m.filterSel = 0
-		if m.filterField == field {
-			for i, it := range values {
-				if !it.isAll && it.value == m.filterValue {
-					m.filterSel = i
-					break
-				}
-			}
-		}
+		m.descend(filterFieldsList[m.filterSel])
 	}
 	m.layout()
 	return m, nil
@@ -185,14 +185,7 @@ func (m model) handleFilterValueKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyEnter:
 		items := m.matchingFilterValues()
 		if len(items) > 0 && m.filterSel >= 0 && m.filterSel < len(items) {
-			item := items[m.filterSel]
-			if item.isAll {
-				m.filterField = filterFieldNone
-				m.filterValue = ""
-			} else {
-				m.filterField = m.filterFieldCur
-				m.filterValue = item.value
-			}
+			m.applyFilter(m.filterFieldCur, items[m.filterSel])
 			m.dropVisual()
 			m.resort()
 		}
@@ -228,9 +221,19 @@ func (m model) handleFilterValueKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 }
 
-// filterValues builds {label, value, count} from m.unfolded().
+// filterValues builds {label, value, count} for one field's value list.
+//
+// Project and priority narrow the slot, so their values and counts come off
+// m.sliced() — the rows the active slice already lets through, which is
+// exactly what applying one of them would leave. Status is the slice's own
+// axis: picking a value there replaces the slice rather than narrowing under
+// it, so its values are built over the whole pass instead (see
+// statusFilterValues). Either way, a row's count is what selecting it shows.
 func (m *model) filterValues(field filterField) []filterItem {
-	items := m.unfolded()
+	if field == filterFieldStatus {
+		return m.statusFilterValues()
+	}
+	items := m.sliced()
 	totalCount := len(items)
 
 	switch field {
@@ -256,30 +259,6 @@ func (m *model) filterValues(field filterField) []filterItem {
 				label: label,
 				value: name,
 				count: counts[name],
-			})
-		}
-		return res
-
-	case filterFieldStatus:
-		res := []filterItem{
-			{label: "all status", value: "", isAll: true, count: totalCount},
-		}
-		counts := make(map[string]int)
-		for _, it := range items {
-			counts[it.Status]++
-		}
-		var statuses []string
-		for s := range counts {
-			statuses = append(statuses, s)
-		}
-		slices.SortFunc(statuses, func(a, b string) int {
-			return compareStatusPosition(a, b, m.statusIndex)
-		})
-		for _, s := range statuses {
-			res = append(res, filterItem{
-				label: s,
-				value: s,
-				count: counts[s],
 			})
 		}
 		return res
@@ -335,7 +314,63 @@ func (m *model) matchingFilterValues() []filterItem {
 	return out
 }
 
+// statusFilterValues is the status row's value list: every status the pass
+// carries, in Linear board order, plus the all-statuses row that is the
+// slice's own "" stop. Selecting one sets the slice (see applyFilter), so
+// the list is built over m.attention rather than m.sliced() — a list built
+// under the active slice would offer only the status already showing, and
+// picking it would be the one stop that changes nothing.
+//
+// The counts follow the same rule: a named status counts every row carrying
+// it, and the all-statuses row counts what the all-slice shows, which is the
+// unfolded rows rather than the whole pass.
+func (m *model) statusFilterValues() []filterItem {
+	res := []filterItem{{
+		label: "all status",
+		value: "",
+		isAll: true,
+		count: len(filterAttention(m.attention, filterFieldNone, "", "", "")),
+	}}
+	counts := make(map[string]int)
+	for _, it := range m.attention {
+		if it.Status != "" {
+			counts[it.Status]++
+		}
+	}
+	statuses := make([]string, 0, len(counts))
+	for st := range counts {
+		statuses = append(statuses, st)
+	}
+	slices.SortFunc(statuses, func(a, b string) int {
+		return compareStatusPosition(a, b, m.statusIndex)
+	})
+	for _, st := range statuses {
+		res = append(res, filterItem{label: st, value: st, count: counts[st]})
+	}
+	return res
+}
+
+// applyFilter commits one row of a value list. Status lands on the slice and
+// every other field on the slot, so the modal writes to exactly one of the
+// two controls and they can never disagree about a status.
+func (m *model) applyFilter(field filterField, item filterItem) {
+	if field == filterFieldStatus {
+		m.slice = item.value
+		return
+	}
+	if item.isAll {
+		m.filterField = filterFieldNone
+		m.filterValue = ""
+		return
+	}
+	m.filterField = field
+	m.filterValue = item.value
+}
+
 // matchesFilter reports whether an item matches the active filter slot.
+// Status is never in the slot — the modal routes it to the slice — but the
+// switch stays total so a slot that somehow held one would still narrow to
+// it rather than silently match every row.
 func matchesFilter(it loop.AttentionItem, field filterField, value string) bool {
 	switch field {
 	case filterFieldProject:
