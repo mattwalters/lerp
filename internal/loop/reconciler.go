@@ -844,9 +844,15 @@ func (r *Reconciler) ejectLane(ticketID string) (Ejection, evidence.Record, bool
 	fail := func(format string, args ...any) (Ejection, evidence.Record, bool, error) {
 		return Ejection{}, evidence.Record{}, false, fmt.Errorf(format, args...)
 	}
-	switch {
-	case lr == nil:
+	if lr == nil {
 		return fail("no lane is running %s", ticketID)
+	}
+	// A map read with no side effects, so having it ahead of the switch below
+	// does not disturb "everything that can refuse refuses first, while
+	// nothing has changed" — it only lets the SessionID case ask the
+	// question that decides whether an empty one is a defect at all.
+	runner := r.runnerFor(lr.record.Queue)
+	switch {
 	// PID 1 is not a run: it is every process this user may signal, since
 	// the kill below negates it.
 	case lr.record.PID <= 1:
@@ -863,7 +869,11 @@ func (r *Reconciler) ejectLane(ticketID string) (Ejection, evidence.Record, bool
 		// hand back a resume command for a dead session while the ticket
 		// hops behind the operator's back.
 		return fail("%s has already finished; its run is being settled", ticketID)
-	case lr.record.SessionID == "":
+	case lr.record.SessionID == "" && run.OpensSession(runner):
+		// An empty SessionID is only a defect for a runner that was supposed
+		// to have minted one. A vendor that names its own session instead
+		// (run.CapturesSession) never had one to record here — its session is
+		// resolved from the log below, by ResumeCommand.
 		return fail("%s recorded no session to resume", ticketID)
 	case lr.record.ProcessStartedUnix == 0:
 		// Alive falls back to a bare existence check when no start time could
@@ -875,7 +885,14 @@ func (r *Reconciler) ejectLane(ticketID string) (Ejection, evidence.Record, bool
 		return fail("the agent for %s is no longer running", ticketID)
 	}
 	record := lr.record
-	resume := run.ResumeCommand(r.runnerFor(record.Queue), record)
+	resume, err := run.ResumeCommand(runner, record)
+	if err != nil {
+		// The died-early case for a vendor that names its own session: the
+		// log never said, so there is nothing to hand over. Refusing here,
+		// before the kill, is what keeps that run from being killed for a
+		// resume command that could not be produced.
+		return fail("%s: %w", ticketID, err)
+	}
 	if resume == "" {
 		return fail("the runner for queue %q has no resume command", record.Queue)
 	}
@@ -925,11 +942,15 @@ func (r *Reconciler) CanEject(queue string) (bool, string) {
 	switch {
 	case runner.Resume == "":
 		return false, fmt.Sprintf("runner %q has no resume command", q.Runner)
-	case !run.OpensSession(runner):
-		// A resume template over a command that never asks for {{session}} is
-		// a resume nobody can use: lerp never chose the session id, so it has
-		// none to hand back. Answering yes here would offer the key on every
-		// such run and fail only once the operator had confirmed it.
+	case !run.OpensSession(runner) && !run.CapturesSession(runner):
+		// A resume template over a command that neither asks for {{session}}
+		// nor names its own is a resume nobody can use: lerp has no session,
+		// minted or captured, to hand back. Answering yes here would offer
+		// the key on every such run and fail only once the operator had
+		// confirmed it. This is honest but imperfect for a run.CapturesSession
+		// queue: the key is offered per queue, and a press can still fail on a
+		// run that died before its first event — the resolver's refusal is
+		// what catches that one.
 		return false, fmt.Sprintf("runner %q does not use {{session}}, so lerp has no session to resume", q.Runner)
 	}
 	return true, ""

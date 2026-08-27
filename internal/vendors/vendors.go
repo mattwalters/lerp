@@ -23,12 +23,21 @@ type Adapter interface {
 	Resume(Options) string
 }
 
+// SessionNamer is implemented by an adapter whose CLI names its own session
+// instead of accepting one lerp chose. Session reads a line of the run's log
+// for that name. It exists so internal/run can ask a capability question
+// instead of carrying a vendor's name in an if.
+type SessionNamer interface {
+	Session(line string) (string, bool)
+}
+
 // adapters is the whole set of vendors lerp ships. Adding one is one file
 // plus one entry here — logfmt's detect carries the same comment on the
 // decoding side. A map rather than a switch is what keeps Names from
 // drifting away from what Lookup accepts.
 var adapters = map[string]Adapter{
 	"claude": claude{},
+	"codex":  codex{},
 }
 
 // Lookup returns the adapter registered under name.
