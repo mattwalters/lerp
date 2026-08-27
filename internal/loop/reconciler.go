@@ -343,6 +343,13 @@ type Reconciler struct {
 	// and ejected it needs no lock. Nothing durable lives here (SCOPE.md
 	// invariant 1): losing it to a restart costs one full re-list.
 	boards map[string]*teamBoard
+
+	// resumeAt is when a pass may next ask Linear anything, set by fail when
+	// an error chain carries *linear.RateLimitError. Guarded by mu: unlike
+	// boards, fail is reachable from goroutines other than the pass's own
+	// (Eject reports its failures the same way), even though only a pass's
+	// Linear reads carry this error today.
+	resumeAt time.Time
 }
 
 // teamBoard is the attention pass's cached reading of one team: the issues
@@ -472,13 +479,55 @@ func (r *Reconciler) Run(ctx context.Context) error {
 // agent. A failed pass is reported as an EventError, never returned: the loop
 // repairs drift, and a pass that could not finish is just drift for the next
 // one. EventTicked always closes the pass, whichever branch above ran or
-// failed to.
+// failed to — a paused pass included.
+//
+// A pass still paused from a rate limit skips reconcileEvidence, fill and
+// attention entirely — every Linear call a pass could make, not just the
+// read that failed — and reports how much longer it will wait instead. That
+// is the check here rather than in Run: Run's own ticker is one caller of
+// Tick, but production paces it from the TUI instead (tui.Options.Interval
+// drives Engine.Tick directly, no daemon behind it), so the gate has to sit
+// where every caller passes through, not in the loop only one of them uses.
 func (r *Reconciler) Tick(ctx context.Context) {
+	if wait, ok := r.paused(); ok {
+		r.emit(Event{Type: EventError, Err: fmt.Errorf("linear: rate limited, resuming in %s", wait.Round(time.Second))})
+		r.emit(Event{Type: EventTicked})
+		return
+	}
 	if r.reconcileEvidence(ctx) {
 		r.fill(ctx)
 	}
 	r.attention(ctx)
 	r.emit(Event{Type: EventTicked})
+}
+
+// paused reports whether a rate limit set by fail is still in effect. It
+// clears resumeAt once the deadline has passed, so a pass need only check
+// this — no jitter, no retry count, the one deadline the ticket asked for.
+func (r *Reconciler) paused() (time.Duration, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.resumeAt.IsZero() {
+		return 0, false
+	}
+	if wait := time.Until(r.resumeAt); wait > 0 {
+		return wait, true
+	}
+	r.resumeAt = time.Time{}
+	return 0, false
+}
+
+// pauseFor sets resumeAt to the later of d (Linear's own Retry-After) and
+// the next interval, so a 429 that carried no usable delay still costs one
+// interval's pause rather than none — the polling this replaces would have
+// waited that long anyway.
+func (r *Reconciler) pauseFor(d time.Duration) {
+	if d < r.o.Interval {
+		d = r.o.Interval
+	}
+	r.mu.Lock()
+	r.resumeAt = time.Now().Add(d)
+	r.mu.Unlock()
 }
 
 // AttentionDefinition is the operator-facing one-line description of the
@@ -1905,5 +1954,9 @@ func (r *Reconciler) emit(ev Event) {
 }
 
 func (r *Reconciler) fail(err error) {
+	var rl *linear.RateLimitError
+	if errors.As(err, &rl) {
+		r.pauseFor(rl.RetryAfter)
+	}
 	r.emit(Event{Type: EventError, Err: err})
 }

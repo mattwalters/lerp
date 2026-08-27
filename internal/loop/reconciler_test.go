@@ -2058,11 +2058,13 @@ func TestAttentionRestoresWhatAShortResyncDropped(t *testing.T) {
 }
 
 // Done-when: a delta that keeps failing falls back to the two listings
-// instead of retrying forever. Nothing here consumes RateLimitError — that is
-// another ticket — so a 429, a gateway error or a query Linear stopped
-// accepting is a hard failure on every pass, and a counter that only counted
-// successes would never let the re-list run again. The inbox would freeze at
-// whatever the cold start saw for the life of the process.
+// instead of retrying forever. This drives the delta with a plain error
+// rather than *linear.RateLimitError, which Tick now pauses on instead of
+// retrying (see TestTickPausesOnRateLimit) — so here a 429, a gateway error
+// or a query Linear stopped accepting is still a hard failure on every pass,
+// and a counter that only counted successes would never let the re-list run
+// again. The inbox would freeze at whatever the cold start saw for the life
+// of the process.
 func TestAttentionFallsBackToListingWhenTheDeltaKeepsFailing(t *testing.T) {
 	h, counting := newCountingHarness(t)
 	h.resyncEvery(2)
@@ -2116,6 +2118,56 @@ func TestAttentionFallsBackToListingWhenTheDeltaKeepsFailing(t *testing.T) {
 	if counting.deltas.Load() != 2 {
 		t.Errorf("delta attempts = %d, want ResyncEvery of them before giving up",
 			counting.deltas.Load())
+	}
+}
+
+// Done-when (LERP-44): a 429 with a Retry-After stops Linear calls for
+// roughly that long, and every skipped pass still says why instead of
+// looking stalled. A gateway error or any other failure is unaffected — see
+// TestAttentionFallsBackToListingWhenTheDeltaKeepsFailing, which never sets
+// resumeAt and keeps retrying every pass.
+func TestTickPausesOnRateLimit(t *testing.T) {
+	h, counting := newCountingHarness(t)
+	h.rec.o.Interval = 20 * time.Millisecond
+	h.fake.AddIssue("LERP", linear.Issue{ID: "first", Identifier: "LERP-1", Status: "Backlog"})
+	ctx := context.Background()
+
+	// Cold start: the two listings, no delta yet to fail.
+	h.rec.Tick(ctx)
+	h.waitEvents(t, EventAttention, 1)
+	listingsAfterColdStart := counting.listings.Load()
+
+	retryAfter := 300 * time.Millisecond
+	counting.deltaErr = &linear.RateLimitError{RetryAfter: retryAfter}
+	h.rec.Tick(ctx)
+	if got := h.waitEvents(t, EventError, 1)[0]; !strings.Contains(got.Err.Error(), "rate limited") {
+		t.Fatalf("error event = %v, want the delta's own rate limit error", got.Err)
+	}
+	deltasAtFailure := counting.deltas.Load()
+
+	// Every pass inside the Retry-After window is a no-op but for the error
+	// saying so and EventTicked closing the pass as it always does: no
+	// delta, no re-list, no queue read — the hammering the ticket is about.
+	for i := 0; i < 3; i++ {
+		h.rec.Tick(ctx)
+		got := h.drainEvents()
+		if len(got) != 2 || got[0].Type != EventError || !strings.Contains(got[0].Err.Error(), "resuming") ||
+			got[1].Type != EventTicked {
+			t.Fatalf("paused pass %d emitted %+v, want the resuming error then EventTicked", i, got)
+		}
+		if counting.deltas.Load() != deltasAtFailure || counting.listings.Load() != listingsAfterColdStart {
+			t.Fatalf("paused pass %d made a Linear call: deltas=%d listings=%d, want both unchanged",
+				i, counting.deltas.Load(), counting.listings.Load())
+		}
+	}
+
+	time.Sleep(retryAfter + 50*time.Millisecond)
+	counting.deltaErr = nil
+	h.rec.Tick(ctx)
+	h.waitEvents(t, EventAttention, 1)
+	if counting.deltas.Load() != deltasAtFailure+1 {
+		t.Errorf("delta attempts after the pause = %d, want one more: the pause lifted and the "+
+			"pass resumed", counting.deltas.Load())
 	}
 }
 
