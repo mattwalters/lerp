@@ -1,0 +1,242 @@
+package tui
+
+import (
+	"fmt"
+	"strings"
+)
+
+// Folding lets a long ticket body read first as an outline of its headings
+// and then, on demand, in full — vim's fold model, applied to markdown. It
+// has to work on the source, not on renderMarkdown's output: by the time a
+// heading has become a bold line of text, nothing says which lines under it
+// belong to it. So this file re-scans the same source ticketLines already
+// has, finds the headings renderMarkdown finds and then throws away, and
+// composes the pane's lines section by section instead of in one call.
+//
+// Session-only and per ticket: folded state lives on ticketDetail (see
+// model.go), which is fetched once per ticket for the process's lifetime —
+// there is no refresh to lose it to, and a different ticket is simply a
+// different map.
+
+// heading is one heading line found outside a code fence, in document
+// order: its level (the number of leading #s), its text, and the source
+// line it starts at.
+type heading struct {
+	level int
+	text  string
+	line  int
+}
+
+// headings finds every heading line in src, the way mdHeading and fenced
+// (markdown.go) would together: a line inside a fenced block is code, never
+// structure, so fold has to skip fences exactly as the renderer does, or a
+// `#` in a code sample would cut sections the reader never wrote.
+func headings(src []string) []heading {
+	var out []heading
+	for i := 0; i < len(src); i++ {
+		trim := strings.TrimSpace(src[i])
+		if mark := fenceMark(trim); mark != "" {
+			i = skipFence(src, i, mark)
+			continue
+		}
+		if m := mdHeading.FindStringSubmatch(src[i]); m != nil {
+			out = append(out, heading{level: len(m[1]), text: m[2], line: i})
+		}
+	}
+	return out
+}
+
+// skipFence returns the index of the line closing the fence opened at i, or
+// the source's last line if it never closes — the same rule fenced() uses,
+// so a heading search and a render agree about where a fence ends.
+func skipFence(src []string, i int, mark string) int {
+	for i++; i < len(src); i++ {
+		if t := strings.TrimSpace(src[i]); strings.HasPrefix(t, mark) && strings.Trim(t, mark[:1]) == "" {
+			return i
+		}
+	}
+	return len(src) - 1
+}
+
+// headingEnds computes, for each heading, the source line its section runs
+// to (exclusive): the next heading at the same level or shallower, or the
+// end of the document. A heading nested inside another's section always
+// ends at or before its parent's own end, since "same level or shallower"
+// is a stricter test the deeper a heading sits — which is what lets foldBody
+// walk the list once, flat, rather than build a tree.
+func headingEnds(hs []heading, total int) []int {
+	ends := make([]int, len(hs))
+	for i, h := range hs {
+		end := total
+		for j := i + 1; j < len(hs); j++ {
+			if hs[j].level <= h.level {
+				end = hs[j].line
+				break
+			}
+		}
+		ends[i] = end
+	}
+	return ends
+}
+
+// foldBody renders a ticket body the way ticketLines wants it: as lines
+// ready for the pane, a per-line owner saying which heading (by position in
+// document order, -1 for none) that line belongs to, and how many headings
+// the body has at all. folded says which of those headings are collapsed —
+// a collapsed heading still shows its own line, with a count of what it is
+// hiding, but nothing inside its section renders at all, including a nested
+// heading, which is how one fold covers its whole subtree.
+func foldBody(body string, width int, folded map[int]bool) (lines []string, owner []int, headingCount int) {
+	src := strings.Split(body, "\n")
+	hs := headings(src)
+	if len(hs) == 0 {
+		lines = renderMarkdown(body, width)
+		return lines, negOwner(len(lines)), 0
+	}
+	ends := headingEnds(hs, len(src))
+
+	emit := func(text string, ownerIdx int) {
+		for _, l := range renderMarkdown(text, width) {
+			lines = append(lines, l)
+			owner = append(owner, ownerIdx)
+		}
+	}
+	// blank inserts the air renderMarkdown's own heading case puts above a
+	// heading (markdown.go's r.blank()) — lost here because each heading is
+	// rendered by its own isolated call, with no out slice behind it to test.
+	blank := func() {
+		if n := len(lines); n > 0 && lines[n-1] != "" {
+			lines = append(lines, "")
+			owner = append(owner, -1)
+		}
+	}
+
+	pos := 0
+	var stack []int // open ancestor headings, innermost last
+	for i, h := range hs {
+		if h.line < pos {
+			continue // inside a folded ancestor's section — invisible
+		}
+		for len(stack) > 0 && ends[stack[len(stack)-1]] <= h.line {
+			stack = stack[:len(stack)-1]
+		}
+		parent := -1
+		if len(stack) > 0 {
+			parent = stack[len(stack)-1]
+		}
+		emit(strings.Join(src[pos:h.line], "\n"), parent)
+		blank()
+		if folded[i] {
+			hidden := len(renderMarkdown(strings.Join(src[h.line+1:ends[i]], "\n"), width))
+			headingLines := renderMarkdown(src[h.line], width)
+			if n := len(headingLines); n > 0 {
+				headingLines[n-1] += styleFaint.Render(fmt.Sprintf(" ⋯ %d hidden", hidden))
+			}
+			for _, l := range headingLines {
+				lines = append(lines, l)
+				owner = append(owner, i)
+			}
+			pos = ends[i]
+			continue
+		}
+		for _, l := range renderMarkdown(src[h.line], width) {
+			lines = append(lines, l)
+			owner = append(owner, i)
+		}
+		pos = h.line + 1
+		stack = append(stack, i)
+	}
+	parent := -1
+	if len(stack) > 0 {
+		parent = stack[len(stack)-1]
+	}
+	emit(strings.Join(src[pos:], "\n"), parent)
+	return lines, owner, len(hs)
+}
+
+// negOwner is n lines' worth of "no heading owns this" — the whole of a
+// document with nothing to fold, or a stretch (a comment, the pane's own
+// header lines) that folding was never asked to reach.
+func negOwner(n int) []int {
+	o := make([]int, n)
+	for i := range o {
+		o[i] = -1
+	}
+	return o
+}
+
+// foldable reports whether z/Z do anything right now: the pane must be
+// showing the inbox's own ticket detail — not the work panel, not a log,
+// not the ? overlay, not a modal — and that ticket's body must have at
+// least one heading. foldCount is set by refreshMain alongside foldOwner,
+// so this never re-parses the body just to answer.
+func (m *model) foldable() bool {
+	return m.mainOpen() && !m.modal() && !m.helpOn && m.focus == panelAttention && m.foldCount > 0
+}
+
+// toggleFold flips the fold on the heading nearest the top of the viewport,
+// at or after it — the nearest thing this pane has to "the section under
+// the cursor," since the prose it shows has no selectable line of its own,
+// only a scroll position. Scanning forward rather than reading that one
+// line is what makes it work on a ticket short enough to need no
+// scrolling: the viewport's top is pinned to the pane's own header lines
+// then, which own no heading themselves, and the first one reading would
+// reach is the answer, not a dead key.
+func (m *model) toggleFold() {
+	it := m.selectedAttention()
+	if it == nil {
+		return
+	}
+	d := m.details[it.TicketID]
+	if d == nil || len(m.foldOwner) == 0 {
+		return
+	}
+	idx := -1
+	for i := clampIndex(m.vp.YOffset, len(m.foldOwner)); i < len(m.foldOwner); i++ {
+		if m.foldOwner[i] >= 0 {
+			idx = m.foldOwner[i]
+			break
+		}
+	}
+	if idx < 0 {
+		return
+	}
+	if d.folded == nil {
+		d.folded = make(map[int]bool)
+	}
+	d.folded[idx] = !d.folded[idx]
+}
+
+// foldAll swaps the whole document between its outline — every heading
+// collapsed — and the full text. One key serves both directions: pressed
+// again once everything is already folded, it finds that and opens
+// everything back up instead.
+func (m *model) foldAll() {
+	it := m.selectedAttention()
+	if it == nil {
+		return
+	}
+	d := m.details[it.TicketID]
+	if d == nil {
+		return
+	}
+	hs := headings(strings.Split(d.body, "\n"))
+	if len(hs) == 0 {
+		return
+	}
+	allFolded := true
+	for i := range hs {
+		if !d.folded[i] {
+			allFolded = false
+			break
+		}
+	}
+	if allFolded {
+		d.folded = nil
+		return
+	}
+	d.folded = make(map[int]bool, len(hs))
+	for i := range hs {
+		d.folded[i] = true
+	}
+}

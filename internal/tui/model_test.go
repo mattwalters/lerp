@@ -4215,7 +4215,8 @@ func TestWideMainPaneFillsTheBody(t *testing.T) {
 	}
 	// The short ticket is the case that used to leave dead space: its detail
 	// is a handful of lines in a 39-line body.
-	if lines := strings.Count(m.detail(padMain.inner(m.geometry().mainW)), "\n") + 1; lines > 10 {
+	text, _, _ := m.detail(padMain.inner(m.geometry().mainW))
+	if lines := strings.Count(text, "\n") + 1; lines > 10 {
 		t.Fatalf("the short ticket draws %d lines: it is not short enough to test with", lines)
 	}
 	for _, tc := range []struct {
@@ -4751,6 +4752,127 @@ func TestTicketDetailShowsBodyAndComments(t *testing.T) {
 	// it now; asserting it here would only be reading that line.)
 	if strings.Index(view, "unclaimed") > strings.Index(view, "the ticket body") {
 		t.Fatalf("the pass's own lines no longer render first:\n%s", view)
+	}
+}
+
+// Done-when: z folds the section under the cursor and reads it back. This
+// ticket is short enough to draw without scrolling, so the viewport's top
+// stays pinned at 0, on the pane's own header lines — toggleFold has to
+// scan forward from there to reach the first heading rather than reading
+// that one line, or z would be a dead key on every ticket short enough not
+// to need paging through.
+func TestFoldKeyTogglesSectionUnderCursor(t *testing.T) {
+	m, _, reader := newReadingTestModel(t)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+	m = update(t, m, keyMsg("enter"))
+	m = selectAndRead(t, m, 0, linear.IssueDetail{Body: "# Plan\n\nstep one\nstep two"}, nil, reader)
+	if !strings.Contains(m.View(), "step one") {
+		t.Fatalf("the section should be open before folding:\n%s", m.View())
+	}
+
+	m = update(t, m, keyMsg("z"))
+	view := m.View()
+	if strings.Contains(view, "step one") {
+		t.Fatalf("z did not fold the section under the cursor:\n%s", view)
+	}
+	if !strings.Contains(view, "hidden") {
+		t.Fatalf("a folded section should say how much it hid:\n%s", view)
+	}
+
+	m = update(t, m, keyMsg("z"))
+	if !strings.Contains(m.View(), "step one") {
+		t.Fatalf("pressing z again should reopen the section:\n%s", m.View())
+	}
+}
+
+// Done-when: fold-all turns a plan into an outline of its headings, and the
+// same key opens it back up once everything is already folded.
+func TestFoldAllTogglesTheWholeOutline(t *testing.T) {
+	m, _, reader := newReadingTestModel(t)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+	m = update(t, m, keyMsg("enter"))
+	body := "# One\n\nfirst body\n\n# Two\n\nsecond body"
+	m = selectAndRead(t, m, 0, linear.IssueDetail{Body: body}, nil, reader)
+
+	m = update(t, m, keyMsg("Z"))
+	view := m.View()
+	if strings.Contains(view, "first body") || strings.Contains(view, "second body") {
+		t.Fatalf("Z should have folded every section:\n%s", view)
+	}
+	if !strings.Contains(view, "One") || !strings.Contains(view, "Two") {
+		t.Fatalf("an outline still names every heading:\n%s", view)
+	}
+
+	m = update(t, m, keyMsg("Z"))
+	view = m.View()
+	if !strings.Contains(view, "first body") || !strings.Contains(view, "second body") {
+		t.Fatalf("Z again should reopen everything:\n%s", view)
+	}
+}
+
+// The fold keys are inert without a heading to act on: a plain ticket body
+// never grows a "hidden" line nobody asked for.
+func TestFoldKeysAreInertWithNoHeadings(t *testing.T) {
+	m, _, reader := newReadingTestModel(t)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+	m = update(t, m, keyMsg("enter"))
+	m = selectAndRead(t, m, 0, linear.IssueDetail{Body: "just a paragraph, nothing to fold"}, nil, reader)
+
+	before := m.View()
+	m = update(t, m, keyMsg("z"))
+	m = update(t, m, keyMsg("Z"))
+	if got := m.View(); got != before {
+		t.Fatalf("fold keys changed a headingless body:\n before:\n%s\n after:\n%s", before, got)
+	}
+}
+
+// Done-when: the key hints show the fold keys, only where there is
+// something to fold — a plain ticket body offers neither z nor Z, the way r
+// drops out where there is no log to flip.
+func TestFoldKeyHintsOnlyWhereThereIsSomethingToFold(t *testing.T) {
+	m, _, reader := newReadingTestModel(t)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+	m = update(t, m, keyMsg("enter"))
+	m = selectAndRead(t, m, 0, linear.IssueDetail{Body: "no headings here"}, nil, reader)
+	if hint := m.keyHint(panelAttention, 200); strings.Contains(hint, "fold") {
+		t.Fatalf("a headingless body should not offer the fold keys: %q", hint)
+	}
+
+	m2, _, reader2 := newReadingTestModel(t)
+	m2 = update(t, m2, keyMsg("1"))
+	m2 = update(t, m2, eventMsg{ev: threeWaiting()})
+	m2 = update(t, m2, keyMsg("enter"))
+	m2 = selectAndRead(t, m2, 0, linear.IssueDetail{Body: "# A heading\n\nbody"}, nil, reader2)
+	if hint := m2.keyHint(panelAttention, 200); !strings.Contains(hint, "fold") {
+		t.Fatalf("a body with a heading should offer the fold keys: %q", hint)
+	}
+}
+
+// Done-when: the folded-length interaction with scrolling — the viewport's
+// own line count shrinks with a fold, and the scroll position it clamps to
+// clamps to the shorter content rather than to what the fold hid.
+func TestFoldedLengthInteractsWithScrolling(t *testing.T) {
+	m, _, reader := newReadingTestModel(t)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+	m = update(t, m, keyMsg("enter"))
+	body := "# Plan\n\n" + strings.Repeat("a line of the plan\n", 40)
+	m = selectAndRead(t, m, 0, linear.IssueDetail{Body: body}, nil, reader)
+	full := m.vp.TotalLineCount()
+
+	m = update(t, m, keyMsg("z")) // cursor is still at the top, on the heading itself
+
+	folded := m.vp.TotalLineCount()
+	if folded >= full {
+		t.Fatalf("folding did not shrink the pane's content: folded=%d full=%d", folded, full)
+	}
+	m.vp.GotoBottom()
+	if m.vp.YOffset+m.vp.Height < folded {
+		t.Fatalf("the bottom of a folded pane should clamp to its own shorter length")
 	}
 }
 

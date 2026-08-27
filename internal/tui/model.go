@@ -289,6 +289,14 @@ type ticketDetail struct {
 	body     string
 	comments []linear.Comment
 	err      string
+	// folded is which of the body's headings (by position in document
+	// order) are currently collapsed. Nil means nothing is — the state a
+	// ticket opens in. There is no eviction of this map any more than of
+	// the detail it sits on (see details below), which is what makes it
+	// session-only and per-document for free: a different ticket is a
+	// different ticketDetail, and this one is never rebuilt under an
+	// operator who is still reading it.
+	folded map[int]bool
 }
 
 // workRow is one selectable line of the work panel: a ticket, and the lane
@@ -445,6 +453,18 @@ type model struct {
 	// late reply is checked against.
 	details    map[string]*ticketDetail
 	detailWant string
+
+	// foldOwner maps every line refreshMain last put in the pane to the
+	// heading (by index into that ticket's own heading list) it belongs to,
+	// -1 for a line no heading owns — the pane's header lines, a comment, a
+	// document with nothing to fold. foldCount is how many headings that
+	// document has, cached here so foldable (asked on every frame, for the
+	// key line) never re-parses a body just to answer. Both are rebuilt by
+	// refreshMain on every call and mean nothing between one call and the
+	// next — display state, not a Reader result, so they get no entry in
+	// details.
+	foldOwner []int
+	foldCount int
 
 	// detailOpen is whether the main pane is open, per panel — a panel
 	// doubles as its index, the way geometry's wants and floors are indexed.
@@ -935,6 +955,16 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Raw):
 		m.rawLog = !m.rawLog
 		m.refreshLog()
+	// The fold keys act on the inbox's own ticket body, so they are inert
+	// everywhere else: the pane shut, the work panel, a log, the ? overlay,
+	// or a document with no heading to fold in the first place.
+	case !m.foldable() && (key.Matches(msg, m.keys.Fold) || key.Matches(msg, m.keys.FoldAll)):
+	case key.Matches(msg, m.keys.Fold):
+		m.toggleFold()
+		m.refreshMain()
+	case key.Matches(msg, m.keys.FoldAll):
+		m.foldAll()
+		m.refreshMain()
 	case key.Matches(msg, m.keys.Open):
 		return m, openURL(m.selectedURL())
 	}
@@ -1865,6 +1895,7 @@ func (m *model) roomForMain() bool {
 func (m *model) refreshMain() {
 	if m.helpOn {
 		m.vp.SetContent(m.helpText())
+		m.foldOwner, m.foldCount = nil, 0
 		return
 	}
 	if !m.mainOpen() {
@@ -1872,19 +1903,24 @@ func (m *model) refreshMain() {
 	}
 	if m.showingLog() {
 		m.refreshLog()
+		m.foldOwner, m.foldCount = nil, 0
 		return
 	}
 	// The viewport's width is the pane's inner width, so prose wrapped here
 	// is wrapped to the columns it will be drawn in — panelBox truncates its
 	// rows rather than wrapping them, and a line too long is a line cut.
-	m.vp.SetContent(m.detail(m.vp.Width))
+	text, owner, count := m.detail(m.vp.Width)
+	m.vp.SetContent(text)
+	m.foldOwner, m.foldCount = owner, count
 }
 
 // detail is the read-only lens the main pane shows for a selection with no
 // log. width is the pane's inner width, which the inbox lens wraps prose to.
-func (m *model) detail(width int) string {
+// owner and headingCount are foldOwner/foldCount's next values — nil and 0
+// from the work panel, which has no ticket body in it to fold.
+func (m *model) detail(width int) (text string, owner []int, headingCount int) {
 	if m.focus == panelWork {
-		return m.workDetail()
+		return m.workDetail(), nil, 0
 	}
 	return m.attentionDetail(width)
 }
@@ -2631,6 +2667,7 @@ func (m *model) panelKeys(p panel) []key.Binding {
 		canEject:   m.canEjectSelected(),
 		visual:     m.visual && canPromote,
 		selected:   m.visualSelectionCount(),
+		canFold:    m.foldable(),
 	})
 }
 
@@ -3699,16 +3736,18 @@ const labelGutter = "        "
 // everything the loop knows, Linear's URL, and then the ticket itself (see
 // ticketLines). Promote is the one action here; everything else about the
 // item happens in Linear.
-func (m model) attentionDetail(width int) string {
+func (m model) attentionDetail(width int) (string, []int, int) {
 	if !m.attentionSeen {
-		return styleFaint.Render("reading the board…")
+		return styleFaint.Render("reading the board…"), nil, 0
 	}
 	if len(m.attention) == 0 {
-		return styleFaint.Render("the inbox is empty — that is the goal state") + "\n" +
+		text := styleFaint.Render("the inbox is empty — that is the goal state") + "\n" +
 			styleFaint.Render("(shows "+loop.AttentionDefinition+")")
+		return text, nil, 0
 	}
 	if len(m.shown) == 0 {
-		return styleFaint.Render(m.emptyNote()) + "\n" + styleFaint.Render(m.emptyHint())
+		text := styleFaint.Render(m.emptyNote()) + "\n" + styleFaint.Render(m.emptyHint())
+		return text, nil, 0
 	}
 	it := m.selectedAttention()
 	// These lines come from the pass and always render first, whatever the
@@ -3732,7 +3771,13 @@ func (m model) attentionDetail(width int) string {
 		lines = append(lines, labelGutter+l)
 	}
 	lines = append(lines, styleFaint.Render("linear  ")+it.URL)
-	return strings.Join(append(lines, m.ticketLines(it.TicketID, width, browser.Openable(it.URL))...), "\n")
+	// None of these header lines belongs to a fold, so they pad foldOwner
+	// with -1 of their own before the ticket's own owner slice picks up
+	// where they leave off — the two are appended together, and the pane's
+	// content is the join of the same two slices.
+	header := negOwner(len(lines))
+	tl, owner, count := m.ticketLines(it.TicketID, width, browser.Openable(it.URL))
+	return strings.Join(append(lines, tl...), "\n"), append(header, owner...), count
 }
 
 // ticketLines is the ticket itself, below the pass's own lines: the body,
@@ -3744,34 +3789,51 @@ func (m model) attentionDetail(width int) string {
 // open, so hasDoor is the same question the key line asks. A read that
 // failed on a row whose URL the opener refuses has nowhere to send the
 // operator, and saying so twice is worse than saying nothing.
-func (m model) ticketLines(ticketID string, width int, hasDoor bool) []string {
+//
+// owner mirrors the returned lines one for one (see fold.go); headingCount
+// is the body's own heading count, 0 wherever there is no body to fold —
+// loading, failed, empty. Comments are not fold nodes: only the body's
+// headings are, so every comment line owns nothing.
+func (m model) ticketLines(ticketID string, width int, hasDoor bool) (lines []string, owner []int, headingCount int) {
 	d := m.details[ticketID]
 	switch {
 	case d == nil:
-		return nil
+		return nil, nil, 0
 	case d.state == detailLoading:
-		return []string{"", styleFaint.Render("reading the ticket…")}
+		lines = []string{"", styleFaint.Render("reading the ticket…")}
+		return lines, negOwner(len(lines)), 0
 	case d.state == detailFailed:
 		failed := []string{"", styleFaint.Render("couldn't read the ticket: " + d.err)}
 		if hasDoor {
 			failed = append(failed, styleFaint.Render("o opens it in Linear"))
 		}
-		return failed
+		return failed, negOwner(len(failed)), 0
 	}
-	lines := []string{""}
+	lines = []string{""}
+	owner = []int{-1}
 	if body := strings.TrimSpace(d.body); body != "" {
-		lines = append(lines, renderMarkdown(body, width)...)
+		var bodyLines []string
+		var bodyOwner []int
+		bodyLines, bodyOwner, headingCount = foldBody(body, width, d.folded)
+		lines = append(lines, bodyLines...)
+		owner = append(owner, bodyOwner...)
 	} else {
 		lines = append(lines, styleFaint.Render("(no description)"))
+		owner = append(owner, -1)
 	}
 	if len(d.comments) == 0 {
-		return append(lines, "", styleFaint.Render("(no comments)"))
+		lines = append(lines, "", styleFaint.Render("(no comments)"))
+		owner = append(owner, -1, -1)
+		return lines, owner, headingCount
 	}
 	for _, c := range d.comments {
 		lines = append(lines, "", styleFaint.Render(commentHead(c)))
-		lines = append(lines, renderMarkdown(strings.TrimSpace(c.Body), width)...)
+		owner = append(owner, -1, -1)
+		cl := renderMarkdown(strings.TrimSpace(c.Body), width)
+		lines = append(lines, cl...)
+		owner = append(owner, negOwner(len(cl))...)
 	}
-	return lines
+	return lines, owner, headingCount
 }
 
 // commentHead is one comment's byline: who wrote it and how long ago.
