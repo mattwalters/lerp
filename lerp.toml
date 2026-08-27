@@ -37,9 +37,9 @@ dispose = 'git worktree remove --force "$LERP_WORKSPACE"'
 # is what `eject` hands you when you want to take the wheel yourself.
 #
 # Planning and merging run on the claude adapter, below. Implementing runs
-# on the antigravity adapter (the agy CLI) instead — a live canary for the
-# second vendor lerp ships, so a regression in that adapter's harness shows
-# up on this board before it shows up in anyone else's repo. The codex
+# on the antigravity adapter (the agy CLI) instead — a live canary for that
+# vendor, so a regression in its harness shows up on this board before it
+# shows up in anyone else's repo. The codex
 # adapter (LERP-137) sits out of this file for now, undogfooded; when it
 # earns a slot here it is a queue where a vendor regression is cheap and
 # visible, never the merge queue below, whose refusal clause is the part of
@@ -76,21 +76,20 @@ effort = "medium"
 args = "--permission-mode bypassPermissions"
 
 # Implementing, moved off claude on purpose: this queue is the antigravity
-# adapter's canary, the stage most worth running through a second vendor's
+# adapter's canary, the stage most worth running through that vendor's
 # harness under real load, since most implement runs execute a plan a human
 # has already read and approved — comparatively mechanical work, and the
 # one place a vendor regression is easiest to spot from the diff it leaves
 # behind. gemini-3.7-flash-high is antigravity's cheap-hands tier at its
 # highest reasoning effort — the same "thoroughness is still the whole job"
 # bet the old claude-sonnet-5 pick made, translated to this CLI's own
-# vocabulary: agy's model catalog ships each tier pre-named per effort level
-# (`-high`/`-medium`/`-low`), so naming the tier is naming the effort — an
-# `effort =` line here would just repeat what the model id already says.
+# vocabulary: this id already names its effort level, so a separate
+# `effort =` line here would just repeat it.
 #
 # No reviewer roster rides along, and that is agy's own limit, not a
-# vendor-vs-command one: `args` splices in verbatim regardless of runner
-# shape, so a vendor="claude" runner with `--agents '{...}'` in its args
-# would have produced this repo's old claude-implement command exactly,
+# vendor-vs-command one: on a vendor="claude" runner, `args` is the
+# adapter's escape valve and splices in verbatim, so `--agents '{...}'`
+# there would have produced this repo's old claude-implement invocation with
 # resume and eject intact — the roster was never gated on writing a
 # `command` runner. What agy actually lacks is claude's capability itself:
 # its CLI can select an already-defined `--agent`, but has no flag for
