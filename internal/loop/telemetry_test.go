@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mattwalters/lerp/internal/config"
 	"github.com/mattwalters/lerp/internal/evidence"
 	"github.com/mattwalters/lerp/internal/linear"
 	"github.com/mattwalters/lerp/internal/run"
@@ -42,6 +43,91 @@ func TestTelemetryRecordsALiveRunsExitCodeAndStatus(t *testing.T) {
 	}
 	if got.Vendor != "" {
 		t.Errorf("vendor = %q, want empty: testRepo's runner is a command template", got.Vendor)
+	}
+}
+
+// A run started under runner A and settled after the config renames or
+// replaces that queue's runner reports runner A in its telemetry line.
+// Telemetry exists to compare vendors under real load; runner identity
+// comes from the run's start-time evidence record rather than settle-time config.
+func TestTelemetryRunnerStampedFromRecordNotSettleTimeConfig(t *testing.T) {
+	execute, release, _ := blockingExecute(t, "")
+	h := newHarness(t, 1, execute)
+	h.rec.o.Repo.Runners = map[string]config.Runner{
+		"runner-a": {Command: "runner-a-cmd", Vendor: "vendor-a", Model: "model-a"},
+		"runner-b": {Command: "runner-b-cmd", Vendor: "vendor-b", Model: "model-b"},
+	}
+	h.rec.o.Repo.Queues["todo"] = config.Queue{
+		Status: "Todo", Prompt: "do work", Runner: "runner-a", OnSuccess: "Done", OnFailure: "Needs Help",
+	}
+	h.fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Todo"})
+
+	ctx := context.Background()
+	h.rec.Tick(ctx)
+	h.waitEvents(t, EventStarted, 1)
+
+	// Swap the queue's runner in config before the run settles.
+	h.rec.o.Repo.Queues["todo"] = config.Queue{
+		Status: "Todo", Prompt: "do work", Runner: "runner-b", OnSuccess: "Done", OnFailure: "Needs Help",
+	}
+
+	release()
+	h.waitEvents(t, EventExited, 1)
+
+	runs := h.telemetryRuns()
+	if len(runs) != 1 {
+		t.Fatalf("telemetry runs = %d, want exactly 1", len(runs))
+	}
+	got := runs[0]
+	if got.Runner != "runner-a" {
+		t.Errorf("runner = %q, want runner-a (from start-time record)", got.Runner)
+	}
+	if got.Vendor != "vendor-a" {
+		t.Errorf("vendor = %q, want vendor-a", got.Vendor)
+	}
+	if got.Model != "model-a" {
+		t.Errorf("model = %q, want model-a", got.Model)
+	}
+}
+
+// A record predating the Runner, Vendor, and Model fields (Runner empty)
+// falls back to reading them from settle-time config.
+func TestTelemetryFallsBackToConfigForRecordsPredatingRunnerFields(t *testing.T) {
+	h := newHarness(t, 1, nil)
+	h.rec.o.Repo.Runners["agent"] = config.Runner{
+		Command: "agent", Vendor: "anthropic", Model: "claude-sonnet",
+	}
+	record, err := h.evidence.Create(evidence.Record{
+		Lane: 1, TicketID: "orphan", Ticket: "LERP-1", Queue: "todo", StartingStatus: "Todo",
+		StartedAt: time.Now().Add(-time.Minute),
+		// Runner, Vendor, Model deliberately left empty (predating fields)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(record.ExitPath, []byte("0"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h.fake.AddIssue("LERP", linear.Issue{
+		ID: "orphan", Identifier: "LERP-1", Status: "Todo", AssigneeID: "fake-viewer",
+	})
+
+	h.rec.Tick(context.Background())
+	h.waitEvents(t, EventExited, 1)
+
+	runs := h.telemetryRuns()
+	if len(runs) != 1 {
+		t.Fatalf("telemetry runs = %d, want exactly 1", len(runs))
+	}
+	got := runs[0]
+	if got.Runner != "agent" {
+		t.Errorf("runner = %q, want agent (from config fallback)", got.Runner)
+	}
+	if got.Vendor != "anthropic" {
+		t.Errorf("vendor = %q, want anthropic (from config fallback)", got.Vendor)
+	}
+	if got.Model != "claude-sonnet" {
+		t.Errorf("model = %q, want claude-sonnet (from config fallback)", got.Model)
 	}
 }
 
