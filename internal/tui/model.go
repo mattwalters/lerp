@@ -2904,9 +2904,11 @@ func (m model) attentionPanel(w, h int) string {
 	// (rule 1) rather than the one thing standing between a NO_COLOR or
 	// 16-colour terminal and knowing the inbox is empty at all. wordmarkFits
 	// is asked about the room left after that line, not the panel's whole
-	// interior — the mark fills what its neighbour did not need.
+	// interior — the mark fills what its neighbour did not need. wordmarkVisible
+	// is the same care from the other direction: a profile that cannot dim it
+	// draws it bare, which is a wall of characters rather than a watermark.
 	if m.boardEmpty() {
-		if room := ih - len(rows); wordmarkFits(inner, room) {
+		if room := ih - len(rows); wordmarkFits(inner, room) && wordmarkVisible(lipgloss.DefaultRenderer()) {
 			rows = append(rows, wordmarkPanel(inner, room)...)
 		}
 	}

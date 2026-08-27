@@ -72,3 +72,15 @@ func wordmarkPanel(w, ih int) []string {
 	block := lipgloss.Place(w, ih, lipgloss.Center, lipgloss.Center, styleWordmark.Render(markBlock))
 	return strings.Split(block, "\n")
 }
+
+// wordmarkVisible reports whether r would actually dim the mark rather than
+// draw it bare. NO_COLOR, and any profile termenv downgrades to no colour,
+// turns every style in this package to plain text (TestNoColorLeavesTheTextBare)
+// — harmless for the palette, which still carries real information at full
+// brightness, but wrong for a figure whose only claim to being decoration is
+// being too dim to read. Full-brightness ASCII art the width of the panel is
+// not a watermark, it is a wall of characters, so this is asked alongside
+// wordmarkFits rather than left to degrade like everything else here.
+func wordmarkVisible(r *lipgloss.Renderer) bool {
+	return styleWordmark.Renderer(r).Render("x") != "x"
+}

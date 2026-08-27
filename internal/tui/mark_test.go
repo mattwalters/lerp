@@ -2,6 +2,7 @@ package tui
 
 import (
 	"errors"
+	"io"
 	"strings"
 	"testing"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/mattwalters/lerp/internal/loop"
+	"github.com/muesli/termenv"
 )
 
 // hasMark reports whether the large mark is on screen whole: every row of
@@ -257,6 +259,11 @@ func hasDimMark(view string) bool {
 // TestWordmarkFitsRequiresRoomOnEverySide).
 func emptyBoard(t *testing.T) model {
 	t.Helper()
+	// wordmarkVisible (mark.go) is what keeps the mark off a NO_COLOR
+	// terminal — and a test binary writing to a pipe hits the same profile
+	// detection, so without this every "the mark shows" assertion here would
+	// fail for a reason that has nothing to do with the thing under test.
+	forceColour(t)
 	m, _, _ := newTestModel(t, 2)
 	m = pastTheSplash(t, m)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: nil}})
@@ -319,6 +326,7 @@ func TestTheWordmarkLeavesRoomForTheEmptyStateLine(t *testing.T) {
 // before the inbox reports the finished ticket — would flash it on for the
 // gap.
 func TestTheWordmarkWaitsForBothEventsToSettle(t *testing.T) {
+	forceColour(t)
 	m, _, _ := newTestModel(t, 2)
 	m = pastTheSplash(t, m)
 	// One ticket running: neither panel is empty yet.
@@ -409,6 +417,7 @@ func TestTheWordmarkHidesWhenWorkHasATicket(t *testing.T) {
 // wrong reason, boardEmptySettled never having caught up rather than the
 // search guard actually holding.
 func TestTheWordmarkStaysOffScreenBehindAnOpenSearch(t *testing.T) {
+	forceColour(t)
 	m, _, _ := newTestModel(t, 2)
 	m = pastTheSplash(t, m)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention,
@@ -440,6 +449,7 @@ func TestTheWordmarkStaysOffScreenBehindAnOpenSearch(t *testing.T) {
 // must keep deferring to the panel's own key hint (which still offers to
 // clear it) for exactly that long.
 func TestTheWordmarkStaysOffScreenBehindALeftoverQuery(t *testing.T) {
+	forceColour(t)
 	m, _, _ := newTestModel(t, 2)
 	m = pastTheSplash(t, m)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention,
@@ -461,6 +471,26 @@ func TestTheWordmarkStaysOffScreenBehindALeftoverQuery(t *testing.T) {
 	}
 	if hasDimMark(m.View()) {
 		t.Fatalf("the mark drew over a leftover search filter:\n%s", m.View())
+	}
+}
+
+// A profile NO_COLOR (or an unsupportive terminal) downgrades to no colour
+// turns colorWordmark to plain text the same as every other style here
+// (TestNoColorLeavesTheTextBare) — fine for text that carries information,
+// wrong for a figure whose only claim to being decoration is dimness.
+// wordmarkVisible is what keeps the mark off screen in exactly that case
+// rather than drawing it at full brightness.
+func TestWordmarkVisibleReadsTheColorProfile(t *testing.T) {
+	render := func(env fakeEnviron) bool {
+		r := lipgloss.NewRenderer(io.Discard, termenv.WithEnvironment(env), termenv.WithTTY(true))
+		r.SetHasDarkBackground(true)
+		return wordmarkVisible(r)
+	}
+	if !render(fakeEnviron{"TERM": "xterm-256color"}) {
+		t.Fatal("wordmarkVisible = false with colour available, want true")
+	}
+	if render(fakeEnviron{"TERM": "xterm-256color", "NO_COLOR": "1"}) {
+		t.Fatal("wordmarkVisible = true under NO_COLOR, want false")
 	}
 }
 
@@ -489,6 +519,7 @@ func TestWordmarkFitsRequiresRoomOnEverySide(t *testing.T) {
 // settled with tickedMsg so the assertion is actually exercising the fit
 // test rather than passing on unsettled state alone.
 func TestTheWordmarkNeverClipsOnATightBoard(t *testing.T) {
+	forceColour(t)
 	m, _, _ := newTestModel(t, 2)
 	// Wide enough to stay clear of the too-small screen, but short enough
 	// that the inbox panel's own floor is nowhere near the mark's height.
