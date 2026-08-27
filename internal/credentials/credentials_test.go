@@ -30,8 +30,8 @@ func tempStore(t *testing.T, tok *token) store {
 	return s
 }
 
-// testClientID stands in for the public client LERP-109 will register; the
-// shipped constant is still empty.
+// testClientID stands in for the public client a human still has to
+// register in Linear; the shipped constant is empty until then.
 const testClientID = "lerp-test-client"
 
 func liveToken() token {
@@ -634,7 +634,8 @@ func TestNoClientIDIsNotAnExpiredSession(t *testing.T) {
 		t.Fatalf("storedSource: %v", err)
 	}
 	source.endpoint = srv.URL
-	// clientID left as the shipped constant, which is empty until LERP-109.
+	// clientID left as the shipped constant, still empty pending the human
+	// registration step (see credentials.go's doc comment on clientID).
 
 	_, err = source.header(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "client id") {

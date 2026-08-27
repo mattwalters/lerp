@@ -4,9 +4,6 @@ import (
 	"cmp"
 	"context"
 	"fmt"
-	"net/url"
-	"os/exec"
-	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -20,7 +17,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/mattwalters/lerp/internal/childenv"
+	"github.com/mattwalters/lerp/internal/browser"
 	"github.com/mattwalters/lerp/internal/linear"
 	"github.com/mattwalters/lerp/internal/loop"
 )
@@ -1283,69 +1280,21 @@ func (m *model) selectedURL() string {
 	return ""
 }
 
-// linearHost is the only host `o` opens. Linear serves one web app from
-// one name, so an allowlist of one covers every door the board has.
-const linearHost = "linear.app"
-
-// openable reports whether a URL is one the OS opener may be handed. The
-// string is Linear's own url field, so this gates nothing the operator
-// typed — it gates the endpoint that supplied it. `open` and `xdg-open`
-// launch whatever scheme the machine has a handler for, so a compromised or
-// impersonated API would otherwise reach a file:// path, or some third
-// party's URL-scheme handler, through one keystroke on a row that looks
-// like every other row.
-func openable(rawURL string) bool {
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return false
-	}
-	// Whitespace first, because Parse allows it in a path: Linear
-	// percent-encodes it, and xdg-utils honours a $BROWSER holding a %s by
-	// substituting the URL into a command line and letting the shell split
-	// it again — so a space is one of the few ways a URL on the right host
-	// still reaches something other than a browser.
-	if strings.ContainsAny(rawURL, " \t\n\r\v\f") {
-		return false
-	}
-	// Host, not Hostname: a port is not something Linear sends, and
-	// refusing one costs nothing. Parse has already lowercased the scheme;
-	// the host it leaves as it found it. Userinfo is refused rather than
-	// ignored — the host is still Linear's, so it redirects nobody, but
-	// https://anything-at-all@linear.app/… is a browser dialog quoting an
-	// attacker's string back at the operator.
-	return u.Scheme == "https" && u.User == nil && strings.EqualFold(u.Host, linearHost)
-}
-
-// openURL hands the URL to the OS opener. This is the TUI opening the
-// operator's browser, not lerp speaking to an API; everything beyond
-// promote still happens in Linear. The opener is a child like any other, so
-// it gets its environment from childenv: a personal `xdg-open` wrapper that
-// logs what it was given must not be logging the operator's Linear key.
+// openURL hands the URL to the OS opener, through internal/browser. This is
+// the TUI opening the operator's browser, not lerp speaking to an API;
+// everything beyond promote still happens in Linear.
 func openURL(rawURL string) tea.Cmd {
 	if rawURL == "" {
 		return nil
 	}
-	// A refusal is louder than a no-op on purpose. The key line drops `o`
-	// from a row whose URL fails this, so pressing it anyway is the operator
-	// asking a question — and the status bar is where the answer goes.
-	if !openable(rawURL) {
-		return func() tea.Msg {
-			return openErrMsg{err: fmt.Errorf("refusing to open %s: only a plain https://%s link opens from here", rawURL, linearHost)}
-		}
-	}
 	return func() tea.Msg {
-		var c *exec.Cmd
-		switch runtime.GOOS {
-		case "darwin":
-			c = exec.Command("open", rawURL)
-		default:
-			c = exec.Command("xdg-open", rawURL)
+		// A refusal is louder than a no-op on purpose. The key line drops `o`
+		// from a row whose URL browser.Openable refuses, so pressing it
+		// anyway is the operator asking a question — and the status bar is
+		// where the answer goes.
+		if err := browser.Open(rawURL); err != nil {
+			return openErrMsg{err: err}
 		}
-		c.Env = childenv.Inherited()
-		if err := c.Start(); err != nil {
-			return openErrMsg{err: fmt.Errorf("open %s: %w", rawURL, err)}
-		}
-		go c.Wait()
 		return nil
 	}
 }
@@ -2435,7 +2384,7 @@ func (m *model) panelKeys(p panel) []key.Binding {
 		// to open. Under the ? overlay it is the one moment the pane is
 		// certainly not showing a log, and the key is inert to match.
 		hasLog:     m.logOnScreen(),
-		hasURL:     openable(m.selectedURL()),
+		hasURL:     browser.Openable(m.selectedURL()),
 		filtered:   m.search != "",
 		projects:   m.hasProjects(),
 		canPromote: len(m.o.Statuses) > 0 && m.roomForMain(),
@@ -3383,7 +3332,7 @@ func (m model) attentionDetail(width int) string {
 		lines = append(lines, labelGutter+l)
 	}
 	lines = append(lines, styleFaint.Render("linear  ")+it.URL)
-	return strings.Join(append(lines, m.ticketLines(it.TicketID, width, openable(it.URL))...), "\n")
+	return strings.Join(append(lines, m.ticketLines(it.TicketID, width, browser.Openable(it.URL))...), "\n")
 }
 
 // ticketLines is the ticket itself, below the pass's own lines: the body,

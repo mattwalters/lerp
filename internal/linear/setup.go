@@ -96,6 +96,40 @@ func (c *HTTP) TeamStates(ctx context.Context, teamKey string) ([]string, error)
 	return names, nil
 }
 
+const viewerIdentityQuery = `
+query ViewerIdentity {
+  viewer { id name email }
+}`
+
+// Identity is the authenticated user, as `lerp login` reports it back to the
+// operator: not merely the id the claim protocol uses (see Viewer), but the
+// name and email that make "signed in as" mean something to a human.
+type Identity struct {
+	ID    string
+	Name  string
+	Email string
+}
+
+// ViewerIdentity reads the authenticated user's id, name and email. It sits
+// beside the other setup-time reads: nothing in the loop calls it, only
+// `lerp login` confirming who it just signed in as. Unlike Viewer, this is
+// not memoized — login calls it exactly once, against the token it has just
+// obtained, and never through Resolve, which would prefer LINEAR_API_KEY and
+// report the wrong identity when one is set.
+func (c *HTTP) ViewerIdentity(ctx context.Context) (Identity, error) {
+	var resp struct {
+		Viewer struct {
+			ID    string `json:"id"`
+			Name  string `json:"name"`
+			Email string `json:"email"`
+		} `json:"viewer"`
+	}
+	if err := c.do(ctx, viewerIdentityQuery, nil, &resp); err != nil {
+		return Identity{}, fmt.Errorf("viewer identity: %w", err)
+	}
+	return Identity{ID: resp.Viewer.ID, Name: resp.Viewer.Name, Email: resp.Viewer.Email}, nil
+}
+
 const workflowStateCreateMutation = `
 mutation WorkflowStateCreate($teamId: String!, $name: String!, $type: String!, $color: String!) {
   workflowStateCreate(input: { teamId: $teamId, name: $name, type: $type, color: $color }) { success }
