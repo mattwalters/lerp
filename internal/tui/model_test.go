@@ -3766,7 +3766,7 @@ func TestTheKeyLineKeepsTheKeysThatAct(t *testing.T) {
 	}
 
 	// Given the room, both keys come back.
-	wide := update(t, m, tea.WindowSizeMsg{Width: 150, Height: 30})
+	wide := resize(t, m, 150, 30)
 	line = lineWith(t, wide.View(), "p promote")
 	for _, want := range []string{"s sort", "P project"} {
 		if !strings.Contains(line, want) {
@@ -6850,7 +6850,7 @@ func TestTheOverlayBorrowsThePaneNotItsKeys(t *testing.T) {
 	m = update(t, m, keyMsg("tab"))
 	// Short enough that the overlay is longer than the pane, so scrolling it
 	// is a fact and not an accident of how many bindings there are.
-	m = update(t, m, tea.WindowSizeMsg{Width: 100, Height: 18})
+	m = resize(t, m, 100, 18)
 
 	m = update(t, m, keyMsg("?"))
 	if !m.mainFocused() {

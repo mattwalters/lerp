@@ -77,11 +77,11 @@ func newSecondLerp(t *testing.T, h *harness, lanes int) *harness {
 // both need, over an evidence store and board the caller has already
 // decided are fresh or shared — an injectable added here reaches both
 // callers instead of silently unwiring whichever one it was not added to.
-func buildHarness(t *testing.T, lanes int, execute ExecuteFunc, ev *evidence.Evidence, root string, fake *linear.Fake, client linear.Client) *harness {
+func buildHarness(t *testing.T, lanes int, execute ExecuteFunc, store *evidence.Evidence, root string, fake *linear.Fake, client linear.Client) *harness {
 	t.Helper()
 	h := &harness{
 		fake:     fake,
-		evidence: ev,
+		evidence: store,
 		root:     root,
 		events:   make(chan Event, 64),
 		alive:    map[string]bool{},
