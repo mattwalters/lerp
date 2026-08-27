@@ -41,6 +41,23 @@ LINEAR_API_KEY=... lerp init --team LERP    # wire this repo to a Linear team
 LINEAR_API_KEY=... lerp                     # open the board
 ```
 
+## FAQ
+
+**How is the Linear API key scoped?**
+`LINEAR_API_KEY` is a Linear personal API key, which carries your user's
+full workspace access across all teams — Linear does not provide per-team
+key scoping. If you want to isolate lerp from the rest of your Linear
+workspace, create a dedicated Linear user account for automation.
+
+**How do I clean up or uninstall?**
+`make uninstall` (or deleting the binary from `$HOME/.local/bin` / `GOBIN`)
+removes the installed binary. To clean up local state, `rm -rf .lerp/` once
+all agents have stopped — run evidence in `.lerp/runs/` is how the next
+`lerp` adopts or reaps live agents, and workspaces under `.lerp/workspaces/`
+are git worktrees whose registrations the stock `dispose` command normally
+unwinds (`git worktree prune` handles strays). Losing `.lerp/` costs
+compute, never correctness.
+
 ## The manual
 
 **[The manual](https://lerp.sh/)** is the docs site:

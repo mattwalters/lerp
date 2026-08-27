@@ -49,8 +49,11 @@ the tag rather than from whatever was lying around on somebody's laptop.
 
 Lerp speaks exactly one external API: Linear, and every command needs a
 credential for it. Today that is a personal API key in the `LINEAR_API_KEY`
-environment variable — create one in Linear's settings and export it. Beyond that key lerp itself needs
-only Git, but the stock pipeline shells out to `claude`
+environment variable — create one in Linear's settings and export it.
+Personal API keys carry your full Linear workspace access across every team
+(Linear has no per-team key scoping); adopters who want to limit lerp's reach
+can create a dedicated Linear user account for automation. Beyond that key lerp
+itself needs only Git, but the stock pipeline shells out to `claude`
 ([Claude Code](https://docs.claude.com/en/docs/claude-code)) as its runner
 and its implementing prompt opens pull requests with `gh`, so install both
 before the [quickstart](quickstart.md) reaches its first run.
