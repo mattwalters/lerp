@@ -929,6 +929,17 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.visual, m.visualAnchor = true, it.Ticket
 			}
 		}
+	case key.Matches(msg, m.keys.VisualAll):
+		// V selects the full shown range in one keystroke — whatever the
+		// active project filter, search, and fold state have left visible.
+		if m.focus == panelAttention && len(m.shown) > 0 && len(m.o.Statuses) > 0 && m.roomForMain() {
+			m.visual, m.visualAnchor = true, m.shown[0].Ticket
+			m.attnSel = len(m.shown) - 1
+			if !m.helpOn {
+				m.refreshMain()
+				m.vp.GotoTop()
+			}
+		}
 	case key.Matches(msg, m.keys.Eject):
 		m.startEject()
 	case key.Matches(msg, m.keys.ForceStart):
