@@ -246,10 +246,21 @@ func detect(line string) (Decoder, bool) {
 		return nil, false
 	}
 	var probe struct {
-		Type  string `json:"type"`
-		Event string `json:"event"`
+		Type string `json:"type"`
+		// Event is raw rather than string: claude's own --include-partial-
+		// messages stream carries a *nested object* under this same key
+		// ({"type":"stream_event","event":{...}}), and unmarshalling that into
+		// a string field would fail the whole probe — misreading a real
+		// claude line as not a JSON event at all, rather than one this
+		// switch simply does not claim.
+		Event json.RawMessage `json:"event"`
 	}
-	if json.Unmarshal([]byte(line), &probe) != nil || (probe.Type == "" && probe.Event == "") {
+	if json.Unmarshal([]byte(line), &probe) != nil {
+		return nil, false
+	}
+	var event string
+	json.Unmarshal(probe.Event, &event) // leaves event empty for a nested object, which is fine below
+	if probe.Type == "" && event == "" {
 		return nil, false
 	}
 	switch probe.Type {
@@ -258,7 +269,7 @@ func detect(line string) (Decoder, bool) {
 	case "thread.started", "turn.started", "turn.completed", "item.started", "item.completed":
 		return codex{}, true
 	}
-	switch probe.Event {
+	switch event {
 	case "init", "step_update", "result":
 		return newAntigravity(), true
 	}

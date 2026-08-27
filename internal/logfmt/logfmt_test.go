@@ -93,6 +93,25 @@ func TestStreamHoldsAnUnclaimedEventValue(t *testing.T) {
 	}
 }
 
+// Claude Code's --include-partial-messages carries a *nested object* under
+// an "event" key ({"type":"stream_event","event":{...}}), the same key name
+// agy's discriminator uses for a plain string. That must not make the probe
+// fail to unmarshal at all — which would misread a real claude line as not a
+// JSON event, rather than one this switch simply does not claim (it is held
+// like any other unclaimed event, and a claude line that follows still names
+// the format).
+func TestStreamHoldsAClaudeStreamEventLineWhoseEventKeyIsAnObject(t *testing.T) {
+	var s Stream
+	lead := `{"type":"stream_event","event":{"type":"content_block_delta"},"session_id":"abc"}`
+	if events := feed(&s, lead+"\n"); len(events) != 0 {
+		t.Fatalf("an undecided stream emitted %v", kinds(events))
+	}
+	wantKinds(t, feed(&s, claudeInit+"\n"), KindInit)
+	if s.Raw() {
+		t.Fatal("a claude stream_event line with a nested event object made the stream give up on the format")
+	}
+}
+
 // The board attaches to a log already being written, so the first bytes it
 // reads are the tail of a line. Skipping to the next newline is what keeps
 // that fragment from deciding the format — or from reaching the pane.
