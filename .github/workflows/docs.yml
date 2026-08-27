@@ -187,6 +187,42 @@ jobs:
           mv /tmp/root/index.html /tmp/root/why /tmp/root/style.css public/
           mv /tmp/root/demo.gif public/docs/
 
+      # Casts are rendered from the tag's own tree, same as the manual below,
+      # so a recording always shows the released binary rather than whatever
+      # merged last. Ahead of the Hugo builds: hugo.toml already mounts
+      # docs/static into every build's static/, so a build that runs after
+      # this step picks up docs/static/casts/ for free and needs no copy of
+      # its own. workflow_dispatch cannot reach this step either, for the
+      # same reason it cannot reach the manual builds below.
+      - name: Set up Go
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      # install-only, same as demo.yml: the render itself stays `make casts`,
+      # the same command a local re-record runs.
+      - uses: charmbracelet/vhs-action@v2
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+      - name: Render casts
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        run: make casts
+
+      # The root is marketing and tracks main (see "Build root" above), so it
+      # never runs a Hugo build on this tag push to pick casts up from a
+      # mount. This is the last release's recordings, staged at the site
+      # root directly — a plain copy, not a build — so the splash page plays
+      # them too. keep_files preserves it between tags: a push to main stages
+      # nothing at public/casts (main renders no casts of its own), so it
+      # goes on serving whatever the last tag put here. Before the first tag
+      # this step has not run yet and the root has no casts at all; deciding
+      # what the splash page does about that is LERP-132's call, not this
+      # one's.
+      - name: Stage this release's casts at the site root
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        run: |
+          mkdir -p public/casts
+          cp -r docs/static/casts/. public/casts/
+
       # The manual publishes only from a tag, from that tag's own tree —
       # never from main, which is what keeps a manual that ships with an
       # installable binary from describing code the binary doesn't have.

@@ -150,6 +150,43 @@ func TestEnsureWorkflowStatesRejectsStateWithoutCategory(t *testing.T) {
 	}
 }
 
+// ViewerIdentity decodes id, name and email, and leaves Viewer's memoization
+// alone — a second Viewer call must not be answered from this one's cache.
+func TestViewerIdentityDecodesNameAndEmail(t *testing.T) {
+	var viewerCalls, identityCalls int
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		req := decodeRequest(t, r)
+		switch {
+		case strings.Contains(req.Query, "ViewerIdentity"):
+			identityCalls++
+			writeData(t, w, `{"viewer":{"id":"user-1","name":"Ada Lovelace","email":"ada@example.com"}}`)
+		case strings.Contains(req.Query, "Viewer"):
+			viewerCalls++
+			writeData(t, w, `{"viewer":{"id":"user-1"}}`)
+		default:
+			t.Errorf("unexpected query: %s", req.Query)
+		}
+	})
+	got, err := c.ViewerIdentity(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := Identity{ID: "user-1", Name: "Ada Lovelace", Email: "ada@example.com"}
+	if got != want {
+		t.Errorf("identity = %+v, want %+v", got, want)
+	}
+	if identityCalls != 1 {
+		t.Errorf("identityCalls = %d, want 1", identityCalls)
+	}
+
+	if _, err := c.Viewer(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if viewerCalls != 1 {
+		t.Errorf("viewerCalls = %d, want 1 — ViewerIdentity must not have satisfied Viewer's cache", viewerCalls)
+	}
+}
+
 func TestEnsureWorkflowStatesDoesNotCreateExistingStates(t *testing.T) {
 	calls := 0
 	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {

@@ -2,3 +2,8 @@
 # every deploy; nothing generated belongs in the history.
 public/
 .hugo_build.lock
+
+# make casts renders these fresh from docs/tapes/ into the scratch dir and
+# copies them here; committing them would mean a growing pile of binaries in
+# git for something a make target regenerates deterministically enough.
+static/casts/

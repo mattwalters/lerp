@@ -1,0 +1,79 @@
+# Every cast under docs/tapes/, re-recorded to prove the tapes still drive
+# lerp.
+#
+# Its own workflow rather than a job in ci.yml because the thing that makes it
+# cheap is a paths filter, and a filter belongs to the workflow's trigger, not
+# to a job: added to ci.yml it would gate the gate, and an ordinary code PR
+# would run no tests at all. So the demo moves here, where a filter can say
+# "only when the casts' own inputs changed" without taking `make check` with
+# it.
+#
+# What this does not weaken: `internal/demo` is a normal package, built by `go
+# build ./...` and covered by `demo_test.go`, both of which stay in `make
+# check` on every push. API drift between the harness and the TUI it drives is
+# still caught for free on every PR. What only a render catches is behavioral
+# drift — a tape keystroke that still compiles and no longer does what it was
+# written to do — and that is what the three triggers below are for.
+name: demo
+
+on:
+  # A PR that touches the casts' own inputs. Every tape under docs/tapes/ is
+  # the script, `internal/demo` is the harness they drive, and the Makefile
+  # holds both the render recipe and the size caps — a change to any of them
+  # can break a render, so each of them pays for the render here. This file
+  # is in the list for the same reason docs.yml lists itself: a change to the
+  # job should be tested by the job.
+  pull_request:
+    paths:
+      - "docs/tapes/**"
+      - "internal/demo/**"
+      - "Makefile"
+      - ".github/workflows/demo.yml"
+  # A tag push, the moment the recordings actually describe something: they
+  # illustrate a released binary, not whatever merged last. The same glob
+  # release.yml fires on, deliberately — the cast and the binaries a release
+  # ships are meant to be the same commit rendered once, so a tag that cuts a
+  # release is exactly a tag that re-records. (Publishing what this run
+  # renders is LERP-69's; today the tag run proves the tape still drives the
+  # released code, which is the rot check the every-push run used to do.)
+  push:
+    tags:
+      - "v[0-9]*.[0-9]*.[0-9]*"
+  # The escape hatch: re-check on demand, on any ref, without a commit to
+  # push. What to reach for when a PR changed the TUI rather than the tape and
+  # you want to know whether the keystrokes still land.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # A cast rots silently: a tape whose keystrokes no longer drive the UI they
+  # were written against still renders, it just renders the wrong thing. This
+  # job re-records every tape and checks that each render worked — nothing
+  # diffs the bytes, because video output is not reproducible enough to
+  # compare and what is worth knowing is only whether the script still drives
+  # lerp.
+  #
+  # vhs's own exit code cannot answer that: the harness runs inside the
+  # terminal being recorded, so a harness that dies at startup is a recording
+  # of a bash error that vhs writes out happily and exits 0 on. `make casts`
+  # gates on the status the harness itself reports and on each tape's own
+  # Wait+Screen lines (see the Makefile's render-tape), so this step stays
+  # the one command a local re-record runs — the same target that also
+  # covers the README's tape, so a PR touching any tape's inputs proves the
+  # whole set rather than just one cast.
+  demo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      # With no `path`, the action installs vhs and its ttyd/ffmpeg
+      # dependencies and stops there, so the render itself stays `make
+      # casts` — the same command a local re-record runs. Installing all
+      # three is the slowest thing in this repository's CI, which is why it
+      # now happens on the runs above and not on every push.
+      - uses: charmbracelet/vhs-action@v2
+      - run: make casts

@@ -90,7 +90,7 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      # install-only, for the reason the demo job installs vhs and stops: what
+      # install-only, for the reason demo.yml installs vhs and stops: what
       # runs is `make snapshot`, the same command a developer runs, so the two
       # cannot drift.
       - uses: goreleaser/goreleaser-action@v7
@@ -102,27 +102,3 @@ jobs:
       # halfway through a build.
       - run: goreleaser check
       - run: make snapshot
-
-  # The cast rots silently: a tape whose keystrokes no longer drive the UI
-  # they were written against still renders, it just renders the wrong thing.
-  # This job re-records it and checks that the render worked — nothing diffs
-  # the bytes, because GIF output is not reproducible enough to compare and
-  # what is worth knowing is only whether the script still drives lerp.
-  #
-  # vhs's own exit code cannot answer that: the harness runs inside the
-  # terminal being recorded, so a harness that dies at startup is a recording
-  # of a bash error that vhs writes out happily and exits 0 on. `make demo`
-  # gates on the status the harness itself reports (see the demo recipe), so
-  # this step stays the one command a local re-record runs.
-  demo:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-      # With no `path`, the action installs vhs and its ttyd/ffmpeg
-      # dependencies and stops there, so the render itself stays `make demo` —
-      # the same command a local re-record runs.
-      - uses: charmbracelet/vhs-action@v2
-      - run: make demo

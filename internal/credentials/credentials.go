@@ -25,9 +25,10 @@ const defaultTokenEndpoint = "https://api.linear.app/oauth/token"
 // clientID is the single public OAuth client lerp ships: no secret, one
 // application in the operator's authorized apps (SCOPE invariant 4).
 //
-// Empty until LERP-109 registers the application. Nothing can have written
-// a token file before the command that creates one exists, so no refresh
-// can reach the endpoint with it empty.
+// Empty until Matt registers the "Lerp" OAuth application in Linear — a
+// one-time step only he can do, from inside Linear's own settings. Login and
+// refresh both refuse cleanly while it is empty rather than sending Linear a
+// request it can only refuse as an unknown client.
 const clientID = ""
 
 // refreshSkew is how long before its stated expiry an access token counts
@@ -91,6 +92,20 @@ func resolve(s store, hc *http.Client) (func(context.Context) (string, error), e
 		return nil, err
 	}
 	return src.header, nil
+}
+
+// envKeyIsSet reports whether LINEAR_API_KEY is set, dropping it from lerp's
+// own environment in the same breath — the same rule Resolve follows, for
+// the same reason: a child spawned with a nil Env inherits whatever this
+// process still holds. Login and logout call this only to decide whether to
+// mention that the env key still wins over what they just did; dropping it
+// costs nothing since both commands are done with the process right after.
+func envKeyIsSet() bool {
+	if os.Getenv(childenv.LinearAPIKeyEnv) == "" {
+		return false
+	}
+	os.Unsetenv(childenv.LinearAPIKeyEnv)
+	return true
 }
 
 // storedSource loads the token file into a source that renews it. Tests use
@@ -219,9 +234,9 @@ func (s *oauthSource) refresh(ctx context.Context) error {
 		// Latched, because no request can change it: a build with no client
 		// id cannot renew a token at all, and Linear would refuse the grant
 		// as a bad client — which reads as ErrLoginRequired and sends the
-		// operator after a `lerp login` this build does not have. Reachable
-		// only from a hand-written token file until LERP-109 fills the
-		// constant in.
+		// operator after a `lerp login` that would refuse the same way.
+		// Reachable only from a hand-written token file: Login refuses
+		// before it ever writes one while clientID is empty.
 		s.dead = errors.New("credentials: this lerp has no Linear OAuth client id, so a stored token cannot be renewed; set " + childenv.LinearAPIKeyEnv)
 		return s.dead
 	}
@@ -269,69 +284,18 @@ func exchange(ctx context.Context, hc *http.Client, endpoint, clientID, refreshT
 		"refresh_token": {refreshToken},
 		"client_id":     {clientID},
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
-	if err != nil {
-		return token{}, fmt.Errorf("credentials: build refresh request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	resp, err := hc.Do(req)
-	if err != nil {
-		return token{}, fmt.Errorf("credentials: refresh: %w", err)
-	}
-	defer resp.Body.Close()
-
+	next, refused, err := postGrant(ctx, hc, endpoint, form)
 	switch {
-	case resp.StatusCode == http.StatusOK:
-	case resp.StatusCode == http.StatusBadRequest, resp.StatusCode == http.StatusUnauthorized:
+	case refused:
 		// The grant was refused, not fumbled: RFC 6749 §5.2 puts a revoked
 		// or replayed refresh token at 400, and a client Linear will not
 		// accept at 401. Asking again cannot help, so the caller latches
 		// this — which is why the status and the body come along. A
 		// disabled client id and an expired session read identically
 		// otherwise, and only one of them is fixed by logging in again.
-		return token{}, fmt.Errorf("%w (%s: %s)", ErrLoginRequired, resp.Status, snippet(resp))
-	default:
-		// Everything else is the endpoint declining to answer rather than
-		// refusing the grant: a 429 behind a shared egress IP, a 403 from a
-		// WAF rule, a 404 if the path moves, any 5xx. Latching those would
-		// lose a live credential for the life of the process, and offer
-		// `lerp login` — unauthenticated from the same address — as the one
-		// remedy that could not help. The GraphQL side draws the same line
-		// between ErrRateLimited and ErrAuth.
-		return token{}, fmt.Errorf("credentials: refresh: %s: %s", resp.Status, snippet(resp))
-	}
-
-	var body struct {
-		AccessToken  string `json:"access_token"`
-		RefreshToken string `json:"refresh_token"`
-		ExpiresIn    int64  `json:"expires_in"`
-	}
-	// Past this point Linear has honoured the exchange: the refresh token
-	// this call sent is rotated and gone, so every failure below is spent —
-	// asking again with the one still in memory can only fail, and would
-	// spend the file's replay grace doing it. See refresh, which latches
-	// them for exactly that reason.
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		return token{}, spent(fmt.Errorf("credentials: decode refresh response: %w", err))
-	}
-	if body.AccessToken == "" {
-		return token{}, spent(errors.New("credentials: refresh: token endpoint returned no access token"))
-	}
-	if body.ExpiresIn <= int64(refreshSkew/time.Second) {
-		// A lifetime shorter than the renewal window is as unusable as no
-		// lifetime at all: the token arrives already inside the skew, so it
-		// would be treated as expired on the very next request and on every
-		// request after it — an exchange per GraphQL call, which is the one
-		// thing this source must never do.
-		return token{}, spent(fmt.Errorf("credentials: refresh: token endpoint returned a %ds lifetime, shorter than the %s renewal window", body.ExpiresIn, refreshSkew))
-	}
-	now := time.Now()
-	next := token{
-		AccessToken:  body.AccessToken,
-		RefreshToken: body.RefreshToken,
-		ExpiresAt:    now.Add(time.Duration(body.ExpiresIn) * time.Second),
-		ObtainedAt:   now,
+		return token{}, fmt.Errorf("%w (%s)", ErrLoginRequired, err)
+	case err != nil:
+		return token{}, fmt.Errorf("credentials: refresh: %w", err)
 	}
 	if next.RefreshToken == "" {
 		// A server that rotates nothing sends no refresh token back. Keep
@@ -339,4 +303,73 @@ func exchange(ctx context.Context, hc *http.Client, endpoint, clientID, refreshT
 		next.RefreshToken = refreshToken
 	}
 	return next, nil
+}
+
+// postGrant posts one token-endpoint request and reports whether the
+// endpoint refused the grant outright — RFC 6749 §5.2 puts a revoked,
+// replayed, or otherwise bad grant at 400 or 401. Refresh and login's own
+// authorization-code exchange each decide what a refusal means to their own
+// caller (ErrLoginRequired for one, a plain login failure for the other), so
+// this reports refused rather than choosing for them. Everything else — a
+// 429 behind a shared egress IP, a 403 from a WAF rule, a 404 if the path
+// moves, any 5xx — is the endpoint declining to answer rather than refusing
+// the grant, and is returned as a plain error worth retrying. Errors here
+// are unwrapped, for the caller's own "credentials: <verb>:" prefix.
+func postGrant(ctx context.Context, hc *http.Client, endpoint string, form url.Values) (tok token, refused bool, err error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
+	if err != nil {
+		return token{}, false, err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := hc.Do(req)
+	if err != nil {
+		return token{}, false, err
+	}
+	defer resp.Body.Close()
+
+	switch {
+	case resp.StatusCode == http.StatusOK:
+	case resp.StatusCode == http.StatusBadRequest, resp.StatusCode == http.StatusUnauthorized:
+		return token{}, true, fmt.Errorf("%s: %s", resp.Status, snippet(resp))
+	default:
+		return token{}, false, fmt.Errorf("%s: %s", resp.Status, snippet(resp))
+	}
+
+	tok, err = decodeGrant(resp)
+	return tok, false, err
+}
+
+// decodeGrant decodes a token endpoint's 200 response. Reached only once
+// Linear has honoured the request — refusal is classified by postGrant
+// before this runs — so every failure from here on is spent: the grant this
+// call sent is already consumed, and asking again with it can only fail.
+// Both grants decode through this one path.
+func decodeGrant(resp *http.Response) (token, error) {
+	var body struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		ExpiresIn    int64  `json:"expires_in"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return token{}, spent(fmt.Errorf("decode token response: %w", err))
+	}
+	if body.AccessToken == "" {
+		return token{}, spent(errors.New("token endpoint returned no access token"))
+	}
+	if body.ExpiresIn <= int64(refreshSkew/time.Second) {
+		// A lifetime shorter than the renewal window is as unusable as no
+		// lifetime at all: the token arrives already inside the skew, so it
+		// would be treated as expired on the very next request and on every
+		// request after it — an exchange per GraphQL call, which is the one
+		// thing a renewing source must never do.
+		return token{}, spent(fmt.Errorf("token endpoint returned a %ds lifetime, shorter than the %s renewal window", body.ExpiresIn, refreshSkew))
+	}
+	now := time.Now()
+	return token{
+		AccessToken:  body.AccessToken,
+		RefreshToken: body.RefreshToken,
+		ExpiresAt:    now.Add(time.Duration(body.ExpiresIn) * time.Second),
+		ObtainedAt:   now,
+	}, nil
 }

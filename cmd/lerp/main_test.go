@@ -15,6 +15,16 @@ func TestUsageDoesNotSayLane(t *testing.T) {
 	}
 }
 
+// Both new subcommands are discoverable from -h, not just from reading the
+// source.
+func TestUsageListsLoginAndLogout(t *testing.T) {
+	for _, want := range []string{"lerp login", "lerp logout"} {
+		if !strings.Contains(usage, want) {
+			t.Errorf("usage does not mention %q:\n%s", want, usage)
+		}
+	}
+}
+
 // A startup warning that scrolls past unread is the same as no warning: the
 // TUI takes the alternate screen a moment later. So announce holds the run
 // until the operator acknowledges it.

@@ -27,6 +27,8 @@ import (
 const usage = `usage:
   lerp [-concurrency N]         open the TUI; the loop runs while it is open
   lerp version                  print the version
+  lerp login                    sign in to Linear (loopback OAuth); no flags
+  lerp logout                   sign out of Linear and revoke the token; no flags
   lerp init --team KEY [--yes]  map lerp's queues onto the team's board and write this repo's lerp.toml
 `
 
@@ -72,6 +74,25 @@ func main() {
 	switch args[0] {
 	case "version":
 		fmt.Printf("lerp %s\n", version.Version)
+	case "login":
+		// No flags, so an unrecognised one — --port, --help, a typo — must
+		// not fall through silently into opening a browser and binding a
+		// port for two minutes.
+		if len(args) > 1 {
+			fmt.Fprintf(os.Stderr, "lerp login: takes no arguments\n\n%s", usage)
+			os.Exit(2)
+		}
+		if err := credentials.Login(context.Background(), os.Stdout); err != nil {
+			fatal(fmt.Errorf("lerp login: %w", err))
+		}
+	case "logout":
+		if len(args) > 1 {
+			fmt.Fprintf(os.Stderr, "lerp logout: takes no arguments\n\n%s", usage)
+			os.Exit(2)
+		}
+		if err := credentials.Logout(context.Background(), os.Stdout); err != nil {
+			fatal(fmt.Errorf("lerp logout: %w", err))
+		}
 	case "init":
 		initCommand(args[1:])
 	default:
