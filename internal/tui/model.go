@@ -1967,7 +1967,13 @@ func (m *model) workGroups() []workGroup {
 			gi = len(groups) - 1
 		}
 		row.queue, row.status, row.team = groups[gi].name, groups[gi].status, groups[gi].team
-		row.window = m.o.Windows[row.queue]
+		// The window has to match the runner that is actually producing
+		// row.context — the lane's own queue — not the group the row is
+		// displayed under: a ticket an agent moved mid-run to a different
+		// queue's status would otherwise pair this lane's reading with
+		// another runner's window, a wrong denominator rather than no
+		// percentage at all.
+		row.window = m.o.Windows[ln.queue]
 		groups[gi].rows = append(groups[gi].rows, row)
 		if ln.ticketID != "" {
 			running[ln.ticketID] = true
@@ -3607,7 +3613,7 @@ func (m model) mainScrollbar(h int) *scrollbar {
 }
 
 // helpText is the ? overlay: every binding the keymap declares, and then
-// the legend for the marks the inbox draws inside its columns.
+// the legends for the marks the inbox and the work row draw inside them.
 func (m model) helpText() string {
 	lines := strings.Split(m.help.View(m.keys), "\n")
 	lines = append(lines, inboxLegend()...)

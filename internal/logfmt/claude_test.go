@@ -328,6 +328,23 @@ func TestClaudeUncompletedNotificationDoesNotRetire(t *testing.T) {
 	}
 }
 
+// "" is the top-level agent's own key, not a blank subagent id: a
+// completion notification that names no tool_use_id at all must not be
+// read as its and retire the one agent that is never a subagent.
+func TestClaudeCompletionWithoutToolUseIDDoesNotRetireTheTopLevelAgent(t *testing.T) {
+	dec := &claude{}
+	dec.Decode(claudeAgentLine("", 150000))
+	dec.Decode(claudeTaskNotification("", "completed"))
+
+	ev, ok := dec.Decode(claudeAgentLine("toolu_sub", 1))
+	if !ok {
+		t.Fatal("line was not decoded")
+	}
+	if ev.Context != 150000 {
+		t.Fatalf(`a completion naming no tool_use_id retired the top-level agent: worst-of read %d, want its own 150000`, ev.Context)
+	}
+}
+
 // A stream that never states usage reports Context zero throughout — the
 // same "the runner does not say" floor Usage and Cost already keep.
 func TestClaudeContextZeroWithoutUsage(t *testing.T) {
@@ -393,26 +410,49 @@ func TestClaudeSequentialSubagentsNeverEvictTheTopLevelAgent(t *testing.T) {
 	}
 }
 
-// A retired agent is removed from the eviction queue outright, not left
-// sitting in it under a name the map no longer has — its slot is free
-// immediately, so a new agent right after a retirement does not evict
-// something that is still genuinely live.
-func TestClaudeRetireFreesItsQueueSlot(t *testing.T) {
+// track and retire must keep agents and agentOrder in exact 1:1
+// correspondence — every name in one is a key in the other, and the live
+// count never exceeds trackedAgents — whatever mixture of new agents and
+// retirements arrives. This checks the two data structures directly rather
+// than only through contextMax: a retirement that corrupts agentOrder
+// without deleting the wrong thing from the map (say, truncating the queue
+// at the retired entry's index instead of splicing just that one entry
+// out) would not necessarily show up as a wrong worst-of reading in a
+// single step, but it does show up as a length or membership mismatch
+// immediately.
+func TestClaudeTrackAndRetireStayInSync(t *testing.T) {
 	dec := &claude{}
-	dec.Decode(claudeAgentLine("agent-0", 1))
-	dec.Decode(claudeAgentLine("agent-1", 999999))
-	for i := 2; i < trackedAgents; i++ {
+	dec.Decode(claudeAgentLine("agent-0", 999999))
+	for i := 1; i < trackedAgents; i++ {
 		dec.Decode(claudeAgentLine(fmt.Sprintf("agent-%d", i), 1))
 	}
-	// The queue now holds trackedAgents live agents; the next distinct
-	// agent would ordinarily evict the oldest, agent-0.
-	dec.Decode(claudeTaskNotification("agent-0", "completed"))
-
-	ev, ok := dec.Decode(claudeAgentLine("agent-new", 1))
-	if !ok {
-		t.Fatal("line was not decoded")
+	if len(dec.agents) != trackedAgents || len(dec.agentOrder) != trackedAgents {
+		t.Fatalf("after filling to capacity: len(agents)=%d len(agentOrder)=%d, want both %d",
+			len(dec.agents), len(dec.agentOrder), trackedAgents)
 	}
-	if ev.Context != 999999 {
-		t.Fatalf("worst-of read %d after a retirement freed a slot, want agent-1's still-live 999999", ev.Context)
+
+	// Retire one from the middle, not the oldest or newest — the case a
+	// truncating bug (rather than a splice) would get wrong.
+	dec.Decode(claudeTaskNotification("agent-15", "completed"))
+	if len(dec.agents) != trackedAgents-1 || len(dec.agentOrder) != trackedAgents-1 {
+		t.Fatalf("after retiring a middle entry: len(agents)=%d len(agentOrder)=%d, want both %d",
+			len(dec.agents), len(dec.agentOrder), trackedAgents-1)
+	}
+	if _, live := dec.agents["agent-15"]; live {
+		t.Fatal("agent-15 is still in the map after its own retirement")
+	}
+	if _, live := dec.agents["agent-0"]; !live {
+		t.Fatal("retiring agent-15 also lost agent-0 — the queue and map desynced")
+	}
+
+	// One more distinct agent refills exactly the freed slot: back at
+	// capacity, not over it, and nothing else was evicted to make room.
+	dec.Decode(claudeAgentLine("agent-new", 1))
+	if len(dec.agents) != trackedAgents || len(dec.agentOrder) != trackedAgents {
+		t.Fatalf("after refilling the freed slot: len(agents)=%d len(agentOrder)=%d, want both %d",
+			len(dec.agents), len(dec.agentOrder), trackedAgents)
+	}
+	if _, live := dec.agents["agent-0"]; !live {
+		t.Fatal("agent-0 was evicted refilling a single freed slot, want it untouched")
 	}
 }

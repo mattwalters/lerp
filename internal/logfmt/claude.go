@@ -133,8 +133,11 @@ func (c *claude) Decode(line string) (Event, bool) {
 			// once it is gone: retire its entry so the worst-of figure falls
 			// back to whatever is still running. The lowered figure appears
 			// on the next assistant line rather than instantly, which is the
-			// calm rule, not a gap.
-			if l.Status == "completed" {
+			// calm rule, not a gap. ToolUseID != "" guards the one id that
+			// must never be retired this way: "" is the top-level agent's
+			// own key, and a malformed or unrecognized completion line —
+			// one naming no subagent at all — must not be read as its.
+			if l.Status == "completed" && l.ToolUseID != "" {
 				c.retire(l.ToolUseID)
 			}
 		}

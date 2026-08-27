@@ -5989,6 +5989,45 @@ func TestWorkGroupsWireTheConfiguredWindow(t *testing.T) {
 	}
 }
 
+// A ticket an agent moved to a different queue's status mid-run still
+// displays under that new queue (see workGroups), but the reading on the
+// row is still that lane's own process — so the window has to come from
+// the lane's own queue, not the group the row is shown under, or the
+// figure pairs one runner's reading with another runner's denominator.
+func TestWorkGroupsWindowFollowsTheRunningLaneNotTheDisplayGroup(t *testing.T) {
+	ticker := &countingTicker{}
+	events := make(chan loop.Event, 8)
+	m := newModel(context.Background(), Options{
+		Engine:   fakeEngine{ticker, &recordingPromoter{}, &recordingEjector{}, &recordingStarter{}, &recordingReader{}},
+		Statuses: defaultTestStatuses,
+		Windows:  map[string]int{"implement": 200000, "review": 100000},
+		Interval: time.Millisecond,
+		Lanes:    1,
+		Events:   events,
+	})
+	resized, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = pastTheSplash(t, resized.(model))
+
+	// The lane started this run in "implement", but the ticket now sits in
+	// "review"'s listing — the agent moved it mid-run.
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Team: "LERP", Name: "implement", Status: "Implementing"},
+		{Team: "LERP", Name: "review", Status: "In Review", Tickets: []loop.QueueTicket{
+			{ID: "id-42", Identifier: "LERP-42", Title: "moved mid-run"},
+		}},
+	}}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		TicketID: "id-42", Ticket: "LERP-42", Queue: "implement", LogPath: "/dev/null"}})
+
+	rows := m.workRows()
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1: %+v", len(rows), rows)
+	}
+	if rows[0].window != 200000 {
+		t.Fatalf("row.window = %d, want 200000 (implement's, the running lane's own queue) — not review's 100000, the group it displays under", rows[0].window)
+	}
+}
+
 // A row with both a context reading and a configured window draws the
 // worst agent's load as a percentage, beside the tokens and cost it already
 // carries.
