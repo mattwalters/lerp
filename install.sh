@@ -21,6 +21,9 @@ Usage: install.sh [--bin-dir DIR]
 Installs the lerp binary built for this machine's OS and architecture from
 the latest GitHub release. Defaults to \$HOME/.local/bin; pass --bin-dir to
 choose another directory. Never uses sudo and never edits your PATH.
+
+Piped from curl, flags go after -s --:
+  curl -fsSL .../install.sh | sh -s -- --bin-dir DIR
 EOF
 }
 
@@ -70,21 +73,30 @@ esac
 
 # Resolving the redirect a browser would follow avoids both a JSON parser and
 # the GitHub API's much tighter unauthenticated rate limit — this is a plain
-# object fetch, not an API call.
+# object fetch, not an API call. A repo with no releases yet does not 404
+# here: GitHub 200s /releases/latest and redirects it to the plain /releases
+# page instead of a tag page, so the tag is read from the redirect's shape,
+# not just checked for being empty.
 latest_url=$(curl -fsSL -o /dev/null -w '%{url_effective}' \
-  "https://github.com/$repo/releases/latest")
-tag=${latest_url##*/}
-if [ -z "$tag" ] || [ "$tag" = "latest" ]; then
-  echo "install.sh: could not resolve the latest release tag — is one published yet?" >&2
+  "https://github.com/$repo/releases/latest") || {
+  echo "install.sh: could not reach GitHub to resolve the latest release" >&2
   exit 1
-fi
+}
+case "$latest_url" in
+  */releases/tag/*) tag=${latest_url##*/} ;;
+  *)
+    echo "install.sh: no published release found for $repo — has one been tagged yet?" >&2
+    exit 1
+    ;;
+esac
 version=${tag#v}
 
 archive="lerp_${version}_${os}_${arch}.tar.gz"
 base_url="https://github.com/$repo/releases/download/$tag"
 
 workdir=$(mktemp -d)
-trap 'rm -rf "$workdir"' EXIT
+tmp_bin="$bin_dir/.lerp.tmp.$$"
+trap 'rm -rf "$workdir"; rm -f "$tmp_bin"' EXIT
 
 echo "install.sh: downloading $archive ($tag)"
 curl -fsSL -o "$workdir/$archive" "$base_url/$archive"
@@ -104,11 +116,17 @@ else
   exit 1
 fi
 
-tar -xzf "$workdir/$archive" -C "$workdir" lerp
-
+# Extracted straight to a temp file beside the target and renamed into place,
+# not via $workdir: $workdir sits under $TMPDIR, often a different filesystem
+# than $bin_dir, and mv falls back to copy across a filesystem boundary — on
+# Linux that copy can hit ETXTBSY reopening a lerp that is currently running,
+# e.g. re-running the installer to upgrade while the board is open elsewhere.
+# A same-directory rename cannot cross a filesystem, so it cannot land that
+# way half-written either.
 mkdir -p "$bin_dir"
-mv "$workdir/lerp" "$bin_dir/lerp"
-chmod 755 "$bin_dir/lerp"
+tar -xzf "$workdir/$archive" -O lerp > "$tmp_bin"
+chmod 755 "$tmp_bin"
+mv "$tmp_bin" "$bin_dir/lerp"
 
 printf 'installed %s to %s\n' "$tag" "$bin_dir/lerp"
 case ":$PATH:" in
