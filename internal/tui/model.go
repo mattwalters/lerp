@@ -316,8 +316,11 @@ type workRow struct {
 	// tool and target are the last tool call the log carried, empty until it
 	// carries one; tokens is what the run has spent, summed over the whole
 	// log — history included, so an adopted run reports the run's total.
+	// cost is the same sum in dollars, zero for a runner whose stream never
+	// states one.
 	tool, target string
 	tokens       int
+	cost         float64
 	// The pickup gate, for a ticket that is not running: where it sits in
 	// its queue's order, and what holds it there.
 	pos, of   int
@@ -1510,7 +1513,14 @@ func (m *model) apply(ev loop.Event) {
 		changed = panelWork
 	case loop.EventExited:
 		// How the run ended goes on the status bar, and only there: see
-		// settle for why the ticket's own row cannot hold it.
+		// settle for why the ticket's own row cannot hold it. Cost joins it
+		// for the same reason, and for claude specifically it has nowhere
+		// else it could ever land: the stream settles it on the result line
+		// that ends the log, which is to say at the moment the row carrying
+		// it is about to disappear. The loop reads it off the event's own
+		// Cost field, computed before it emitted this event — a subscriber
+		// here is already too late to read the log itself, since the loop's
+		// record (and the log with it) may be gone by the time this arrives.
 		note := fmt.Sprintf("%s exited %d", ev.Ticket, ev.ExitCode)
 		if ev.Err != nil {
 			note += " (move failed)"
@@ -1521,6 +1531,11 @@ func (m *model) apply(ev loop.Event) {
 			// operator's pipeline did not run — so it replaces the plain
 			// outcome rather than crowding the line beside it.
 			note, warn = ev.Note, true
+		}
+		// The run cost money whichever story the note tells, so it joins
+		// either one rather than only the plain outcome.
+		if ev.Cost >= minCost {
+			note += " · " + costLabel(ev.Cost)
 		}
 		m.note(note, warn)
 		m.settle(ev)
@@ -1914,6 +1929,7 @@ func (m *model) workGroups() []workGroup {
 			row.heard, row.rate = ln.pulse.heard, ln.pulse.window()
 			row.tool, row.target = ln.pulse.tool, ln.pulse.target
 			row.tokens = ln.pulse.tokens
+			row.cost = ln.pulse.cost
 		}
 		// A running ticket normally still sits in its queue's listing,
 		// claimed and ineligible: that listing is the group, and it carries
@@ -3332,6 +3348,9 @@ func (m model) workRowLines(r workRow, selected bool, width int) []string {
 	if r.tokens > 0 {
 		totals += " · " + tokenCount(r.tokens)
 	}
+	if r.cost >= minCost {
+		totals += " · " + costLabel(r.cost)
+	}
 	right := state + " " + styleFaint.Render(totals)
 	lines := []string{splitRow(marker(selected)+dot+" "+name, right, width)}
 	if reading := runLine(r, width); reading != "" {
@@ -3455,6 +3474,37 @@ func tokenCount(n int) string {
 	// The unit stays on: a bare number beside a clock reads as another
 	// duration.
 	return s + " tok"
+}
+
+// minCost is the smallest figure worth a reading: below half a cent, the run
+// cost something a real vendor bill would round to zero anyway, and $0.00
+// beside a token count would read as a real, reported zero rather than as
+// what it actually is — a number too small to bother with. Callers gate on
+// this rather than on cost > 0, the way they would for tokens.
+const minCost = 0.005
+
+// costLabel renders what a run has spent in dollars, graduating precision
+// the way tokenCount does: cents are the reading under ten dollars, and stop
+// being one above it, whole dollars from a hundred up. Each cutover sits a
+// hair below its round number — 99.96 draws as $100, not $100.0 a column
+// away from where the whole-dollar branch already begins — the same
+// adjustment tokenCount makes against 999,900 drawing as 1000k. The $
+// already tells the figure apart from the clock beside it, so unlike
+// tokenCount this carries no trailing unit.
+//
+// It is only ever called with what a runner's own stream reported — never a
+// figure lerp derived from tokens — so there is no per-vendor price to get
+// wrong here: a vendor that reports nothing never reaches this function at
+// all (r.cost stays zero, see workRowLines and minCost).
+func costLabel(c float64) string {
+	switch {
+	case c >= 99.95:
+		return fmt.Sprintf("$%.0f", c)
+	case c >= 9.995:
+		return fmt.Sprintf("$%.1f", c)
+	default:
+		return fmt.Sprintf("$%.2f", c)
+	}
 }
 
 // mainPanel is the lens: the promote picker while it is open, the ? overlay,

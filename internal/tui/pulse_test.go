@@ -403,6 +403,67 @@ func TestPulseTracksSpendAndTheLastCall(t *testing.T) {
 	}
 }
 
+// Cost only ever arrives on claude's result line, once, at the very end of
+// the run — nothing mid-run reports it — so a live pulse shows nothing in
+// dollars until that line lands, and then the run's whole figure at once.
+// That line is also the one that ends the log, so a poll landing between it
+// and the run settling is the only chance the row itself ever gets to draw
+// the figure. The operator's second chance does not go through pulse at all:
+// internal/loop's runCost reads the same log independently, before the run's
+// evidence (log included) is discarded, and the result rides loop.Event.Cost
+// onto the exit note that apply (model.go) builds on EventExited.
+func TestPulseTracksCostFromTheResultLine(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.log")
+	appendLog(t, path, `{"type":"system","subtype":"init","model":"claude-opus-5","session_id":"abc"}`+"\n")
+	now := time.Now()
+	p := newPulse(path)
+	p.read(now)
+	if p.cost != 0 {
+		t.Fatalf("a run with no result line reports $%.2f, want 0", p.cost)
+	}
+
+	appendLog(t, path,
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"working"}],`+
+			`"usage":{"input_tokens":100,"output_tokens":100}}}`+"\n")
+	p.read(now)
+	if p.cost != 0 {
+		t.Fatalf("a mid-run line reports $%.2f, want 0 until the result line", p.cost)
+	}
+
+	appendLog(t, path,
+		`{"type":"result","subtype":"success","num_turns":1,"total_cost_usd":0.42}`+"\n")
+	p.read(now)
+	if p.cost != 0.42 {
+		t.Fatalf("the result line's cost read as $%.2f, want $0.42", p.cost)
+	}
+
+	// A rewritten log loses the figure with everything else it read: it is a
+	// reading of a file that is gone.
+	writeLog(t, path, []byte("a wholly new log\n"))
+	p.read(now.Add(sparkBucket))
+	if p.cost != 0 {
+		t.Fatalf("the rewritten log kept a cost of $%.2f", p.cost)
+	}
+}
+
+// A runner whose stream never states a cost — codex, today — must never
+// have one invented for it from its token usage: the pulse just keeps
+// summing zero.
+func TestPulseReportsNoCostForARunnerThatDoesNotStateOne(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.log")
+	now := time.Now()
+	p := newPulse(path)
+	appendLog(t, path,
+		`{"type":"turn.completed","usage":{"input_tokens":31101,"cached_input_tokens":26112,"output_tokens":119}}`+"\n")
+	p.read(now)
+	if p.cost != 0 {
+		t.Fatalf("codex usage priced itself at $%.2f, want 0", p.cost)
+	}
+	if p.tokens == 0 {
+		t.Fatal("the token total did not move, so the fixture is not exercising the decoder")
+	}
+}
+
 // The row's figure is a sum of what the log reports, so a runner that repeats
 // one call's usage on every line of it inflates the row directly: Claude Code
 // writes a content block per line, and a thinking-then-tool call read 3x.

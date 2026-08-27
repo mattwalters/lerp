@@ -347,6 +347,39 @@ func TestExitedEventReportsASkippedHop(t *testing.T) {
 	}
 }
 
+// Claude states a run's cost on the same result line that ends its log, at
+// the exact moment its row is about to be torn down — and the loop's own
+// record of that run, log included, may already be gone by the time a
+// subscriber reacts to EventExited (see runCost in internal/loop). So the
+// event itself carries the final figure, computed by the loop before either
+// of those disappear, and the TUI's only job is to put it on the exit note
+// where it survives the row.
+func TestExitedEventCarriesTheRunsFinalCost(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		TicketID: "id-42", Ticket: "LERP-42", Queue: "implement", LogPath: "/dev/null"}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventExited, RunID: "r1", Lane: 1,
+		TicketID: "id-42", Ticket: "LERP-42", Queue: "implement", ExitCode: 0, Cost: 0.42}})
+
+	if view := m.View(); !strings.Contains(view, "LERP-42 exited 0 · $0.42") {
+		t.Fatalf("the exit note does not carry the run's cost:\n%s", view)
+	}
+}
+
+// A skipped hop's note replaces the plain "exited" outcome with the larger
+// story, but the run still cost money either way: the figure must not be
+// lost along with the outcome it replaced. A short note here, deliberately —
+// the real one is long enough to be truncated on its own at this width, which
+// would make the assertion about truncation rather than about the cost.
+func TestSkippedHopNoteStillCarriesCost(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventExited, RunID: "r1", Lane: 1,
+		TicketID: "id-42", Ticket: "LERP-42", Queue: "implement", ExitCode: 0, Note: "hop skipped", Cost: 0.42}})
+	if view := m.View(); !strings.Contains(view, "hop skipped · $0.42") {
+		t.Fatalf("the skipped-hop note does not carry the run's cost:\n%s", view)
+	}
+}
+
 func TestProvisioningTicketIsOccupied(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventProvisioning, RunID: "r1", Lane: 1,
@@ -5838,6 +5871,60 @@ func TestSpendReadsInTheColumnsARowHas(t *testing.T) {
 	} {
 		if got := tokenCount(tc.n); got != tc.want {
 			t.Errorf("tokenCount(%d) = %q, want %q", tc.n, got, tc.want)
+		}
+	}
+}
+
+// The dollar figure is a fact about the whole run, drawn beside the elapsed
+// clock the same way the token count is — and, like the token count, absent
+// entirely for a run whose runner never states one.
+func TestRunningRowCarriesWhatTheRunHasCost(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	r := workRow{ticket: "LERP-1", title: "one", lane: 1, state: laneRunning,
+		since: time.Now().Add(-90 * time.Second), heard: time.Now(), cost: 0.42}
+
+	first := ansi.Strip(m.workRowLines(r, false, 80)[0])
+	if !strings.Contains(first, "1m30s") || !strings.Contains(first, "$0.42") {
+		t.Fatalf("the running row does not say how long or how much it cost: %q", first)
+	}
+
+	// A run whose runner reports no cost at all — codex, today — says
+	// nothing in dollars: no gap, no zero, nothing to misread as a real
+	// figure.
+	r.cost = 0
+	if got := ansi.Strip(m.workRowLines(r, false, 80)[0]); strings.Contains(got, "$") {
+		t.Fatalf("a run with no reported cost still shows a dollar figure: %q", got)
+	}
+
+	// A run that genuinely cost a fraction of a cent is not "no cost
+	// reported" — codex's case — but $0.00 beside a token count would read
+	// as one anyway: a real, reported zero. Below minCost it is dropped the
+	// same as the absent case.
+	r.cost = 0.001
+	if got := ansi.Strip(m.workRowLines(r, false, 80)[0]); strings.Contains(got, "$") {
+		t.Fatalf("a sub-cent run drew a dollar figure at all: %q", got)
+	}
+}
+
+func TestCostGraduatesPrecisionLikeTokenCount(t *testing.T) {
+	for _, tc := range []struct {
+		c    float64
+		want string
+	}{
+		{0.08, "$0.08"},
+		{9.99, "$9.99"},
+		{10, "$10.0"},
+		{12.3, "$12.3"},
+		{99.9, "$99.9"},
+		// A hair under 100: %.1f would round this to "100.0", a column away
+		// from the whole-dollar branch that starts one cent later — the same
+		// artifact tokenCount avoids at its own M cutover.
+		{99.96, "$100"},
+		{100, "$100"},
+		{134, "$134"},
+	} {
+		if got := costLabel(tc.c); got != tc.want {
+			t.Errorf("costLabel(%v) = %q, want %q", tc.c, got, tc.want)
 		}
 	}
 }

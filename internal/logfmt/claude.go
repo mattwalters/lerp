@@ -44,7 +44,12 @@ type claudeLine struct {
 	NumTurns        int    `json:"num_turns"`
 	DurationMS      int64  `json:"duration_ms"`
 	IsError         bool   `json:"is_error"`
-	Message         struct {
+	// TotalCostUSD is the run's own running total, in dollars, as the result
+	// line reports it. No other line carries a cost of any kind — the stream
+	// settles it only here — so unlike Usage it needs no guard against being
+	// billed twice.
+	TotalCostUSD float64 `json:"total_cost_usd"`
+	Message      struct {
 		ID      string        `json:"id"`
 		Content []claudeBlock `json:"content"`
 		Usage   claudeUsage   `json:"usage"`
@@ -109,8 +114,12 @@ func (c *claude) Decode(line string) (Event, bool) {
 	case "result":
 		// The result line carries the run's own total, which is the sum this
 		// stream has been keeping all along. Reporting it as usage would
-		// count the whole run twice at the end of it.
-		return Event{Kind: KindResult, Text: resultLine(l), IsError: l.IsError, Time: l.time()}, true
+		// count the whole run twice at the end of it. Cost is different: the
+		// stream never reports it anywhere else, so there is nothing to
+		// double here — this is the one and only place a claude run's dollar
+		// figure becomes knowable at all.
+		return Event{Kind: KindResult, Text: resultLine(l), IsError: l.IsError, Time: l.time(),
+			Cost: l.TotalCostUSD}, true
 	}
 	return Event{}, false
 }

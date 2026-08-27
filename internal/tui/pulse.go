@@ -82,12 +82,14 @@ type pulse struct {
 	consumed int64
 	lastT    time.Time
 	// tokens is what the run has spent, summed from the usage its log
-	// reports; tool and target are the last call it made, which is the most
-	// concrete answer the log has to what it is doing. History counts into
-	// all three the same as the live stream: the log records the whole run,
-	// so a run adopted mid-way reports the run's own total, not the tail of
-	// it this process happened to watch.
+	// reports; cost is the same sum over dollars, zero for a runner whose
+	// stream never states one; tool and target are the last call it made,
+	// which is the most concrete answer the log has to what it is doing.
+	// History counts into all four the same as the live stream: the log
+	// records the whole run, so a run adopted mid-way reports the run's own
+	// total, not the tail of it this process happened to watch.
 	tokens       int
+	cost         float64
 	tool, target string
 }
 
@@ -134,11 +136,11 @@ func (p *pulse) read(now time.Time) {
 			p.stream, p.cells, p.head, p.seen = logfmt.Stream{}, [sparkCells]int{}, 0, 0
 			p.at, p.lastT = time.Time{}, time.Time{}
 			p.hist, p.consumed = 0, 0
-			// The total and the last call went with the file: both are
+			// The totals and the last call went with the file: all are
 			// readings of a log that no longer exists, and the one still on
 			// screen would be a command from a run nobody can look at any
 			// more.
-			p.tokens, p.tool, p.target = 0, "", ""
+			p.tokens, p.cost, p.tool, p.target = 0, 0, "", ""
 		}
 		if mid {
 			p.stream.SkipLine()
@@ -149,6 +151,7 @@ func (p *pulse) read(now time.Time) {
 		for _, ev := range p.stream.Feed(b) {
 			p.place(ev, history)
 			p.tokens += ev.Usage
+			p.cost += ev.Cost
 			if ev.Kind == logfmt.KindToolCall {
 				p.tool, p.target = ev.Tool, ev.Text
 			}

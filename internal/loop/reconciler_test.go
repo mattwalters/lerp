@@ -649,6 +649,71 @@ func TestRunFailureRoutesToOnFailure(t *testing.T) {
 	}
 }
 
+// Claude states a run's cost on the same result line that ends its log, at
+// the exact moment the record naming that log is about to be discarded
+// (Evidence.Remove, right after this event's Event is built but before a
+// subscriber ever sees it) — so the loop has to read it here, while the log
+// still exists, rather than leave it for EventExited's recipient to try.
+func TestExitedEventCarriesTheRunsCostFromItsLog(t *testing.T) {
+	h := newHarness(t, 1, func(_ context.Context, inv run.Invocation) (run.Result, error) {
+		line := `{"type":"result","subtype":"success","num_turns":1,"total_cost_usd":0.42}` + "\n"
+		if err := os.WriteFile(inv.LogPath, []byte(line), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return run.Result{ExitCode: 0}, nil
+	})
+	h.fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Todo"})
+
+	h.rec.Tick(context.Background())
+	exited := h.waitEvents(t, EventExited, 1)
+	if exited[0].Cost != 0.42 {
+		t.Errorf("exit event cost = %v, want 0.42", exited[0].Cost)
+	}
+}
+
+// A runner whose stream never states a cost — codex, today — must not have
+// the exit event report one anyway. The log here decodes cleanly and carries
+// real token usage, so this is testing that absence, not a log runCost
+// merely failed to open.
+func TestExitedEventReportsNoCostForARunnerThatDoesNotStateOne(t *testing.T) {
+	h := newHarness(t, 1, func(_ context.Context, inv run.Invocation) (run.Result, error) {
+		line := `{"type":"turn.completed","usage":{"input_tokens":100,"output_tokens":50}}` + "\n"
+		if err := os.WriteFile(inv.LogPath, []byte(line), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return run.Result{ExitCode: 0}, nil
+	})
+	h.fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Todo"})
+
+	h.rec.Tick(context.Background())
+	exited := h.waitEvents(t, EventExited, 1)
+	if exited[0].Cost != 0 {
+		t.Errorf("exit event cost = %v, want 0", exited[0].Cost)
+	}
+}
+
+// runCost bounds its read rather than loading a pathological run's whole log
+// onto the tick goroutine: a multi-day agent's log can run to hundreds of
+// megabytes, and reading and JSON-decoding all of it would stall reconcile
+// for as long as that takes. A cost stated past the cap is missed — the
+// trade this makes on purpose, the same one pulse's own catchupChunks makes
+// against a log too long to catch up on in a poll — so this pins the
+// boundary rather than the ordinary case, which TestExitedEventCarriesTheRunsCostFromItsLog
+// already covers.
+func TestRunCostIsBoundedForAPathologicalLog(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.log")
+	var b strings.Builder
+	b.WriteString(strings.Repeat("x", runCostCap+1))
+	b.WriteString("\n")
+	b.WriteString(`{"type":"result","subtype":"success","total_cost_usd":9.99}` + "\n")
+	if err := os.WriteFile(path, []byte(b.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := runCost(path); got != 0 {
+		t.Errorf("runCost read past its cap and found %v, want 0", got)
+	}
+}
+
 // Provisioning never starts a lane, so the claim it won has to go back:
 // an assigned ticket is never eligible, so keeping it would strand the ticket
 // in the very queue it came from. The workspace is disposed either way — a

@@ -56,7 +56,22 @@ type Event struct {
 	// still carry it, and where it has none — a single-line runner, or a
 	// call whose every line decoded to nothing — one call's worth is lost,
 	// which the next line's arrival makes invisible.
-	Usage   int
+	Usage int
+	// Cost is what the runner's own stream says this line's call cost in
+	// dollars. Lerp carries no price table — model prices churn and a wrong
+	// one reads as confident — so a vendor whose stream is silent on cost
+	// stays silent here too, forever, rather than being priced from Usage.
+	//
+	// Like Usage, a reader sums it over the stream, so it is a decoder's job
+	// to hand back a delta, zero after the first line of a call that repeats
+	// itself the way Usage's doc describes — never the running total a
+	// stream may carry instead. A decoder that reports a stream's cumulative
+	// figure as-is on every line it appears on inflates every run behind it.
+	// claude's decoder gets this for free rather than by discipline: its
+	// stream states cost on exactly one line for the whole run, so treating
+	// that one figure as the delta is correct without any bookkeeping to get
+	// wrong — see claude.go's result case.
+	Cost    float64
 	IsError bool
 	// Time is when the runner says the line was written, zero for a runner
 	// that does not date its lines. Like Usage it is the line's rather than
