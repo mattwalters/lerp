@@ -26,7 +26,7 @@ import (
 
 const usage = `usage:
   lerp [-concurrency N]         open the TUI; the loop runs while it is open
-  lerp version                  print the version
+  lerp version, --version       print the version
   lerp login                    sign in to Linear (loopback OAuth); no flags
   lerp logout                   sign out of Linear and revoke the token; no flags
   lerp init --team KEY [--yes]  map lerp's queues onto the team's board and write this repo's lerp.toml
@@ -40,6 +40,12 @@ const defaultLanes = 10
 
 func main() {
 	args := os.Args[1:]
+	// --version (and -version) is the flag-shaped spelling scripts and
+	// `--help` habits reach for; without this it falls into the bare-TUI
+	// flag set below and dies as an unknown flag instead of printing anything.
+	if len(args) > 0 && (args[0] == "--version" || args[0] == "-version") {
+		args[0] = "version"
+	}
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
 		fs := flag.NewFlagSet("lerp", flag.ExitOnError)
 		lanes := fs.Int("concurrency", defaultLanes, "how many agents may run at once")
