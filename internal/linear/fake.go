@@ -3,6 +3,7 @@ package linear
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -339,12 +340,20 @@ func (f *Fake) GetIssueDetail(_ context.Context, issueID string) (IssueDetail, e
 	return IssueDetail{Body: fi.body, Comments: append([]Comment(nil), f.comments[issueID]...)}, nil
 }
 
+// MoveIssue mirrors the real client's refusal of a status name absent from
+// the issue's team — but only once a test has declared that team's states
+// with SetTeamStates. A team nothing has declared accepts any name, so the
+// many tests that move issues through ad hoc statuses without modeling a
+// whole board keep working unchanged.
 func (f *Fake) MoveIssue(_ context.Context, issueID, statusName string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	fi, ok := f.issues[issueID]
 	if !ok {
 		return fmt.Errorf("move issue %s: %w", issueID, ErrNotFound)
+	}
+	if states, declared := f.teamStates[fi.team]; declared && !slices.Contains(states, statusName) {
+		return fmt.Errorf("move issue %s: no state named %q on its team", issueID, statusName)
 	}
 	fi.issue.Status = statusName
 	f.touch(fi)
