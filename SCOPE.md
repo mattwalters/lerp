@@ -80,19 +80,20 @@ sentence.
    queue it sits in — blocking relations are how humans sequence
    concurrent work.
 3. **Runner** — an adapter to a coding-agent CLI (Claude Code, Codex,
-   …). The contract: takes a prompt and a working directory, runs to
-   exit, exit code means done or failed. The contract is the lowest
-   common denominator — a capability every runner can't offer is a
-   capability lerp doesn't have. The adapters for the CLIs lerp knows
-   ship built in — one file per vendor, holding the flag spellings and
-   the session bookkeeping a command template cannot express — and
-   config names one and overrides its defaults. The command runner
-   remains for everything else: any line of shell whose exit code
-   keeps the contract is a runner, adapter or not. Which runner serves
-   a queue is one word of that queue's config, never a policy: lerp
-   does not rotate, prefer, or fall back between runners. Choosing who
-   does the work is routing, and routing is a human placing something
-   — a ticket on a status, a word in a queue's config.
+   Antigravity, …). The contract: takes a prompt and a working
+   directory, runs to exit, exit code means done or failed. The
+   contract is the lowest common denominator — a capability every
+   runner can't offer is a capability lerp doesn't have. The adapters
+   for the CLIs lerp knows ship built in — one file per vendor, holding
+   the flag spellings and the session bookkeeping a command template
+   cannot express — and config names one and overrides its defaults.
+   The command runner remains for everything else: any line of shell
+   whose exit code keeps the contract is a runner, adapter or not.
+   Which runner serves a queue is one word of that queue's config,
+   never a policy: lerp does not rotate, prefer, or fall back between
+   runners. Choosing who does the work is routing, and routing is a
+   human placing something — a ticket on a status, a word in a queue's
+   config.
 4. **Lane** — a concurrency unit. Lerp runs at most N agents at once.
    N is small — small enough that one person can watch what is
    happening — and the number itself is a default the operator

@@ -141,3 +141,61 @@ func TestCapturesSession(t *testing.T) {
 		t.Error("CapturesSession(a hand-written command runner) = true, want false")
 	}
 }
+
+// antigravityRunner is a vendor-resolved runner for agy, the other adapter
+// whose CLI names its own session instead of accepting one lerp mints — the
+// same shape codexRunner is, over the seam this ticket shares with LERP-137.
+func antigravityRunner(t *testing.T) config.Runner {
+	t.Helper()
+	c, err := config.ParseRepoConfig(`
+teams = ["LERP"]
+provision = "p"
+dispose = "d"
+
+[runners.agy]
+vendor = "antigravity"
+
+[queues.implement]
+status = "Implementing"
+prompt = "p {{ticket}}"
+runner = "agy"
+on_success = "Done"
+`, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c.Runners["agy"]
+}
+
+func TestCapturesSessionAntigravity(t *testing.T) {
+	if !CapturesSession(antigravityRunner(t)) {
+		t.Error("CapturesSession(antigravity) = false, want true")
+	}
+}
+
+// agy's init line carries conversation_id as a top-level sibling field, not
+// nested inside the "init" object the way its own cwd and tool list are —
+// this pins that shape against the seam that reads it.
+func TestResolveSessionReadsAntigravityInitLine(t *testing.T) {
+	logPath := writeLog(t,
+		`{"event":"init","conversation_id":"ffd2f49a-85bf-45ab-bfad-80aed96a9b98","init":{"cwd":"/tmp"}}`,
+		`{"event":"step_update","step_update":{"step_index":0,"state":"DONE","step_type":"user_input"}}`,
+	)
+	id, err := resolveSession(antigravityRunner(t), evidence.Record{RunID: "run", LogPath: logPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "ffd2f49a-85bf-45ab-bfad-80aed96a9b98"; id != want {
+		t.Errorf("resolveSession = %q, want %q", id, want)
+	}
+}
+
+// An agy run killed before its init line ever appeared leaves nothing to
+// resume, and that has to fail plainly rather than resolve to an empty id.
+func TestResolveSessionErrorsForAntigravityWhenTheLogNeverNamesOne(t *testing.T) {
+	logPath := writeLog(t, `{"event":"step_update","step_update":{"step_index":0,"state":"DONE","step_type":"user_input"}}`)
+	_, err := resolveSession(antigravityRunner(t), evidence.Record{RunID: "run-3", LogPath: logPath})
+	if err == nil || !strings.Contains(err.Error(), "never reported a session id") {
+		t.Fatalf("resolveSession error = %v, want a no-session error", err)
+	}
+}

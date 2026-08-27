@@ -36,8 +36,9 @@ type SessionNamer interface {
 // decoding side. A map rather than a switch is what keeps Names from
 // drifting away from what Lookup accepts.
 var adapters = map[string]Adapter{
-	"claude": claude{},
-	"codex":  codex{},
+	"claude":      claude{},
+	"codex":       codex{},
+	"antigravity": antigravity{},
 }
 
 // Lookup returns the adapter registered under name.

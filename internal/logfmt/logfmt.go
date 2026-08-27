@@ -236,14 +236,20 @@ func (s *Stream) sniff(line string) []Event {
 // whether the line is a JSON event at all — a stream of events nobody claims
 // is still a stream, and worth waiting a few lines on. Adding a vendor is one
 // file plus one case here.
+//
+// Two probe fields, not one: claude and codex both discriminate on `type`,
+// but agy discriminates on `event` — a line naming neither, or naming one
+// with a value no case here knows, is still a JSON event and falls to the
+// event-but-unclaimed branch below rather than being read as plain text.
 func detect(line string) (Decoder, bool) {
 	if !strings.HasPrefix(strings.TrimSpace(line), "{") {
 		return nil, false
 	}
 	var probe struct {
-		Type string `json:"type"`
+		Type  string `json:"type"`
+		Event string `json:"event"`
 	}
-	if json.Unmarshal([]byte(line), &probe) != nil || probe.Type == "" {
+	if json.Unmarshal([]byte(line), &probe) != nil || (probe.Type == "" && probe.Event == "") {
 		return nil, false
 	}
 	switch probe.Type {
@@ -251,6 +257,10 @@ func detect(line string) (Decoder, bool) {
 		return &claude{}, true
 	case "thread.started", "turn.started", "turn.completed", "item.started", "item.completed":
 		return codex{}, true
+	}
+	switch probe.Event {
+	case "init", "step_update", "result":
+		return newAntigravity(), true
 	}
 	return nil, true
 }

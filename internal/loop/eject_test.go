@@ -393,6 +393,87 @@ func TestEjectRefusesADeadAgent(t *testing.T) {
 	waitIdle(t, h.rec)
 }
 
+// antigravityRunner is the test repo's runner for agy, the other vendor
+// whose CLI names its own session instead of accepting one lerp mints — the
+// same shape codexRunner is, over the seam LERP-137 built and this ticket
+// reuses.
+func antigravityRunner(h *harness) {
+	h.rec.o.Repo.Runners["agent"] = config.Runner{
+		Vendor:  "antigravity",
+		Command: "agy -p {{prompt}} --output-format stream-json --add-dir {{workdir}}",
+		Resume:  "cd {{workdir}} && agy --conversation {{session}}",
+	}
+}
+
+// An antigravity run records no SessionID at all — lerp never mints one for a
+// vendor that names its own — and eject resolves it from the run's own log
+// instead, reading the real conversation_id shape agy's init line carries (a
+// top-level sibling field, not nested inside "init").
+func TestEjectAntigravityRunResolvesSessionFromItsLog(t *testing.T) {
+	h := newHarness(t, 1, nil)
+	h.rec.o.Alive = evidence.Alive
+	antigravityRunner(h)
+	agent := startFakeAgent(t)
+	record := orphanRun(t, h, evidence.Record{
+		Lane: 1, TicketID: "tkt", Ticket: "LERP-1", Queue: "todo", StartingStatus: "Todo",
+	}, agent)
+	logLine := `{"event":"init","conversation_id":"ffd2f49a-85bf-45ab-bfad-80aed96a9b98","init":{"cwd":"/tmp"}}` + "\n"
+	if err := os.WriteFile(record.LogPath, []byte(logLine), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h.fake.AddIssue("LERP", linear.Issue{
+		ID: "tkt", Identifier: "LERP-1", Status: "Todo", AssigneeID: "fake-viewer",
+	})
+	ctx := context.Background()
+	h.rec.Tick(ctx)
+	h.waitEvents(t, EventAdopted, 1)
+
+	ejection, err := h.rec.Eject(ctx, "tkt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "cd '" + record.Workspace + "' && agy --conversation 'ffd2f49a-85bf-45ab-bfad-80aed96a9b98'"
+	if ejection.Resume != want {
+		t.Errorf("Resume = %q, want %q", ejection.Resume, want)
+	}
+	agent.waitKilled()
+}
+
+// An antigravity agent killed before it ever wrote its init line leaves eject
+// nothing to resume, and refusing has to happen before the kill — the agent
+// must still be found alive and running afterwards, the same guarantee
+// TestEjectRefusesACodexRunThatNeverReportedASession holds for codex.
+func TestEjectRefusesAnAntigravityRunThatNeverReportedASession(t *testing.T) {
+	h := newHarness(t, 1, nil)
+	h.rec.o.Alive = evidence.Alive
+	antigravityRunner(h)
+	agent := startFakeAgent(t)
+	record := orphanRun(t, h, evidence.Record{
+		Lane: 1, TicketID: "tkt", Ticket: "LERP-1", Queue: "todo", StartingStatus: "Todo",
+	}, agent)
+	// The log exists — the run started — but died before its first event.
+	if err := os.WriteFile(record.LogPath, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h.fake.AddIssue("LERP", linear.Issue{
+		ID: "tkt", Identifier: "LERP-1", Status: "Todo", AssigneeID: "fake-viewer",
+	})
+	ctx := context.Background()
+	h.rec.Tick(ctx)
+	h.waitEvents(t, EventAdopted, 1)
+
+	_, err := h.rec.Eject(ctx, "tkt")
+	if err == nil || !strings.Contains(err.Error(), "never reported a session id") {
+		t.Fatalf("Eject error = %v, want one naming the missing session", err)
+	}
+	if !agent.alive() {
+		t.Error("a refused eject killed the agent")
+	}
+	if _, err := h.evidence.Read(record.RunID); err != nil {
+		t.Errorf("run record after a refused eject: read error = %v, want it intact", err)
+	}
+}
+
 // The two ways a run can end are decided under one lock: an eject that
 // arrives while the run is already being concluded is refused, rather than
 // reporting a session the operator cannot resume and stranding the workspace
@@ -614,9 +695,10 @@ func TestEjectRefusesASecondTime(t *testing.T) {
 }
 
 // CanEject answers for a queue before the operator presses the key, and it
-// has two ways to say no: no resume template, and a command that never opens
-// a session lerp chose — a resume template over one of those is a command
-// nobody could use, because lerp never learns the id.
+// has two ways to say no: no resume template, and no session at all — neither
+// one lerp minted into {{session}} nor one a captured-session vendor names —
+// a resume template over either of those is a command nobody could use,
+// because lerp never learns the id.
 func TestCanEjectNeedsBothHalves(t *testing.T) {
 	h := newHarness(t, 1, nil)
 	cases := []struct {
@@ -628,12 +710,16 @@ func TestCanEjectNeedsBothHalves(t *testing.T) {
 		{"both halves", config.Runner{Command: "agent {{session}}", Resume: "agent --resume {{session}}"}, true, ""},
 		{"no resume template", config.Runner{Command: "agent {{session}}"}, false, "no resume command"},
 		{"command opens no session", config.Runner{Command: "agent", Resume: "agent --resume {{session}}"}, false, "{{session}}"},
-		// A vendor that names its own session (codex) never opens one lerp
-		// chose, so the command alone would read as "does not use
-		// {{session}}" — CapturesSession is what turns this on anyway.
-		{"vendor captures its own session", config.Runner{
+		// A vendor that names its own session (codex, antigravity) never
+		// opens one lerp chose, so the command alone would read as "does not
+		// use {{session}}" — CapturesSession is what turns this on anyway.
+		{"codex captures its own session", config.Runner{
 			Vendor: "codex", Command: "codex exec --json -- {{prompt}}",
 			Resume: "cd {{workdir}} && codex resume {{session}}",
+		}, true, ""},
+		{"antigravity captures its own session", config.Runner{
+			Vendor: "antigravity", Command: "agy -p {{prompt}} --output-format stream-json --add-dir {{workdir}}",
+			Resume: "cd {{workdir}} && agy --conversation {{session}}",
 		}, true, ""},
 	}
 	for _, tc := range cases {
