@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -57,6 +58,11 @@ type Event struct {
 	// which the next line's arrival makes invisible.
 	Usage   int
 	IsError bool
+	// Time is when the runner says the line was written, zero for a runner
+	// that does not date its lines. Like Usage it is the line's rather than
+	// a kind's, and it is what lets a reader that attached late put the
+	// events it is catching up on where they actually happened.
+	Time time.Time
 }
 
 // Decoder turns one line of a runner's log into an event. A line a decoder

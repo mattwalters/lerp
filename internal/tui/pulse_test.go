@@ -3,6 +3,7 @@ package tui
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -37,7 +38,7 @@ func TestPulseCountsDecodedEvents(t *testing.T) {
 	appendLog(t, path, `{"type":"system","subtype":"init","model":"claude-opus-5","session_id":"abc"}`+"\n")
 
 	now := time.Now()
-	p := newPulse(path, now, now)
+	p := newPulse(path)
 	p.read(now)
 	// Three lines, one of them a tool result the pane draws under its call:
 	// three events, because three things happened.
@@ -64,7 +65,7 @@ func TestPulseWaitsForAWholeLine(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "run.log")
 	appendLog(t, path, "first line\n")
 	now := time.Now()
-	p := newPulse(path, now, now)
+	p := newPulse(path)
 	p.read(now)
 
 	appendLog(t, path, "half a ")
@@ -79,20 +80,23 @@ func TestPulseWaitsForAWholeLine(t *testing.T) {
 	}
 }
 
-// Attaching reads the file's end: what a run wrote before this process
-// started watching happened at times the pulse cannot know, and dating it to
-// now would draw a burst that never happened.
-func TestPulseAttachesAtTheEndOfAnExistingLog(t *testing.T) {
+// History a log does not date has no place in the ring: those lines happened
+// at times nobody recorded, and dating them to now would draw a burst that
+// never happened. The line stays as short as a fresh run's — a shape nobody
+// measured is not drawn — while the totals still carry what the lines say.
+func TestPulseLeavesUndatedHistoryOffTheLine(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "run.log")
 	appendLog(t, path, strings.Repeat("an hour of work\n", 200))
 
 	now := time.Now()
-	p := newPulse(path, now, now)
+	p := newPulse(path)
 	p.read(now)
-	for _, c := range p.window() {
-		if c != 0 {
-			t.Fatalf("history it never saw was counted as activity: %v", p.window())
-		}
+	got := p.window()
+	if len(got) != 1 {
+		t.Fatalf("undated history stretched the line to %d buckets, want 1: %v", len(got), got)
+	}
+	if got[0] != 0 {
+		t.Fatalf("history nobody dated was counted as activity now: %v", got)
 	}
 }
 
@@ -102,7 +106,7 @@ func TestPulseQuietGoesFlat(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "run.log")
 	appendLog(t, path, "x\n")
 	start := time.Now()
-	p := newPulse(path, start, start)
+	p := newPulse(path)
 	p.read(start)
 	appendLog(t, path, "busy\nbusy\n")
 	p.read(start)
@@ -140,7 +144,7 @@ func TestPulseHeardIsTheFilesOwnTime(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now()
-	p := newPulse(path, now, now)
+	p := newPulse(path)
 	p.read(now)
 	if p.heard.IsZero() || p.heard.Sub(old).Abs() > time.Second {
 		t.Fatalf("heard = %v, want the file's mtime %v", p.heard, old)
@@ -151,7 +155,7 @@ func TestPulseHeardIsTheFilesOwnTime(t *testing.T) {
 // no reading rather than a made-up one.
 func TestPulseWithoutAFileHasNothingToSay(t *testing.T) {
 	now := time.Now()
-	p := newPulse(filepath.Join(t.TempDir(), "not-yet"), now, now)
+	p := newPulse(filepath.Join(t.TempDir(), "not-yet"))
 	p.read(now)
 	p.read(now.Add(time.Minute))
 	if !p.heard.IsZero() {
@@ -169,7 +173,7 @@ func TestPulseStopsReadingALogThatVanished(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "run.log")
 	appendLog(t, path, "working\n")
 	now := time.Now()
-	p := newPulse(path, now, now)
+	p := newPulse(path)
 	p.read(now)
 	if p.heard.IsZero() {
 		t.Fatal("a log that is there reports no time")
@@ -192,7 +196,7 @@ func TestPulseWindowGrowsWithTheRun(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "run.log")
 	appendLog(t, path, "started\n")
 	start := time.Now()
-	p := newPulse(path, start, start)
+	p := newPulse(path)
 	p.read(start)
 	if got := len(p.window()); got != 1 {
 		t.Fatalf("a run one poll old draws %d buckets, want 1", got)
@@ -207,98 +211,100 @@ func TestPulseWindowGrowsWithTheRun(t *testing.T) {
 	}
 }
 
-// Done-when: a run adopted from a previous process must not read as one that
-// just started. The span between the run starting and this process attaching
-// is drawn as unread — history no reading exists for — rather than left off
-// the line, which is how an hour-old agent came to draw the short line of a
-// ten-second-old one.
-func TestPulseMarksTheSpanItNeverWatched(t *testing.T) {
+// datedCall is one Claude-stream tool call, dated the way the real stream
+// dates its lines, spending what the test says it spent.
+func datedCall(ts time.Time, id, file string, usage int) string {
+	return `{"type":"assistant","timestamp":"` + ts.UTC().Format(time.RFC3339Nano) + `",` +
+		`"message":{"id":"` + id + `","content":[{"type":"tool_use","name":"Read","input":{"file_path":"` + file + `"}}],` +
+		`"usage":{"input_tokens":` + strconv.Itoa(usage) + `,"output_tokens":0}}}` + "\n"
+}
+
+// Done-when: a run adopted from a previous process draws the history its log
+// records rather than the short line of one that just started. The stream
+// dates its lines, so the events this process never watched still land in the
+// buckets where they happened — and the totals are the run's own: the tokens
+// its whole log was billed for, and the last call it made before the pickup.
+func TestPulseRebuildsAnAdoptedRunsHistory(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "run.log")
-	appendLog(t, path, strings.Repeat("an hour of work\n", 200))
 	now := time.Now()
-	p := newPulse(path, now.Add(-time.Hour), now)
+	appendLog(t, path,
+		`{"type":"system","subtype":"init","model":"claude-opus-5","session_id":"abc"}`+"\n"+
+			datedCall(now.Add(-5*time.Minute), "msg_01", "/a/old.go", 1000)+
+			// An undated line between dated ones — the thinking heartbeat —
+			// is read at the last dated time, which it follows closely.
+			`{"type":"system","subtype":"thinking_tokens","estimated_tokens":12}`+"\n"+
+			datedCall(now.Add(-2*time.Minute), "msg_02", "/a/recent.go", 500))
+
+	p := newPulse(path)
 	p.read(now)
 
 	got := p.window()
-	if len(got) != sparkCells {
-		t.Fatalf("an hour-old run draws %d buckets, want the whole ring of %d", len(got), sparkCells)
+	// The oldest event is five minutes — twenty buckets — back, and the
+	// reading reaches exactly that far: no further, which would claim quiet
+	// nobody measured, and no shorter, which would be the fresh line.
+	if want := 21; len(got) != want {
+		t.Fatalf("a run with five minutes of history draws %d buckets, want %d: %v", len(got), want, got)
 	}
-	for i, c := range got[:len(got)-1] {
-		if c != unreadBucket {
-			t.Fatalf("bucket %d of a span nobody counted holds %d: %v", i, c, got)
-		}
+	if got[0] != 2 {
+		t.Fatalf("the old call and its heartbeat hold %d, want 2: %v", got[0], got)
 	}
-	bars := sparkline(got)
-	fresh := sparkline(func() []int {
-		q := newPulse(path, now, now)
-		q.read(now)
-		return q.window()
-	}())
-	if bars == fresh {
-		t.Fatalf("the adopted run draws %q, the same line as a run that just started", bars)
+	if at := len(got) - 1 - 8; got[at] != 1 {
+		t.Fatalf("the recent call landed at %d, want bucket %d of %v", got[at], at, got)
 	}
-	if !strings.HasPrefix(bars, string(sparkUnread)) || !strings.ContainsRune(bars, sparkBars[0]) {
-		t.Fatalf("the line does not read as unread history followed by a watched bucket: %q", bars)
+	if p.tokens != 1500 {
+		t.Fatalf("the run's history billed %d tokens, want 1500", p.tokens)
+	}
+	if p.tool != "Read" || p.target != "recent.go" {
+		t.Fatalf("the last call is %q %q, want Read recent.go", p.tool, p.target)
 	}
 }
 
-// The unread span is not a permanent header: it gives way bucket by bucket to
-// what the pulse has actually watched, so a run adopted ten minutes ago
-// eventually draws a line of nothing but its own reading.
-func TestPulseUnreadGivesWayToWhatItWatches(t *testing.T) {
+// History older than the ring still stretches the line: an adopted run whose
+// log went quiet twenty minutes ago draws the long flat line of a run that
+// has been quiet, not the short line of one that just started — the shape is
+// the reading, and it is the one thing a restart used to lose.
+func TestPulseHistoryBeyondTheRingStretchesTheLine(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "run.log")
-	appendLog(t, path, "adopted mid-run\n")
-	start := time.Now()
-	p := newPulse(path, start.Add(-time.Hour), start)
-	p.read(start)
+	now := time.Now()
+	appendLog(t, path, datedCall(now.Add(-20*time.Minute), "msg_01", "/a/b.go", 700))
 
-	appendLog(t, path, "still working\n")
-	p.read(start.Add(10 * sparkBucket))
+	p := newPulse(path)
+	p.read(now)
 	got := p.window()
 	if len(got) != sparkCells {
-		t.Fatalf("window = %d buckets, want the ring's %d", len(got), sparkCells)
+		t.Fatalf("a run quiet since before the ring draws %d buckets, want %d", len(got), sparkCells)
 	}
-	// Eleven buckets have existed under this pulse; the rest is what it
-	// never saw, and the unread span shortens by exactly what it watched.
-	if watched := 11; got[len(got)-watched] == unreadBucket || got[len(got)-watched-1] != unreadBucket {
-		t.Fatalf("the unread span did not give way after %d buckets: %v", watched, got)
-	}
-
-	p.read(start.Add(time.Hour))
-	for i, c := range p.window() {
-		if c == unreadBucket {
-			t.Fatalf("bucket %d still reads unread after the ring filled: %v", i, p.window())
+	for i, c := range got {
+		if c != 0 {
+			t.Fatalf("an event from before the ring was counted into bucket %d: %v", i, got)
 		}
+	}
+	if p.tokens != 700 || p.tool != "Read" {
+		t.Fatalf("history beyond the ring lost the totals: %d tokens, call %q", p.tokens, p.tool)
 	}
 }
 
-// A rewrite takes the counts, never the unread span. The counts describe a
-// file that is gone; "this pulse has no reading for what came before" is what
-// the rewrite has just made true again of everything it held, and clearing it
-// alongside them would hand an adopted run back the line of one that just
-// started.
-func TestPulseKeepsItsUnreadSpanWhenTheLogIsRewritten(t *testing.T) {
+// Adoption catches up in one poll, not one chunk: a log bigger than a single
+// read hands back is swallowed by the same read call, so the row never spends
+// its first seconds drawing half a history.
+func TestPulseCatchesUpOnABigLogInOnePoll(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "run.log")
-	appendLog(t, path, strings.Repeat("an hour of work\n", 200))
-	start := time.Now()
-	p := newPulse(path, start.Add(-time.Hour), start)
-	p.read(start)
-	p.read(start.Add(sparkBucket))
+	now := time.Now()
+	var b strings.Builder
+	const lines, each = 2000, 10
+	for i := 0; i < lines; i++ {
+		back := time.Duration(lines-i) * (5 * time.Minute) / lines
+		b.WriteString(datedCall(now.Add(-back), "msg_"+strconv.Itoa(i), "/a/b.go", each))
+	}
+	if int64(b.Len()) <= tailChunk {
+		t.Fatalf("the log is %d bytes, no bigger than one %d-byte chunk", b.Len(), tailChunk)
+	}
+	appendLog(t, path, b.String())
 
-	// Shorter than what it replaces, which is how a follower knows a file
-	// was rewritten rather than appended to.
-	writeLog(t, path, []byte("a wholly new log\n"))
-	p.read(start.Add(2 * sparkBucket))
-	got := p.window()
-	if len(got) != sparkCells {
-		t.Fatalf("after the rewrite the run draws %d buckets, want the ring's %d: %v",
-			len(got), sparkCells, got)
-	}
-	if got[0] != unreadBucket {
-		t.Fatalf("the rewrite took the unread span with the counts: %v", got)
-	}
-	if got[len(got)-1] != 1 {
-		t.Fatalf("the new log's line did not land in the bucket now filling: %v", got)
+	p := newPulse(path)
+	p.read(now)
+	if p.tokens != lines*each {
+		t.Fatalf("one poll read %d tokens of history, want all %d", p.tokens, lines*each)
 	}
 }
 
@@ -317,11 +323,6 @@ func TestSparkline(t *testing.T) {
 		{"the rest scale under the peak", []int{1, 5, 9}, "▂▄█"},
 		{"one event never reads as none", []int{1, 0, 20}, "▂▁█"},
 		{"no window, no line", nil, ""},
-		// A bucket from before the pulse attached is neither a count nor a
-		// quiet stretch, so it draws as neither: off the ramp entirely,
-		// while the buckets that were counted keep the window's own scale.
-		{"unwatched history is not a quiet stretch",
-			[]int{unreadBucket, unreadBucket, 1, 0, 4}, "··▂▁█"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -339,7 +340,7 @@ func TestPulseStartsOverWhenTheLogIsRewritten(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "run.log")
 	appendLog(t, path, "one\ntwo\nthree\n")
 	start := time.Now()
-	p := newPulse(path, start, start)
+	p := newPulse(path)
 	p.read(start)
 	appendLog(t, path, "four\nfive\n")
 	p.read(start.Add(sparkBucket))
@@ -363,7 +364,7 @@ func TestPulseTracksSpendAndTheLastCall(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "run.log")
 	appendLog(t, path, `{"type":"system","subtype":"init","model":"claude-opus-5","session_id":"abc"}`+"\n")
 	now := time.Now()
-	p := newPulse(path, now, now)
+	p := newPulse(path)
 	p.read(now)
 	if p.tokens != 0 || p.tool != "" {
 		t.Fatalf("a run that has done nothing reports %d tokens and %q", p.tokens, p.tool)
@@ -409,8 +410,8 @@ func TestPulseBillsOneCallOnce(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "run.log")
 	appendLog(t, path, `{"type":"system","subtype":"init","model":"claude-opus-5","session_id":"abc"}`+"\n")
 	now := time.Now()
-	p := newPulse(path, now, now)
-	p.read(now) // attach at the end of what is already there
+	p := newPulse(path)
+	p.read(now) // consume what is already there as history
 
 	// Three lines of one call, each repeating the same 1,000-token usage,
 	// and read a poll apart: a live board reads a message's blocks as they

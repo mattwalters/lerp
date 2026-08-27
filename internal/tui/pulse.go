@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"math"
+	"os"
 	"strings"
 	"time"
 
@@ -26,24 +28,19 @@ const (
 	sparkBucket   = 15 * time.Second
 	sparkCells    = 60
 	sparkMinCells = 8
+
+	// catchupChunks bounds how many chunks of history one poll reads while
+	// the pulse is behind the log — behind only just after attaching, since
+	// a live agent writes slower than one chunk a poll. Thirty-two chunks is
+	// two megabytes: several times the log a run leaves after minutes of
+	// work, so adoption usually catches up in one poll, and small enough
+	// that a monstrous log costs a few polls instead of one long stall.
+	catchupChunks = 32
 )
 
 // sparkBars is the ramp, lowest first. Index 0 is an empty bucket, so a
 // stretch with no activity in it reads as a flat line along the bottom.
 var sparkBars = []rune("▁▂▃▄▅▆▇█")
-
-const (
-	// unreadBucket stands in a window for a bucket that passed before this
-	// process attached to the log — history no count exists for. Counts are
-	// never negative, so it cannot collide with one.
-	unreadBucket = -1
-	// sparkUnread draws such a bucket. It sits off the ramp deliberately: a
-	// bar of any height would be a count nobody made, and the floor bar is
-	// already the reading for "watched, and nothing happened". This one says
-	// only "older than I have watched it", and a dot is distinct from every
-	// bar at a glance rather than by height.
-	sparkUnread = '·'
-)
 
 // pulse is one lane's log read for what its work row says about the run in
 // progress: how much activity it has carried lately, what it has spent, and
@@ -66,90 +63,136 @@ type pulse struct {
 	// file yet, which is whether the row has a second line to draw at all.
 	heard time.Time
 	// cells is a ring of event counts, one per bucket; head is the bucket
-	// now filling, at is when it opened, and seen is how many buckets have
-	// existed at all — a young run draws a short line rather than a long
+	// now filling, at is when it opened, and seen is how many buckets the
+	// reading covers — a young run draws a short line rather than a long
 	// empty one, which would be the picture of a run that had died.
 	cells [sparkCells]int
 	head  int
 	at    time.Time
 	seen  int
-	// unread is how many buckets passed between the run starting and this
-	// pulse attaching, capped at the ring. They carry no counts — there are
-	// none to be had — and window draws them ahead of the ring, so an
-	// adopted run reads as older than the stretch it has been watched for.
-	unread int
+	// hist is how much of the log predates this pulse, and consumed how much
+	// it has read; together they say whether a chunk is history being caught
+	// up on or the live stream. The two are read differently: a live event
+	// happened just now and lands in the bucket now filling, while a
+	// historical one happened whenever its line says (lastT carrying the
+	// last dated line's time over the undated lines between, which follow
+	// it closely), and one whose line says nothing has no place in the ring
+	// at all — dating it to now would draw a burst that never happened.
+	hist     int64
+	consumed int64
+	lastT    time.Time
 	// tokens is what the run has spent, summed from the usage its log
-	// reports; tool and target are the last tool call it made, which is the
-	// most concrete answer the log has to what it is doing. Both are of the
-	// stretch this pulse has read: unread above says whether there is a
-	// stretch before it, and the row says so too rather than passing a
-	// partial total off as the run's.
+	// reports; tool and target are the last call it made, which is the most
+	// concrete answer the log has to what it is doing. History counts into
+	// all three the same as the live stream: the log records the whole run,
+	// so a run adopted mid-way reports the run's own total, not the tail of
+	// it this process happened to watch.
 	tokens       int
 	tool, target string
 }
 
-// newPulse attaches at the end of the file. What is already in it happened at
-// times the pulse cannot know, and counting it into the bucket now filling
-// would draw a burst that never happened.
-//
-// started is when the run began, and only a run inherited from a previous
-// process began before now (see readPulses). That span is history this pulse
-// has no counts for and no way to get any, so it is marked unread rather than
-// left out: a line that merely started short is the line of a run that just
-// started, which is the one thing the row must not say about an hour-old
-// agent.
-func newPulse(path string, started, now time.Time) *pulse {
-	p := &pulse{follower: newFollower(path, 0)}
-	if !started.IsZero() {
-		p.unread = min(sparkCells, max(0, int(now.Sub(started)/sparkBucket)))
+// newPulse attaches at the start of the file and reads the run's whole log,
+// history included: the log records what the run did and — where the runner
+// dates its lines — when, so a run adopted from a previous process draws the
+// history it actually has. A log that does not date its lines contributes its
+// history to the totals but not to the ring, and the line grows from the
+// attach the way a fresh run's does: short, never a shape nobody measured.
+func newPulse(path string) *pulse {
+	p := &pulse{follower: newFollower(path, math.MaxInt64)}
+	// What the file holds now is history; what arrives after is the live
+	// stream. A log that is not there yet has no history at all.
+	if info, err := os.Stat(path); err == nil {
+		p.hist = info.Size()
 	}
 	return p
 }
 
-// read takes one poll's worth of log. now is passed in rather than read here
-// so a caller polling several lanes buckets them all against one clock.
+// read takes one poll's worth of log — or, while the pulse is still behind
+// the history it attached over, up to catchupChunks of it, so adoption
+// converges in a poll or two instead of trickling in. now is passed in rather
+// than read here so a caller polling several lanes buckets them all against
+// one clock.
 func (p *pulse) read(now time.Time) {
-	b, mid, reset := p.follower.next()
-	// The file's own time, or none at all: a log that is gone is not a log
-	// that has fallen quiet, and reporting the last time it was there would
-	// read as an agent still being watched.
-	p.heard = p.mod
-	if p.heard.IsZero() {
-		// There is no file to read: a lane still provisioning is given its
-		// log path before the runner creates it, and a log may be deleted
-		// under a live agent. Rolling the ring against a file that is not
-		// there would draw the flat line of a run that had stopped.
-		return
-	}
-	if reset {
-		// The file was rewritten under us, so the counts are a picture of a
-		// log that is gone — and folding a whole new file into the bucket
-		// now filling would draw one spike and flatten every real one beside
-		// it. Start the reading over with the file.
-		//
-		// The unread span survives: it says this pulse has no counts for
-		// what came before, which a rewrite has just made true again of
-		// everything it had. It is not a rescue — a rewrite costs the
-		// reading either way, and a short span leaves a short line — it is
-		// that the span is still the truth about the run after one.
-		p.stream, p.cells, p.head, p.seen = logfmt.Stream{}, [sparkCells]int{}, 0, 0
-		p.at = time.Time{}
-		// The total and the last call went with the file: both are readings
-		// of a log that no longer exists, and the one still on screen would
-		// be a command from a run nobody can look at any more.
-		p.tokens, p.tool, p.target = 0, "", ""
-	}
-	if mid {
-		p.stream.SkipLine()
-	}
-	p.roll(now)
-	for _, ev := range p.stream.Feed(b) {
-		p.cells[p.head]++
-		p.tokens += ev.Usage
-		if ev.Kind == logfmt.KindToolCall {
-			p.tool, p.target = ev.Tool, ev.Text
+	for i := 0; i < catchupChunks; i++ {
+		b, mid, reset := p.follower.next()
+		// The file's own time, or none at all: a log that is gone is not a
+		// log that has fallen quiet, and reporting the last time it was
+		// there would read as an agent still being watched.
+		p.heard = p.mod
+		if p.heard.IsZero() {
+			// There is no file to read: a lane still provisioning is given
+			// its log path before the runner creates it, and a log may be
+			// deleted under a live agent. Rolling the ring against a file
+			// that is not there would draw the flat line of a run that had
+			// stopped.
+			return
+		}
+		if reset {
+			// The file was rewritten under us, so the counts are a picture
+			// of a log that is gone. Start the reading over with the file —
+			// all of which is new, none of it history.
+			p.stream, p.cells, p.head, p.seen = logfmt.Stream{}, [sparkCells]int{}, 0, 0
+			p.at, p.lastT = time.Time{}, time.Time{}
+			p.hist, p.consumed = 0, 0
+			// The total and the last call went with the file: both are
+			// readings of a log that no longer exists, and the one still on
+			// screen would be a command from a run nobody can look at any
+			// more.
+			p.tokens, p.tool, p.target = 0, "", ""
+		}
+		if mid {
+			p.stream.SkipLine()
+		}
+		p.roll(now)
+		history := p.consumed < p.hist
+		p.consumed += int64(len(b))
+		for _, ev := range p.stream.Feed(b) {
+			p.place(ev, history)
+			p.tokens += ev.Usage
+			if ev.Kind == logfmt.KindToolCall {
+				p.tool, p.target = ev.Tool, ev.Text
+			}
+		}
+		if len(b) == 0 || !history {
+			return
 		}
 	}
+}
+
+// place counts one event into the ring. A live event happened just now, in
+// the bucket now filling. A historical one happened when its line says — an
+// undated line between dated ones is read at the last dated time, which it
+// follows closely — and history from before the log's first dated line, or
+// from a log that dates nothing, is left out of the ring entirely: the
+// totals still carry it, but a bar needs a time and there is none to be had.
+//
+// A historical event extends the reading back to where it happened even when
+// it is too old for the ring to hold a count: an adopted run whose log went
+// quiet twenty minutes ago must draw the long flat line of a run that has
+// been quiet, not the short line of one that just started.
+func (p *pulse) place(ev logfmt.Event, history bool) {
+	if !history {
+		p.cells[p.head]++
+		return
+	}
+	t := ev.Time
+	if t.IsZero() {
+		t = p.lastT
+	} else {
+		p.lastT = t
+	}
+	if t.IsZero() {
+		return
+	}
+	back := 0
+	if d := p.at.Sub(t); d > 0 {
+		back = 1 + int((d-time.Nanosecond)/sparkBucket)
+	}
+	p.seen = max(p.seen, min(back, sparkCells-1)+1)
+	if back >= sparkCells {
+		return
+	}
+	p.cells[((p.head-back)%sparkCells+sparkCells)%sparkCells]++
 }
 
 // roll advances the ring to the bucket now falls in, zeroing the ones that
@@ -176,13 +219,12 @@ func (p *pulse) roll(now time.Time) {
 	p.at = p.at.Add(time.Duration(steps) * sparkBucket)
 }
 
-// window is the counts of the buckets that have existed, oldest first, which
-// is the order a sparkline draws, led by the run's unread span — the buckets
-// that passed before this pulse attached. It is the whole history the ring
-// holds; a row too narrow for all of it draws the tail, which is the recent
-// end. It is short while a run is young: a line that has not had time to fall
-// is not a line that has fallen, and a run picked up ten seconds ago must not
-// read like one that has been quiet since the ring began.
+// window is the counts of the buckets the reading covers, oldest first, which
+// is the order a sparkline draws. It is the whole history the ring holds; a
+// row too narrow for all of it draws the tail, which is the recent end. It is
+// short while the reading is: a line that has not had time to fall is not a
+// line that has fallen, and a run picked up ten seconds ago whose log dates
+// nothing must not read like one that has been quiet since the ring began.
 func (p *pulse) window() []int {
 	if p.heard.IsZero() {
 		// No log behind the ring: it may not exist yet, or it may have been
@@ -190,13 +232,7 @@ func (p *pulse) window() []int {
 		// run that has gone quiet, and a flat line would say it was.
 		return nil
 	}
-	// The unread span gives way to the ring as the ring fills: what this
-	// pulse did watch is never dropped to keep saying it was not watching.
-	u := min(p.unread, sparkCells-p.seen)
-	out := make([]int, 0, u+p.seen)
-	for i := 0; i < u; i++ {
-		out = append(out, unreadBucket)
-	}
+	out := make([]int, 0, p.seen)
 	for i := sparkCells - p.seen; i < sparkCells; i++ {
 		out = append(out, p.cells[(p.head+1+i)%sparkCells])
 	}
@@ -217,11 +253,6 @@ func (p *pulse) window() []int {
 // burst at the start of a run holds the scale for as long as it stays in the
 // window, and steady work under it sits on the bar above the floor. Alive
 // rather than how alive is what the row is for, with the call beside it.
-//
-// A bucket marked unread is drawn as itself and takes no part in the scale:
-// it is a span nobody counted, not a quiet one, and letting it read as either
-// a bar or the floor would be the fresh-start line the marking exists to
-// prevent.
 func sparkline(counts []int) string {
 	hi := 0
 	for _, c := range counts {
@@ -229,10 +260,6 @@ func sparkline(counts []int) string {
 	}
 	var b strings.Builder
 	for _, c := range counts {
-		if c == unreadBucket {
-			b.WriteRune(sparkUnread)
-			continue
-		}
 		bar := 0
 		if c > 0 {
 			bar = max(1, c*(len(sparkBars)-1)/hi)
