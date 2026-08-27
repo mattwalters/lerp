@@ -62,8 +62,8 @@ func wordmarkFits(w, ih int) bool {
 	return ih >= len(markLines)+2*wordmarkMargin && w >= lipgloss.Width(markBlock)+2*wordmarkMargin
 }
 
-// wordmarkPanel is the inbox panel's body when the board is empty and the
-// mark fits (see model.boardEmpty): the same figure the splash draws, dimmed
+// wordmarkPanel is the inbox panel's body when the inbox is empty and the
+// mark fits (see model.inboxEmpty): the same figure the splash draws, dimmed
 // to colorWordmark's named exemption from the contrast floor, centred in the
 // room the panel has. Static — no spinner, unlike the splash — because rule
 // 4 reserves motion for the startup screen and this is a different element
