@@ -20,6 +20,16 @@
 # hand (Settings → Pages). Until that second act the site builds and deploys
 # to a branch nobody serves.
 #
+# One-time cleanup, the first time this version of the workflow runs: earlier
+# deploys, from before the root and the manual split, already put the manual
+# at the site root (gh-pages:/docs/, /readme/, /scope/). Pruning it from the
+# stage keep_files does not retroactively delete what an older deploy already
+# published — those three directories go on being served, unversioned and
+# frozen at whatever main was on the last pre-split deploy, until someone
+# removes them from gh-pages by hand. /latest/ is a separate, harmless case
+# of the same fact: it stays exactly as an old main-tracking deploy left it,
+# which is fine, because the first tag overwrites it with a correct copy.
+#
 # The custom domain is two more switches, both a human's and neither of them
 # in this repository:
 #
