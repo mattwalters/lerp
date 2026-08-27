@@ -21,16 +21,16 @@ type claude struct {
 	// agents holds each live agent's latest input-side reading, keyed by
 	// parent_tool_use_id ("" for the top-level agent) — a reading, not a
 	// sum, so a later line for the same agent simply replaces its entry.
-	// agentOrder is the insertion order of the distinct agents currently
-	// tracked, a ring like counted: past trackedAgents live agents at once,
-	// the oldest entry is evicted rather than the map growing without
-	// bound. The gate is the map's own live size, not a running count of
-	// every agent ever seen — a completion already shrinks it, so a run
-	// whose subagents come and go one at a time, however many over its
-	// life, never forces the top-level agent's own entry out to make room.
+	// agentOrder is the same set's insertion order, oldest first: a queue
+	// rather than a fixed ring, because a completion (retire) has to remove
+	// an entry from the middle of it, not just overwrite the newest. Past
+	// trackedAgents live at once, the oldest is evicted to bound memory; an
+	// entry retired before then is cut out directly, so it never lingers
+	// as a stale slot nothing can reach, and a run whose subagents come and
+	// go one at a time, however many over its life, never forces the
+	// top-level agent's own entry out to make room for one of them.
 	agents     map[string]int
-	agentOrder [trackedAgents]string
-	agentNext  int
+	agentOrder []string
 }
 
 // trackedAgents bounds the agent map the same way countedMessages bounds the
@@ -135,7 +135,7 @@ func (c *claude) Decode(line string) (Event, bool) {
 			// on the next assistant line rather than instantly, which is the
 			// calm rule, not a gap.
 			if l.Status == "completed" {
-				delete(c.agents, l.ToolUseID)
+				c.retire(l.ToolUseID)
 			}
 		}
 	case "assistant", "user":
@@ -196,28 +196,46 @@ func (c *claude) usage(id string, u claudeUsage) int {
 	return total
 }
 
-// track records agent's latest input-side reading, evicting the oldest
-// tracked agent once trackedAgents are live at the same time. A repeat of an
-// agent already tracked only updates its value — the ring only turns for a
-// genuinely new agent, so one still running never loses its place to its own
-// repeated lines. The gate is len(c.agents), the map's live size, rather
-// than a count that only grows: a retirement already frees a slot, so
-// evicting is reserved for a run with that many agents genuinely in flight
-// at once, not one that has merely run that many subagents, one after
-// another, over its life — the top-level agent's own entry, alive for the
-// whole run, would otherwise be the first ever evicted.
+// track records agent's latest input-side reading, evicting the oldest live
+// agent once trackedAgents are tracked at the same time. A repeat of an
+// agent already tracked only updates its value and does not move it in
+// agentOrder — eviction order is insertion order among the currently live,
+// not recency of use, the same as counted's ring. Evicting is reserved for
+// a run with that many agents genuinely in flight at once: a run whose
+// subagents come and go one at a time, however many over its life, never
+// grows past a couple of live entries, so the top-level agent's own entry —
+// alive for the whole run — is never the one squeezed out to make room.
 func (c *claude) track(agent string, tokens int) {
 	if c.agents == nil {
 		c.agents = make(map[string]int, trackedAgents)
 	}
 	if _, seen := c.agents[agent]; !seen {
-		if len(c.agents) >= trackedAgents {
-			delete(c.agents, c.agentOrder[c.agentNext])
+		if len(c.agentOrder) >= trackedAgents {
+			oldest := c.agentOrder[0]
+			c.agentOrder = c.agentOrder[1:]
+			delete(c.agents, oldest)
 		}
-		c.agentOrder[c.agentNext] = agent
-		c.agentNext = (c.agentNext + 1) % trackedAgents
+		c.agentOrder = append(c.agentOrder, agent)
 	}
 	c.agents[agent] = tokens
+}
+
+// retire drops agent from the live set entirely — from the map and from
+// agentOrder — rather than merely deleting it from the map. Leaving its
+// name sitting in agentOrder would hold its place in line for nothing: the
+// slot could only ever be freed by outliving trackedAgents more distinct
+// agents, never by the completion that already said it was done.
+func (c *claude) retire(agent string) {
+	if _, live := c.agents[agent]; !live {
+		return
+	}
+	delete(c.agents, agent)
+	for i, id := range c.agentOrder {
+		if id == agent {
+			c.agentOrder = append(c.agentOrder[:i], c.agentOrder[i+1:]...)
+			break
+		}
+	}
 }
 
 // contextMax is the worst live agent's latest reading — a drowning subagent

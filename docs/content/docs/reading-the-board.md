@@ -40,12 +40,12 @@ runner's own log distinguishes subagents and its `[runners.*]` block names a
 `context` window (see [lerp.toml](lerp-toml.md)), the row also carries a
 percentage: how full the fullest agent in the run is, faint until it crosses
 80%, where it turns to `⚠` — a run with no configured window shows tokens
-only, never a guessed figure. A run inherited from a previous `lerp` reads as
-`running` like any other, and
-carries the run's own age and the run's own total, not the stretch since it
-was adopted: the log it has already written is the evidence, and lerp reads
-it back rather than starting the count over. Under it, once the run has a
-log, a second line reads how that run is going — see [watching a
+only, never a guessed figure. A run inherited from a previous `lerp` reads
+as `running` like any other, and carries the run's own age and the run's
+own total, not the stretch since it was adopted: the log it has already
+written is the evidence, and lerp reads it back rather than starting the
+count over. Under it, once the run has a log, a second line reads how that
+run is going — see [watching a
 run](watching-a-run.md).
 
 Claude settles what a run cost only at the very end, on the same line that

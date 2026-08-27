@@ -379,11 +379,40 @@ func TestClaudeSequentialSubagentsNeverEvictTheTopLevelAgent(t *testing.T) {
 		dec.Decode(claudeTaskNotification(id, "completed"))
 	}
 
-	ev, ok := dec.Decode(claudeAgentLine("", 151000))
+	// The assertion has to come from a line that is not the top-level
+	// agent's own: reporting from "" would re-insert it regardless of
+	// whether it had been evicted in between, passing even against the
+	// bug this test exists to catch. A further, still-live subagent's line
+	// is the honest witness — its own reading (500) must not be what wins.
+	ev, ok := dec.Decode(claudeAgentLine("toolu_live", 500))
 	if !ok {
 		t.Fatal("line was not decoded")
 	}
-	if ev.Context != 151000 {
-		t.Fatalf("after %d sequential subagents the top-level agent's own line read Context %d, want its own 151000 — its entry was evicted", trackedAgents*3, ev.Context)
+	if ev.Context != 150000 {
+		t.Fatalf("after %d sequential subagents the worst-of read %d, want the top-level agent's own 150000 — its entry was evicted", trackedAgents*3, ev.Context)
+	}
+}
+
+// A retired agent is removed from the eviction queue outright, not left
+// sitting in it under a name the map no longer has — its slot is free
+// immediately, so a new agent right after a retirement does not evict
+// something that is still genuinely live.
+func TestClaudeRetireFreesItsQueueSlot(t *testing.T) {
+	dec := &claude{}
+	dec.Decode(claudeAgentLine("agent-0", 1))
+	dec.Decode(claudeAgentLine("agent-1", 999999))
+	for i := 2; i < trackedAgents; i++ {
+		dec.Decode(claudeAgentLine(fmt.Sprintf("agent-%d", i), 1))
+	}
+	// The queue now holds trackedAgents live agents; the next distinct
+	// agent would ordinarily evict the oldest, agent-0.
+	dec.Decode(claudeTaskNotification("agent-0", "completed"))
+
+	ev, ok := dec.Decode(claudeAgentLine("agent-new", 1))
+	if !ok {
+		t.Fatal("line was not decoded")
+	}
+	if ev.Context != 999999 {
+		t.Fatalf("worst-of read %d after a retirement freed a slot, want agent-1's still-live 999999", ev.Context)
 	}
 }
