@@ -80,7 +80,9 @@ Two places, and which one you want depends on whether a run started.
 
 ## How do I clean up or uninstall?
 
-`make uninstall` (or deleting the binary) removes the executable.
+`make uninstall` from a clone removes the binary `make install` put in your
+`GOBIN`; an install.sh install is removed by deleting `lerp` from
+`$HOME/.local/bin` (or the `--bin-dir` you chose).
 
 To clean up local state, delete `.lerp/` once all agents have stopped:
 
