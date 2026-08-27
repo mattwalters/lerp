@@ -2143,6 +2143,7 @@ func TestTickPausesOnRateLimit(t *testing.T) {
 	if got := h.waitEvents(t, EventError, 1)[0]; !strings.Contains(got.Err.Error(), "rate limited") {
 		t.Fatalf("error event = %v, want the delta's own rate limit error", got.Err)
 	}
+	h.waitEvents(t, EventTicked, 1) // this pass's own EventTicked, closing it as always
 	deltasAtFailure := counting.deltas.Load()
 
 	// Every pass inside the Retry-After window is a no-op but for the error
