@@ -4970,6 +4970,47 @@ func TestFoldKeyFallsBackPastTheLastSection(t *testing.T) {
 	}
 }
 
+// Regression test for a bug caught in round 3 review: folding a section the
+// cursor sits inside (not on its heading line) left the viewport's offset
+// unchanged, so once the section's body vanished the pane showed whatever
+// had scrolled up to fill the gap instead of the fold that just happened —
+// and a second z would then act on that wrong section. z must re-anchor the
+// viewport to the folded heading's own (unmoved) line.
+func TestFoldReanchorsTheViewportToTheFoldedSection(t *testing.T) {
+	m, _, reader := newReadingTestModel(t)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+	m = update(t, m, keyMsg("enter"))
+	// Two also needs a body long enough to keep the folded document taller
+	// than the viewport — otherwise everything fits on one screen regardless
+	// of anchoring, and the assertion below would pass even without the fix.
+	body := "# One\n\n" + strings.Repeat("line of one's own body\n", 40) +
+		"\n# Two\n\n" + strings.Repeat("line of two's own body\n", 200)
+	m = selectAndRead(t, m, 0, linear.IssueDetail{Body: body}, nil, reader)
+
+	line := -1
+	for i, o := range m.foldOwner {
+		if o == 0 {
+			line = i
+			break
+		}
+	}
+	if line == -1 {
+		t.Fatalf("no rendered line is owned by One: %v", m.foldOwner)
+	}
+	// Deep into One's body, well past its own heading line — nothing before
+	// that heading shifts when One folds, so its line number does not move.
+	m.vp.SetYOffset(line + 20)
+	m = update(t, m, keyMsg("z"))
+
+	if m.vp.YOffset != line {
+		t.Fatalf("folding One should re-anchor the viewport to its own line %d, got YOffset=%d", line, m.vp.YOffset)
+	}
+	if view := m.View(); !strings.Contains(view, "One") {
+		t.Fatalf("the just-folded heading should be on screen, not scrolled past:\n%s", view)
+	}
+}
+
 // Done-when: a comments fetch that fails never blanks the lines that work
 // today, and still points at Linear.
 func TestTicketDetailFailureKeepsThePaneThatWorks(t *testing.T) {

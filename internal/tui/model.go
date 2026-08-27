@@ -960,8 +960,9 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// or a document with no heading to fold in the first place.
 	case !m.foldable() && (key.Matches(msg, m.keys.Fold) || key.Matches(msg, m.keys.FoldAll)):
 	case key.Matches(msg, m.keys.Fold):
-		m.toggleFold()
+		idx := m.toggleFold()
 		m.refreshMain()
+		m.reanchorFold(idx)
 	case key.Matches(msg, m.keys.FoldAll):
 		m.foldAll()
 		m.refreshMain()

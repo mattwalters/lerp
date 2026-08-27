@@ -21,11 +21,11 @@ import (
 // different map.
 
 // heading is one heading line found outside a code fence, in document
-// order: its level (the number of leading #s), its text, and the source
-// line it starts at.
+// order: its level (the number of leading #s) and the source line it
+// starts at. The render paths re-render src[h.line] directly rather than a
+// captured copy, so the heading itself carries no text.
 type heading struct {
 	level int
-	text  string
 	line  int
 }
 
@@ -42,7 +42,7 @@ func headings(src []string) []heading {
 			continue
 		}
 		if m := mdHeading.FindStringSubmatch(src[i]); m != nil {
-			out = append(out, heading{level: len(m[1]), text: m[2], line: i})
+			out = append(out, heading{level: len(m[1]), line: i})
 		}
 	}
 	return out
@@ -139,8 +139,21 @@ func foldBody(body string, width int, folded map[int]bool) (lines []string, owne
 			// below applies here too: renderMarkdown's fresh call drops a
 			// blank line immediately at its own start, so the count would
 			// otherwise read one line short of what unfolding actually
-			// reveals.
-			if h.line+1 < ends[i] && strings.TrimSpace(src[h.line+1]) == "" {
+			// reveals. The two cases are mutually exclusive, not additive:
+			// unfolding only ever inserts one blank line before whatever
+			// comes next, whether the source already wrote it (case one) or
+			// a subheading buys its own air the way every heading does
+			// (case two, blank()'s unconditional rule in markdown.go) — a
+			// tight subheading right after this one, with no source blank
+			// between them, still gets that air once unfolded, but the
+			// isolated call above never draws it: its own out starts empty,
+			// so the subheading's blank() call is the no-op start-of-output
+			// case rather than the between-blocks case it would be in the
+			// composed render.
+			switch {
+			case h.line+1 < ends[i] && strings.TrimSpace(src[h.line+1]) == "":
+				hidden++
+			case h.line+1 < ends[i] && mdHeading.MatchString(src[h.line+1]):
 				hidden++
 			}
 			suffix := styleFaint.Render(fmt.Sprintf(" ⋯ %d hidden", hidden))
@@ -226,14 +239,20 @@ func (m *model) foldable() bool {
 // still advertising the key. Falling back to the nearest heading behind the
 // cursor covers that case: there is always one, since foldable() already
 // means the document has at least one heading.
-func (m *model) toggleFold() {
+//
+// Returns the toggled heading's index, or -1 if nothing changed — the
+// caller uses it to re-anchor the viewport to that heading after the
+// refresh, since folding a section the cursor sits inside shifts everything
+// below it and leaves the viewport pointed at whatever scrolled up to fill
+// the gap otherwise.
+func (m *model) toggleFold() int {
 	it := m.selectedAttention()
 	if it == nil {
-		return
+		return -1
 	}
 	d := m.details[it.TicketID]
 	if d == nil || len(m.foldOwner) == 0 {
-		return
+		return -1
 	}
 	top := clampIndex(m.vp.YOffset, len(m.foldOwner))
 	idx := -1
@@ -252,12 +271,31 @@ func (m *model) toggleFold() {
 		}
 	}
 	if idx < 0 {
-		return
+		return -1
 	}
 	if d.folded == nil {
 		d.folded = make(map[int]bool)
 	}
 	d.folded[idx] = !d.folded[idx]
+	return idx
+}
+
+// reanchorFold points the viewport at the heading identified by idx, after
+// a refreshMain has rebuilt foldOwner around a fold that just changed —
+// otherwise the pane would show whatever scrolled up to fill the gap the
+// fold left, with the fold itself off-screen and a second press landing on
+// the wrong section entirely (see toggleFold). A no-op for idx < 0, the
+// value toggleFold returns when nothing was toggled.
+func (m *model) reanchorFold(idx int) {
+	if idx < 0 {
+		return
+	}
+	for i, o := range m.foldOwner {
+		if o == idx {
+			m.vp.SetYOffset(i)
+			return
+		}
+	}
 }
 
 // foldAll swaps the whole document between its outline — every heading

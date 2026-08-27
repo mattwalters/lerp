@@ -121,6 +121,37 @@ func TestFoldHiddenCountIncludesTheBlankAfterTheHeading(t *testing.T) {
 	}
 }
 
+// Round 3 found the opposite-direction bug from the test above: a
+// subheading sitting tight against its parent, with no blank line between
+// them in the source, still buys itself the same air every heading gets
+// once unfolded (blank()'s unconditional rule in markdown.go) — but the
+// isolated renderMarkdown call used to estimate the hidden count starts
+// from an empty output, so its own blank() no-ops as the start-of-output
+// case rather than the between-blocks case unfolding would actually hit.
+// Folding A here must report 3 (the blank, B's own line, and its body),
+// not 2.
+func TestFoldHiddenCountAccountsForATightSubheading(t *testing.T) {
+	folded := "# A\n## B\ntext"
+	lines, _, _ := foldBody(folded, 40, map[int]bool{0: true})
+	got := strings.Join(lines, "\n")
+	if !strings.Contains(got, "⋯ 3 hidden") {
+		t.Fatalf("expected a hidden count of 3 (blank + B's heading + its body), got:\n%s", got)
+	}
+}
+
+// A blank line already in the source before a tight subheading must not be
+// double-counted alongside the round-3 fix above: unfolding only ever
+// inserts one blank line before whatever comes next, whichever rule
+// supplied it.
+func TestFoldHiddenCountDoesNotDoubleCountAnExplicitBlankBeforeAHeading(t *testing.T) {
+	folded := "# A\n\n## B\ntext"
+	lines, _, _ := foldBody(folded, 40, map[int]bool{0: true})
+	got := strings.Join(lines, "\n")
+	if !strings.Contains(got, "⋯ 3 hidden") {
+		t.Fatalf("expected a hidden count of 3 (blank + B's heading + its body), got:\n%s", got)
+	}
+}
+
 // Folding a heading hides its body and reports how much it hid, but leaves
 // the heading itself — and anything before or after its section — on
 // screen. The count is the collapsed content only, never the heading's own
