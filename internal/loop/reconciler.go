@@ -105,6 +105,18 @@ const (
 	// an empty one, so a subscriber can show the goal state when the last
 	// item clears.
 	EventAttention EventType = "attention"
+	// EventTicked reports that Tick has finished emitting everything this
+	// pass will ever emit. It is always last: Tick sends it after fill and
+	// attention have both returned, over the same channel every other event
+	// this pass produced, so channel order — not wall-clock order in some
+	// other goroutine — is what guarantees it arrives after them. A
+	// subscriber that needs to know "nothing more is coming this pass"
+	// (the TUI splash, see model.go) has to learn that from this event
+	// rather than from Tick's own return: Tick returning and this event
+	// being read off the channel are two different goroutines racing a
+	// buffered channel, and the goroutine that only has to return wins that
+	// race often enough to matter.
+	EventTicked EventType = "ticked"
 )
 
 // QueueTicket is one ticket as a queue snapshot saw it, with why it will or
@@ -443,12 +455,14 @@ func (r *Reconciler) Run(ctx context.Context) error {
 // Started runs proceed in their own goroutines, so a tick never blocks on an
 // agent. A failed pass is reported as an EventError, never returned: the loop
 // repairs drift, and a pass that could not finish is just drift for the next
-// one.
+// one. EventTicked always closes the pass, whichever branch above ran or
+// failed to.
 func (r *Reconciler) Tick(ctx context.Context) {
 	if r.reconcileEvidence(ctx) {
 		r.fill(ctx)
 	}
 	r.attention(ctx)
+	r.emit(Event{Type: EventTicked})
 }
 
 // AttentionDefinition is the operator-facing one-line description of the

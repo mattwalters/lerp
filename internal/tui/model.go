@@ -543,8 +543,8 @@ type model struct {
 	// to; see splashing. Either landing alone would draw the board with the
 	// other half still zero, which is the flicker LERP-144 replaces, so a
 	// pass-level error does not force either bit on its own — see apply's
-	// EventError case and Update's tickedMsg case for where a read that
-	// never reports falls back to it instead.
+	// EventError and EventTicked cases for where a read that never reports
+	// falls back to it instead.
 	heardQueues    bool
 	heardAttention bool
 
@@ -673,15 +673,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.passHadErr {
 			m.lastErr = ""
 		}
-		// Tick has now fully returned, so every event this pass could ever
-		// emit is already queued — whichever of the two reads still has not
-		// reported by now never will this one. Show whatever arrived rather
-		// than spin on a read that is not coming; see apply's EventError
-		// case for why this cannot happen any earlier.
-		if m.splashing() {
-			m.heardQueues = true
-			m.heardAttention = true
-		}
+		// The splash's own fallback lives on EventTicked (apply), not here:
+		// this message and that event come from two different goroutines
+		// racing a buffered channel, and Tick returning first is common
+		// enough that acting on it here would reintroduce the very flicker
+		// LERP-144 removes — the board drawing before an event already
+		// queued behind this message has actually been applied.
 		m.inFlight = false
 		m.lastPass = time.Now()
 		// The wordmark's promotion half (see boardEmpty): a pass reports the
@@ -875,7 +872,13 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.keysInMain = false
 		}
 	case key.Matches(msg, m.keys.Promote):
-		if m.focus == panelAttention && len(m.shown) > 0 && len(m.o.Statuses) > 0 && m.roomForMain() {
+		// Gated on the splash too, and for the same reason as Detail above:
+		// a row can be on screen from attention alone, before queues has
+		// reported, and opening the picker on it would flip View's modal
+		// bypass early — the board drawn with m.queues still nil, the very
+		// half-populated frame this ticket exists to prevent.
+		if m.focus == panelAttention && len(m.shown) > 0 && len(m.o.Statuses) > 0 &&
+			m.roomForMain() && !m.splashing() {
 			m.promoteTargets = m.capturePromoteTargets()
 			m.promoting = true
 			m.promoteSel = 0
@@ -928,7 +931,11 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// over one all end at the same one-line panel, and a prompt opened
 		// over that line takes the keyboard for a filter with nothing to
 		// match. The way back out of each is the key that empty line names.
-		if m.focus == panelAttention && len(m.shown) > 0 {
+		// And splashing is checked for the same reason Promote checks it: a
+		// row can be on screen from attention alone, before queues has
+		// reported, and the prompt is a modal that would draw the board
+		// early — with the work panel still empty — to make room for it.
+		if m.focus == panelAttention && len(m.shown) > 0 && !m.splashing() {
 			m.dropVisual()
 			m.openSearch()
 			m.refreshMain()
@@ -1222,8 +1229,15 @@ func (m model) doEject(ticketID, ticket string) tea.Cmd {
 // refusal worth a word: the row looks exactly like an ejectable one, and the
 // key line's silence about "e" is easy to miss. The others — a ticket that
 // is not running, a lane still provisioning — are plain on the row itself.
+//
+// A running lane means queues has already reported — fill starts lanes,
+// and it publishes queues first — but says nothing about attention, whose
+// own read is a separate goroutine free to still be in flight. Gated on the
+// splash for the same reason Promote and Search are: the confirm is a modal
+// that would draw the board early, with the inbox still whatever it was
+// before this pass — stale, or on the first pass, still empty.
 func (m *model) startEject() {
-	if m.focus != panelWork || !m.roomForMain() {
+	if m.focus != panelWork || !m.roomForMain() || m.splashing() {
 		return
 	}
 	r := m.selectedWork()
@@ -1612,9 +1626,20 @@ func (m *model) apply(ev loop.Event) {
 		// event carries no word of which read broke, and fill emits its own
 		// EventQueues right behind a partial-listing error regardless — so
 		// settling on sight would drop the splash before that real event, or
-		// before attention's own answer, lands. tickedMsg is where an
+		// before attention's own answer, lands. EventTicked is where an
 		// unresolved read falls back to the error once the pass that could
 		// still answer it has genuinely finished.
+	case loop.EventTicked:
+		// The pass's own last word, over the same channel as its other
+		// events — so, unlike tickedMsg, this is ordered after whichever of
+		// EventQueues and EventAttention this pass was going to emit. Only
+		// then is a read that still has not reported never coming this pass,
+		// and only then can this fall back to showing the error rather than
+		// spin on it.
+		if m.splashing() {
+			m.heardQueues = true
+			m.heardAttention = true
+		}
 	case loop.EventQueues:
 		m.heardQueues = true
 		m.queues = ev.Queues
@@ -2492,10 +2517,12 @@ func (m *model) layout() {
 // EventQueues right behind a partial-listing error regardless, so settling
 // on the error alone would cut to the board before that real event, or
 // before attention's own answer, lands — the very half-populated frame
-// this exists to prevent. Only once Tick has fully returned (tickedMsg) is
-// every event this pass could emit already queued, so that is where an
-// unresolved read falls back to the error rather than spin on one that is
-// not coming; see Update's tickedMsg case.
+// this exists to prevent. Only loop.EventTicked, the pass's own last word
+// sent over the same channel as its other events, is ordered after
+// everything this pass could emit; that is where an unresolved read falls
+// back to the error rather than spin on one that is not coming — not
+// Update's tickedMsg, which comes from a different goroutine racing that
+// same channel and can arrive first; see apply's EventTicked case.
 func (m model) splashing() bool {
 	return !m.heardQueues || !m.heardAttention
 }
@@ -2541,8 +2568,11 @@ func (m model) View() string {
 	// eject — for mainOpen's reason rather than its exact list: something
 	// that answers to keys while nothing it draws reaches the screen is a ?
 	// that does nothing, or an enter that writes to Linear from under a
-	// spinner. Only ? can be open here today, because every other one of
-	// them is gated on a row, and a row means the pass has reported.
+	// spinner. Only ? can be open here today: every other one of them
+	// (Promote, Search, Eject) checks splashing() itself before opening,
+	// because a row can be on screen from one of the first pass's two reads
+	// before the other has landed — a row alone does not mean the pass has
+	// reported.
 	//
 	// A detail pane cannot be in that list at all: enter does not open one
 	// while the splash is up, precisely so that this guard and the

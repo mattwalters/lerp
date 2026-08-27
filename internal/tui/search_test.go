@@ -113,6 +113,7 @@ func TestSearchDoesNotReachAFoldedBacklog(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: board()})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues}})
 
 	m = typeSearch(t, update(t, m, keyMsg("/")), "curl")
 	if got := shownTickets(m); len(got) != 0 {
@@ -151,6 +152,7 @@ func TestSearchIsInertBehindAFullyFoldedInbox(t *testing.T) {
 		{Ticket: "LERP-2", TicketID: "id-2", Title: "Someday", Status: "Backlog",
 			Relevance: loop.StatusBacklog},
 	}}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues}})
 
 	m = update(t, m, keyMsg("/"))
 	if m.searching {
@@ -370,6 +372,7 @@ func TestSearchKeepsTheSelectionOrTakesItToTheTop(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: board()})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues}})
 	m = browseBacklog(t, m)       // the whole fixture, so "b" has several rows to match
 	m = update(t, m, keyMsg("j")) // LERP-48, second under the status default
 
@@ -556,6 +559,7 @@ func TestSearchIsOnTheKeyLineAndTakesIt(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: board()})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues}})
 	m = browseBacklog(t, m) // "back" below is a query over the backlog rows
 
 	panel := m.attentionPanel(96, 14)

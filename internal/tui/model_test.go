@@ -414,6 +414,7 @@ func TestAdoptedRowShowsTrueRunAge(t *testing.T) {
 // .lerp/loop.log; it is not a badge on the screen.
 func TestAdoptedRunReadsAsRunning(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAdopted, RunID: "r1", Lane: 1,
 		TicketID: "id-1", Queue: "plan", LogPath: "/dev/null"}})
 	rows := m.workRows()
@@ -2110,6 +2111,7 @@ func TestPromotePicker(t *testing.T) {
 // stock case and failed both of these.
 func TestPromotePickerFollowsTheKeymap(t *testing.T) {
 	m, _, _, promoter := newPromoteTestModel(t, 1, []string{"Planning", "Implementing"})
+	m = pastTheSplash(t, m)
 	m.keys.Up = key.NewBinding(key.WithKeys("ctrl+p"), key.WithHelp("ctrl+p", "select up"))
 	m.keys.Down = key.NewBinding(key.WithKeys("ctrl+n"), key.WithHelp("ctrl+n", "select down"))
 	// Wide enough to be about the keys and not about the room: these labels
@@ -2178,6 +2180,7 @@ func TestThePickersLineGivesWayBeforeTheInboxCount(t *testing.T) {
 		var whole []int
 		for w := 30; w <= 120; w++ {
 			m, _, _, _ := newPromoteTestModel(t, cfg.lanes, defaultTestStatuses)
+			m = pastTheSplash(t, m)
 			resized, _ := m.Update(tea.WindowSizeMsg{Width: w, Height: 30})
 			m = resized.(model)
 			m = update(t, m, keyMsg("1"))
@@ -2224,6 +2227,7 @@ func TestThePickersLineGivesWayBeforeTheInboxCount(t *testing.T) {
 // while the picker is still open must not leave a dangling selection.
 func TestPromotePickerClosesWhenTheListEmpties(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
 		{Ticket: "LERP-4", TicketID: "loose", Title: "Nobody's routed this"},
@@ -2889,6 +2893,7 @@ func TestWorkStartsWithTheListOnScreen(t *testing.T) {
 // close. Both keys keep working from a closed inbox, which is the default.
 func TestThePickerAndTheOverlayForceThePane(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
 		{Ticket: "LERP-4", TicketID: "loose", Title: "Nobody's routed this"},
@@ -3431,6 +3436,7 @@ func TestAWideButShortWindowStillRefusesThePane(t *testing.T) {
 // and its enter is the TUI's one write.
 func TestShrinkingTheWindowClosesWhatTookThePane(t *testing.T) {
 	m, _, _, promoter := newPromoteTestModel(t, 1, []string{"Planning"})
+	m = pastTheSplash(t, m)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
 		{Ticket: "LERP-4", TicketID: "loose", Title: "Nobody's routed this"},
 	}}})
@@ -5386,6 +5392,7 @@ func TestHostileLogOutputCannotRepaintTheScreen(t *testing.T) {
 // bar, which is one line and must stay one line.
 func TestHostileErrorTextCannotRepaintTheStatusBar(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventError, Err: errors.New(hostile)}})
 	escapeFree(t, "status bar", m.View())
 	bidiFree(t, "status bar", m.View())
@@ -6088,6 +6095,7 @@ func TestScrolledRunKeepsRowsWhole(t *testing.T) {
 func TestEjectConfirmHoldsItsRowAcrossAPass(t *testing.T) {
 	ejector := &recordingEjector{}
 	m, _ := newEjectTestModel(t, 2, ejector)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("2")) // eject is the work panel's key
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 		TicketID: "id-42", Ticket: "LERP-42", Queue: "implement", LogPath: "/dev/null"}})
@@ -6116,6 +6124,7 @@ func TestEjectConfirmHoldsItsRowAcrossAPass(t *testing.T) {
 func TestEjectConfirmClosesWhenItsRunEnds(t *testing.T) {
 	ejector := &recordingEjector{}
 	m, _ := newEjectTestModel(t, 1, ejector)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("2")) // eject is the work panel's key
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
 		TicketID: "id-42", Ticket: "LERP-42", Queue: "implement", LogPath: "/dev/null"}})

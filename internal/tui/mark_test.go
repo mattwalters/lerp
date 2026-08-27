@@ -175,8 +175,8 @@ func TestAPassThatReportsNothingStillEndsTheSplash(t *testing.T) {
 
 // A spinner that never stops is the blank screen with extra motion. When the
 // first pass fails rather than lands, the splash gives way once the pass
-// itself is over (tickedMsg) and the error goes where errors go — the status
-// bar's transient line. It cannot give way on the error alone: see
+// itself is over (EventTicked) and the error goes where errors go — the
+// status bar's transient line. It cannot give way on the error alone: see
 // TestAQueuesErrorDoesNotPreemptAttentionStillPending for why.
 func TestAFailedFirstPassSaysSoRatherThanSpinning(t *testing.T) {
 	m, _, _ := newTestModel(t, 2)
@@ -185,7 +185,7 @@ func TestAFailedFirstPassSaysSoRatherThanSpinning(t *testing.T) {
 	if !hasMark(m.View()) {
 		t.Fatalf("the error alone took the screen from the splash:\n%s", m.View())
 	}
-	m = update(t, m, tickedMsg{})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventTicked}})
 	view := m.View()
 	if hasMark(view) {
 		t.Fatalf("a failed first pass is still spinning once it has ended:\n%s", view)
@@ -204,6 +204,66 @@ func TestALaneFailureDoesNotEndTheSplash(t *testing.T) {
 		Err: errors.New("exit status 1")}})
 	if !hasMark(m.View()) {
 		t.Fatalf("a lane failure ended the splash:\n%s", m.View())
+	}
+}
+
+// tickedMsg and EventTicked come from two different goroutines racing a
+// buffered channel (runTick's return versus waitEvent's read of the same
+// pass's own EventTicked), and Tick returning is the cheaper of the two —
+// it can win that race and reach Update first. If tickedMsg alone ended the
+// splash, that win would cut to the board before this pass's real
+// EventQueues or EventAttention — already sitting in the channel behind
+// EventTicked — had been applied: the half-populated frame this ticket
+// exists to remove, just moved to a rarer window. Only EventTicked, ordered
+// after them by the channel itself, may end it.
+func TestTickedMsgAloneDoesNotEndTheSplash(t *testing.T) {
+	m, _, _ := newTestModel(t, 2)
+	m = update(t, m, tickedMsg{})
+	if !hasMark(m.View()) {
+		t.Fatalf("tickedMsg alone ended the splash:\n%s", m.View())
+	}
+}
+
+// A row can be on screen from attention alone, before queues has reported —
+// the gap between the two reads landing, not just the time before either
+// has. Promote, Search and Eject each open a modal that would make View
+// fall through to the board early (see View's splashing && !modal guard),
+// so each has to check splashing itself rather than trust that a row means
+// the pass is over.
+func TestModalKeysStayShutDuringTheSplashGap(t *testing.T) {
+	attention := loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-1", TicketID: "id-1", Title: "one"},
+	}}
+
+	m, _, _, _ := newPromoteTestModel(t, 1, []string{"Planning"})
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: attention})
+	if !hasMark(m.View()) {
+		t.Fatalf("attention alone ended the splash:\n%s", m.View())
+	}
+	m = update(t, m, keyMsg("p"))
+	if m.promoting || !hasMark(m.View()) {
+		t.Fatalf("p opened the promote picker before queues reported: promoting=%v\n%s",
+			m.promoting, m.View())
+	}
+	m = update(t, m, keyMsg("/"))
+	if m.searching || !hasMark(m.View()) {
+		t.Fatalf("/ opened the search box before queues reported: searching=%v\n%s",
+			m.searching, m.View())
+	}
+
+	ejector := &recordingEjector{}
+	e, _ := newEjectTestModel(t, 1, ejector)
+	e = update(t, e, keyMsg("2"))
+	e = update(t, e, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		TicketID: "id-1", Ticket: "LERP-1", Queue: "implement", LogPath: "/dev/null"}})
+	if !hasMark(e.View()) {
+		t.Fatalf("a running lane alone ended the splash:\n%s", e.View())
+	}
+	e = update(t, e, keyMsg("e"))
+	if e.ejecting || !hasMark(e.View()) {
+		t.Fatalf("e opened the eject confirm before attention reported: ejecting=%v\n%s",
+			e.ejecting, e.View())
 	}
 }
 
@@ -235,8 +295,8 @@ func TestAQueuesErrorDoesNotPreemptAttentionStillPending(t *testing.T) {
 }
 
 // The mirror of the above: if attention also fails this pass, nothing more
-// is coming for either read, and only then — once Tick has actually
-// returned — does the splash give way to the error.
+// is coming for either read, and only then — once EventTicked, the pass's
+// own last word, actually arrives — does the splash give way to the error.
 func TestAPassEndingWithBothReadsUnresolvedFallsBackToTheError(t *testing.T) {
 	m, _, _ := newTestModel(t, 2)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventError,
@@ -250,7 +310,7 @@ func TestAPassEndingWithBothReadsUnresolvedFallsBackToTheError(t *testing.T) {
 	if !hasMark(m.View()) {
 		t.Fatal("attention's error ended the splash before the pass was over")
 	}
-	m = update(t, m, tickedMsg{})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventTicked}})
 	view := m.View()
 	if hasMark(view) {
 		t.Fatalf("the splash spins on past a finished, failed pass:\n%s", view)
