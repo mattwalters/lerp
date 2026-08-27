@@ -25,7 +25,9 @@ type keymap struct {
 	Promote   key.Binding
 	// Visual starts the inbox's multi-select: lazygit's own key for a range
 	// selection, extended by the movement keys and fed straight to Promote.
+	// VisualAll selects the entire shown range in one keystroke.
 	Visual     key.Binding
+	VisualAll  key.Binding
 	Eject      key.Binding
 	ForceStart key.Binding
 	Sort       key.Binding
@@ -75,11 +77,12 @@ func newKeymap() keymap {
 		// names of their own. enter opens and esc closes; neither is a
 		// flip-flop, so an operator who has lost track of the state can
 		// press either and know what they will get.
-		Detail:  key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open detail")),
-		Close:   key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "close detail")),
-		Promote: key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "promote")),
-		Visual:  key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "select a range")),
-		Eject:   key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "eject")),
+		Detail:    key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open detail")),
+		Close:     key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "close detail")),
+		Promote:   key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "promote")),
+		Visual:    key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "select a range")),
+		VisualAll: key.NewBinding(key.WithKeys("V"), key.WithHelp("V", "select all")),
+		Eject:     key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "eject")),
 		// S, not s: a letter that means two different things depending on
 		// which panel has focus is worse than a letter nothing else uses.
 		// The description is "past the limit", not LERP-53's "past the lane
@@ -127,7 +130,7 @@ func (k keymap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Attention, k.Work, k.NextPanel, k.PrevPanel,
 			k.Up, k.Down, k.PageUp, k.PageDown, k.Top, k.Bottom},
-		{k.Detail, k.Close, k.Promote, k.Visual, k.Eject, k.ForceStart, k.Sort, k.Project, k.Backlog,
+		{k.Detail, k.Close, k.Promote, k.Visual, k.VisualAll, k.Eject, k.ForceStart, k.Sort, k.Project, k.Backlog,
 			k.Search, k.Open, k.Raw, k.Fold, k.FoldAll, k.Help, k.Quit},
 	}
 }
@@ -190,7 +193,7 @@ func (k keymap) panelHelp(p panel, live rowKeys) []key.Binding {
 		}
 		b = []key.Binding{find}
 		if live.canPromote {
-			b = append([]key.Binding{k.Promote, short(k.Visual, "select")}, b...)
+			b = append([]key.Binding{k.Promote, short(k.Visual, "select"), short(k.VisualAll, "select all")}, b...)
 		}
 		if live.hasURL {
 			b = append(b, short(k.Open, "open"))

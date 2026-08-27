@@ -2657,6 +2657,205 @@ func TestVisualRangeReadsWithoutColour(t *testing.T) {
 	}
 }
 
+// Done-when: V selects every currently shown row in one keystroke, enters
+// visual mode spanning the whole shown range, and feeds the batch straight
+// to promote.
+func TestVisualAllGrabsEveryShownRow(t *testing.T) {
+	m, _, _, promoter := newPromoteTestModel(t, 1, defaultTestStatuses)
+	m = pastTheSplash(t, m)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+
+	m = update(t, m, keyMsg("V"))
+	if !m.visual {
+		t.Fatal("V did not start visual mode")
+	}
+	if m.visualAnchor != "LERP-1" {
+		t.Fatalf("visualAnchor = %q, want LERP-1 (first shown row)", m.visualAnchor)
+	}
+	if m.attnSel != 2 {
+		t.Fatalf("attnSel = %d, want 2 (last shown row)", m.attnSel)
+	}
+	if count := m.visualSelectionCount(); count != 3 {
+		t.Fatalf("visualSelectionCount = %d, want 3", count)
+	}
+
+	line := lineWith(t, m.View(), "p promote")
+	if !strings.Contains(line, "p promote 3") {
+		t.Fatalf("the key line does not name the full selection count:\n%s", line)
+	}
+
+	m = update(t, m, keyMsg("p"))
+	next, cmd := updateCmd(t, m, keyMsg("enter"))
+	m = next
+	if cmd == nil {
+		t.Fatal("enter produced no promote command")
+	}
+	cmd()
+	if len(promoter.calls) != 3 {
+		t.Fatalf("Promote called %d times, want 3: %+v", len(promoter.calls), promoter.calls)
+	}
+	for i, wantID := range []string{"id-1", "id-2", "id-3"} {
+		if got := promoter.calls[i].ticketID; got != wantID {
+			t.Fatalf("call %d promoted %s, want %s", i, got, wantID)
+		}
+	}
+}
+
+// Done-when: V selects only the rows left visible under an active project filter.
+func TestVisualAllScopedToProjectFilter(t *testing.T) {
+	m, _, _, promoter := newPromoteTestModel(t, 1, defaultTestStatuses)
+	m = pastTheSplash(t, m)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-1", TicketID: "id-1", Title: "First", Status: "Backlog", Project: "Alpha"},
+		{Ticket: "LERP-2", TicketID: "id-2", Title: "Second", Status: "Backlog", Project: "Beta"},
+		{Ticket: "LERP-3", TicketID: "id-3", Title: "Third", Status: "Backlog", Project: "Alpha"},
+	}}})
+
+	m = update(t, m, keyMsg("P")) // cycle to Alpha
+	if m.project != "Alpha" {
+		t.Fatalf("test setup: P did not scope to Alpha: %q", m.project)
+	}
+	if len(m.shown) != 2 {
+		t.Fatalf("test setup: expected 2 shown rows under Alpha, got %d", len(m.shown))
+	}
+
+	m = update(t, m, keyMsg("V"))
+	if !m.visual {
+		t.Fatal("V did not start visual mode")
+	}
+	if count := m.visualSelectionCount(); count != 2 {
+		t.Fatalf("visualSelectionCount = %d, want 2", count)
+	}
+
+	m = update(t, m, keyMsg("p"))
+	next, cmd := updateCmd(t, m, keyMsg("enter"))
+	m = next
+	if cmd == nil {
+		t.Fatal("enter produced no promote command")
+	}
+	cmd()
+	if len(promoter.calls) != 2 {
+		t.Fatalf("Promote called %d times, want 2: %+v", len(promoter.calls), promoter.calls)
+	}
+	if promoter.calls[0].ticketID != "id-1" || promoter.calls[1].ticketID != "id-3" {
+		t.Fatalf("promoted %+v, want [id-1, id-3]", promoter.calls)
+	}
+}
+
+// Done-when: V selects only the rows left visible under an active search filter.
+func TestVisualAllScopedToSearchFilter(t *testing.T) {
+	m, _, _, promoter := newPromoteTestModel(t, 1, defaultTestStatuses)
+	m = pastTheSplash(t, m)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-1", TicketID: "id-1", Title: "Fix parser bug", Status: "Backlog"},
+		{Ticket: "LERP-2", TicketID: "id-2", Title: "Refactor router", Status: "Backlog"},
+		{Ticket: "LERP-3", TicketID: "id-3", Title: "Fix layout bug", Status: "Backlog"},
+	}}})
+
+	m = update(t, m, keyMsg("/"))
+	for _, ch := range "Fix" {
+		m = update(t, m, keyMsg(string(ch)))
+	}
+	m = update(t, m, keyMsg("enter")) // close prompt, keep filter
+	if m.search != "Fix" || len(m.shown) != 2 {
+		t.Fatalf("test setup: search not set or wrong shown count: search=%q shown=%d", m.search, len(m.shown))
+	}
+
+	m = update(t, m, keyMsg("V"))
+	if !m.visual {
+		t.Fatal("V did not start visual mode")
+	}
+	if count := m.visualSelectionCount(); count != 2 {
+		t.Fatalf("visualSelectionCount = %d, want 2", count)
+	}
+
+	m = update(t, m, keyMsg("p"))
+	next, cmd := updateCmd(t, m, keyMsg("enter"))
+	m = next
+	if cmd == nil {
+		t.Fatal("enter produced no promote command")
+	}
+	cmd()
+	if len(promoter.calls) != 2 {
+		t.Fatalf("Promote called %d times, want 2: %+v", len(promoter.calls), promoter.calls)
+	}
+	if promoter.calls[0].ticketID != "id-1" || promoter.calls[1].ticketID != "id-3" {
+		t.Fatalf("promoted %+v, want [id-1, id-3]", promoter.calls)
+	}
+}
+
+// Done-when: esc drops a selection started with V back to a single-ticket promote
+// standing on the last row (where V left the cursor).
+func TestVisualAllEscDegradesToSingleTicket(t *testing.T) {
+	m, _, _, promoter := newPromoteTestModel(t, 1, defaultTestStatuses)
+	m = pastTheSplash(t, m)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+
+	m = update(t, m, keyMsg("V"))
+	if !m.visual {
+		t.Fatal("V did not start visual mode")
+	}
+	m = update(t, m, keyMsg("esc"))
+	if m.visual {
+		t.Fatal("esc did not drop visual mode")
+	}
+	if m.attnSel != 2 {
+		t.Fatalf("cursor at %d, want 2 (the last row)", m.attnSel)
+	}
+
+	m = update(t, m, keyMsg("p"))
+	next, cmd := updateCmd(t, m, keyMsg("enter"))
+	m = next
+	if cmd == nil {
+		t.Fatal("enter produced no promote command")
+	}
+	cmd()
+	if len(promoter.calls) != 1 {
+		t.Fatalf("Promote called %d times, want 1: %+v", len(promoter.calls), promoter.calls)
+	}
+	if got := promoter.calls[0].ticketID; got != "id-3" {
+		t.Fatalf("promoted %s, want id-3", got)
+	}
+}
+
+// Done-when: pressing V while already in a visual selection expands the selection
+// to all currently shown rows.
+func TestVisualAllExpandsExistingVisualRange(t *testing.T) {
+	m, _, _, _ := newPromoteTestModel(t, 1, defaultTestStatuses)
+	m = pastTheSplash(t, m)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-1", TicketID: "id-1", Title: "One", Status: "Backlog"},
+		{Ticket: "LERP-2", TicketID: "id-2", Title: "Two", Status: "Backlog"},
+		{Ticket: "LERP-3", TicketID: "id-3", Title: "Three", Status: "Backlog"},
+		{Ticket: "LERP-4", TicketID: "id-4", Title: "Four", Status: "Backlog"},
+	}}})
+
+	// Start visual on row 1, extend to row 2 (count 2)
+	m = update(t, m, keyMsg("j"))
+	m = update(t, m, keyMsg("v"))
+	m = update(t, m, keyMsg("j"))
+	if count := m.visualSelectionCount(); count != 2 {
+		t.Fatalf("test setup: visualSelectionCount = %d, want 2", count)
+	}
+
+	// Press V: expands to all 4 rows
+	m = update(t, m, keyMsg("V"))
+	if !m.visual {
+		t.Fatal("visual mode ended unexpectedly")
+	}
+	if count := m.visualSelectionCount(); count != 4 {
+		t.Fatalf("visualSelectionCount = %d, want 4", count)
+	}
+	if m.visualAnchor != "LERP-1" || m.attnSel != 3 {
+		t.Fatalf("anchor = %q (want LERP-1), attnSel = %d (want 3)", m.visualAnchor, m.attnSel)
+	}
+}
+
 // The status bar carries the mark, the heartbeat and the counts; the ? key
 // swaps the main pane for the full keymap.
 func TestStatusBarAndHelp(t *testing.T) {
@@ -3728,15 +3927,15 @@ func TestFocusedPanelCarriesItsKeys(t *testing.T) {
 		TicketID: "id-9", Ticket: "LERP-9", Queue: "implement", LogPath: "/dev/null"}})
 
 	view := m.View()
-	for _, want := range []string{"p promote", "v select", "/ search", "o open"} {
+	for _, want := range []string{"p promote", "v select", "V select all"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("the needs-you panel does not offer %q:\n%s", want, view)
 		}
 	}
-	// In the 45-column panel a 100-column terminal leaves, the list is one
-	// key over budget now v is in the mix: nothing here is in a project, so
-	// P was already dead weight, and s — a display cycle, the tier project
-	// is in — is what gives an action key the room.
+	// In the 45-column panel a 100-column terminal leaves, the list is two
+	// keys over budget now v and V are in the mix: nothing here is in a
+	// project, so P was already dead weight, and s — a display cycle, the
+	// tier project is in — is what gives an action key the room.
 	if strings.Contains(view, "P project") {
 		t.Fatalf("P is offered over a list with no project to cycle to:\n%s", view)
 	}
@@ -3775,23 +3974,23 @@ func TestTheKeyLineKeepsTheKeysThatAct(t *testing.T) {
 	m = update(t, m, keyMsg("enter"))
 
 	line := lineWith(t, m.View(), "p promote")
-	for _, want := range []string{"p promote", "v select", "/ search", "o open"} {
+	for _, want := range []string{"p promote", "v select", "V select all"} {
 		if !strings.Contains(line, want) {
 			t.Fatalf("the key line dropped %q, which acts on the row:\n%s", want, line)
 		}
 	}
-	// Two keys short of the room now v is in the mix, and both are display
-	// cycles — sort and project — with the ellipsis to say the ? overlay
-	// has the rest.
+	// Three keys short of the room now v and V are in the mix: search and
+	// both display cycles — sort and project — with the ellipsis to say the
+	// ? overlay has the rest.
 	if strings.Contains(line, "s sort") || strings.Contains(line, "P project") {
-		t.Fatalf("the whole line fits after all — this window should be two keys short:\n%s", line)
+		t.Fatalf("the whole line fits after all — this window should be three keys short:\n%s", line)
 	}
 	if !strings.Contains(line, "…") {
 		t.Fatalf("a line with a key left out does not say so:\n%s", line)
 	}
 
 	// Given the room, both keys come back.
-	wide := resize(t, m, 150, 30)
+	wide := resize(t, m, 180, 30)
 	line = lineWith(t, wide.View(), "p promote")
 	for _, want := range []string{"s sort", "P project"} {
 		if !strings.Contains(line, want) {
