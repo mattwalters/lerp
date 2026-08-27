@@ -248,16 +248,23 @@ func hasDimMark(view string) bool {
 	return false
 }
 
-// emptyBoard is a model past the splash with both panels genuinely empty:
+// emptyBoard is a model past the splash with both panels genuinely empty —
 // nothing waiting on the operator and no ticket, running or queued, in any
-// lane — the one state LERP-145's decoration is for. The window is the test
-// default, 100x30, wide enough that the inbox panel alone clears the mark's
-// fit test many times over (see TestWordmarkFitsRequiresRoomOnEverySide).
+// lane — and settled: the pass that reported that has also concluded, which
+// is what actually licenses the mark (see model.boardEmptySettled). The
+// window is the test default, 100x30, wide enough that the inbox panel
+// alone clears the mark's fit test many times over (see
+// TestWordmarkFitsRequiresRoomOnEverySide).
 func emptyBoard(t *testing.T) model {
 	t.Helper()
 	m, _, _ := newTestModel(t, 2)
 	m = pastTheSplash(t, m)
-	return update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: nil}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: nil}})
+	m = update(t, m, tickedMsg{})
+	if !m.boardEmptySettled {
+		t.Fatal("setup: the empty pass never settled")
+	}
+	return m
 }
 
 // The board's own goal state — nothing on the operator, nothing running or
@@ -270,11 +277,79 @@ func TestTheWordmarkDecoratesTheEmptyBoard(t *testing.T) {
 	if !hasDimMark(view) {
 		t.Fatalf("an empty board does not show the wordmark:\n%s", view)
 	}
-	// Decoration only (rule 1): it replaces the empty-state text rather than
-	// sitting alongside it, which would read as the panel saying the same
-	// thing twice.
-	if strings.Contains(view, "the inbox is empty") {
-		t.Errorf("the plain empty-state text survived next to the mark:\n%s", view)
+	// Rule 1 is decoration only, and the Done-when is explicit that nothing
+	// about it changes what an informational element renders: the plain
+	// empty-state line stays on screen beside the mark, so a NO_COLOR
+	// terminal or one where colorWordmark quantizes toward invisible still
+	// gets the fact in words, not just a blank box.
+	if !strings.Contains(view, "the inbox is empty") {
+		t.Errorf("the plain empty-state text did not survive alongside the mark:\n%s", view)
+	}
+}
+
+// The mark's own fit test is asked about the room left under that line, not
+// the panel's whole interior — a regression that fit the mark against the
+// full height would draw it overlapping the line above it.
+func TestTheWordmarkLeavesRoomForTheEmptyStateLine(t *testing.T) {
+	m := emptyBoard(t)
+	view := ansi.Strip(m.View())
+	lines := strings.Split(view, "\n")
+	textAt, markAt := -1, -1
+	for i, line := range lines {
+		if strings.Contains(line, "the inbox is empty") {
+			textAt = i
+		}
+		if strings.Contains(line, strings.TrimLeft(strings.Split(markBlock, "\n")[0], " ")) {
+			markAt = i
+		}
+	}
+	if textAt < 0 || markAt < 0 {
+		t.Fatalf("expected both the empty-state line and the mark on screen:\n%s", view)
+	}
+	if markAt <= textAt {
+		t.Errorf("the mark drew at or above the empty-state line (text at %d, mark at %d):\n%s", textAt, markAt, view)
+	}
+}
+
+// A pass reports the inbox and the work panel as two separate events, one
+// Linear round trip apart, and rule 3 is explicit that the mark's fit
+// condition is evaluated on settled layout changes, never mid-report: a
+// frame caught between the two must not show the mark on the strength of
+// only one of them having landed empty, or a run concluding — work empties
+// before the inbox reports the finished ticket — would flash it on for the
+// gap.
+func TestTheWordmarkWaitsForBothEventsToSettle(t *testing.T) {
+	m, _, _ := newTestModel(t, 2)
+	m = pastTheSplash(t, m)
+	// One ticket running: neither panel is empty yet.
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
+			{ID: "t1", Identifier: "LERP-1", Title: "ship the thing", Eligible: true},
+		}},
+	}}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: nil}})
+	m = update(t, m, tickedMsg{})
+	if hasDimMark(m.View()) {
+		t.Fatal("setup: the mark is already showing with a ticket in flight")
+	}
+	// The run concludes: the work panel empties first, mid-pass — the inbox
+	// has not yet reported the ticket the run just finished.
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Team: "LERP", Name: "implement", Status: "Todo"},
+	}}})
+	if hasDimMark(m.View()) {
+		t.Fatalf("the mark showed mid-pass, before the inbox reported:\n%s", m.View())
+	}
+	// The inbox reports the finished ticket a beat later, in the same pass —
+	// the board is not empty at all, so tickedMsg must not promote it either.
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention,
+		Attention: []loop.AttentionItem{{Ticket: "LERP-1", Title: "ship the thing"}}}})
+	m = update(t, m, tickedMsg{})
+	if hasDimMark(m.View()) {
+		t.Fatalf("the mark showed once the pass settled non-empty:\n%s", m.View())
+	}
+	if !strings.Contains(m.View(), "LERP-1") {
+		t.Fatalf("the finished ticket never reached the inbox:\n%s", m.View())
 	}
 }
 
@@ -329,7 +404,10 @@ func TestTheWordmarkHidesWhenWorkHasATicket(t *testing.T) {
 // while m.searching, rather than snatch it out from under whatever they are
 // mid-typing. mainOpen says nothing about that box (it lives in the inbox
 // panel's own footer, not the main pane), so the wordmark must know to stay
-// off screen on its own rather than draw over it.
+// off screen on its own rather than draw over it. The pass is explicitly
+// settled with tickedMsg here — otherwise the assertion would pass for the
+// wrong reason, boardEmptySettled never having caught up rather than the
+// search guard actually holding.
 func TestTheWordmarkStaysOffScreenBehindAnOpenSearch(t *testing.T) {
 	m, _, _ := newTestModel(t, 2)
 	m = pastTheSplash(t, m)
@@ -340,12 +418,49 @@ func TestTheWordmarkStaysOffScreenBehindAnOpenSearch(t *testing.T) {
 		t.Fatal("setup: / did not open the search prompt")
 	}
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: nil}})
+	m = update(t, m, tickedMsg{})
+	if !m.boardEmptySettled {
+		t.Fatal("setup: the emptied pass never settled")
+	}
 	view := m.View()
 	if hasDimMark(view) {
 		t.Fatalf("the mark drew over an open search box:\n%s", view)
 	}
 	if !m.searching {
 		t.Fatal("the emptied pass closed the search box out from under the operator")
+	}
+}
+
+// The EventAttention handler skips clearing the query while m.searching is
+// true, precisely so a pass landing mid-word never snatches it away — but
+// that leaves a gap right after: the operator closes the box themselves
+// with enter, which accepts the query and keeps it (closeSearch(true)), and
+// no further pass has arrived since to run the clearing logic at all. The
+// query outlives the box, unresolved, until the next pass — and boardEmpty
+// must keep deferring to the panel's own key hint (which still offers to
+// clear it) for exactly that long.
+func TestTheWordmarkStaysOffScreenBehindALeftoverQuery(t *testing.T) {
+	m, _, _ := newTestModel(t, 2)
+	m = pastTheSplash(t, m)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention,
+		Attention: []loop.AttentionItem{{Ticket: "LERP-1", Title: "one"}}}})
+	m = update(t, m, keyMsg("/"))
+	m = typeSearch(t, m, "one")
+	// The pass empties the inbox while the box is still open: the handler's
+	// own !m.searching guard skips the clear.
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: nil}})
+	m = update(t, m, tickedMsg{})
+	if m.search == "" {
+		t.Fatal("setup: the query was cleared while the box was still open")
+	}
+	// Only now does the operator close it — accepting, which keeps the query
+	// — with no pass having landed since to clear it.
+	m = update(t, m, keyMsg("enter"))
+	if m.searching || m.search == "" {
+		t.Fatal("setup: enter did not accept the query and close the box")
+	}
+	if hasDimMark(m.View()) {
+		t.Fatalf("the mark drew over a leftover search filter:\n%s", m.View())
 	}
 }
 
@@ -370,7 +485,9 @@ func TestWordmarkFitsRequiresRoomOnEverySide(t *testing.T) {
 
 // The fallback for a board too tight to hold the mark: the fit test says no,
 // and the panel keeps its ordinary one-line empty state rather than drawing
-// the figure clipped into whatever room is actually there.
+// the figure clipped into whatever room is actually there. The pass is
+// settled with tickedMsg so the assertion is actually exercising the fit
+// test rather than passing on unsettled state alone.
 func TestTheWordmarkNeverClipsOnATightBoard(t *testing.T) {
 	m, _, _ := newTestModel(t, 2)
 	// Wide enough to stay clear of the too-small screen, but short enough
@@ -378,6 +495,10 @@ func TestTheWordmarkNeverClipsOnATightBoard(t *testing.T) {
 	m = update(t, m, tea.WindowSizeMsg{Width: minWidth, Height: m.minHeight(false)})
 	m = pastTheSplash(t, m)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: nil}})
+	m = update(t, m, tickedMsg{})
+	if !m.boardEmptySettled {
+		t.Fatal("setup: the empty pass never settled")
+	}
 	view := m.View()
 	if hasDimMark(view) {
 		t.Fatalf("the mark rendered on a board too tight to hold it whole:\n%s", view)
