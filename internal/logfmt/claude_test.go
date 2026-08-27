@@ -1,6 +1,7 @@
 package logfmt
 
 import (
+	_ "embed"
 	"fmt"
 	"strings"
 	"testing"
@@ -454,5 +455,80 @@ func TestClaudeTrackAndRetireStayInSync(t *testing.T) {
 	}
 	if _, live := dec.agents["agent-0"]; !live {
 		t.Fatal("agent-0 was evicted refilling a single freed slot, want it untouched")
+	}
+}
+
+//go:embed testdata/claude_subagent.jsonl
+var claudeSubagentLog string
+
+// A real subagent lifecycle stream — parent launch, task_started, subagent
+// execution reaching a higher context than its parent, task_notification
+// completed, parent tool_result, parent continuation — must retire the
+// finished subagent end to end so the row's worst-of figure falls back from
+// the subagent's high-water mark to the parent's actual load.
+func TestClaudeSubagentLifecycleFixture(t *testing.T) {
+	dec := &claude{}
+	lines := strings.Split(strings.TrimSpace(claudeSubagentLog), "\n")
+	if len(lines) == 0 {
+		t.Fatal("subagent fixture is empty")
+	}
+
+	var (
+		events            []Event
+		parentInitialCtx  int
+		subagentPeakCtx   int
+		postRetirementCtx int
+		sawNotification   bool
+	)
+
+	for _, line := range lines {
+		if strings.Contains(line, `"subtype":"task_notification"`) && strings.Contains(line, `"status":"completed"`) {
+			sawNotification = true
+		}
+
+		ev, ok := dec.Decode(line)
+		if !ok {
+			continue
+		}
+		events = append(events, ev)
+
+		if !sawNotification {
+			if parentInitialCtx == 0 && ev.Context > 0 {
+				parentInitialCtx = ev.Context
+			}
+			if ev.Context > subagentPeakCtx {
+				subagentPeakCtx = ev.Context
+			}
+		} else {
+			if ev.Kind == KindText && ev.Context > 0 {
+				postRetirementCtx = ev.Context
+			}
+		}
+	}
+
+	if len(events) == 0 {
+		t.Fatal("fixture produced no events")
+	}
+	if !sawNotification {
+		t.Fatal("fixture contained no completed task_notification line")
+	}
+	if parentInitialCtx == 0 {
+		t.Fatal("expected parent initial context > 0")
+	}
+	if subagentPeakCtx <= parentInitialCtx {
+		t.Fatalf("expected subagent peak context (%d) > parent initial context (%d)", subagentPeakCtx, parentInitialCtx)
+	}
+	if postRetirementCtx == 0 {
+		t.Fatal("expected post-retirement parent context > 0")
+	}
+	if postRetirementCtx >= subagentPeakCtx {
+		t.Fatalf("after subagent retirement, worst-of context %d did not fall back below subagent peak %d",
+			postRetirementCtx, subagentPeakCtx)
+	}
+
+	for agentID := range dec.agents {
+		if agentID != "" {
+			t.Fatalf("subagent %q remains in agents map after retirement", agentID)
+		}
 	}
 }
