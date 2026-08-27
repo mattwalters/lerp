@@ -55,7 +55,21 @@ var (
 		Light: lipgloss.CompleteColor{TrueColor: "#E9E4F7", ANSI256: "254"},
 		Dark:  lipgloss.CompleteColor{TrueColor: "#272138", ANSI256: "234"},
 	}
+	// colorWordmark is the empty-board decoration (LERP-145), pinned below
+	// contrastFloor on purpose: WCAG exempts pure decoration from the
+	// contrast rules outright, and this mark carries no information for
+	// dimness to put at risk (rule 1 — decoration only, forever). It is
+	// deliberately not in palette, and decorativeColors below is what tells
+	// TestPaletteListsEveryColor that absence is the point rather than an
+	// oversight; TestWordmarkIsExemptDecoration in theme_test.go is the
+	// carve-out itself, scoped to this one name.
+	colorWordmark = lipgloss.AdaptiveColor{Light: "#C4C1CC", Dark: "#4A4750"}
 )
+
+// decorativeColors are adaptive colours this package declares that the
+// contrast floor does not bind, by name. One entry today; a second use would
+// mean asking whether it is still true decoration before adding it here.
+var decorativeColors = map[string]bool{"colorWordmark": true}
 
 // contrastFloor is the ratio every colour here has to clear against its
 // backgrounds. WCAG asks 4.5:1 of text (1.4.3) and 3:1 of a graphic or a
@@ -135,6 +149,12 @@ var (
 	// colour: the palette marks state, and the mark is the one thing on the
 	// bar that reports nothing.
 	styleMark = lipgloss.NewStyle().Bold(true)
+
+	// styleWordmark is the empty-board decoration: colorWordmark and nothing
+	// else, no weight — bold is how styleTicket and the mark's own splash
+	// claim the operator's attention, and this is the one figure on screen
+	// built to give none.
+	styleWordmark = lipgloss.NewStyle().Foreground(colorWordmark)
 
 	// styleSelected is the selection band and nothing else: no foreground,
 	// so the row's own colours are what the operator still reads. The ▸

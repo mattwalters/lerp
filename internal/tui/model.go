@@ -2543,6 +2543,29 @@ func (m *model) oneGroup() bool {
 	return true
 }
 
+// boardEmpty is the discrete condition that licenses the empty-board
+// wordmark (LERP-145): the main pane is closed, so there is a candidate
+// centre space at all; the pass has actually reported, so this is the board's
+// own goal state and not the gap before the first read; and neither panel
+// holds a single ticket — nothing waiting on the operator, backlog included,
+// and nothing running or queued in any lane. Every field it reads changes
+// only where an event or a key already mutates the model, never on the
+// poll's own clock, which is what keeps this from being evaluated "per
+// repaint" in the sense rule 3 rules out: the inputs do not move between one
+// frame and the next unless something on screen also moved.
+//
+// !m.searching, not folded into mainOpen: the search prompt is a row of the
+// inbox panel's own footer rather than the main pane, so mainOpen says
+// nothing about it — and an operator can be left mid-query if the pass
+// that empties the list out from under them lands before they close it (see
+// the EventAttention handler's own care about not clearing the query out
+// from under a still-open box). The wordmark would otherwise draw over that
+// box instead of the panel falling back to it.
+func (m *model) boardEmpty() bool {
+	return !m.mainOpen() && !m.searching &&
+		m.attentionSeen && len(m.attention) == 0 && len(m.workRows()) == 0
+}
+
 // attentionEmptyLine is the one line the inbox panel draws instead of a
 // table, empty when there is a table to draw. It is the single reading of
 // that question: the header sits above rows only when there are rows, and
@@ -2818,6 +2841,12 @@ func (m model) attentionPanel(w, h int) string {
 		}
 	}
 	inner := padList.inner(w)
+	// A board this empty has no header, no rows, and — selectedAttention
+	// being nil — no key hints either, so there is never a footer line here
+	// to make room for: the whole of ih is the mark's to fill or leave alone.
+	if ih := h - 2; m.boardEmpty() && wordmarkFits(inner, ih) {
+		return panelBox(panelTitle(1, "inbox", keys, extra), keys, w, h, wordmarkPanel(inner, ih), padList)
+	}
 	rows, cur := m.attentionRows(inner)
 	// The header is pinned rather than listed: windowing a header is how a
 	// header scrolls away. It costs the rows a line, and — by the same rule

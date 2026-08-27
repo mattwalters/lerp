@@ -173,13 +173,47 @@ func TestPaletteListsEveryColor(t *testing.T) {
 		listed[c.name] = true
 	}
 	for name := range declared {
-		if !listed[name] {
+		if !listed[name] && !decorativeColors[name] {
 			t.Errorf("%s is declared but not in palette — an unlisted colour is an unmeasured one", name)
 		}
 	}
 	for name := range listed {
 		if !declared[name] {
 			t.Errorf("palette lists %s, which this package does not declare", name)
+		}
+	}
+}
+
+// The carve-out LERP-145's rule 2 asks for: colorWordmark is decoration, so
+// WCAG exempts it from the contrast rules this floor otherwise enforces on
+// every colour in the package, and the exemption is pinned rather than
+// merely granted — a rebalance that quietly bought it more contrast would
+// leave the decoration carve-out wider than it needs to be, and a change
+// that took it under a 1:1 ratio would leave decoration nobody can even
+// squint at. Scoped to this one name (see decorativeColors in theme.go):
+// nothing else gets to cite this test for its own exemption, and the floor
+// above stays exactly as strict for everything informational.
+func TestWordmarkIsExemptDecoration(t *testing.T) {
+	for _, tc := range []struct {
+		variant     string
+		fg          string
+		backgrounds []string
+	}{
+		{"light", colorWordmark.Light, lightBackgrounds},
+		{"dark", colorWordmark.Dark, darkBackgrounds},
+	} {
+		for _, bg := range tc.backgrounds {
+			t.Run(tc.variant+"/"+bg, func(t *testing.T) {
+				got := contrastRatio(t, tc.fg, bg)
+				if got >= contrastFloor {
+					t.Errorf("colorWordmark %s (%s) on %s is %.2f:1, want under the %.1f:1 floor — it is decoration, not text",
+						tc.variant, tc.fg, bg, got, contrastFloor)
+				}
+				if got <= 1.0 {
+					t.Errorf("colorWordmark %s (%s) on %s is %.2f:1 — invisible, not merely dim",
+						tc.variant, tc.fg, bg, got)
+				}
+			})
 		}
 	}
 }

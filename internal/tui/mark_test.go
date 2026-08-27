@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/mattwalters/lerp/internal/loop"
 )
 
@@ -204,5 +205,184 @@ func TestTheMarkFitsTheSmallestBoard(t *testing.T) {
 	}
 	if got := lipgloss.Height(view); got > m.height {
 		t.Errorf("the splash is %d lines tall in a %d-line window", got, m.height)
+	}
+}
+
+// hasDimMark is hasMark for the empty-board decoration. Two things hasMark
+// itself cannot see past: styleWordmark wraps every line of the block in its
+// own colour escapes, which a byte-offset search would count as indent, so
+// this strips them first. And hasMark checks a figure drawn over a bare
+// canvas — the splash's whole screen — by requiring each row to be the rest
+// of its line once trailing spaces are gone; the decoration sits inside a
+// bordered panel instead, so every row has a border character after it
+// rather than nothing, and that whole-line equality would never match. This
+// checks the same thing hasMark does — every row, in order, at one shared
+// indent — as a substring at that position instead, so whatever the panel
+// draws to its right of the figure does not matter.
+func hasDimMark(view string) bool {
+	view = ansi.Strip(view)
+	block := strings.Split(markBlock, "\n")
+	lines := strings.Split(view, "\n")
+	first := strings.TrimLeft(block[0], " ")
+	for i := 0; i+len(block) <= len(lines); i++ {
+		at := strings.Index(lines[i], first)
+		if at < 0 {
+			continue
+		}
+		indent := at - (len(block[0]) - len(first))
+		if indent < 0 {
+			continue
+		}
+		whole := true
+		for j, row := range block {
+			line := lines[i+j]
+			if indent+len(row) > len(line) || line[indent:indent+len(row)] != row {
+				whole = false
+				break
+			}
+		}
+		if whole {
+			return true
+		}
+	}
+	return false
+}
+
+// emptyBoard is a model past the splash with both panels genuinely empty:
+// nothing waiting on the operator and no ticket, running or queued, in any
+// lane — the one state LERP-145's decoration is for. The window is the test
+// default, 100x30, wide enough that the inbox panel alone clears the mark's
+// fit test many times over (see TestWordmarkFitsRequiresRoomOnEverySide).
+func emptyBoard(t *testing.T) model {
+	t.Helper()
+	m, _, _ := newTestModel(t, 2)
+	m = pastTheSplash(t, m)
+	return update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: nil}})
+}
+
+// The board's own goal state — nothing on the operator, nothing running or
+// queued — is precisely what an idle board looks like whether lerp is
+// working or has nothing left to do, and the wordmark is what tells the two
+// apart from a glance, the way the splash tells a cold start from a wedge.
+func TestTheWordmarkDecoratesTheEmptyBoard(t *testing.T) {
+	m := emptyBoard(t)
+	view := m.View()
+	if !hasDimMark(view) {
+		t.Fatalf("an empty board does not show the wordmark:\n%s", view)
+	}
+	// Decoration only (rule 1): it replaces the empty-state text rather than
+	// sitting alongside it, which would read as the panel saying the same
+	// thing twice.
+	if strings.Contains(view, "the inbox is empty") {
+		t.Errorf("the plain empty-state text survived next to the mark:\n%s", view)
+	}
+}
+
+// Opening a pane is the operator asking for something specific on screen,
+// and the mark is not it: rule 3 hides the decoration the moment there is no
+// more centre space for it to sit in, the same discrete change that would
+// also cover a resize.
+func TestTheWordmarkHidesBehindAnOpenPane(t *testing.T) {
+	m := emptyBoard(t)
+	if !hasDimMark(m.View()) {
+		t.Fatal("setup: the empty board is not showing the mark")
+	}
+	m = openMain(t, m)
+	if hasDimMark(m.View()) {
+		t.Fatalf("the mark is still on screen with the main pane open:\n%s", m.View())
+	}
+}
+
+// A board that fills is a board with something to say for itself, and the
+// mark carries no information (rule 1) — so the moment the inbox has a row,
+// it is that row's screen again, not the mark's.
+func TestTheWordmarkHidesWhenTheInboxHasSomething(t *testing.T) {
+	m := emptyBoard(t)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention,
+		Attention: []loop.AttentionItem{{Ticket: "LERP-1", Title: "one"}}}})
+	view := m.View()
+	if hasDimMark(view) {
+		t.Fatalf("the mark outlived an inbox row landing:\n%s", view)
+	}
+	if !strings.Contains(view, "LERP-1") {
+		t.Fatalf("the inbox row never made it to the panel:\n%s", view)
+	}
+}
+
+// The same rule from the work side: a queued ticket is exactly as much "the
+// board has something on it" as a row in the inbox, even with the inbox
+// itself still clear.
+func TestTheWordmarkHidesWhenWorkHasATicket(t *testing.T) {
+	m := emptyBoard(t)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
+			{ID: "t1", Identifier: "LERP-1", Title: "ship the thing", Eligible: true},
+		}},
+	}}})
+	if hasDimMark(m.View()) {
+		t.Fatalf("the mark outlived a ticket landing in the work panel:\n%s", m.View())
+	}
+}
+
+// A pass can empty the inbox out from under a search box the operator still
+// has open — the EventAttention handler deliberately leaves the query alone
+// while m.searching, rather than snatch it out from under whatever they are
+// mid-typing. mainOpen says nothing about that box (it lives in the inbox
+// panel's own footer, not the main pane), so the wordmark must know to stay
+// off screen on its own rather than draw over it.
+func TestTheWordmarkStaysOffScreenBehindAnOpenSearch(t *testing.T) {
+	m, _, _ := newTestModel(t, 2)
+	m = pastTheSplash(t, m)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention,
+		Attention: []loop.AttentionItem{{Ticket: "LERP-1", Title: "one"}}}})
+	m = update(t, m, keyMsg("/"))
+	if !m.searching {
+		t.Fatal("setup: / did not open the search prompt")
+	}
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: nil}})
+	view := m.View()
+	if hasDimMark(view) {
+		t.Fatalf("the mark drew over an open search box:\n%s", view)
+	}
+	if !m.searching {
+		t.Fatal("the emptied pass closed the search box out from under the operator")
+	}
+}
+
+// wordmarkFits is the guard against a clipped figure (rule 3): the fixed-size
+// block needs its full height and width, margin included, on both sides.
+// Shaving one cell off either dimension has to fail it — a fit test that
+// rounds in the mark's favour is the one that lets a corner of it touch the
+// border it is meant to keep clear of.
+func TestWordmarkFitsRequiresRoomOnEverySide(t *testing.T) {
+	need := len(markLines) + 2*wordmarkMargin
+	wide := lipgloss.Width(markBlock) + 2*wordmarkMargin
+	if !wordmarkFits(wide, need) {
+		t.Fatalf("wordmarkFits(%d, %d) = false, want true at exactly the room it asks for", wide, need)
+	}
+	if wordmarkFits(wide-1, need) {
+		t.Error("wordmarkFits allowed a box one column too narrow")
+	}
+	if wordmarkFits(wide, need-1) {
+		t.Error("wordmarkFits allowed a box one row too short")
+	}
+}
+
+// The fallback for a board too tight to hold the mark: the fit test says no,
+// and the panel keeps its ordinary one-line empty state rather than drawing
+// the figure clipped into whatever room is actually there.
+func TestTheWordmarkNeverClipsOnATightBoard(t *testing.T) {
+	m, _, _ := newTestModel(t, 2)
+	// Wide enough to stay clear of the too-small screen, but short enough
+	// that the inbox panel's own floor is nowhere near the mark's height.
+	m = update(t, m, tea.WindowSizeMsg{Width: minWidth, Height: m.minHeight(false)})
+	m = pastTheSplash(t, m)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: nil}})
+	view := m.View()
+	if hasDimMark(view) {
+		t.Fatalf("the mark rendered on a board too tight to hold it whole:\n%s", view)
+	}
+	if !strings.Contains(view, "the inbox is empty") {
+		t.Fatalf("the tight board lost its plain empty-state text along with the mark:\n%s", view)
 	}
 }
