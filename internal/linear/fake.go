@@ -209,6 +209,20 @@ func (f *Fake) SetDescription(issueID, body string) {
 	}
 }
 
+// AddComment records a comment on an issue for tests that assert on
+// GetIssueDetail or Comments.
+func (f *Fake) AddComment(issueID, body string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	fi, ok := f.issues[issueID]
+	if !ok {
+		return
+	}
+	f.comments[issueID] = append(f.comments[issueID],
+		Comment{Author: f.viewerID, Body: body, CreatedAt: time.Now()})
+	f.touch(fi)
+}
+
 // view materializes the caller-visible Issue, computing Blocked from the
 // current statuses of the declared blockers and Blocks by reading the same
 // declarations backwards, and reading the state category off the status the
@@ -380,19 +394,6 @@ func (f *Fake) UnassignIssue(_ context.Context, issueID string) error {
 		return fmt.Errorf("unassign issue %s: %w", issueID, ErrNotFound)
 	}
 	fi.issue.AssigneeID = ""
-	f.touch(fi)
-	return nil
-}
-
-func (f *Fake) CommentOnIssue(_ context.Context, issueID, bodyMarkdown string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	fi, ok := f.issues[issueID]
-	if !ok {
-		return fmt.Errorf("comment on issue %s: %w", issueID, ErrNotFound)
-	}
-	f.comments[issueID] = append(f.comments[issueID],
-		Comment{Author: f.viewerID, Body: bodyMarkdown, CreatedAt: time.Now()})
 	f.touch(fi)
 	return nil
 }

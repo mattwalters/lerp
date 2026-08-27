@@ -494,3 +494,17 @@ func TestExitStatusWithoutAPathReportsNothing(t *testing.T) {
 		t.Errorf("ExitStatus of a pathless record = (%d, %v), want no status", code, ok)
 	}
 }
+
+func TestEvidenceLayoutAccessors(t *testing.T) {
+	root := t.TempDir()
+	e := New(root)
+	if got, want := e.StateDir(), filepath.Join(root, ".lerp"); got != want {
+		t.Errorf("StateDir = %q, want %q", got, want)
+	}
+	if got, want := e.RunsDir(), filepath.Join(root, ".lerp", "runs"); got != want {
+		t.Errorf("RunsDir = %q, want %q", got, want)
+	}
+	if got, want := e.LoopLogPath(), filepath.Join(root, ".lerp", "loop.log"); got != want {
+		t.Errorf("LoopLogPath = %q, want %q", got, want)
+	}
+}

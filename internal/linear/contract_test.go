@@ -99,7 +99,6 @@ func notFoundOps() map[string]func(ctx context.Context, c Client) error {
 		"MoveIssue":      func(ctx context.Context, c Client) error { return c.MoveIssue(ctx, "nope", "Todo") },
 		"AssignIssue":    func(ctx context.Context, c Client) error { return c.AssignIssue(ctx, "nope", "u") },
 		"UnassignIssue":  func(ctx context.Context, c Client) error { return c.UnassignIssue(ctx, "nope") },
-		"CommentOnIssue": func(ctx context.Context, c Client) error { return c.CommentOnIssue(ctx, "nope", "hi") },
 	}
 }
 
