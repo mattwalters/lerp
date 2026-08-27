@@ -42,5 +42,5 @@ promoted ticket, following only the manual.
 **[SCOPE.md](SCOPE.md)** — the fence around the project: five concepts, nine
 invariants, and the litmus tests every change runs through.
 
-The docs you are reading are the ones that shipped with this version of lerp;
-the picker in the header moves between versions.
+This page isn't versioned — the manual is. Open Docs and the picker in its
+header moves between releases.

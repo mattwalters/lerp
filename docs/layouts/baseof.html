@@ -14,6 +14,12 @@
        included, mounted rather than written — is a page of the manual and
        gets the three-region shell. */}}
   {{ $manual := and (not .IsHome) (not .Params.splash) }}
+  {{/* Whether this build IS the unversioned root, as opposed to whether the
+       current page is a manual page — the two sound alike but are not: a
+       tag build stages home and Why lerp too (see docs.yml), so a versioned
+       build has non-manual pages of its own, and each of those still needs
+       the manual it ships beside, not the one at the site root. */}}
+  {{ $unversionedRoot := eq site.Params.version "" }}
   {{/* Looked up rather than spelled as a path, so a header link can never
        outlive the page it points at: with no page this fails the build,
        where a hand-written href would quietly serve a 404 from every page on
@@ -28,27 +34,38 @@
          sidebar and so have no other door to it. .here marks the part of the
          site you are already in.
 
-         From inside the manual this stays self-relative: relURL resolves
-         within this build, and a version's Docs link should never leave
-         that version. The root carries no manual of its own — the publish
-         workflow prunes it back out after building — so from there the link
-         goes straight to /latest/, root-absolute because /latest/ is a
-         sibling build this one has never heard of. Until the first tag
-         exists that 404s; accepted rather than adding a manifest-gated
-         hide/show for one link, since the version picker below already
-         tolerates that same fetch failing silently, and there is no manual
-         to publish before the first tag regardless. */}}
-    <a class="nav{{ if $manual }} here{{ end }}" href="{{ if $manual }}{{ "docs/" | relURL }}{{ else }}/latest/docs/{{ end }}">Docs</a>
+         Keyed on $unversionedRoot, not $manual: every page of a versioned
+         build (home and Why lerp included, since a tag stages the whole
+         site) has that build's own manual right beside it, so "docs/" |
+         relURL resolves within this build for all of them. Only the
+         unversioned root build genuinely has no manual after the publish
+         workflow prunes it back out — that is the one case needing
+         "/latest/docs/" | relURL instead: /latest/ is a sibling build this
+         one has never heard of, so the path has to name it explicitly, and
+         relURL still leaves Hugo's relativeURLs pass free to turn it into a
+         page-relative link that survives being served from any host or
+         subdirectory (see hugo.toml). Until the first tag exists that
+         404s; accepted rather than adding manifest-gated hide/show logic
+         for one link, on a project that has no manual to publish before
+         the first tag regardless. */}}
+    <a class="nav{{ if $manual }} here{{ end }}" href="{{ if $unversionedRoot }}{{ "/latest/docs/" | relURL }}{{ else }}{{ "docs/" | relURL }}{{ end }}">Docs</a>
     {{/* Beside the manual, not inside it: somebody still deciding whether
          lerp is the right tool has not started reading a manual yet, and the
          sidebar is for people who have. */}}
     <a class="nav{{ if eq .RelPermalink $why.RelPermalink }} here{{ end }}" href="{{ $why.RelPermalink }}">{{ $why.Title }}</a>
     <span class="spacer"></span>
     <a class="nav" href="{{ site.Params.repo }}">GitHub</a>
+    {{/* The picker belongs to manual pages: the root is unversioned, and
+         with no option in the list matching an empty site.Params.version,
+         a populated <select> would default to its first entry, "latest" —
+         showing a version label on the one build that deliberately has
+         none. */}}
+    {{ if $manual }}
     <span class="version">
       <span class="version-label">{{ site.Params.version }}</span>
       <select id="version-picker" hidden aria-label="Documentation version"></select>
     </span>
+    {{ end }}
   </header>
   <div class="wrap">
     {{ if $manual }}
@@ -100,6 +117,7 @@
     </nav>
     {{ end }}
   </div>
+  {{ if $manual }}
   <script>
     // The version picker. Each release is frozen under /vX.Y.Z/ beside a
     // moving /latest/, and versions.json sits one level above them all at the
@@ -125,13 +143,20 @@
             option.selected = v === {{ site.Params.version }};
             picker.appendChild(option);
           });
+          // Into that version's manual, not its root: the root of a
+          // versioned build is that version's own frozen copy of the home
+          // page, which (like every non-manual page) carries no picker and
+          // no version label — a reader who just switched versions would
+          // land somewhere that gives no sign the switch worked, with no
+          // picker on the page to correct it from.
           picker.addEventListener("change", function () {
-            window.location.href = new URL(picker.value + "/", root);
+            window.location.href = new URL(picker.value + "/docs/", root);
           });
           picker.hidden = false;
         })
         .catch(function () {});
     })();
   </script>
+  {{ end }}
 </body>
 </html>

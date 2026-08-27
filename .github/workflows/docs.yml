@@ -20,6 +20,16 @@
 # hand (Settings → Pages). Until that second act the site builds and deploys
 # to a branch nobody serves.
 #
+# One-time cleanup, the first time this version of the workflow runs: earlier
+# deploys, from before the root and the manual split, already put the manual
+# at the site root (gh-pages:/docs/, /readme/, /scope/). Pruning it from the
+# stage keep_files does not retroactively delete what an older deploy already
+# published — those three directories go on being served, unversioned and
+# frozen at whatever main was on the last pre-split deploy, until someone
+# removes them from gh-pages by hand. /latest/ is a separate, harmless case
+# of the same fact: it stays exactly as an old main-tracking deploy left it,
+# which is fine, because the first tag overwrites it with a correct copy.
+#
 # The custom domain is two more switches, both a human's and neither of them
 # in this repository:
 #
@@ -77,7 +87,14 @@ jobs:
       - uses: peaceiris/actions-hugo@v3
         with:
           hugo-version: ${{ steps.pin.outputs.version }}
+      # HUGO_PARAMS_VERSION explicitly empty, matching the root build below:
+      # left unset this would default to hugo.toml's "dev" and never equal
+      # "", so the root's own template branch (baseof.html's $unversionedRoot)
+      # would go untested here and get its first real run on the publish that
+      # follows a merge.
       - run: hugo --source docs --destination "$PWD/public"
+        env:
+          HUGO_PARAMS_VERSION: ""
       # The other shape the templates take: a versioned build, which stamps
       # a version, links into that tag on GitHub and looks a directory
       # further up for the manifest. /latest/ and /vX.Y.Z/ both take this
@@ -88,6 +105,7 @@ jobs:
         env:
           HUGO_PARAMS_VERSION: v0.0.0
           HUGO_PARAMS_VERSIONROOT: ".."
+          HUGO_PARAMS_REF: v0.0.0
 
   publish:
     if: github.event_name != 'pull_request'
@@ -148,15 +166,26 @@ jobs:
 
       # The root build above is the whole site — home, Why lerp, and the
       # manual alike, because there is one Hugo source and one set of
-      # templates, not two builds to keep in sync. This step throws the
-      # manual pages back out of that build before deploy, leaving the
-      # marketing pages it actually publishes. docs/demo.gif is spared: it
-      # is a static file mounted alongside the manual's section index (see
-      # hugo.toml) but the splash page embeds it too, at the same path GitHub
-      # renders it from in the README, so it stays put.
-      - name: Prune the manual from the root build
+      # templates, not two builds to keep in sync. This step keeps only the
+      # root pages, named explicitly, and deletes everything else, rather
+      # than naming the manual's pages to delete: the manual grows on its own
+      # (a new docs/content/docs/<page>.md, another root-file mount alongside
+      # README and SCOPE) while the root does not, so a keep-list of what's
+      # small and fixed stays correct where a prune-list of what's open-ended
+      # would silently fall behind and let the next addition onto the manual
+      # leak onto the unversioned root instead. docs/demo.gif is kept
+      # alongside the two root pages though it lives under the manual's own
+      # mount (see hugo.toml): the splash page embeds it too, at the same
+      # path GitHub renders it from in the README, so it has to stay.
+      - name: Stage only the root from the root build
         if: github.ref == 'refs/heads/main'
-        run: rm -rf public/docs/index.html public/docs/overview public/readme public/scope
+        run: |
+          mkdir /tmp/root
+          mv public/index.html public/why public/style.css public/docs/demo.gif /tmp/root/
+          rm -rf public
+          mkdir -p public/docs
+          mv /tmp/root/index.html /tmp/root/why /tmp/root/style.css public/
+          mv /tmp/root/demo.gif public/docs/
 
       # Casts are rendered from the tag's own tree, same as the manual below,
       # so a recording always shows the released binary rather than whatever
@@ -205,12 +234,18 @@ jobs:
       # A level below where the root's version directories used to live, so
       # the version picker's manifest — and the other versions it points at
       # — are one directory up from this copy, same as every frozen version.
+      # HUGO_PARAMS_REF is the tag, not "latest": the version label is what
+      # the header shows, but off-site links (render-link.html, for a repo
+      # file the site does not publish, like CONTRIBUTING.md) need the real
+      # ref this tree came from, or they'd point at whatever main has moved
+      # on to since.
       - name: Build latest
         if: github.event_name == 'push' && github.ref_type == 'tag'
         run: hugo --source docs --destination "$PWD/public/latest"
         env:
           HUGO_PARAMS_VERSION: latest
           HUGO_PARAMS_VERSIONROOT: ".."
+          HUGO_PARAMS_REF: ${{ github.ref_name }}
 
       # The frozen copy this tag owns forever, published alongside /latest/
       # in the same run: the release that moves /latest/ forward is the same
@@ -221,6 +256,7 @@ jobs:
         env:
           HUGO_PARAMS_VERSION: ${{ github.ref_name }}
           HUGO_PARAMS_VERSIONROOT: ".."
+          HUGO_PARAMS_REF: ${{ github.ref_name }}
 
       # The manifest behind the version picker: this tag appended to whatever
       # gh-pages already carries, deduplicated and sorted newest first. The
@@ -267,9 +303,10 @@ jobs:
       # versions.json on a tag push — while everything else already on
       # gh-pages, including every previously released version's directory,
       # stays exactly where it was. The same property in the other
-      # direction: the root can never shed a page, so a deleted or renamed
-      # content file goes on being served from its last build until someone
-      # removes it from the branch by hand.
+      # direction: nothing published this way ever sheds a page on its own —
+      # the root, and /latest/ no less than a frozen /vX.Y.Z/ — so a deleted
+      # or renamed content file goes on being served from its subtree's last
+      # build until someone removes it from the branch by hand.
       #
       # Nothing staged means nothing to publish: a run whose builds all
       # skipped — a dispatch pointed at neither main nor a tag push — stops
