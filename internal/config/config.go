@@ -99,6 +99,14 @@ type Runner struct {
 	Model   string `toml:"model"`
 	Effort  string `toml:"effort"`
 	Args    string `toml:"args"`
+	// Context is the model's context window, in tokens — a display
+	// denominator, nothing lerp acts on. Allowed on both a vendor and a
+	// command runner, since it says nothing about the CLI, only how full its
+	// window is; vendorOnlyField leaves it alone. Zero, the default, means
+	// unset: no configured window means no percentage anywhere on the
+	// board, never a built-in fallback — windows differ by model and by
+	// flags, and a wrong one reads as confidently right.
+	Context int `toml:"context"`
 }
 
 // vendorOnlyField reports the first of Model, Effort or Args set on a
@@ -269,6 +277,22 @@ func (c *RepoConfig) PromoteTargets() []string {
 	return targets
 }
 
+// ContextWindows maps each queue name to its runner's configured context
+// window in tokens — the denominator the work row turns a context reading
+// into a percentage with. A queue whose runner sets no window has no entry,
+// which is the same "no percentage" case as a runner whose stream never
+// reports a reading at all. The single spelling of the lookup, next to
+// WatchedStatuses and PromoteTargets.
+func (c *RepoConfig) ContextWindows() map[string]int {
+	windows := make(map[string]int)
+	for name, q := range c.Queues {
+		if r, ok := c.Runners[q.Runner]; ok && r.Context > 0 {
+			windows[name] = r.Context
+		}
+	}
+	return windows
+}
+
 // LoadRepoConfig reads and validates the per-repo config file at path
 // (conventionally RepoConfigFile at the repo root).
 func LoadRepoConfig(path string) (*RepoConfig, error) {
@@ -336,6 +360,9 @@ func (c *RepoConfig) validate(path string) error {
 	}
 	for _, name := range slices.Sorted(maps.Keys(c.Runners)) {
 		r := c.Runners[name]
+		if r.Context < 0 {
+			return fmt.Errorf("%s: runner %q: context must not be negative", path, name)
+		}
 		if (r.Vendor == "") == (r.Command == "") {
 			return fmt.Errorf("%s: runner %q: set exactly one of vendor or command", path, name)
 		}

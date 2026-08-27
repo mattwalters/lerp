@@ -28,10 +28,12 @@ func TestClaudeDecodesTheStream(t *testing.T) {
 		{"prose", claudeText, Event{Kind: KindText, Text: "I'll start by reading the ticket."}},
 		{"tool call on a path", claudeRead, Event{Kind: KindToolCall, Tool: "Read", Text: "model.go"}},
 		// Every kind of token the call billed for, and the four counts are
-		// disjoint: 6 + 91 + 4,096 + 12,000.
+		// disjoint: 6 + 91 + 4,096 + 12,000. Context is the input side only
+		// (6 + 4,096 + 12,000), output excluded — how full the window is,
+		// not what the run was billed for.
 		{"an assistant line carries what its call spent",
 			`{"type":"assistant","message":{"content":[{"type":"text","text":"Reading the ticket."}],"usage":{"input_tokens":6,"output_tokens":91,"cache_creation_input_tokens":4096,"cache_read_input_tokens":12000}}}`,
-			Event{Kind: KindText, Text: "Reading the ticket.", Usage: 16193}},
+			Event{Kind: KindText, Text: "Reading the ticket.", Usage: 16193, Context: 16102}},
 		{"the run's own total is not counted again",
 			`{"type":"result","subtype":"success","num_turns":3,"usage":{"input_tokens":6,"output_tokens":91}}`,
 			Event{Kind: KindResult, Text: "success · 3 turns"}},
@@ -239,4 +241,122 @@ func claudeBlockLine(id, kind, body string) string {
 	return `{"type":"assistant","message":{"id":"` + id + `","role":"assistant","content":[{"type":"` +
 		kind + `",` + body + `}],"usage":{"input_tokens":100,"output_tokens":200,` +
 		`"cache_creation_input_tokens":300,"cache_read_input_tokens":400}}}`
+}
+
+// claudeAgentLine is one assistant line from the given agent — "" for the
+// top-level agent, a subagent's Task tool_use_id otherwise — whose usage
+// reads inputTokens on the input side.
+func claudeAgentLine(parentToolUseID string, inputTokens int) string {
+	return fmt.Sprintf(`{"type":"assistant","parent_tool_use_id":%q,`+
+		`"message":{"content":[{"type":"text","text":"working"}],"usage":{"input_tokens":%d}}}`,
+		parentToolUseID, inputTokens)
+}
+
+// claudeTaskNotification is a subagent lifecycle line: a "task_notification"
+// naming the Task tool_use_id and its status.
+func claudeTaskNotification(toolUseID, status string) string {
+	return fmt.Sprintf(`{"type":"system","subtype":"task_notification","tool_use_id":%q,"status":%q}`,
+		toolUseID, status)
+}
+
+// The worst context reading among a run's agents is what the row shows, so a
+// subagent that outruns its own parent must not hide behind the parent's
+// smaller figure — the log LERP-150 verified against read 274k top-level
+// against 132k and 141k subagents; this is the inverted case the ticket asks
+// for, a small parent and a subagent that outgrows it.
+func TestClaudeAttributesContextPerAgent(t *testing.T) {
+	dec := &claude{}
+	ev, ok := dec.Decode(claudeAgentLine("", 1000))
+	if !ok {
+		t.Fatal("line was not decoded")
+	}
+	if ev.Context != 1000 {
+		t.Fatalf("the top-level agent's line reported Context %d, want 1000", ev.Context)
+	}
+
+	ev, ok = dec.Decode(claudeAgentLine("toolu_sub", 5000))
+	if !ok {
+		t.Fatal("line was not decoded")
+	}
+	if ev.Context != 5000 {
+		t.Fatalf("a bigger subagent's line reported Context %d, want the worst-of 5000", ev.Context)
+	}
+
+	ev, ok = dec.Decode(claudeAgentLine("", 1200))
+	if !ok {
+		t.Fatal("line was not decoded")
+	}
+	if ev.Context != 5000 {
+		t.Fatalf("the top-level agent growing to 1200 reported Context %d, want the subagent's 5000 to stay the worst", ev.Context)
+	}
+}
+
+// A finished subagent's high-water mark must not haunt the row once it is
+// gone: the completion notification retires its entry, so the next line
+// falls back to whatever is still running.
+func TestClaudeRetiresAFinishedSubagent(t *testing.T) {
+	dec := &claude{}
+	dec.Decode(claudeAgentLine("", 1000))
+	dec.Decode(claudeAgentLine("toolu_sub", 9000))
+
+	if ev, ok := dec.Decode(claudeTaskNotification("toolu_sub", "completed")); ok {
+		t.Fatalf("a task_notification line decoded to %+v, want it dropped", ev)
+	}
+
+	ev, ok := dec.Decode(claudeAgentLine("", 1100))
+	if !ok {
+		t.Fatal("line was not decoded")
+	}
+	if ev.Context != 1100 {
+		t.Fatalf("after the subagent's completion the figure read %d, want the parent's own 1100", ev.Context)
+	}
+}
+
+// A status other than "completed" — the subagent has only started — must not
+// retire anything: only a genuine completion frees the slot.
+func TestClaudeUncompletedNotificationDoesNotRetire(t *testing.T) {
+	dec := &claude{}
+	dec.Decode(claudeAgentLine("toolu_sub", 9000))
+	dec.Decode(claudeTaskNotification("toolu_sub", "started"))
+
+	ev, ok := dec.Decode(claudeAgentLine("", 100))
+	if !ok {
+		t.Fatal("line was not decoded")
+	}
+	if ev.Context != 9000 {
+		t.Fatalf("a non-completion notification changed the worst-of to %d, want the subagent's 9000 untouched", ev.Context)
+	}
+}
+
+// A stream that never states usage reports Context zero throughout — the
+// same "the runner does not say" floor Usage and Cost already keep.
+func TestClaudeContextZeroWithoutUsage(t *testing.T) {
+	ev, ok := (&claude{}).Decode(claudeText)
+	if !ok {
+		t.Fatal("line was not decoded")
+	}
+	if ev.Context != 0 {
+		t.Fatalf("a line with no usage reported Context %d, want 0", ev.Context)
+	}
+}
+
+// The agent map is capped the way the counted-messages ring is: a day-long
+// run's fan-out is unbounded and this is a board that stays up. Past the cap
+// the oldest tracked agent is evicted, so its stale high-water mark cannot
+// keep winning the worst-of forever.
+func TestClaudeTracksAgentCapEvicts(t *testing.T) {
+	dec := &claude{}
+	dec.Decode(claudeAgentLine("agent-0", 999999))
+
+	var ev Event
+	for i := 1; i <= trackedAgents; i++ {
+		var ok bool
+		ev, ok = dec.Decode(claudeAgentLine(fmt.Sprintf("agent-%d", i), 1))
+		if !ok {
+			t.Fatal("line was not decoded")
+		}
+	}
+	if ev.Context != 1 {
+		t.Fatalf("the worst-of figure read %d once the cap evicted the huge agent, want 1", ev.Context)
+	}
 }

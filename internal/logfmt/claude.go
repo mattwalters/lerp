@@ -18,7 +18,24 @@ type claude struct {
 	// reported, newest overwriting oldest.
 	counted [countedMessages]string
 	next    int
+	// agents holds each live agent's latest input-side reading, keyed by
+	// parent_tool_use_id ("" for the top-level agent) — a reading, not a
+	// sum, so a later line for the same agent simply replaces its entry.
+	// agentOrder is the insertion order of the distinct agents seen so far,
+	// a ring like counted, and agentSeen is how many of its slots hold a
+	// real agent: past trackedAgents the oldest agent's entry is evicted
+	// rather than the map growing without bound, the same trade counted
+	// makes for message ids.
+	agents     map[string]int
+	agentOrder [trackedAgents]string
+	agentNext  int
+	agentSeen  int
 }
+
+// trackedAgents bounds the agent map the same way countedMessages bounds the
+// counted ring: a day-long run's fan-out is unbounded and this is a board
+// that stays up.
+const trackedAgents = 32
 
 // countedMessages is how many messages the decoder remembers having billed.
 // One API call is written as several lines — one per content block — and each
@@ -49,7 +66,15 @@ type claudeLine struct {
 	// settles it only here — so unlike Usage it needs no guard against being
 	// billed twice.
 	TotalCostUSD float64 `json:"total_cost_usd"`
-	Message      struct {
+	// ParentToolUseID names the subagent an assistant or user line belongs
+	// to — the tool_use_id of the Task call that started it — empty for the
+	// top-level agent. ToolUseID and Status belong to a "task_notification"
+	// system line: ToolUseID is the same id, and Status "completed" is what
+	// retires that agent's entry once it is done.
+	ParentToolUseID string `json:"parent_tool_use_id"`
+	ToolUseID       string `json:"tool_use_id"`
+	Status          string `json:"status"`
+	Message         struct {
 		ID      string        `json:"id"`
 		Content []claudeBlock `json:"content"`
 		Usage   claudeUsage   `json:"usage"`
@@ -69,6 +94,13 @@ type claudeUsage struct {
 
 func (u claudeUsage) total() int {
 	return u.InputTokens + u.OutputTokens + u.CacheCreationTokens + u.CacheReadTokens
+}
+
+// inputSide is what the call's context window holds: everything it read
+// going in, output excluded — the number "how full is the agent" is asking
+// for, where total() (what the run is billed for) counts output too.
+func (u claudeUsage) inputSide() int {
+	return u.InputTokens + u.CacheCreationTokens + u.CacheReadTokens
 }
 
 type claudeBlock struct {
@@ -95,8 +127,23 @@ func (c *claude) Decode(line string) (Event, bool) {
 			// The stream's heartbeat: a running count for the thinking block
 			// in progress, restarting at each one.
 			return Event{Kind: KindThinking, Tokens: l.EstimatedTokens}, true
+		case "task_notification":
+			// A finished subagent's high-water mark must not haunt the row
+			// once it is gone: retire its entry so the worst-of figure falls
+			// back to whatever is still running. The lowered figure appears
+			// on the next assistant line rather than instantly, which is the
+			// calm rule, not a gap.
+			if l.Status == "completed" {
+				delete(c.agents, l.ToolUseID)
+			}
 		}
 	case "assistant", "user":
+		if l.Type == "assistant" {
+			// Every assistant line repeats its call's usage, so tracking it
+			// here even for a line that renders nothing keeps the reading
+			// current without waiting for one that does.
+			c.track(l.ParentToolUseID, l.Message.Usage.inputSide())
+		}
 		// The stream emits one content block per line; a line carrying
 		// several renders the first block it knows, which is the one the
 		// operator would have read first anyway.
@@ -107,6 +154,7 @@ func (c *claude) Decode(line string) (Event, bool) {
 				// spent whatever it chose to say. A user line — a tool
 				// result — reports none, so this is zero there.
 				ev.Usage = c.usage(l.Message.ID, l.Message.Usage)
+				ev.Context = c.contextMax()
 				ev.Time = l.time()
 				return ev, true
 			}
@@ -145,6 +193,40 @@ func (c *claude) usage(id string, u claudeUsage) int {
 	c.counted[c.next] = id
 	c.next = (c.next + 1) % len(c.counted)
 	return total
+}
+
+// track records agent's latest input-side reading, evicting the oldest
+// tracked agent once trackedAgents distinct agents have been seen. A repeat
+// of an agent already tracked only updates its value — the ring only turns
+// for a genuinely new agent, so an agent already retired by a completion
+// notification and never seen again does not hold a slot forever, but one
+// still running never loses its place to its own repeated lines.
+func (c *claude) track(agent string, tokens int) {
+	if c.agents == nil {
+		c.agents = make(map[string]int, trackedAgents)
+	}
+	if _, seen := c.agents[agent]; !seen {
+		if c.agentSeen == trackedAgents {
+			delete(c.agents, c.agentOrder[c.agentNext])
+		} else {
+			c.agentSeen++
+		}
+		c.agentOrder[c.agentNext] = agent
+		c.agentNext = (c.agentNext + 1) % trackedAgents
+	}
+	c.agents[agent] = tokens
+}
+
+// contextMax is the worst live agent's latest reading — a drowning subagent
+// must not hide behind a healthy top-level agent.
+func (c *claude) contextMax() int {
+	max := 0
+	for _, tokens := range c.agents {
+		if tokens > max {
+			max = tokens
+		}
+	}
+	return max
 }
 
 // time is when the stream says the line was written. The system lines carry

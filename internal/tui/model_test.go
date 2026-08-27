@@ -1035,6 +1035,31 @@ func TestHelpOverlayDecodesTheInboxMarks(t *testing.T) {
 	}
 }
 
+// The work row's ⚠ means something different from the inbox's own — a
+// context load past loadWarn, not an unnamed status — so it gets its own
+// line in the overlay rather than folding into inboxLegend's.
+func TestHelpOverlayDecodesTheWorkMarks(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	m = update(t, resized.(model), keyMsg("?"))
+
+	view := ansi.Strip(m.View())
+	shown, decoded := false, false
+	for _, l := range strings.Split(view, "\n") {
+		if !strings.Contains(l, "⚠") {
+			continue
+		}
+		shown = true
+		decoded = decoded || strings.Contains(l, "context load")
+	}
+	if !shown {
+		t.Fatalf("the help overlay does not show the work row's ⚠ at all:\n%s", view)
+	}
+	if !decoded {
+		t.Fatalf("no line explains the work row's ⚠:\n%s", view)
+	}
+}
+
 // Done-when: the ? overlay is a lens like the others, so a live log behind
 // it neither writes over it nor is disturbed by it. One viewport serves the
 // log, the detail and the overlay; the overlay is the one the operator
@@ -5926,6 +5951,107 @@ func TestCostGraduatesPrecisionLikeTokenCount(t *testing.T) {
 		if got := costLabel(tc.c); got != tc.want {
 			t.Errorf("costLabel(%v) = %q, want %q", tc.c, got, tc.want)
 		}
+	}
+}
+
+// A running row's window comes from Options.Windows, keyed by the queue it
+// is running in — the plumbing from RepoConfig.ContextWindows through to the
+// row, independent of the reading itself. A queue absent from the map
+// carries no window, the same as an unconfigured runner.
+func TestWorkGroupsWireTheConfiguredWindow(t *testing.T) {
+	ticker := &countingTicker{}
+	events := make(chan loop.Event, 8)
+	m := newModel(context.Background(), Options{
+		Engine:   fakeEngine{ticker, &recordingPromoter{}, &recordingEjector{}, &recordingStarter{}, &recordingReader{}},
+		Statuses: defaultTestStatuses,
+		Windows:  map[string]int{"implement": 200000},
+		Interval: time.Millisecond,
+		Lanes:    2,
+		Events:   events,
+	})
+	resized, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = pastTheSplash(t, resized.(model))
+
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		TicketID: "id-42", Ticket: "LERP-42", Queue: "implement", LogPath: "/dev/null"}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r2", Lane: 2,
+		TicketID: "id-43", Ticket: "LERP-43", Queue: "plan", LogPath: "/dev/null"}})
+
+	windows := make(map[string]int)
+	for _, r := range m.workRows() {
+		windows[r.ticket] = r.window
+	}
+	if windows["LERP-42"] != 200000 {
+		t.Errorf("LERP-42's row.window = %d, want 200000 from Options.Windows[implement]", windows["LERP-42"])
+	}
+	if windows["LERP-43"] != 0 {
+		t.Errorf("LERP-43's row.window = %d, want 0 — its queue has no configured window", windows["LERP-43"])
+	}
+}
+
+// A row with both a context reading and a configured window draws the
+// worst agent's load as a percentage, beside the tokens and cost it already
+// carries.
+func TestRunningRowCarriesItsContextLoad(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	r := workRow{ticket: "LERP-1", title: "one", lane: 1, state: laneRunning,
+		since: time.Now().Add(-90 * time.Second), heard: time.Now(), context: 40000, window: 200000}
+
+	first := ansi.Strip(m.workRowLines(r, false, 80)[0])
+	if !strings.Contains(first, "20%") {
+		t.Fatalf("a row with a reading and a window does not report its load: %q", first)
+	}
+}
+
+// The glyph is what turns a plain percentage into an attention signal, and
+// it earns its place only at loadWarn and above — half a window is a normal
+// working state and must not carry it.
+func TestContextLoadCarriesTheGlyphAtThreshold(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	base := workRow{ticket: "LERP-1", title: "one", lane: 1, state: laneRunning,
+		since: time.Now().Add(-90 * time.Second), heard: time.Now(), window: 100000}
+
+	below := base
+	below.context = 79000
+	if got := ansi.Strip(m.workRowLines(below, false, 80)[0]); strings.Contains(got, "⚠") {
+		t.Fatalf("a load of 79%% already carries the glyph: %q", got)
+	}
+
+	at := base
+	at.context = 80000
+	got := ansi.Strip(m.workRowLines(at, false, 80)[0])
+	if !strings.Contains(got, "⚠") || !strings.Contains(got, "80%") {
+		t.Fatalf("a load of 80%% does not carry the glyph: %q", got)
+	}
+}
+
+// A reading with no configured window is the same "tokens only" case a
+// runner that reports no reading at all already has: no percentage, and no
+// stray separator left dangling for the figure that never came.
+func TestContextLoadIsAbsentWithoutAWindow(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	r := workRow{ticket: "LERP-1", title: "one", lane: 1, state: laneRunning,
+		since: time.Now().Add(-90 * time.Second), heard: time.Now(), tokens: 1000, context: 40000}
+
+	got := ansi.Strip(m.workRowLines(r, false, 80)[0])
+	if strings.Contains(got, "%") {
+		t.Fatalf("a reading with no configured window still drew a percentage: %q", got)
+	}
+	if strings.HasSuffix(strings.TrimRight(got, " "), "·") {
+		t.Fatalf("a dropped load figure left a dangling separator: %q", got)
+	}
+}
+
+// A configured window with no reading yet — the log has not carried a call
+// with usage — renders neither: a percentage of zero would be a lie, not a
+// floor.
+func TestContextLoadIsAbsentWithoutAReading(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	r := workRow{ticket: "LERP-1", title: "one", lane: 1, state: laneRunning,
+		since: time.Now().Add(-90 * time.Second), heard: time.Now(), window: 200000}
+
+	if got := ansi.Strip(m.workRowLines(r, false, 80)[0]); strings.Contains(got, "%") {
+		t.Fatalf("a window with no reading still drew a percentage: %q", got)
 	}
 }
 

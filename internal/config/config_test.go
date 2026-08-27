@@ -453,6 +453,25 @@ on_success = "Done"
 `,
 			wantErr: `queues "plan" and "replan" both watch status "Planning"`,
 		},
+		{
+			name: "negative context",
+			toml: `
+teams = ["LERP"]
+provision = "p"
+dispose = "d"
+
+[runners.claude]
+command = "claude"
+context = -1
+
+[queues.plan]
+status = "Planning"
+prompt = "p"
+runner = "claude"
+on_success = "Done"
+`,
+			wantErr: `runner "claude": context must not be negative`,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -484,6 +503,86 @@ func TestQueueExpandPrompt(t *testing.T) {
 	want := "Work LERP-42 in Implementing; done goes to In Review, trouble to Needs Attention. Close LERP-42."
 	if got != want {
 		t.Errorf("ExpandPrompt = %q, want %q", got, want)
+	}
+}
+
+// context is a display denominator, allowed on both a vendor runner and a
+// command runner — it says nothing about the CLI, only how full its window
+// is, so it is not one of the vendorOnlyField fields a command runner
+// refuses.
+func TestContextParsesOnVendorAndCommandRunner(t *testing.T) {
+	path := writeFile(t, "lerp.toml", `
+teams = ["LERP"]
+provision = "p"
+dispose = "d"
+
+[runners.claude]
+vendor = "claude"
+context = 200000
+
+[runners.codex]
+command = "codex exec {{prompt}}"
+context = 128000
+
+[queues.plan]
+status = "Planning"
+prompt = "p"
+runner = "claude"
+on_success = "Implementing"
+
+[queues.implement]
+status = "Implementing"
+prompt = "p"
+runner = "codex"
+on_success = "Done"
+`)
+	c, err := LoadRepoConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := c.Runners["claude"].Context; got != 200000 {
+		t.Errorf("Runners[claude].Context = %d, want 200000", got)
+	}
+	if got := c.Runners["codex"].Context; got != 128000 {
+		t.Errorf("Runners[codex].Context = %d, want 128000", got)
+	}
+}
+
+// ContextWindows maps a queue to its runner's configured window, and omits a
+// queue whose runner sets none — the same "no percentage" case a runner
+// whose stream reports no reading already has.
+func TestContextWindows(t *testing.T) {
+	path := writeFile(t, "lerp.toml", `
+teams = ["LERP"]
+provision = "p"
+dispose = "d"
+
+[runners.claude]
+command = "claude"
+context = 200000
+
+[runners.codex]
+command = "codex exec {{prompt}}"
+
+[queues.plan]
+status = "Planning"
+prompt = "p"
+runner = "claude"
+on_success = "Implementing"
+
+[queues.implement]
+status = "Implementing"
+prompt = "p"
+runner = "codex"
+on_success = "Done"
+`)
+	c, err := LoadRepoConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]int{"plan": 200000}
+	if got := c.ContextWindows(); !reflect.DeepEqual(got, want) {
+		t.Errorf("ContextWindows = %v, want %v", got, want)
 	}
 }
 

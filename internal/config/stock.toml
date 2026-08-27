@@ -52,6 +52,12 @@ dispose = 'git worktree remove --force "$LERP_WORKSPACE"'
 vendor = "claude"
 # model = "opus"
 # effort = "high"
+# The model's context window, in tokens, so the board can show how full a
+# run's fullest agent is. No value here means no percentage anywhere on the
+# board — lerp carries no model→window table, so this is the only honest
+# source, and it is commented out because a live number would be exactly
+# the confidently wrong denominator that would defeat the point.
+# context = 200000
 #{{bypass}}
 args = "--permission-mode bypassPermissions"
 #{{/bypass}}

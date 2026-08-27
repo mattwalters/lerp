@@ -100,6 +100,12 @@ branching is a human or an agent moving a ticket.
   know which ticket it was started for — while lerp will still advance
   that ticket on a clean exit. Write `prompt = "Implement {{ticket}}
   ..."`, not `prompt = "Implement the ticket ..."`.
+- **`context` is a display denominator, never a capability.** Set it on a
+  runner to the model's context window in tokens (`context = 200000`) and
+  the board turns a run's context reading into a percentage; leave it unset
+  and the row shows tokens with no percentage. Lerp carries no
+  model→window table — windows vary by model and by flags — so an unset
+  `context` is the honest state, not a gap to fill in.
 - **Name statuses by placeholder, not by name.** A prompt may also use
   `{{status}}`, `{{on_success}}`, and `{{on_failure}}`, expanded from
   its own queue's fields — no other queue's, and nothing more. Prose
