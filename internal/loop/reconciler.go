@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/mattwalters/lerp/internal/config"
+	"github.com/mattwalters/lerp/internal/credentials"
 	"github.com/mattwalters/lerp/internal/evidence"
 	"github.com/mattwalters/lerp/internal/linear"
 	"github.com/mattwalters/lerp/internal/logfmt"
@@ -27,6 +28,10 @@ import (
 // choose an interval. Polling is the design: no webhooks, and nothing listens
 // on a port.
 const DefaultInterval = 12 * time.Second
+
+// DefaultSessionExpiryBackoff is how long the loop idles when Linear
+// rejects a stored refresh token before checking disk for a re-login.
+const DefaultSessionExpiryBackoff = 5 * time.Minute
 
 // DefaultResyncEvery is how many delta reads the attention pass makes before
 // it re-lists a team's board from scratch. At DefaultInterval that is a full
@@ -289,6 +294,10 @@ type ReconcilerOptions struct {
 	// not a lerp.toml setting: nothing an operator configures should be able
 	// to decide how stale their inbox may get.
 	ResyncEvery int
+	// SessionExpiryBackoff is how long the loop idles when Linear rejects
+	// the stored refresh token (revoked, or rotated past grace), DefaultSessionExpiryBackoff
+	// when zero.
+	SessionExpiryBackoff time.Duration
 
 	// Events, when set, receives every Event the loop emits. It is called
 	// from the loop's goroutines and must be safe for concurrent use; a
@@ -345,14 +354,13 @@ type Reconciler struct {
 	boardsMu sync.Mutex
 	boards   map[string]*teamBoard
 
+	// pauseMu protects pause state: resumeAt, pauseIsRateLimit, rateLimitOAuth.
 	// resumeAt is when a pass may next ask Linear anything, set by fail when
-	// an error chain carries *linear.RateLimitError. It has its own lock
-	// rather than sharing mu: fail runs under mu already held when it is
-	// reporting ejectLane's own failures (a filesystem error today, never
-	// this one, but fail has no way to know that) — sharing mu would
-	// deadlock that call the moment it ever did carry one.
-	rateLimitMu sync.Mutex
-	resumeAt    time.Time
+	// an error chain carries *linear.RateLimitError or ErrLoginRequired.
+	pauseMu          sync.Mutex
+	resumeAt         time.Time
+	pauseIsRateLimit bool
+	rateLimitOAuth   bool
 }
 
 // teamBoard is the attention pass's cached reading of one team: the issues
@@ -414,6 +422,9 @@ func NewReconciler(o ReconcilerOptions) (*Reconciler, error) {
 	}
 	if o.ResyncEvery <= 0 {
 		o.ResyncEvery = DefaultResyncEvery
+	}
+	if o.SessionExpiryBackoff <= 0 {
+		o.SessionExpiryBackoff = DefaultSessionExpiryBackoff
 	}
 	if o.Execute == nil {
 		o.Execute = run.Execute
@@ -499,23 +510,32 @@ func (r *Reconciler) Run(ctx context.Context) error {
 // reaps stands down.
 func (r *Reconciler) Tick(ctx context.Context) {
 	if wait, ok := r.paused(); ok {
-		r.emit(Event{Type: EventError, Err: fmt.Errorf("linear: rate limited, resuming in %s", wait.Round(time.Second))})
+		if isRL, isOAuth := r.isRateLimitPause(); isRL {
+			budget := "personal API key budget (2,500 req/hr; run \"lerp login\" for 5,000 req/hr OAuth)"
+			if isOAuth {
+				budget = "OAuth budget (5,000 req/hr)"
+			}
+			r.emit(Event{Type: EventError, Err: fmt.Errorf("linear: rate limited on %s, resuming in %s", budget, wait.Round(time.Second))})
+		}
 		r.emit(Event{Type: EventTicked})
 		return
 	}
 	if r.reconcileEvidence(ctx) {
 		r.fill(ctx)
 	}
-	r.attention(ctx)
+	if _, ok := r.paused(); !ok {
+		r.attention(ctx)
+	}
 	r.emit(Event{Type: EventTicked})
 }
 
-// paused reports whether a rate limit set by fail is still in effect. It
-// clears resumeAt once the deadline has passed, so a pass need only check
-// this — no jitter, no retry count, the one deadline the ticket asked for.
+// paused reports whether a pause set by fail (rate limit or session expiry)
+// is still in effect. It clears resumeAt once the deadline has passed, so a
+// pass need only check this — no jitter, no retry count, the one deadline
+// the ticket asked for.
 func (r *Reconciler) paused() (time.Duration, bool) {
-	r.rateLimitMu.Lock()
-	defer r.rateLimitMu.Unlock()
+	r.pauseMu.Lock()
+	defer r.pauseMu.Unlock()
 	if r.resumeAt.IsZero() {
 		return 0, false
 	}
@@ -523,26 +543,59 @@ func (r *Reconciler) paused() (time.Duration, bool) {
 		return wait, true
 	}
 	r.resumeAt = time.Time{}
+	r.pauseIsRateLimit = false
+	r.rateLimitOAuth = false
 	return 0, false
 }
 
-// pauseFor extends resumeAt to at least the later of d (Linear's own
+// isRateLimitPause reports whether the active pause is due to a rate limit
+// (and whether it hit the OAuth budget) as opposed to a session expiry backoff.
+func (r *Reconciler) isRateLimitPause() (bool, bool) {
+	r.pauseMu.Lock()
+	defer r.pauseMu.Unlock()
+	return r.pauseIsRateLimit, r.rateLimitOAuth
+}
+
+// pauseForRateLimit extends resumeAt to at least the later of d (Linear's own
 // Retry-After) and the next interval, so a 429 that carried no usable delay
 // still costs one interval's pause rather than none — the polling this
 // replaces would have waited that long anyway. It only ever extends: fill
 // and attention can each fail with their own RateLimitError in the same
 // pass, and a header-less second one must not cut a first one's long wait
 // down to one interval.
-func (r *Reconciler) pauseFor(d time.Duration) {
+func (r *Reconciler) pauseForRateLimit(d time.Duration, oauth bool) {
 	if d < r.o.Interval {
 		d = r.o.Interval
 	}
 	until := time.Now().Add(d)
-	r.rateLimitMu.Lock()
+	r.pauseMu.Lock()
 	if until.After(r.resumeAt) {
 		r.resumeAt = until
+		r.pauseIsRateLimit = true
+		r.rateLimitOAuth = oauth
 	}
-	r.rateLimitMu.Unlock()
+	r.pauseMu.Unlock()
+}
+
+// pauseForExpiry pauses Linear calls for d after Linear rejects the stored
+// refresh token, idling quietly instead of hammering Linear every interval.
+func (r *Reconciler) pauseForExpiry(d time.Duration) {
+	if d < r.o.Interval {
+		d = r.o.Interval
+	}
+	until := time.Now().Add(d)
+	r.pauseMu.Lock()
+	if until.After(r.resumeAt) {
+		r.resumeAt = until
+		r.pauseIsRateLimit = false
+		r.rateLimitOAuth = false
+	}
+	r.pauseMu.Unlock()
+}
+
+// pauseFor preserves the legacy pause helper for tests.
+func (r *Reconciler) pauseFor(d time.Duration) {
+	r.pauseForRateLimit(d, false)
 }
 
 // AttentionDefinition is the operator-facing one-line description of the
@@ -585,6 +638,10 @@ const AttentionDefinition = "unclaimed tickets, and your claimed tickets, sittin
 func (r *Reconciler) attention(ctx context.Context) {
 	viewerID, err := r.o.Client.Viewer(ctx)
 	if err != nil {
+		if errors.Is(err, credentials.ErrLoginRequired) {
+			r.fail(err)
+			return
+		}
 		r.fail(fmt.Errorf("attention: read viewer: %w", err))
 		return
 	}
@@ -689,6 +746,9 @@ func (r *Reconciler) refreshBoard(ctx context.Context, team, viewerID string) (*
 	// window returns again simply replaces itself.
 	delta, err := r.o.Client.ListTeamIssuesUpdatedSince(ctx, team, since.Add(-deltaOverlap))
 	if err != nil {
+		if errors.Is(err, credentials.ErrLoginRequired) {
+			return nil, err
+		}
 		return nil, fmt.Errorf("attention: read changes for team %s: %w", team, err)
 	}
 	r.boardsMu.Lock()
@@ -747,10 +807,16 @@ func (r *Reconciler) refreshBoard(ctx context.Context, team, viewerID string) (*
 func (r *Reconciler) relistBoard(ctx context.Context, team, viewerID string) (*teamBoard, error) {
 	unassigned, err := r.o.Client.ListUnassignedIssues(ctx, team)
 	if err != nil {
+		if errors.Is(err, credentials.ErrLoginRequired) {
+			return nil, err
+		}
 		return nil, fmt.Errorf("attention: list unassigned tickets for team %s: %w", team, err)
 	}
 	assigned, err := r.o.Client.ListAssignedIssues(ctx, team, viewerID)
 	if err != nil {
+		if errors.Is(err, credentials.ErrLoginRequired) {
+			return nil, err
+		}
 		return nil, fmt.Errorf("attention: list claimed tickets for team %s: %w", team, err)
 	}
 	board := &teamBoard{issues: make(map[string]linear.Issue, len(unassigned)+len(assigned))}
@@ -1558,6 +1624,9 @@ func (r *Reconciler) fill(ctx context.Context) {
 		// the others while its outage lasts. The failure is reported and the
 		// broken queue retried next pass.
 		r.fail(err)
+		if _, ok := r.paused(); ok {
+			return
+		}
 	}
 	r.emit(Event{Type: EventQueues, Queues: snapshotQueues(listings)})
 	for _, c := range candidatesFrom(listings) {
@@ -2032,8 +2101,12 @@ func (r *Reconciler) emit(ev Event) {
 
 func (r *Reconciler) fail(err error) {
 	var rl *linear.RateLimitError
-	if errors.As(err, &rl) {
-		r.pauseFor(rl.RetryAfter)
+	switch {
+	case errors.As(err, &rl):
+		r.pauseForRateLimit(rl.RetryAfter, rl.OAuth)
+	case errors.Is(err, credentials.ErrLoginRequired):
+		r.pauseForExpiry(r.o.SessionExpiryBackoff)
+		err = credentials.ErrLoginRequired
 	}
 	r.emit(Event{Type: EventError, Err: err})
 }

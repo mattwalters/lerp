@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -18,6 +20,7 @@ import (
 	"time"
 
 	"github.com/mattwalters/lerp/internal/config"
+	"github.com/mattwalters/lerp/internal/credentials"
 	"github.com/mattwalters/lerp/internal/evidence"
 	"github.com/mattwalters/lerp/internal/linear"
 	"github.com/mattwalters/lerp/internal/run"
@@ -2886,4 +2889,306 @@ func TestNewReconcilerValidatesOptions(t *testing.T) {
 			t.Errorf("NewReconciler accepted options missing %s", name)
 		}
 	}
+}
+
+// authedClient wraps linear.Client to simulate linear.HTTP's per-request auth check.
+type authedClient struct {
+	linear.Client
+	auth func(context.Context) (string, error)
+}
+
+func (a *authedClient) ListIssues(ctx context.Context, teamKey, statusName string) ([]linear.Issue, error) {
+	if _, err := a.auth(ctx); err != nil {
+		return nil, err
+	}
+	return a.Client.ListIssues(ctx, teamKey, statusName)
+}
+
+func (a *authedClient) ListAssignedIssues(ctx context.Context, teamKey, assigneeID string) ([]linear.Issue, error) {
+	if _, err := a.auth(ctx); err != nil {
+		return nil, err
+	}
+	return a.Client.ListAssignedIssues(ctx, teamKey, assigneeID)
+}
+
+func (a *authedClient) ListUnassignedIssues(ctx context.Context, teamKey string) ([]linear.Issue, error) {
+	if _, err := a.auth(ctx); err != nil {
+		return nil, err
+	}
+	return a.Client.ListUnassignedIssues(ctx, teamKey)
+}
+
+func (a *authedClient) ListTeamIssuesUpdatedSince(ctx context.Context, teamKey string, since time.Time) ([]linear.Issue, error) {
+	if _, err := a.auth(ctx); err != nil {
+		return nil, err
+	}
+	return a.Client.ListTeamIssuesUpdatedSince(ctx, teamKey, since)
+}
+
+func (a *authedClient) TeamStates(ctx context.Context, teamKey string) ([]string, error) {
+	if _, err := a.auth(ctx); err != nil {
+		return nil, err
+	}
+	return a.Client.TeamStates(ctx, teamKey)
+}
+
+func (a *authedClient) TeamGitAutomations(ctx context.Context, teamKey string) ([]linear.GitAutomation, error) {
+	if _, err := a.auth(ctx); err != nil {
+		return nil, err
+	}
+	return a.Client.TeamGitAutomations(ctx, teamKey)
+}
+
+func (a *authedClient) GetIssue(ctx context.Context, issueID string) (linear.Issue, error) {
+	if _, err := a.auth(ctx); err != nil {
+		return linear.Issue{}, err
+	}
+	return a.Client.GetIssue(ctx, issueID)
+}
+
+func (a *authedClient) GetIssueDetail(ctx context.Context, issueID string) (linear.IssueDetail, error) {
+	if _, err := a.auth(ctx); err != nil {
+		return linear.IssueDetail{}, err
+	}
+	return a.Client.GetIssueDetail(ctx, issueID)
+}
+
+func (a *authedClient) MoveIssue(ctx context.Context, issueID, statusName string) (linear.Issue, error) {
+	if _, err := a.auth(ctx); err != nil {
+		return linear.Issue{}, err
+	}
+	return a.Client.MoveIssue(ctx, issueID, statusName)
+}
+
+func (a *authedClient) AssignIssue(ctx context.Context, issueID, userID string) error {
+	if _, err := a.auth(ctx); err != nil {
+		return err
+	}
+	return a.Client.AssignIssue(ctx, issueID, userID)
+}
+
+func (a *authedClient) UnassignIssue(ctx context.Context, issueID string) error {
+	if _, err := a.auth(ctx); err != nil {
+		return err
+	}
+	return a.Client.UnassignIssue(ctx, issueID)
+}
+
+func (a *authedClient) Viewer(ctx context.Context) (string, error) {
+	if _, err := a.auth(ctx); err != nil {
+		return "", err
+	}
+	return a.Client.Viewer(ctx)
+}
+
+// Done-when (LERP-110): a pass that straddles expiry must not fail,
+// double-refresh (single-flight), or tear the token file (two goroutines mid-pass).
+// An integration-shaped test with an httptest token endpoint and a fake board.
+func TestReconcilerOAuthTransparentRefresh(t *testing.T) {
+	var exchanges atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		exchanges.Add(1)
+		time.Sleep(10 * time.Millisecond) // slight delay to provoke concurrency races
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"access-renewed","refresh_token":"refresh-renewed","expires_in":3600}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	tokenDir := t.TempDir()
+	tokenFile := filepath.Join(tokenDir, "token.json")
+	initialTok := `{"access_token":"access-expired","refresh_token":"refresh-1","expires_at":"2026-01-01T00:00:00Z","obtained_at":"2026-01-01T00:00:00Z"}`
+	if err := os.WriteFile(tokenFile, []byte(initialTok), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	auth, err := credentials.ResolveDir(tokenDir, srv.Client(), srv.URL, "test-client")
+	if err != nil {
+		t.Fatalf("ResolveDir: %v", err)
+	}
+
+	fake := linear.NewFake()
+	fake.AddIssue("LERP", linear.Issue{ID: "iss-1", Identifier: "LERP-1", Status: "Implementing"})
+	fake.AddIssue("LERP", linear.Issue{ID: "iss-2", Identifier: "LERP-2", Status: "Implementing"})
+
+	client := &authedClient{Client: fake, auth: auth}
+	h := newHarnessWith(t, 2, nil, fake, client)
+
+	ctx := context.Background()
+	h.rec.Tick(ctx)
+
+	// Drain all events for the pass
+	var errorEvents []Event
+	drained := false
+	for !drained {
+		select {
+		case ev := <-h.events:
+			if ev.Type == EventError {
+				errorEvents = append(errorEvents, ev)
+			}
+		case <-time.After(50 * time.Millisecond):
+			drained = true
+		}
+	}
+
+	if len(errorEvents) > 0 {
+		for _, ev := range errorEvents {
+			t.Errorf("unexpected error event: %v", ev.Err)
+		}
+	}
+
+	if got := exchanges.Load(); got != 1 {
+		t.Errorf("token endpoint exchanges = %d, want 1 (single-flight across all requests in the pass)", got)
+	}
+
+	// Verify token file was written without tearing
+	data, err := os.ReadFile(tokenFile)
+	if err != nil {
+		t.Fatalf("read token file: %v", err)
+	}
+	if !strings.Contains(string(data), "access-renewed") || !strings.Contains(string(data), "refresh-renewed") {
+		t.Errorf("token file content = %q, want renewed tokens", string(data))
+	}
+}
+
+// Done-when (LERP-110): a revoked refresh token produces exactly one actionable
+// message and a quiet idle, and a re-login on disk clears the latch and resumes.
+func TestReconcilerOAuthRevokedTokenCollapsesToOneMessageAndIdlesQuietly(t *testing.T) {
+	var exchanges atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		exchanges.Add(1)
+		http.Error(w, `{"error":"invalid_grant"}`, http.StatusBadRequest)
+	}))
+	t.Cleanup(srv.Close)
+
+	tokenDir := t.TempDir()
+	tokenFile := filepath.Join(tokenDir, "token.json")
+	initialTok := `{"access_token":"access-expired","refresh_token":"refresh-revoked","expires_at":"2026-01-01T00:00:00Z","obtained_at":"2026-01-01T00:00:00Z"}`
+	if err := os.WriteFile(tokenFile, []byte(initialTok), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	auth, err := credentials.ResolveDir(tokenDir, srv.Client(), srv.URL, "test-client")
+	if err != nil {
+		t.Fatalf("ResolveDir: %v", err)
+	}
+
+	fake := linear.NewFake()
+	fake.AddIssue("LERP", linear.Issue{ID: "iss-1", Identifier: "LERP-1", Status: "Implementing"})
+	fake.AddIssue("LERP", linear.Issue{ID: "iss-2", Identifier: "LERP-2", Status: "Planning"})
+
+	client := &authedClient{Client: fake, auth: auth}
+	h := newHarnessWith(t, 2, nil, fake, client)
+	h.rec.o.Interval = 20 * time.Millisecond
+	h.rec.o.SessionExpiryBackoff = 300 * time.Millisecond
+
+	ctx := context.Background()
+
+	// Pass 1: Refresh token rejected -> exactly one actionable EventError, then EventTicked
+	h.rec.Tick(ctx)
+	eventsPass1 := h.drainEvents()
+	if len(eventsPass1) != 2 {
+		t.Fatalf("pass 1 emitted %d events, want 2 (one EventError then EventTicked): %+v", len(eventsPass1), eventsPass1)
+	}
+	if eventsPass1[0].Type != EventError || !errors.Is(eventsPass1[0].Err, credentials.ErrLoginRequired) {
+		t.Errorf("pass 1 error = %v, want ErrLoginRequired", eventsPass1[0].Err)
+	}
+	if eventsPass1[0].Err.Error() != `Linear session expired; run "lerp login"` {
+		t.Errorf("pass 1 error message = %q, want %q", eventsPass1[0].Err.Error(), `Linear session expired; run "lerp login"`)
+	}
+	if eventsPass1[1].Type != EventTicked {
+		t.Errorf("pass 1 last event = %v, want EventTicked", eventsPass1[1].Type)
+	}
+	if got := exchanges.Load(); got != 1 {
+		t.Errorf("exchanges after pass 1 = %d, want 1", got)
+	}
+
+	// Passes 2, 3, 4: Inside backoff window -> quiet idle (EventTicked only, no EventError)
+	for i := 0; i < 3; i++ {
+		h.rec.Tick(ctx)
+		got := h.drainEvents()
+		if len(got) != 1 || got[0].Type != EventTicked {
+			t.Fatalf("paused pass %d emitted %+v, want only EventTicked (quiet idle)", i+1, got)
+		}
+		if exchanges.Load() != 1 {
+			t.Fatalf("paused pass %d called token endpoint: exchanges = %d, want 1 (latched)", i+1, exchanges.Load())
+		}
+	}
+
+	// Wait out backoff and simulate operator running `lerp login` in another terminal
+	time.Sleep(350 * time.Millisecond)
+	reloginTok := `{"access_token":"access-new-login","refresh_token":"refresh-new-login","expires_at":"2099-01-01T00:00:00Z","obtained_at":"2026-08-27T00:00:00Z"}`
+	if err := os.WriteFile(tokenFile, []byte(reloginTok), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Pass 5: After re-login -> latch cleared, loop resumes cleanly
+	h.rec.Tick(ctx)
+	eventsPass5 := h.drainEvents()
+	var pass5Errors []Event
+	for _, ev := range eventsPass5 {
+		if ev.Type == EventError {
+			pass5Errors = append(pass5Errors, ev)
+		}
+	}
+	if len(pass5Errors) > 0 {
+		t.Errorf("pass 5 after re-login emitted error events: %+v", pass5Errors)
+	}
+}
+
+// Done-when (LERP-110): rate-limit backoff messaging names which budget was hit
+// (OAuth vs API key), and a 429 under an API key suggests `lerp login`.
+func TestTickRateLimitNamesBudget(t *testing.T) {
+	t.Run("API key budget", func(t *testing.T) {
+		h, counting := newCountingHarness(t)
+		h.rec.o.Interval = 20 * time.Millisecond
+		h.fake.AddIssue("LERP", linear.Issue{ID: "first", Identifier: "LERP-1", Status: "Backlog"})
+		ctx := context.Background()
+
+		// Cold start
+		h.rec.Tick(ctx)
+		h.waitEvents(t, EventAttention, 1)
+
+		counting.deltaErr = &linear.RateLimitError{RetryAfter: 200 * time.Millisecond, OAuth: false}
+		h.rec.Tick(ctx)
+		got := h.waitEvents(t, EventError, 1)[0]
+		h.waitEvents(t, EventTicked, 1)
+
+		if !strings.Contains(got.Err.Error(), "personal API key") || !strings.Contains(got.Err.Error(), "lerp login") {
+			t.Errorf("error = %q, want personal API key budget and lerp login remedy", got.Err)
+		}
+
+		// Check paused tick message
+		h.rec.Tick(ctx)
+		pausedEvs := h.drainEvents()
+		if len(pausedEvs) < 1 || !strings.Contains(pausedEvs[0].Err.Error(), "personal API key") || !strings.Contains(pausedEvs[0].Err.Error(), "lerp login") {
+			t.Errorf("paused tick error = %v, want personal API key and lerp login named", pausedEvs)
+		}
+	})
+
+	t.Run("OAuth budget", func(t *testing.T) {
+		h, counting := newCountingHarness(t)
+		h.rec.o.Interval = 20 * time.Millisecond
+		h.fake.AddIssue("LERP", linear.Issue{ID: "first", Identifier: "LERP-1", Status: "Backlog"})
+		ctx := context.Background()
+
+		// Cold start
+		h.rec.Tick(ctx)
+		h.waitEvents(t, EventAttention, 1)
+
+		counting.deltaErr = &linear.RateLimitError{RetryAfter: 200 * time.Millisecond, OAuth: true}
+		h.rec.Tick(ctx)
+		got := h.waitEvents(t, EventError, 1)[0]
+		h.waitEvents(t, EventTicked, 1)
+
+		if !strings.Contains(got.Err.Error(), "OAuth budget (5,000 req/hr)") {
+			t.Errorf("error = %q, want OAuth budget named", got.Err)
+		}
+
+		// Check paused tick message
+		h.rec.Tick(ctx)
+		pausedEvs := h.drainEvents()
+		if len(pausedEvs) < 1 || !strings.Contains(pausedEvs[0].Err.Error(), "OAuth budget (5,000 req/hr)") {
+			t.Errorf("paused tick error = %v, want OAuth budget named", pausedEvs)
+		}
+	})
 }

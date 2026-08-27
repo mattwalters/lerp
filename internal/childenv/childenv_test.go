@@ -54,6 +54,30 @@ func TestInheritedDropsAnEmptyLinearAPIKey(t *testing.T) {
 	}
 }
 
+// Done-when (LERP-110): no LINEAR_* credential reaches a child process
+// under either auth mode (API key or OAuth). Under API key mode the key is
+// dropped from the environment; under OAuth mode the token lives in a file
+// and was never in the environment to begin with.
+func TestInheritedHasNoLinearCredentialsUnderEitherAuthMode(t *testing.T) {
+	t.Run("API key mode", func(t *testing.T) {
+		t.Setenv(LinearAPIKeyEnv, "lin_api_secret")
+		for _, entry := range Inherited() {
+			if strings.HasPrefix(entry, "LINEAR_") {
+				t.Errorf("Inherited kept %q under API key mode", entry)
+			}
+		}
+	})
+
+	t.Run("OAuth mode", func(t *testing.T) {
+		t.Setenv(LinearAPIKeyEnv, "")
+		for _, entry := range Inherited() {
+			if strings.HasPrefix(entry, "LINEAR_") {
+				t.Errorf("Inherited has %q under OAuth mode", entry)
+			}
+		}
+	})
+}
+
 // The scrub is only worth as much as its coverage: a spawn site added later
 // that builds its own environment from os.Environ() puts the key back in
 // reach, and nothing about it looks wrong in review. Two source-level

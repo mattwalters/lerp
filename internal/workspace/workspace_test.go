@@ -115,3 +115,36 @@ func TestWorkspaceCommandsDropTheLinearAPIKey(t *testing.T) {
 		t.Error("workspace environment has no PATH; it inherited nothing")
 	}
 }
+
+// Done-when (LERP-110): no LINEAR_* credential reaches workspace commands
+// under either auth mode (API key or OAuth).
+func TestWorkspaceCommandsNoLinearCredentialsUnderEitherAuthMode(t *testing.T) {
+	for _, mode := range []string{"api_key", "oauth"} {
+		t.Run(mode, func(t *testing.T) {
+			if mode == "api_key" {
+				t.Setenv(childenv.LinearAPIKeyEnv, "lin_api_secret")
+			} else {
+				t.Setenv(childenv.LinearAPIKeyEnv, "")
+			}
+			repoDir := t.TempDir()
+			script := writeScript(t, repoDir, "print-env.sh", "env\n")
+
+			var log bytes.Buffer
+			id := Identity{Lane: 2, TicketID: "issue-123", Workspace: "/tmp/lerp-2"}
+			if err := Provision(context.Background(), repoDir, script, id, &log); err != nil {
+				t.Fatalf("Provision: %v", err)
+			}
+			Dispose(context.Background(), repoDir, script, id, &log)
+
+			got := log.String()
+			for _, line := range strings.Split(got, "\n") {
+				if name, _, ok := strings.Cut(line, "="); ok && strings.HasPrefix(name, "LINEAR_") {
+					t.Errorf("workspace environment contains %s under %s mode", name, mode)
+				}
+			}
+			if strings.Contains(got, "lin_api_secret") {
+				t.Errorf("workspace environment contains API key secret under %s mode", mode)
+			}
+		})
+	}
+}

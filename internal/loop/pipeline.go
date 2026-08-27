@@ -10,6 +10,7 @@ import (
 	"sort"
 
 	"github.com/mattwalters/lerp/internal/config"
+	"github.com/mattwalters/lerp/internal/credentials"
 	"github.com/mattwalters/lerp/internal/linear"
 	"github.com/mattwalters/lerp/internal/run"
 	"github.com/mattwalters/lerp/internal/workspace"
@@ -259,6 +260,9 @@ func listQueues(ctx context.Context, client linear.Client, repo *config.RepoConf
 			queue := repo.Queues[name]
 			issues, err := client.ListIssues(ctx, team, queue.Status)
 			if err != nil {
+				if errors.Is(err, credentials.ErrLoginRequired) {
+					return nil, err
+				}
 				errs = append(errs, fmt.Errorf("list %s queue for team %s: %w", queue.Status, team, err))
 				continue
 			}

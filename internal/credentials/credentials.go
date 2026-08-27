@@ -94,6 +94,23 @@ func resolve(s store, hc *http.Client) (func(context.Context) (string, error), e
 	return src.header, nil
 }
 
+// ResolveDir is Resolve with the token file's directory and endpoint injected,
+// so integration tests can run against an httptest.Server token endpoint and
+// a temporary token file.
+func ResolveDir(dir string, hc *http.Client, endpoint, clientID string) (func(context.Context) (string, error), error) {
+	src, err := storedSource(store{dir: dir}, hc)
+	if err != nil {
+		return nil, err
+	}
+	if endpoint != "" {
+		src.endpoint = endpoint
+	}
+	if clientID != "" {
+		src.clientID = clientID
+	}
+	return src.header, nil
+}
+
 // envKeyIsSet reports whether LINEAR_API_KEY is set, dropping it from lerp's
 // own environment in the same breath — the same rule Resolve follows, for
 // the same reason: a child spawned with a nil Env inherits whatever this
