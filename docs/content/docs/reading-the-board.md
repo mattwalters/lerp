@@ -33,13 +33,20 @@ grouped by queue: every ticket sitting in each queue's status, in the loop's
 own pickup order, with the ones running now at the top of their own group.
 
 A running row carries its state — provisioning or running — the run's elapsed
-time, and the tokens it has spent, as its own log reports them. A run
+time, and the tokens it has spent, as its own log reports them, plus a
+dollar figure beside the tokens where its runner's stream states one — no
+lerp price table stands in for a runner that stays silent on cost. A run
 inherited from a previous `lerp` reads as `running` like any other, and
 carries the run's own age and the run's own total, not the stretch since it
 was adopted: the log it has already written is the evidence, and lerp reads
 it back rather than starting the count over. Under it, once the run has a
 log, a second line reads how that run is going — see [watching a
 run](watching-a-run.md).
+
+Claude settles what a run cost only at the very end, on the same line that
+closes its log — the moment the row itself is about to disappear — so that
+figure shows up on the status bar's exit note instead, where it survives the
+row.
 
 A waiting row is shown faint with the reason it waits, blocked or claimed.
 `enter` on one shows where it sits in pickup order and what gates it.

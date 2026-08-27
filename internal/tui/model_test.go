@@ -347,6 +347,32 @@ func TestExitedEventReportsASkippedHop(t *testing.T) {
 	}
 }
 
+// Claude states a run's cost on the same result line that ends its log, so
+// the figure becomes knowable at the exact moment its row is about to be
+// torn down. It has to survive that moment on the exit note or an operator
+// never reads it at all — see finalCost.
+func TestExitedEventCarriesTheRunsFinalCost(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	path := filepath.Join(t.TempDir(), "run.log")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		TicketID: "id-42", Ticket: "LERP-42", Queue: "implement", LogPath: path}})
+	// The poll is what attaches a pulse to the lane at all (readPulses), the
+	// same as it would in the running app between the run starting and it
+	// exiting.
+	m = update(t, m, pollMsg{})
+
+	appendLog(t, path, `{"type":"result","subtype":"success","num_turns":1,"total_cost_usd":0.42}`+"\n")
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventExited, RunID: "r1", Lane: 1,
+		TicketID: "id-42", Ticket: "LERP-42", Queue: "implement", ExitCode: 0}})
+
+	if view := m.View(); !strings.Contains(view, "LERP-42 exited 0 · $0.42") {
+		t.Fatalf("the exit note does not carry the run's cost:\n%s", view)
+	}
+}
+
 func TestProvisioningTicketIsOccupied(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventProvisioning, RunID: "r1", Lane: 1,
@@ -5862,6 +5888,15 @@ func TestRunningRowCarriesWhatTheRunHasCost(t *testing.T) {
 	if got := ansi.Strip(m.workRowLines(r, false, 80)[0]); strings.Contains(got, "$") {
 		t.Fatalf("a run with no reported cost still shows a dollar figure: %q", got)
 	}
+
+	// A run that genuinely cost a fraction of a cent is not "no cost
+	// reported" — codex's case — but $0.00 beside a token count would read
+	// as one anyway: a real, reported zero. Below minCost it is dropped the
+	// same as the absent case.
+	r.cost = 0.001
+	if got := ansi.Strip(m.workRowLines(r, false, 80)[0]); strings.Contains(got, "$") {
+		t.Fatalf("a sub-cent run drew a dollar figure at all: %q", got)
+	}
 }
 
 func TestCostGraduatesPrecisionLikeTokenCount(t *testing.T) {
@@ -5874,6 +5909,10 @@ func TestCostGraduatesPrecisionLikeTokenCount(t *testing.T) {
 		{10, "$10.0"},
 		{12.3, "$12.3"},
 		{99.9, "$99.9"},
+		// A hair under 100: %.1f would round this to "100.0", a column away
+		// from the whole-dollar branch that starts one cent later — the same
+		// artifact tokenCount avoids at its own M cutover.
+		{99.96, "$100"},
 		{100, "$100"},
 		{134, "$134"},
 	} {

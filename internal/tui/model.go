@@ -1513,8 +1513,16 @@ func (m *model) apply(ev loop.Event) {
 		changed = panelWork
 	case loop.EventExited:
 		// How the run ended goes on the status bar, and only there: see
-		// settle for why the ticket's own row cannot hold it.
+		// settle for why the ticket's own row cannot hold it. Cost joins it
+		// for the same reason, and for claude specifically it has nowhere
+		// else it could ever land: the stream settles it on the result line
+		// that ends the log, which is to say at the very moment the row
+		// carrying it is about to disappear. finalCost reads past that line
+		// before the lane goes with it, so the figure survives its own row.
 		note := fmt.Sprintf("%s exited %d", ev.Ticket, ev.ExitCode)
+		if cost := m.finalCost(ev.Lane); cost >= minCost {
+			note += " · " + costLabel(cost)
+		}
 		if ev.Err != nil {
 			note += " (move failed)"
 		}
@@ -1639,6 +1647,25 @@ func (m *model) apply(ev loop.Event) {
 	if changed == m.focus {
 		m.refreshMain()
 	}
+}
+
+// finalCost gives a lane's log the one read it is owed once the process that
+// wrote it has already exited, before settle discards the pulse holding its
+// running total. That ordering — read, then discard — is what makes this
+// call race-free where reading the row on the fly is not: the process is
+// already gone by the time EventExited arrives, so the file is complete, not
+// a moving target the way it is while an agent still writes to it.
+//
+// Zero for a lane the poller never got to (no pulse) as well as for a runner
+// whose stream never states a cost at all — the two are indistinguishable
+// here, and both mean nothing to add to the note.
+func (m *model) finalCost(laneNum int) float64 {
+	ln := m.lanes[laneNum]
+	if ln == nil || ln.pulse == nil {
+		return 0
+	}
+	ln.pulse.read(time.Now())
+	return ln.pulse.cost
 }
 
 // settle frees the lane a run just left. The log outlives the lane: the
@@ -3336,7 +3363,7 @@ func (m model) workRowLines(r workRow, selected bool, width int) []string {
 	if r.tokens > 0 {
 		totals += " · " + tokenCount(r.tokens)
 	}
-	if r.cost > 0 {
+	if r.cost >= minCost {
 		totals += " · " + costLabel(r.cost)
 	}
 	right := state + " " + styleFaint.Render(totals)
@@ -3464,20 +3491,31 @@ func tokenCount(n int) string {
 	return s + " tok"
 }
 
+// minCost is the smallest figure worth a reading: below half a cent, the run
+// cost something a real vendor bill would round to zero anyway, and $0.00
+// beside a token count would read as a real, reported zero rather than as
+// what it actually is — a number too small to bother with. Callers gate on
+// this rather than on cost > 0, the way they would for tokens.
+const minCost = 0.005
+
 // costLabel renders what a run has spent in dollars, graduating precision
 // the way tokenCount does: cents are the reading under ten dollars, and stop
-// being one above it. The $ already tells it apart from the clock beside it,
-// so unlike tokenCount this carries no trailing unit.
+// being one above it, whole dollars from a hundred up. Each cutover sits a
+// hair below its round number — 99.96 draws as $100, not $100.0 a column
+// away from where the whole-dollar branch already begins — the same
+// adjustment tokenCount makes against 999,900 drawing as 1000k. The $
+// already tells the figure apart from the clock beside it, so unlike
+// tokenCount this carries no trailing unit.
 //
 // It is only ever called with what a runner's own stream reported — never a
-// figure lerp derived from tokens — so there is no per-vendor cutover here to
-// get wrong: a vendor that reports nothing never reaches this function at
-// all (r.cost stays zero, see workRowLines).
+// figure lerp derived from tokens — so there is no per-vendor price to get
+// wrong here: a vendor that reports nothing never reaches this function at
+// all (r.cost stays zero, see workRowLines and minCost).
 func costLabel(c float64) string {
 	switch {
-	case c >= 100:
+	case c >= 99.95:
 		return fmt.Sprintf("$%.0f", c)
-	case c >= 10:
+	case c >= 9.995:
 		return fmt.Sprintf("$%.1f", c)
 	default:
 		return fmt.Sprintf("$%.2f", c)

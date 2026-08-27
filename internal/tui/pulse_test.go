@@ -406,6 +406,10 @@ func TestPulseTracksSpendAndTheLastCall(t *testing.T) {
 // Cost only ever arrives on claude's result line, once, at the very end of
 // the run — nothing mid-run reports it — so a live pulse shows nothing in
 // dollars until that line lands, and then the run's whole figure at once.
+// That line is also the one that ends the log, so a poll landing between it
+// and the run settling is the only chance the row itself ever gets to draw
+// the figure; model.go's finalCost is what gives the operator a second one,
+// on the exit note, that does not depend on that timing.
 func TestPulseTracksCostFromTheResultLine(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "run.log")
 	appendLog(t, path, `{"type":"system","subtype":"init","model":"claude-opus-5","session_id":"abc"}`+"\n")
