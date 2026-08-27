@@ -38,8 +38,14 @@ type keymap struct {
 	ClearSearch key.Binding
 	Open        key.Binding
 	Raw         key.Binding
-	Help        key.Binding
-	Quit        key.Binding
+	// Fold collapses or reopens the section under the cursor; FoldAll swaps
+	// the whole document between its outline (every section closed) and the
+	// full text — the same key either way, since the way out of an outline
+	// is the key that made it.
+	Fold    key.Binding
+	FoldAll key.Binding
+	Help    key.Binding
+	Quit    key.Binding
 }
 
 func newKeymap() keymap {
@@ -95,8 +101,15 @@ func newKeymap() keymap {
 		ClearSearch: key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "clear search")),
 		Open:        key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "open in Linear")),
 		Raw:         key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "raw log")),
-		Help:        key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
-		Quit:        key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
+		// vim's z family is the mental model (see fold.go), but a Binding
+		// matches one keystroke, not a chord — there is nowhere in this
+		// codebase that buffers a pending prefix key like vim's own za/zM/zR
+		// do, and this ticket is not where that machinery gets built. z and
+		// Z carry the mnemonic without it.
+		Fold:    key.NewBinding(key.WithKeys("z"), key.WithHelp("z", "fold")),
+		FoldAll: key.NewBinding(key.WithKeys("Z"), key.WithHelp("Z", "fold all")),
+		Help:    key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
+		Quit:    key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
 	}
 }
 
@@ -115,7 +128,7 @@ func (k keymap) FullHelp() [][]key.Binding {
 		{k.Attention, k.Work, k.NextPanel, k.PrevPanel,
 			k.Up, k.Down, k.PageUp, k.PageDown, k.Top, k.Bottom},
 		{k.Detail, k.Close, k.Promote, k.Visual, k.Eject, k.ForceStart, k.Sort, k.Project, k.Backlog,
-			k.Search, k.Open, k.Raw, k.Help, k.Quit},
+			k.Search, k.Open, k.Raw, k.Fold, k.FoldAll, k.Help, k.Quit},
 	}
 }
 
@@ -137,6 +150,7 @@ type rowKeys struct {
 	// many rows it spans — the line's "promote N" while one is on.
 	visual   bool
 	selected int
+	canFold  bool
 }
 
 // panelHelp is the line a focused panel carries: the keys that act on the
@@ -153,10 +167,11 @@ type rowKeys struct {
 // forty columns wide, so a key that does nothing here costs one that does.
 //
 // The order is what survives a narrow panel, since bubbles drops hints off
-// the end to fit: what acts on the row under the cursor first, then the two
-// display cycles, whose state the panel title already carries in words. All
-// five fit from about 120 columns; under that the cycles go first and the
-// ellipsis says where to look for them.
+// the end to fit: what acts on the row or document under the cursor first
+// (promote, open, fold), then the two display cycles last, since sort and
+// project's own state is already carried in the panel title in words where
+// fold's is not. All seven fit from about 120 columns; under that the
+// cycles go first and the ellipsis says where to look for them.
 func (k keymap) panelHelp(p panel, live rowKeys) []key.Binding {
 	var b []key.Binding
 	switch p {
@@ -179,6 +194,9 @@ func (k keymap) panelHelp(p panel, live rowKeys) []key.Binding {
 		}
 		if live.hasURL {
 			b = append(b, short(k.Open, "open"))
+		}
+		if live.canFold {
+			b = append(b, k.Fold, k.FoldAll)
 		}
 		b = append(b, short(k.Sort, "sort"))
 		if live.projects {

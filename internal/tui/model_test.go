@@ -4215,7 +4215,8 @@ func TestWideMainPaneFillsTheBody(t *testing.T) {
 	}
 	// The short ticket is the case that used to leave dead space: its detail
 	// is a handful of lines in a 39-line body.
-	if lines := strings.Count(m.detail(padMain.inner(m.geometry().mainW)), "\n") + 1; lines > 10 {
+	text, _, _ := m.detail(padMain.inner(m.geometry().mainW))
+	if lines := strings.Count(text, "\n") + 1; lines > 10 {
 		t.Fatalf("the short ticket draws %d lines: it is not short enough to test with", lines)
 	}
 	for _, tc := range []struct {
@@ -4751,6 +4752,350 @@ func TestTicketDetailShowsBodyAndComments(t *testing.T) {
 	// it now; asserting it here would only be reading that line.)
 	if strings.Index(view, "unclaimed") > strings.Index(view, "the ticket body") {
 		t.Fatalf("the pass's own lines no longer render first:\n%s", view)
+	}
+}
+
+// Done-when: z folds the section under the cursor and reads it back. This
+// ticket is short enough to draw without scrolling, so the viewport's top
+// stays pinned at 0, on the pane's own header lines — toggleFold has to
+// scan forward from there to reach the first heading rather than reading
+// that one line, or z would be a dead key on every ticket short enough not
+// to need paging through.
+func TestFoldKeyTogglesSectionUnderCursor(t *testing.T) {
+	m, _, reader := newReadingTestModel(t)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+	m = update(t, m, keyMsg("enter"))
+	m = selectAndRead(t, m, 0, linear.IssueDetail{Body: "# Plan\n\nstep one\nstep two"}, nil, reader)
+	if !strings.Contains(m.View(), "step one") {
+		t.Fatalf("the section should be open before folding:\n%s", m.View())
+	}
+
+	m = update(t, m, keyMsg("z"))
+	view := m.View()
+	if strings.Contains(view, "step one") {
+		t.Fatalf("z did not fold the section under the cursor:\n%s", view)
+	}
+	if !strings.Contains(view, "hidden") {
+		t.Fatalf("a folded section should say how much it hid:\n%s", view)
+	}
+
+	m = update(t, m, keyMsg("z"))
+	if !strings.Contains(m.View(), "step one") {
+		t.Fatalf("pressing z again should reopen the section:\n%s", m.View())
+	}
+}
+
+// Done-when: fold-all turns a plan into an outline of its headings, and the
+// same key opens it back up once everything is already folded.
+func TestFoldAllTogglesTheWholeOutline(t *testing.T) {
+	m, _, reader := newReadingTestModel(t)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+	m = update(t, m, keyMsg("enter"))
+	body := "# One\n\nfirst body\n\n# Two\n\nsecond body"
+	m = selectAndRead(t, m, 0, linear.IssueDetail{Body: body}, nil, reader)
+
+	m = update(t, m, keyMsg("Z"))
+	view := m.View()
+	if strings.Contains(view, "first body") || strings.Contains(view, "second body") {
+		t.Fatalf("Z should have folded every section:\n%s", view)
+	}
+	if !strings.Contains(view, "One") || !strings.Contains(view, "Two") {
+		t.Fatalf("an outline still names every heading:\n%s", view)
+	}
+
+	m = update(t, m, keyMsg("Z"))
+	view = m.View()
+	if !strings.Contains(view, "first body") || !strings.Contains(view, "second body") {
+		t.Fatalf("Z again should reopen everything:\n%s", view)
+	}
+}
+
+// Regression test for a bug caught in review: pressing z with the cursor
+// inside a flat section's own body — not on its heading line, and not yet
+// into the next sibling — must fold that section, not the next one.
+// Popping the closed-ancestor stack before crediting the preceding text to
+// it would misattribute a section's own trailing body to whatever heading
+// followed, since the pop happens exactly because that heading is reached.
+func TestFoldTogglesTheSectionTheCursorIsActuallyIn(t *testing.T) {
+	m, _, reader := newReadingTestModel(t)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+	m = update(t, m, keyMsg("enter"))
+	body := "# One\n\n" + strings.Repeat("line of one's own body\n", 20) + "\n# Two\n\nsecond body"
+	m = selectAndRead(t, m, 0, linear.IssueDetail{Body: body}, nil, reader)
+
+	line := -1
+	for i, o := range m.foldOwner {
+		if o == 0 {
+			line = i
+			break
+		}
+	}
+	if line == -1 {
+		t.Fatalf("no rendered line is owned by One: %v", m.foldOwner)
+	}
+	// A few lines into One's own body, well clear of its heading line, so
+	// this exercises body ownership rather than the heading-line case.
+	m.vp.SetYOffset(line + 3)
+	m = update(t, m, keyMsg("z"))
+	view := m.View()
+	if strings.Contains(view, "line of one's own body") {
+		t.Fatalf("z should have folded One, whose body the cursor sat inside:\n%s", view)
+	}
+	if !strings.Contains(view, "second body") {
+		t.Fatalf("folding One must not touch Two:\n%s", view)
+	}
+}
+
+// The fold keys are inert without a heading to act on: a plain ticket body
+// never grows a "hidden" line nobody asked for.
+func TestFoldKeysAreInertWithNoHeadings(t *testing.T) {
+	m, _, reader := newReadingTestModel(t)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+	m = update(t, m, keyMsg("enter"))
+	m = selectAndRead(t, m, 0, linear.IssueDetail{Body: "just a paragraph, nothing to fold"}, nil, reader)
+
+	before := m.View()
+	m = update(t, m, keyMsg("z"))
+	m = update(t, m, keyMsg("Z"))
+	if got := m.View(); got != before {
+		t.Fatalf("fold keys changed a headingless body:\n before:\n%s\n after:\n%s", before, got)
+	}
+}
+
+// Done-when: the key hints show the fold keys, only where there is
+// something to fold — a plain ticket body offers neither z nor Z, the way r
+// drops out where there is no log to flip.
+func TestFoldKeyHintsOnlyWhereThereIsSomethingToFold(t *testing.T) {
+	m, _, reader := newReadingTestModel(t)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+	m = update(t, m, keyMsg("enter"))
+	m = selectAndRead(t, m, 0, linear.IssueDetail{Body: "no headings here"}, nil, reader)
+	if hint := m.keyHint(panelAttention, 200); strings.Contains(hint, "fold") {
+		t.Fatalf("a headingless body should not offer the fold keys: %q", hint)
+	}
+
+	m2, _, reader2 := newReadingTestModel(t)
+	m2 = update(t, m2, keyMsg("1"))
+	m2 = update(t, m2, eventMsg{ev: threeWaiting()})
+	m2 = update(t, m2, keyMsg("enter"))
+	m2 = selectAndRead(t, m2, 0, linear.IssueDetail{Body: "# A heading\n\nbody"}, nil, reader2)
+	if hint := m2.keyHint(panelAttention, 200); !strings.Contains(hint, "fold") {
+		t.Fatalf("a body with a heading should offer the fold keys: %q", hint)
+	}
+}
+
+// Done-when: the folded-length interaction with scrolling — the viewport's
+// own line count shrinks with a fold, and the scroll position it clamps to
+// clamps to the shorter content rather than to what the fold hid.
+func TestFoldedLengthInteractsWithScrolling(t *testing.T) {
+	m, _, reader := newReadingTestModel(t)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+	m = update(t, m, keyMsg("enter"))
+	body := "# Plan\n\n" + strings.Repeat("a line of the plan\n", 40)
+	m = selectAndRead(t, m, 0, linear.IssueDetail{Body: body}, nil, reader)
+	full := m.vp.TotalLineCount()
+
+	m = update(t, m, keyMsg("z")) // cursor is still at the top, on the heading itself
+
+	folded := m.vp.TotalLineCount()
+	if folded >= full {
+		t.Fatalf("folding did not shrink the pane's content: folded=%d full=%d", folded, full)
+	}
+	m.vp.GotoBottom()
+	if m.vp.YOffset+m.vp.Height < folded {
+		t.Fatalf("the bottom of a folded pane should clamp to its own shorter length")
+	}
+}
+
+// Regression test for a bug caught in round 2 review: panelHelp appended
+// the fold hints after sort and project, so bubbles' truncate-from-the-end
+// behavior dropped them first — on an ordinary terminal width, before sort
+// or project ever did. Sort and project's own state is already carried in
+// the panel title in words (panelHelp's own stated rule for what may drop
+// first); fold's is not, so it must survive a narrow panel at least as long
+// as they do.
+func TestFoldHintSurvivesBeforeTheDisplayCycles(t *testing.T) {
+	k := newKeymap()
+	b := k.panelHelp(panelAttention, rowKeys{canFold: true, projects: true, canPromote: true, hasURL: true})
+	pos := func(key string) int {
+		for i, bind := range b {
+			if bind.Help().Key == key {
+				return i
+			}
+		}
+		return -1
+	}
+	foldPos, sortPos, projectPos := pos("z"), pos("s"), pos("P")
+	if foldPos == -1 || sortPos == -1 || projectPos == -1 {
+		t.Fatalf("expected fold, sort and project hints all present, got %v", b)
+	}
+	if foldPos > sortPos || foldPos > projectPos {
+		t.Fatalf("fold hint at %d should come before sort (%d) and project (%d), so a narrow panel drops them first", foldPos, sortPos, projectPos)
+	}
+}
+
+// Regression test for a bug caught in round 2 review: toggleFold's forward
+// scan finds nothing once the viewport is scrolled past the last heading's
+// section — into the comments, which own no heading — so z went dead even
+// though foldable() was still true and still advertising it in the key
+// hints. It should fall back to the nearest section behind the cursor
+// instead of doing nothing.
+func TestFoldKeyFallsBackPastTheLastSection(t *testing.T) {
+	m, _, reader := newReadingTestModel(t)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+	m = update(t, m, keyMsg("enter"))
+	comments := []linear.Comment{{Author: "a", Body: strings.Repeat("comment line\n\n", 60)}}
+	m = selectAndRead(t, m, 0, linear.IssueDetail{Body: "# Plan\n\nstep one", Comments: comments}, nil, reader)
+	m.vp.GotoBottom()
+
+	top := clampIndex(m.vp.YOffset, len(m.foldOwner))
+	for i := top; i < len(m.foldOwner); i++ {
+		if m.foldOwner[i] >= 0 {
+			t.Fatalf("test setup: the viewport's top is still inside a section, not past every one of them")
+		}
+	}
+
+	m = update(t, m, keyMsg("z"))
+	it := m.selectedAttention()
+	d := m.details[it.TicketID]
+	if d == nil || !d.folded[0] {
+		t.Fatalf("z should have folded the nearest section behind the cursor rather than doing nothing")
+	}
+	// Regression: re-anchoring here would yank the operator away from the
+	// comments they were actually reading, back up to a heading off the top
+	// of their screen — the fallback exists so z still does something from
+	// down here, not so it also relocates the reader. layout()'s own clamp
+	// still trims YOffset by however much folding "step one" shortened the
+	// document, so the assertion is AtBottom (still parked at the end of
+	// whatever is left), not an exact offset.
+	if !m.vp.AtBottom() {
+		t.Fatalf("folding via the backward fallback should not move the viewport away from the bottom, got YOffset=%d", m.vp.YOffset)
+	}
+}
+
+// Regression test for a bug the round-4 review caught in the round-3 fix
+// above: re-anchoring fired on every fold, not just the one case that needs
+// it. Folding the very first heading while the viewport still sits at the
+// top of a long ticket — its ordinary resting position right after opening
+// one — jumped the pane down to that heading, scrolling the ticket's own
+// title, status and Linear link off screen even though nothing needed to
+// move: the fold only ever removes content *after* its heading, so the
+// header a plain top-of-document scroll position was already showing stays
+// perfectly valid without any re-anchor at all.
+func TestFoldAtTheTopDoesNotScrollThePanesOwnHeaderOffScreen(t *testing.T) {
+	m, _, reader := newReadingTestModel(t)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+	m = update(t, m, keyMsg("enter"))
+	// Two needs a long body of its own: folding One away entirely would
+	// shrink the whole document below the viewport's height, and the
+	// viewport's own clamp would then force YOffset back to 0 regardless of
+	// whether anything re-anchored it there — hiding the bug this guards
+	// against rather than exercising it.
+	body := "# One\n\n" + strings.Repeat("line of one's own body\n", 40) +
+		"\n# Two\n\n" + strings.Repeat("line of two's own body\n", 200)
+	m = selectAndRead(t, m, 0, linear.IssueDetail{Body: body}, nil, reader)
+	if m.vp.YOffset != 0 {
+		t.Fatalf("test setup: expected the viewport to open at the top, got YOffset=%d", m.vp.YOffset)
+	}
+
+	m = update(t, m, keyMsg("z"))
+	if m.vp.YOffset != 0 {
+		t.Fatalf("folding the first heading from the top should not move the viewport, got YOffset=%d", m.vp.YOffset)
+	}
+	// "linear  " is the pane's own header label (attentionDetail) — unlike
+	// "status", which the inbox table's column header also carries and so
+	// would pass this assertion even with the pane's own header scrolled
+	// off screen entirely.
+	if view := m.View(); !strings.Contains(view, "linear  ") {
+		t.Fatalf("the pane's own header should still be on screen after folding from the top:\n%s", view)
+	}
+}
+
+// Regression test for a bug the round-5 review caught in the round-4 fix
+// above: gating re-anchoring on "is the viewport's top line itself owned by
+// a heading" missed the blank line fold.go inserts between a heading and
+// its own body — unowned (-1), but still squarely inside that heading's
+// section, not a gap between sections the way the pane's header or a run
+// of comments is. With the cursor parked there, folding must still
+// re-anchor: nothing about sitting one line below One's own heading, on
+// the blank its body starts with, is different from sitting further down
+// in the body itself.
+func TestFoldReanchorsFromTheBlankAfterAHeadingToo(t *testing.T) {
+	m, _, reader := newReadingTestModel(t)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+	m = update(t, m, keyMsg("enter"))
+	body := "# One\n\n" + strings.Repeat("line of one's own body\n", 40) +
+		"\n# Two\n\n" + strings.Repeat("line of two's own body\n", 200)
+	m = selectAndRead(t, m, 0, linear.IssueDetail{Body: body}, nil, reader)
+
+	line := -1
+	for i, o := range m.foldOwner {
+		if o == 0 {
+			line = i
+			break
+		}
+	}
+	if line == -1 {
+		t.Fatalf("no rendered line is owned by One: %v", m.foldOwner)
+	}
+	if m.foldOwner[line+1] != -1 {
+		t.Fatalf("test setup: expected the line after One's heading to be its own unowned blank, got owner %d", m.foldOwner[line+1])
+	}
+	m.vp.SetYOffset(line + 1)
+	m = update(t, m, keyMsg("z"))
+
+	if m.vp.YOffset != line {
+		t.Fatalf("folding One from the blank right after its heading should still re-anchor to line %d, got YOffset=%d", line, m.vp.YOffset)
+	}
+}
+
+// Regression test for a bug caught in round 3 review: folding a section the
+// cursor sits inside (not on its heading line) left the viewport's offset
+// unchanged, so once the section's body vanished the pane showed whatever
+// had scrolled up to fill the gap instead of the fold that just happened —
+// and a second z would then act on that wrong section. z must re-anchor the
+// viewport to the folded heading's own (unmoved) line.
+func TestFoldReanchorsTheViewportToTheFoldedSection(t *testing.T) {
+	m, _, reader := newReadingTestModel(t)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+	m = update(t, m, keyMsg("enter"))
+	// Two also needs a body long enough to keep the folded document taller
+	// than the viewport — otherwise everything fits on one screen regardless
+	// of anchoring, and the assertion below would pass even without the fix.
+	body := "# One\n\n" + strings.Repeat("line of one's own body\n", 40) +
+		"\n# Two\n\n" + strings.Repeat("line of two's own body\n", 200)
+	m = selectAndRead(t, m, 0, linear.IssueDetail{Body: body}, nil, reader)
+
+	line := -1
+	for i, o := range m.foldOwner {
+		if o == 0 {
+			line = i
+			break
+		}
+	}
+	if line == -1 {
+		t.Fatalf("no rendered line is owned by One: %v", m.foldOwner)
+	}
+	// Deep into One's body, well past its own heading line — nothing before
+	// that heading shifts when One folds, so its line number does not move.
+	m.vp.SetYOffset(line + 20)
+	m = update(t, m, keyMsg("z"))
+
+	if m.vp.YOffset != line {
+		t.Fatalf("folding One should re-anchor the viewport to its own line %d, got YOffset=%d", line, m.vp.YOffset)
+	}
+	if view := m.View(); !strings.Contains(view, "One") {
+		t.Fatalf("the just-folded heading should be on screen, not scrolled past:\n%s", view)
 	}
 }
 
