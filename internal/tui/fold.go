@@ -243,16 +243,27 @@ func (m *model) foldable() bool {
 // Returns the heading to re-anchor the viewport to, or -1 if the caller
 // should leave the viewport alone. These are not the same thing as "which
 // heading got toggled": re-anchoring only matters when the cursor's own
-// position sat inside that heading's section (found on the forward scan's
-// very first line, at top itself) — that is the one case where folding
-// shifts everything the viewport was showing and leaves it pointed at
-// whatever scrolled up to fill the gap. Reached by scanning past a gap
-// (the pane's own header lines, a blank between sections) or by the
-// backward fallback below, the viewport was already showing valid content
-// before the toggle and moving it would only interrupt wherever the
-// operator actually was — jumping to the very top on the first fold of a
-// ticket still parked at its opening scroll position, or yanking the pane
-// away from the comments the backward fallback exists to leave undisturbed.
+// position already sat inside that heading's section — that is the one
+// case where folding shifts everything the viewport was showing and leaves
+// it pointed at whatever scrolled up to fill the gap. Landing on the
+// section's own gap lines counts as inside it too: the blank fold.go's
+// blank() puts before a heading, or the one between a heading and its own
+// body, are unowned (-1) but still fall inside the section on either side
+// of them, closer to one heading than any other — a nearest-owned-neighbor
+// check on both sides of top, forward and backward, is what "inside"
+// actually means when most of a section's own lines carry its owner
+// directly and only these seams do not.
+//
+// The pane's header lines and any run of comments past the last heading
+// are a different kind of unowned: nothing behind them (searching
+// backward) is ever owned by the heading found ahead, because there is no
+// heading behind them at all (top of document) or the forward scan found
+// nothing (past every section, the fallback below). Both read as "not
+// inside," which is what leaves the viewport alone in exactly the two
+// cases the round-4 review found broken: jumping to the very top on the
+// first fold of a ticket still parked at its opening scroll position, and
+// yanking the pane away from the comments the backward fallback exists to
+// leave undisturbed.
 func (m *model) toggleFold() int {
 	it := m.selectedAttention()
 	if it == nil {
@@ -263,21 +274,23 @@ func (m *model) toggleFold() int {
 		return -1
 	}
 	top := clampIndex(m.vp.YOffset, len(m.foldOwner))
-	idx := -1
-	direct := m.foldOwner[top] >= 0
+	ahead := -1
 	for i := top; i < len(m.foldOwner); i++ {
 		if m.foldOwner[i] >= 0 {
-			idx = m.foldOwner[i]
+			ahead = m.foldOwner[i]
 			break
 		}
 	}
-	if idx < 0 {
-		for i := top; i >= 0; i-- {
-			if m.foldOwner[i] >= 0 {
-				idx = m.foldOwner[i]
-				break
-			}
+	behind := -1
+	for i := top; i >= 0; i-- {
+		if m.foldOwner[i] >= 0 {
+			behind = m.foldOwner[i]
+			break
 		}
+	}
+	idx, direct := ahead, ahead >= 0 && ahead == behind
+	if idx < 0 {
+		idx = behind // the fallback: nothing ahead, so act on whatever is behind
 	}
 	if idx < 0 {
 		return -1

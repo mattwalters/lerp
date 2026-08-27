@@ -5010,8 +5010,51 @@ func TestFoldAtTheTopDoesNotScrollThePanesOwnHeaderOffScreen(t *testing.T) {
 	if m.vp.YOffset != 0 {
 		t.Fatalf("folding the first heading from the top should not move the viewport, got YOffset=%d", m.vp.YOffset)
 	}
-	if view := m.View(); !strings.Contains(view, "status") {
+	// "linear  " is the pane's own header label (attentionDetail) — unlike
+	// "status", which the inbox table's column header also carries and so
+	// would pass this assertion even with the pane's own header scrolled
+	// off screen entirely.
+	if view := m.View(); !strings.Contains(view, "linear  ") {
 		t.Fatalf("the pane's own header should still be on screen after folding from the top:\n%s", view)
+	}
+}
+
+// Regression test for a bug the round-5 review caught in the round-4 fix
+// above: gating re-anchoring on "is the viewport's top line itself owned by
+// a heading" missed the blank line fold.go inserts between a heading and
+// its own body — unowned (-1), but still squarely inside that heading's
+// section, not a gap between sections the way the pane's header or a run
+// of comments is. With the cursor parked there, folding must still
+// re-anchor: nothing about sitting one line below One's own heading, on
+// the blank its body starts with, is different from sitting further down
+// in the body itself.
+func TestFoldReanchorsFromTheBlankAfterAHeadingToo(t *testing.T) {
+	m, _, reader := newReadingTestModel(t)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+	m = update(t, m, keyMsg("enter"))
+	body := "# One\n\n" + strings.Repeat("line of one's own body\n", 40) +
+		"\n# Two\n\n" + strings.Repeat("line of two's own body\n", 200)
+	m = selectAndRead(t, m, 0, linear.IssueDetail{Body: body}, nil, reader)
+
+	line := -1
+	for i, o := range m.foldOwner {
+		if o == 0 {
+			line = i
+			break
+		}
+	}
+	if line == -1 {
+		t.Fatalf("no rendered line is owned by One: %v", m.foldOwner)
+	}
+	if m.foldOwner[line+1] != -1 {
+		t.Fatalf("test setup: expected the line after One's heading to be its own unowned blank, got owner %d", m.foldOwner[line+1])
+	}
+	m.vp.SetYOffset(line + 1)
+	m = update(t, m, keyMsg("z"))
+
+	if m.vp.YOffset != line {
+		t.Fatalf("folding One from the blank right after its heading should still re-anchor to line %d, got YOffset=%d", line, m.vp.YOffset)
 	}
 }
 
