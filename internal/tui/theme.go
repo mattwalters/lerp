@@ -26,34 +26,52 @@ import (
 // by being hard to read. styleTicket is bold, so the ramp reads bold /
 // normal / faint rather than normal / nearly-invisible.
 var (
-	colorFocus        = lipgloss.AdaptiveColor{Light: "#6E4BC7", Dark: "#A78BFA"}
-	colorRunning      = lipgloss.AdaptiveColor{Light: "#127A57", Dark: "#3DDC97"}
+	// colorFocus is terminal green: a muted, desaturated phosphor tone, not
+	// the neon `#33FF33`-class hacker green — CRT-phosphor lineage without
+	// the gnarliness. colorRunning was already this family's other member,
+	// which is why it moves to teal below rather than sitting two clicks
+	// away in the same hue.
+	colorFocus = lipgloss.AdaptiveColor{Light: "#186B3E", Dark: "#6FCF97"}
+	// colorRunning moves to teal/cyan rather than staying green now that
+	// colorFocus is green too: "selected" and "alive" are the board's most
+	// load-bearing distinction, and a hue split (green vs teal, ~45° apart)
+	// holds under a glance in a way that pushing two greens apart in
+	// lightness alone would not — a work row shows both at once, next to a
+	// focused border, so the two states need to separate at a glance and
+	// not just under a calibrated eye.
+	colorRunning      = lipgloss.AdaptiveColor{Light: "#0B6E85", Dark: "#22D3EE"}
 	colorProvisioning = lipgloss.AdaptiveColor{Light: "#9A5E07", Dark: "#F2B84B"}
 	colorAttention    = lipgloss.AdaptiveColor{Light: "#C4275B", Dark: "#F2618E"}
-	colorFaint        = lipgloss.AdaptiveColor{Light: "#6E697C", Dark: "#9490A9"}
+	// colorFaint stays as it was: a near-neutral grey (well under 15%
+	// saturation in both variants), not a purple accent, so the retune
+	// leaves it alone rather than tinting a colour nobody reads as purple.
+	colorFaint = lipgloss.AdaptiveColor{Light: "#6E697C", Dark: "#9490A9"}
 	// colorSelected is the band under the row the cursor is on. It is a
 	// background, so it is not read — it is read *through*, by every colour
 	// a row already carries. The tint is therefore the quietest one that
 	// still finds itself across a panel, and it is priced against styleFaint,
-	// the combination with the least to spare: faint keeps 5.01:1 on the dark
-	// band against 6.82:1 on black, and 4.25:1 on the light one against
-	// 5.28:1 on white. Adaptive, because the same tint that reads as a band
-	// on a dark terminal is a smudge on a light one.
+	// the combination with the least to spare: faint keeps 5.08:1 on the dark
+	// band against 6.82:1 on black, and 4.28:1 on the light one against
+	// 5.28:1 on white — both re-derived at the same design point the purple
+	// held (same lightness step off black/white as before), just re-hued to
+	// green. Adaptive, because the same tint that reads as a band on a dark
+	// terminal is a smudge on a light one.
 	//
 	// It is the one colour here spelled out per profile rather than left to
 	// lipgloss to degrade, because it is the only one used as a background,
 	// where degrading is destructive rather than approximate: the 6×6×6 cube
-	// has no quiet tint of this hue — #272138 quantises to xterm 17, a
-	// saturated navy — and 16 colours has none at any hue, where it comes out
-	// a solid blue or magenta bar. The 256-colour pair is off the grey ramp
-	// instead, chosen to hold the design point rather than the hue: the same
-	// step off the terminal's own background, and faint left where it was.
-	// The 16-colour slots are empty on purpose, which renders no band at all
-	// — ▸ is the cursor there, which is what the marker is kept as the
-	// fallback for.
+	// has no quiet tint of this hue either — #17271C quantises to xterm 232,
+	// a step of the grey ramp itself, but #CCF0D8 (the light variant) lands
+	// on a pale cube green, and 16 colours has none at any hue, where the
+	// light variant comes out a solid, full-brightness green bar. The
+	// 256-colour pair is off the grey ramp instead, chosen to hold the design
+	// point rather than the hue: the same step off the terminal's own
+	// background, and faint left where it was. The 16-colour slots are empty
+	// on purpose, which renders no band at all — ▸ is the cursor there, which
+	// is what the marker is kept as the fallback for.
 	colorSelected = lipgloss.CompleteAdaptiveColor{
-		Light: lipgloss.CompleteColor{TrueColor: "#E9E4F7", ANSI256: "254"},
-		Dark:  lipgloss.CompleteColor{TrueColor: "#272138", ANSI256: "234"},
+		Light: lipgloss.CompleteColor{TrueColor: "#CCF0D8", ANSI256: "254"},
+		Dark:  lipgloss.CompleteColor{TrueColor: "#17271C", ANSI256: "234"},
 	}
 	// colorWordmark is the empty-board decoration (LERP-145), pinned below
 	// contrastFloor on purpose: WCAG exempts pure decoration from the
@@ -65,17 +83,19 @@ var (
 	// Spelled out per profile like colorSelected, and for the same reason:
 	// the truecolor value is tuned to sit just under the floor, and 16
 	// colours has no slot that dim — termenv's nearest ANSI match for
-	// #4A4750 is bright-black, which most terminals render around #7E7E7E,
+	// #48514B is bright-black, which most terminals render around #7E7E7E,
 	// well *above* the floor and exactly the "full-brightness wall of ASCII
 	// art" wordmarkVisible exists to rule out. The ANSI slots are left empty
 	// on purpose, which renders no colour at all on that profile —
 	// wordmarkVisible reads that as "cannot dim it" and the panel falls back
 	// to its plain empty-state text, the same as under NO_COLOR. ANSI256
-	// degrades fine on its own (the nearest grey stays under the floor), so
-	// it gets an explicit value rather than also going without.
+	// degrades fine on its own (both variants' nearest 256 match stays under
+	// the floor, even though the light variant's nearest is a pale cube
+	// green rather than a grey), so it gets an explicit value rather than
+	// also going without.
 	colorWordmark = lipgloss.CompleteAdaptiveColor{
-		Light: lipgloss.CompleteColor{TrueColor: "#C4C1CC", ANSI256: "251"},
-		Dark:  lipgloss.CompleteColor{TrueColor: "#4A4750", ANSI256: "239"},
+		Light: lipgloss.CompleteColor{TrueColor: "#C1CDC5", ANSI256: "251"},
+		Dark:  lipgloss.CompleteColor{TrueColor: "#48514B", ANSI256: "239"},
 	}
 )
 

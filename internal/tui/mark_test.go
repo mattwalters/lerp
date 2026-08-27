@@ -547,7 +547,7 @@ func TestTheWordmarkStaysOffScreenBehindALeftoverQuery(t *testing.T) {
 // rather than drawing it at full brightness. The ANSI (16-colour) case is
 // the sharper version of the same bug: colorWordmark's ANSI slots are left
 // empty specifically so this profile renders no colour at all rather than
-// termenv's nearest 16-colour match, which for #4A4750 is bright-black —
+// termenv's nearest 16-colour match, which for #48514B is bright-black —
 // most terminals draw that around #7E7E7E, well above the contrast floor
 // and exactly the "full-brightness wall of ASCII art" this function exists
 // to keep off screen.
