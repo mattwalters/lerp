@@ -7281,10 +7281,13 @@ func index(t *testing.T, s string) int {
 }
 
 // Done-when: legible on both terminal backgrounds — which on a profile with
-// no quiet tint to offer means no band at all. A 16-colour terminal
-// quantises this background to a solid ANSI blue or magenta: a bar across
-// the row that takes every faint cell on it to about 1.3:1. The ▸ marker is
-// the cursor there, and it is on the row whether the band is or not.
+// no quiet tint to offer means no band at all. A 16-colour terminal would
+// quantise the light variant to a solid ANSI green: a bar across the row
+// that takes every faint cell on it to about 3.85:1, well above the design
+// point the band is priced at. (The dark variant quantises to black, which
+// would already read as no band — the light variant is the one the empty
+// ANSI slot is actually saving.) The ▸ marker is the cursor there, and it is
+// on the row whether the band is or not.
 func TestTheBandIsDrawnOnlyWhereItCanBeQuiet(t *testing.T) {
 	was := lipgloss.ColorProfile()
 	t.Cleanup(func() { lipgloss.SetColorProfile(was) })
