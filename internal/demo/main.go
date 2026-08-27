@@ -210,12 +210,13 @@ func run(ctx context.Context) error {
 // this a zero lane count would otherwise validate here and be refused by Run.
 func tuiOptions(rec *loop.Reconciler, repo *config.RepoConfig, events <-chan loop.Event) tui.Options {
 	return tui.Options{
-		Engine:   rec,
-		Statuses: repo.PromoteTargets(),
-		Windows:  repo.ContextWindows(),
-		Interval: interval,
-		Lanes:    lanes,
-		Events:   events,
+		Engine:         rec,
+		Statuses:       boardStates,
+		PromoteTargets: repo.PromoteTargets(),
+		Windows:        repo.ContextWindows(),
+		Interval:       interval,
+		Lanes:          lanes,
+		Events:         events,
 	}
 }
 

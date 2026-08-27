@@ -155,6 +155,10 @@ func openTUI(ctx context.Context, lanes int) error {
 	if err != nil {
 		return err
 	}
+	boardOrder, err := boardStatuses(ctx, client, repo.Teams)
+	if err != nil {
+		return err
+	}
 	ev := evidence.New(repoDir)
 	lock, err := ev.AcquireLock()
 	if err != nil {
@@ -205,13 +209,34 @@ func openTUI(ctx context.Context, lanes int) error {
 	// their own process groups, with run evidence on disk — keep working. The
 	// next lerp adopts them.
 	return tui.Run(ctx, tui.Options{
-		Engine:   rec,
-		Statuses: repo.PromoteTargets(),
-		Windows:  repo.ContextWindows(),
-		Interval: loop.DefaultInterval,
-		Lanes:    lanes,
-		Events:   events,
+		Engine:         rec,
+		Statuses:       boardOrder,
+		PromoteTargets: repo.PromoteTargets(),
+		Windows:        repo.ContextWindows(),
+		Interval:       loop.DefaultInterval,
+		Lanes:          lanes,
+		Events:         events,
 	})
+}
+
+// boardStatuses reads workflow states in Linear board order for each
+// configured team, deduplicating names across teams while preserving order.
+func boardStatuses(ctx context.Context, client linear.Client, teams []string) ([]string, error) {
+	var order []string
+	seen := make(map[string]bool)
+	for _, team := range teams {
+		states, err := client.TeamStates(ctx, team)
+		if err != nil {
+			return nil, fmt.Errorf("read workflow states for team %s: %w", team, err)
+		}
+		for _, s := range states {
+			if !seen[s] {
+				seen[s] = true
+				order = append(order, s)
+			}
+		}
+	}
+	return order, nil
 }
 
 func initCommand(args []string) {

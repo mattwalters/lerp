@@ -1,13 +1,16 @@
 package main
 
 import (
+	"context"
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/mattwalters/lerp/internal/config"
+	"github.com/mattwalters/lerp/internal/linear"
 )
 
 // The operator's surface says concurrency, never lane. Lane stays the
@@ -200,5 +203,20 @@ func TestLoadRepoValidConfig(t *testing.T) {
 	}
 	if len(repo.Teams) == 0 {
 		t.Errorf("teams empty in loaded config: %+v", repo)
+	}
+}
+
+func TestBoardStatusesPreservesOrderAndDeduplicates(t *testing.T) {
+	fake := linear.NewFake()
+	fake.SetTeamStates("TEAM1", "Triage", "Backlog", "Todo", "In Progress", "Done")
+	fake.SetTeamStates("TEAM2", "Backlog", "Todo", "Review", "Done", "Archived")
+
+	got, err := boardStatuses(context.Background(), fake, []string{"TEAM1", "TEAM2"})
+	if err != nil {
+		t.Fatalf("boardStatuses: %v", err)
+	}
+	want := []string{"Triage", "Backlog", "Todo", "In Progress", "Done", "Review", "Archived"}
+	if !slices.Equal(got, want) {
+		t.Errorf("boardStatuses = %v, want %v", got, want)
 	}
 }

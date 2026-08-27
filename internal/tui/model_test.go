@@ -2135,6 +2135,32 @@ func TestPromotePicker(t *testing.T) {
 	}
 }
 
+func TestPromotePickerSortsByBoardPositionWithUnknownsAtEnd(t *testing.T) {
+	ticker := &countingTicker{}
+	promoter := &recordingPromoter{}
+	events := make(chan loop.Event, 8)
+	m := newModel(context.Background(), Options{
+		Engine:         fakeEngine{ticker, promoter, &recordingEjector{}, &recordingStarter{}, &recordingReader{}},
+		Statuses:       []string{"Triage", "Backlog", "Planning", "Plan Review", "Implementing", "In Review", "Done"},
+		PromoteTargets: []string{"Implementing", "UnknownB", "Planning", "In Review", "UnknownA"},
+		Interval:       time.Millisecond,
+		Lanes:          1,
+		Events:         events,
+	})
+	m = resize(t, m, 100, 30)
+	m = pastTheSplash(t, m)
+	m = openInboxOn(t, m, "Backlog")
+
+	m = update(t, m, keyMsg("p"))
+	if !m.promoting {
+		t.Fatal("p did not open the promote picker")
+	}
+	wantOrder := []string{"Planning", "Implementing", "In Review", "UnknownB", "UnknownA"}
+	if !slices.Equal(m.promoteStatuses, wantOrder) {
+		t.Fatalf("promoteStatuses = %v, want %v", m.promoteStatuses, wantOrder)
+	}
+}
+
 // The picker reads its keys from the keymap, so a rebound Up/Down moves the
 // selection there like it does everywhere else, and the picker's line on the
 // status bar names the new keys. Matching raw strings passed this test's
@@ -2300,6 +2326,40 @@ func TestPromoteCommitsToTheTargetCapturedAtOpen(t *testing.T) {
 	if len(promoter.calls) != 1 || promoter.calls[0].ticketID != "id-1" {
 		t.Fatalf("Promote calls = %+v, want exactly one call for id-1 (the target captured at open)",
 			promoter.calls)
+	}
+}
+
+func TestInboxGroupingOrdersStatusGroupsByBoardPosition(t *testing.T) {
+	ticker := &countingTicker{}
+	promoter := &recordingPromoter{}
+	events := make(chan loop.Event, 8)
+	// Board order: Planning before Implementing.
+	// Alphabetical order: Implementing before Planning.
+	m := newModel(context.Background(), Options{
+		Engine:   fakeEngine{ticker, promoter, &recordingEjector{}, &recordingStarter{}, &recordingReader{}},
+		Statuses: []string{"Backlog", "Planning", "Implementing", "In Review", "Done"},
+		Interval: time.Millisecond,
+		Lanes:    1,
+		Events:   events,
+	})
+	m = resize(t, m, 100, 30)
+	m = pastTheSplash(t, m)
+	m = update(t, m, keyMsg("1"))
+
+	// Attention items in the same relevance tier (StatusFinished) with different statuses.
+	// Under strings.Compare, "Implementing" < "Planning".
+	// Under board position, "Planning" (pos 1) < "Implementing" (pos 2).
+	// Unknown status "CustomStatus" sinks to the end.
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-10", Title: "implementing item", Status: "Implementing", Relevance: loop.StatusFinished},
+		{Ticket: "LERP-20", Title: "planning item", Status: "Planning", Relevance: loop.StatusFinished},
+		{Ticket: "LERP-30", Title: "unknown status item", Status: "CustomStatus", Relevance: loop.StatusFinished},
+	}}})
+
+	got := shownTickets(m)
+	want := []string{"LERP-20", "LERP-10", "LERP-30"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("shownTickets = %v, want %v (Planning before Implementing by board order, CustomStatus at end)", got, want)
 	}
 }
 
