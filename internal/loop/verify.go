@@ -12,6 +12,7 @@ import (
 
 	"github.com/mattwalters/lerp/internal/config"
 	"github.com/mattwalters/lerp/internal/linear"
+	"github.com/mattwalters/lerp/internal/vendors"
 )
 
 // Verify runs lerp's startup checks against the board, once, before the first
@@ -24,16 +25,19 @@ import (
 //   - Warnings are printed and the run starts anyway. A team git automation
 //     that would move a ticket mid-stage is a strong smell that may be
 //     deliberate in ways lerp cannot see, so it names itself and the fix and
-//     gets out of the way.
+//     gets out of the way. A vendor runner CLI without a Linear MCP server
+//     configured warns that its runs cannot read tickets or leave verdicts.
 //
 // Warnings are only computed once the statuses check has passed: a board
 // missing the statuses the config names has nothing to say about which of
 // them an automation collides with.
-func Verify(ctx context.Context, client linear.Client, repo *config.RepoConfig) ([]string, error) {
+func Verify(ctx context.Context, client linear.Client, repo *config.RepoConfig, repoDir string) ([]string, error) {
 	if err := verifyStatuses(ctx, client, repo); err != nil {
 		return nil, err
 	}
-	return verifyGitAutomations(ctx, client, repo), nil
+	warnings := verifyGitAutomations(ctx, client, repo)
+	warnings = append(warnings, verifyLinearMCP(repo, repoDir)...)
+	return warnings, nil
 }
 
 // verifyStatuses checks, with one states-read per configured team, that every
@@ -193,4 +197,56 @@ func gitAutomationWarning(team, label string, a linear.GitAutomation, repo *conf
 	}
 	return append(lines, fmt.Sprintf(
 		"fix: set that automation to No action %s, or point a queue at %q", scope, a.Status))
+}
+
+// verifyLinearMCP reports any vendor runner whose CLI does not have a Linear
+// MCP server configured. Each named vendor runner is checked (command runners
+// are skipped as opaque). It warns rather than refusing: runs might still
+// succeed if the operator has other mechanisms, but without MCP the runs
+// cannot read tickets or leave verdicts.
+func verifyLinearMCP(repo *config.RepoConfig, repoDir string) []string {
+	runnerQueues := make(map[string][]string)
+	for _, qname := range slices.Sorted(maps.Keys(repo.Queues)) {
+		q := repo.Queues[qname]
+		if q.Runner != "" && q.Status != "" {
+			runnerQueues[q.Runner] = append(runnerQueues[q.Runner], q.Status)
+		}
+	}
+
+	var report []string
+	for _, rname := range slices.Sorted(maps.Keys(repo.Runners)) {
+		r := repo.Runners[rname]
+		if r.Vendor == "" {
+			continue // command runners are opaque — skip them
+		}
+		adapter, ok := vendors.Lookup(r.Vendor)
+		if !ok {
+			continue
+		}
+		if adapter.HasLinearMCP(repoDir) {
+			continue
+		}
+
+		queues := runnerQueues[rname]
+		slices.Sort(queues)
+		queues = slices.Compact(queues)
+
+		var queueLabel string
+		if len(queues) == 1 {
+			queueLabel = fmt.Sprintf(" (queue %q)", queues[0])
+		} else if len(queues) > 1 {
+			quoted := make([]string, len(queues))
+			for i, q := range queues {
+				quoted[i] = fmt.Sprintf("%q", q)
+			}
+			queueLabel = fmt.Sprintf(" (queues %s)", strings.Join(quoted, ", "))
+		}
+
+		fixCmd := strings.Join(adapter.MCPRegisterHTTP(), " ")
+		report = append(report, fmt.Sprintf(
+			"runner %q%s names the %s CLI, which has no Linear MCP server configured — its runs cannot read tickets or leave verdicts. Fix: %s, then authenticate via %s.",
+			rname, queueLabel, adapter.CLIName(), fixCmd, adapter.AuthInstruction(),
+		))
+	}
+	return report
 }

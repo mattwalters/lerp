@@ -66,12 +66,21 @@ func (antigravity) HasLinearMCP(repoRoot string) bool {
 		if checkAgySettings(filepath.Join(home, ".gemini", "antigravity-cli", "settings.json")) {
 			return true
 		}
+		if checkAgySettings(filepath.Join(home, ".gemini", "settings.json")) {
+			return true
+		}
 	}
 	if repoRoot != "" {
 		if checkAgyDir(filepath.Join(repoRoot, ".gemini", "antigravity-cli", "mcp")) {
 			return true
 		}
 		if checkAgyDir(filepath.Join(repoRoot, ".gemini", "mcp")) {
+			return true
+		}
+		if checkAgySettings(filepath.Join(repoRoot, ".gemini", "antigravity-cli", "settings.json")) {
+			return true
+		}
+		if checkAgySettings(filepath.Join(repoRoot, ".gemini", "settings.json")) {
 			return true
 		}
 	}
@@ -115,6 +124,13 @@ func checkAgySettings(path string) bool {
 	var settings map[string]any
 	if err := json.Unmarshal(data, &settings); err == nil {
 		if servers, ok := settings["mcpServers"].(map[string]any); ok {
+			for name, val := range servers {
+				if isLinearServer(name, val) {
+					return true
+				}
+			}
+		}
+		if servers, ok := settings["mcp_servers"].(map[string]any); ok {
 			for name, val := range servers {
 				if isLinearServer(name, val) {
 					return true

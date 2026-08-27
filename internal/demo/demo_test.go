@@ -32,7 +32,7 @@ func TestBoardConfigLoads(t *testing.T) {
 	if !slices.Equal(repo.Teams, []string{demoTeam}) {
 		t.Fatalf("board.toml serves %v, want [%s]", repo.Teams, demoTeam)
 	}
-	warnings, err := loop.Verify(context.Background(), seedBoard(), repo)
+	warnings, err := loop.Verify(context.Background(), seedBoard(), repo, "")
 	if err != nil {
 		t.Fatal(err)
 	}

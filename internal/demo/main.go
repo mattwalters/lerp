@@ -158,7 +158,7 @@ func run(ctx context.Context) error {
 	// The same refusal openTUI makes, and here it doubles as a rot guard: a
 	// status renamed in board.toml but not on the seeded board fails the
 	// render instead of recording an empty queue.
-	warnings, err := loop.Verify(ctx, client, repo)
+	warnings, err := loop.Verify(ctx, client, repo, root)
 	if err != nil {
 		return err
 	}

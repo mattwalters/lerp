@@ -5,6 +5,8 @@ package loop
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -160,7 +162,7 @@ func TestVerifyWarnsOnMidStageAutomation(t *testing.T) {
 	fake.SetGitAutomations("LERP", linear.GitAutomation{
 		Event: linear.GitEventStart, Status: "In Progress",
 	})
-	warnings, err := Verify(context.Background(), fake, verifyRepo())
+	warnings, err := Verify(context.Background(), fake, verifyRepo(), "")
 	if err != nil {
 		t.Fatalf("Verify = %v, want nil — a colliding automation warns, it does not refuse", err)
 	}
@@ -187,7 +189,7 @@ func TestVerifySaysNothingWhenThePipelineNamesTheTarget(t *testing.T) {
 	fake.SetGitAutomations("LERP", linear.GitAutomation{
 		Event: linear.GitEventStart, Status: "Plan Review",
 	})
-	warnings, err := Verify(context.Background(), fake, verifyRepo())
+	warnings, err := Verify(context.Background(), fake, verifyRepo(), "")
 	if err != nil {
 		t.Fatalf("Verify = %v, want nil", err)
 	}
@@ -203,7 +205,7 @@ func TestVerifySaysNothingAboutMergeAutomations(t *testing.T) {
 	fake.SetGitAutomations("LERP", linear.GitAutomation{
 		Event: linear.GitEventMerge, Status: "In Progress",
 	})
-	warnings, err := Verify(context.Background(), fake, verifyRepo())
+	warnings, err := Verify(context.Background(), fake, verifyRepo(), "")
 	if err != nil {
 		t.Fatalf("Verify = %v, want nil", err)
 	}
@@ -216,7 +218,7 @@ func TestVerifySaysNothingAboutAutomationsSetToNoAction(t *testing.T) {
 	fake := verifyFake()
 	// Linear keeps a switched-off rule as a row with no target state.
 	fake.SetGitAutomations("LERP", linear.GitAutomation{Event: linear.GitEventStart})
-	warnings, err := Verify(context.Background(), fake, verifyRepo())
+	warnings, err := Verify(context.Background(), fake, verifyRepo(), "")
 	if err != nil {
 		t.Fatalf("Verify = %v, want nil", err)
 	}
@@ -233,7 +235,7 @@ func TestVerifyWarnsOncePerMidStageEvent(t *testing.T) {
 		linear.GitAutomation{Event: linear.GitEventDraft, Status: "In Progress"},
 		linear.GitAutomation{Event: linear.GitEventMerge, Status: "In Progress"},
 	)
-	warnings, err := Verify(context.Background(), fake, verifyRepo())
+	warnings, err := Verify(context.Background(), fake, verifyRepo(), "")
 	if err != nil {
 		t.Fatalf("Verify = %v, want nil", err)
 	}
@@ -263,7 +265,7 @@ func TestVerifyNamesTheTargetBranchOfAScopedAutomation(t *testing.T) {
 	fake.SetGitAutomations("LERP", linear.GitAutomation{
 		Event: linear.GitEventStart, Status: "In Progress", Branch: "main",
 	})
-	warnings, err := Verify(context.Background(), fake, verifyRepo())
+	warnings, err := Verify(context.Background(), fake, verifyRepo(), "")
 	if err != nil {
 		t.Fatalf("Verify = %v, want nil", err)
 	}
@@ -285,7 +287,7 @@ func TestVerifySaysNothingAboutEventsLerpDoesNotKnow(t *testing.T) {
 	fake.SetGitAutomations("LERP", linear.GitAutomation{
 		Event: "closed", Status: "In Progress",
 	})
-	warnings, err := Verify(context.Background(), fake, verifyRepo())
+	warnings, err := Verify(context.Background(), fake, verifyRepo(), "")
 	if err != nil {
 		t.Fatalf("Verify = %v, want nil", err)
 	}
@@ -302,7 +304,7 @@ func TestVerifyRefusesBeforeItWarns(t *testing.T) {
 	fake.SetGitAutomations("LERP", linear.GitAutomation{
 		Event: linear.GitEventStart, Status: "In Progress",
 	})
-	warnings, err := Verify(context.Background(), fake, verifyRepo())
+	warnings, err := Verify(context.Background(), fake, verifyRepo(), "")
 	if err == nil {
 		t.Fatal("Verify = nil, want the missing status refused")
 	}
@@ -322,7 +324,7 @@ func (failingAutomations) TeamGitAutomations(context.Context, string) ([]linear.
 
 func TestVerifyWarnsRatherThanRefusingWhenAutomationsCannotBeRead(t *testing.T) {
 	client := failingAutomations{Client: verifyFake()}
-	warnings, err := Verify(context.Background(), client, verifyRepo())
+	warnings, err := Verify(context.Background(), client, verifyRepo(), "")
 	if err != nil {
 		t.Fatalf("Verify = %v, want nil — an unreadable check must not block the run", err)
 	}
@@ -341,7 +343,7 @@ func TestVerifyOrdersTheBranchScopedRulesOfOneEvent(t *testing.T) {
 		linear.GitAutomation{Event: linear.GitEventStart, Status: "In Progress"},
 		linear.GitAutomation{Event: linear.GitEventStart, Status: "In Progress", Branch: "main"},
 	)
-	warnings, err := Verify(context.Background(), fake, verifyRepo())
+	warnings, err := Verify(context.Background(), fake, verifyRepo(), "")
 	if err != nil {
 		t.Fatalf("Verify = %v, want nil", err)
 	}
@@ -376,7 +378,7 @@ func TestVerifyWarnsPerTeam(t *testing.T) {
 	})
 	repo := verifyRepo()
 	repo.Teams = []string{"LERP", "DOCS"}
-	warnings, err := Verify(context.Background(), fake, repo)
+	warnings, err := Verify(context.Background(), fake, repo, "")
 	if err != nil {
 		t.Fatalf("Verify = %v, want nil", err)
 	}
@@ -389,5 +391,181 @@ func TestVerifyWarnsPerTeam(t *testing.T) {
 	}
 	if !strings.Contains(msg, "fix: set that automation to No action for team DOCS") {
 		t.Errorf("warnings\n%s\ndo not point the fix at the team it belongs to", msg)
+	}
+}
+
+func TestVerifyWarnsWhenVendorRunnerLacksLinearMCP(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	for _, tc := range []struct {
+		name       string
+		runnerName string
+		vendor     string
+		cliName    string
+		wantFix    string
+		wantAuth   string
+	}{
+		{
+			name:       "antigravity",
+			runnerName: "antigravity-implement",
+			vendor:     "antigravity",
+			cliName:    "agy",
+			wantFix:    "agy mcp add linear https://mcp.linear.app/mcp",
+			wantAuth:   "the /mcp overlay in agy",
+		},
+		{
+			name:       "claude",
+			runnerName: "claude-code",
+			vendor:     "claude",
+			cliName:    "claude",
+			wantFix:    "claude mcp add --transport http linear https://mcp.linear.app/mcp",
+			wantAuth:   "/mcp in claude",
+		},
+		{
+			name:       "codex",
+			runnerName: "codex-runner",
+			vendor:     "codex",
+			cliName:    "codex",
+			wantFix:    "codex mcp add linear --url https://mcp.linear.app/mcp",
+			wantAuth:   "codex mcp login linear",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := verifyFake()
+			repo := verifyRepo()
+			repo.Runners[tc.runnerName] = config.Runner{Vendor: tc.vendor}
+			repo.Queues["implement"] = config.Queue{
+				Status:    "Implementing",
+				Prompt:    "do the work",
+				Runner:    tc.runnerName,
+				OnSuccess: "Done",
+				OnFailure: "Needs Help",
+			}
+			fake.SetTeamStates("LERP", "Todo", "Planning", "Plan Review", "Done", "Needs Help", "Implementing")
+
+			warnings, err := Verify(context.Background(), fake, repo, "")
+			if err != nil {
+				t.Fatalf("Verify = %v, want nil", err)
+			}
+			msg := strings.Join(warnings, "\n")
+			wantWarning := fmt.Sprintf(
+				`runner %q (queue "Implementing") names the %s CLI, which has no Linear MCP server configured — its runs cannot read tickets or leave verdicts. Fix: %s, then authenticate via %s.`,
+				tc.runnerName, tc.cliName, tc.wantFix, tc.wantAuth,
+			)
+			if !strings.Contains(msg, wantWarning) {
+				t.Errorf("warnings\n%s\nmissing %q", msg, wantWarning)
+			}
+		})
+	}
+}
+
+func TestVerifySaysNothingWhenLinearMCPIsConfigured(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	// Configure Claude in ~/.claude.json
+	claudeCfg := homeDir + "/.claude.json"
+	if err := os.WriteFile(claudeCfg, []byte(`{"mcpServers":{"linear":{"type":"http","url":"https://mcp.linear.app/mcp"}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	fake := verifyFake()
+	repo := verifyRepo()
+	repo.Runners["claude"] = config.Runner{Vendor: "claude"}
+	repo.Queues["implement"] = config.Queue{
+		Status:    "Implementing",
+		Prompt:    "do the work",
+		Runner:    "claude",
+		OnSuccess: "Done",
+		OnFailure: "Needs Help",
+	}
+	fake.SetTeamStates("LERP", "Todo", "Planning", "Plan Review", "Done", "Needs Help", "Implementing")
+
+	warnings, err := Verify(context.Background(), fake, repo, "")
+	if err != nil {
+		t.Fatalf("Verify = %v, want nil", err)
+	}
+	if len(warnings) != 0 {
+		t.Errorf("warnings = %v, want none when MCP is configured", warnings)
+	}
+}
+
+func TestVerifyLinearMCPSkipsCommandRunners(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir) // empty home
+
+	fake := verifyFake()
+	repo := verifyRepo()
+	repo.Runners["cmd-runner"] = config.Runner{Command: "echo hello"}
+	repo.Queues["implement"] = config.Queue{
+		Status:    "Implementing",
+		Prompt:    "do the work",
+		Runner:    "cmd-runner",
+		OnSuccess: "Done",
+		OnFailure: "Needs Help",
+	}
+	fake.SetTeamStates("LERP", "Todo", "Planning", "Plan Review", "Done", "Needs Help", "Implementing")
+
+	warnings, err := Verify(context.Background(), fake, repo, "")
+	if err != nil {
+		t.Fatalf("Verify = %v, want nil", err)
+	}
+	if len(warnings) != 0 {
+		t.Errorf("warnings = %v, want none for command runners", warnings)
+	}
+}
+
+func TestVerifyLinearMCPListsMultipleQueues(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	fake := verifyFake()
+	repo := verifyRepo()
+	repo.Runners["claude"] = config.Runner{Vendor: "claude"}
+	repo.Queues["plan"] = config.Queue{
+		Status:    "Planning",
+		Prompt:    "plan it",
+		Runner:    "claude",
+		OnSuccess: "Plan Review",
+		OnFailure: "Needs Help",
+	}
+	repo.Queues["implement"] = config.Queue{
+		Status:    "Implementing",
+		Prompt:    "do the work",
+		Runner:    "claude",
+		OnSuccess: "Done",
+		OnFailure: "Needs Help",
+	}
+	fake.SetTeamStates("LERP", "Todo", "Planning", "Plan Review", "Done", "Needs Help", "Implementing")
+
+	warnings, err := Verify(context.Background(), fake, repo, "")
+	if err != nil {
+		t.Fatalf("Verify = %v, want nil", err)
+	}
+	msg := strings.Join(warnings, "\n")
+	want := `runner "claude" (queues "Implementing", "Planning") names the claude CLI, which has no Linear MCP server configured — its runs cannot read tickets or leave verdicts. Fix: claude mcp add --transport http linear https://mcp.linear.app/mcp, then authenticate via /mcp in claude.`
+	if !strings.Contains(msg, want) {
+		t.Errorf("warnings\n%s\nmissing %q", msg, want)
+	}
+}
+
+func TestVerifyLinearMCPUnusedRunner(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	fake := verifyFake()
+	repo := verifyRepo()
+	// Defined in [runners] but not referenced by any queue
+	repo.Runners["claude"] = config.Runner{Vendor: "claude"}
+
+	warnings, err := Verify(context.Background(), fake, repo, "")
+	if err != nil {
+		t.Fatalf("Verify = %v, want nil", err)
+	}
+	msg := strings.Join(warnings, "\n")
+	want := `runner "claude" names the claude CLI, which has no Linear MCP server configured — its runs cannot read tickets or leave verdicts. Fix: claude mcp add --transport http linear https://mcp.linear.app/mcp, then authenticate via /mcp in claude.`
+	if !strings.Contains(msg, want) {
+		t.Errorf("warnings\n%s\nmissing %q", msg, want)
 	}
 }
