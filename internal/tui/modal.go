@@ -48,10 +48,10 @@ func (m model) modalContent() string {
 		w, h := m.modalSize(m.promoteContentSize())
 		return m.promotePicker(w, h)
 	case m.ejection != nil:
-		w, h := m.modalSize(60, 12)
+		w, h := m.modalSize(76, 12)
 		return m.ejectResult(*m.ejection, w, h)
 	case m.ejecting:
-		w, h := m.modalSize(74, 7)
+		w, h := m.modalSize(76, 7)
 		return m.ejectConfirm(m.ejectRow, w, h)
 	case m.helpOn:
 		w, h := m.modalSize(70, 40)

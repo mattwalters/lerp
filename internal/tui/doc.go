@@ -1,3 +1,5 @@
+// Package tui is the Bubble Tea interface: one screen the inbox and
+// work panels own, with a main pane that follows the selected row
 // opening beside them on enter and closing on esc, plus promote — of
 // a single row, or of a run of adjacent ones held in the inbox's
 // visual mode — and eject. The promote picker, eject and help float
