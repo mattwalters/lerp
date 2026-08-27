@@ -2,9 +2,10 @@
 // work panels own, with a main pane that follows the selected row
 // opening beside them on enter and closing on esc, plus promote — of
 // a single row, or of a run of adjacent ones held in the inbox's
-// visual mode — and eject. An open pane is a surface tab reaches, and
-// the keys scroll it while it has them; the row it is reading is
-// still the panel's. The TUI drives the loop; there is no daemon.
+// visual mode — and eject. The promote picker, eject and help float
+// over the board as modals (see modal.go). An open pane is a surface
+// tab reaches, and the keys scroll it while it has them; the row it is
+// reading is still the panel's. The TUI drives the loop; there is no daemon.
 //
 // A running ticket's row reads its log as agent activity — decoded at
 // render time by internal/logfmt, never on disk — with a raw toggle
