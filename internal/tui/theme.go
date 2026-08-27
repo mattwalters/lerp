@@ -180,14 +180,54 @@ func fitRows(rows []string, ih int) []string {
 	return rows
 }
 
+// scrollbar is the main pane's position indicator: which of a panel's ih
+// body rows the viewport's thumb covers, drawn over the right border in
+// place of its usual edge. nil draws a plain edge — every panelBox caller
+// but the main pane itself, and a main pane whose content is no taller than
+// the pane holding it (see scrollThumb).
+type scrollbar struct{ top, len int }
+
+// scrollThumbGlyph fills the thumb's rows. A solid block against the
+// border's own line character is a shape difference as well as a colour
+// one — the palette's own rule (see theme.go's comment on colour), so the
+// track still reads against the thumb with no colour at all.
+const scrollThumbGlyph = "█"
+
+// scrollThumb is the proportion math behind the scrollbar: which rows of a
+// height-row track a thumb should cover for a total-line document scrolled
+// to yOffset. ok is false when the document fits the track outright — there
+// is nothing to scroll, so nothing to point at, and a thumb spanning every
+// row would read as full when it means something else entirely.
+//
+// The thumb's length is proportional to the fraction of the document the
+// track can show at once, floored at one row so a long document never loses
+// the thumb altogether. Its position is yOffset scaled by the room the thumb
+// has to move in (height-len) over the room the content has to scroll in
+// (total-height) — zero at the top and exactly height-len, flush with the
+// bottom, when yOffset is the viewport's own maximum. Both edges land
+// exactly because the scaling divides out to the untouched numerator there;
+// nothing about it depends on rounding.
+func scrollThumb(total, height, yOffset int) (sb scrollbar, ok bool) {
+	if height <= 0 || total <= height {
+		return scrollbar{}, false
+	}
+	length := max(1, height*height/total)
+	maxOffset := total - height
+	yOffset = clampIndex(yOffset, maxOffset+1)
+	top := yOffset * (height - length) / maxOffset
+	return scrollbar{top: top, len: length}, true
+}
+
 // panelBox draws one bordered panel with its title set into the top border —
 // the cockpit's whole chrome. rows are already-styled lines, each truncated
-// (ANSI-aware) to the content width left by pad.
+// (ANSI-aware) to the content width left by pad. sb overrides the right
+// border with a scrollbar thumb on the rows it covers; nil draws the plain
+// edge every panel but the main pane draws.
 //
 // Focus is drawn as weight as well as colour: the focused panel takes the
 // heavy box, so which panel the keys are talking to still reads on a
 // 16-color terminal, the same rule the state dots follow.
-func panelBox(title string, focused bool, w, h int, rows []string, pad padding) string {
+func panelBox(title string, focused bool, w, h int, rows []string, pad padding, sb *scrollbar) string {
 	bw, ih := w-2, h-2
 	cw := bw - pad.left - pad.right
 	if cw < 1 || ih < 1 {
@@ -213,7 +253,11 @@ func panelBox(title string, focused bool, w, h int, rows []string, pad padding) 
 		if i < len(rows) {
 			row = ansi.Truncate(rows[i], cw, "…")
 		}
-		b.WriteString(border.Render(bd.Left) + lp + padTo(row, cw) + rp + border.Render(bd.Right))
+		right := bd.Right
+		if sb != nil && i >= sb.top && i < sb.top+sb.len {
+			right = scrollThumbGlyph
+		}
+		b.WriteString(border.Render(bd.Left) + lp + padTo(row, cw) + rp + border.Render(right))
 		b.WriteString("\n")
 	}
 	b.WriteString(border.Render(bd.BottomLeft + strings.Repeat(bd.Bottom, bw) + bd.BottomRight))

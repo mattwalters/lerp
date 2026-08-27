@@ -1099,6 +1099,76 @@ func TestTheHelpOverlayGivesTheTicketPaneBackWhereItWas(t *testing.T) {
 	}
 }
 
+// Done-when: opening a long ticket shows at a glance how long it is and
+// where the operator is in it, a document shorter than the pane shows no
+// lying thumb, and scrolling moves the indicator rather than leaving it
+// standing still. TestScrollThumb* in theme_test.go pins the math this test
+// exercises through the model — the two are complementary, not redundant:
+// this is what catches the pane wiring the wrong height or offset into it.
+func TestMainPaneScrollbarTracksThePosition(t *testing.T) {
+	m, _, reader := newReadingTestModel(t)
+	m = pastTheSplash(t, m)
+	resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
+	m = update(t, resized.(model), keyMsg("1"))
+	m = update(t, m, keyMsg("enter")) // the inbox reads a ticket once its pane is open
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+
+	// A ticket short enough to fit the pane outright draws no thumb: a bar
+	// that always reads full would say "there is more" about a document that
+	// has none.
+	m = selectAndRead(t, m, 0, linear.IssueDetail{Body: "a short ticket"}, nil, reader)
+	g := m.geometry()
+	if sb := m.mainScrollbar(g.mainH); sb != nil {
+		t.Fatalf("a ticket shorter than the pane drew a thumb: %+v", *sb)
+	}
+	if strings.Contains(m.View(), scrollThumbGlyph) {
+		t.Fatalf("a ticket shorter than the pane drew a thumb:\n%s", m.View())
+	}
+
+	// A ticket far longer than the pane draws one, at the top to start. A
+	// different row, since the selection has already settled on the first —
+	// settling again on the same one schedules no second fetch.
+	body := strings.Repeat("a line of the plan\n", 80)
+	m = selectAndRead(t, m, 1, linear.IssueDetail{Body: body}, nil, reader)
+	g = m.geometry()
+	top := m.mainScrollbar(g.mainH)
+	if top == nil {
+		t.Fatalf("a ticket far longer than the pane drew no thumb:\n%s", m.View())
+	}
+	if top.top != 0 {
+		t.Errorf("a freshly opened ticket's thumb starts at row %d, want 0", top.top)
+	}
+	if !strings.Contains(m.View(), scrollThumbGlyph) {
+		t.Fatalf("the rendered pane carries no thumb glyph despite one at %+v:\n%s", *top, m.View())
+	}
+
+	// Paging down moves it further into the track rather than leaving it
+	// standing still or flickering back toward the top.
+	m = update(t, m, keyMsg("f"))
+	m = update(t, m, keyMsg("f"))
+	g = m.geometry()
+	moved := m.mainScrollbar(g.mainH)
+	if moved == nil {
+		t.Fatalf("the thumb disappeared after paging down:\n%s", m.View())
+	}
+	if moved.top <= top.top {
+		t.Errorf("after paging down, thumb top = %d, want it past %d", moved.top, top.top)
+	}
+
+	// And it reaches the very last row once the pane is following the tail
+	// end of the ticket, the same edge scrollThumb's own tests pin.
+	m = update(t, m, keyMsg("G"))
+	g = m.geometry()
+	bottom := m.mainScrollbar(g.mainH)
+	if bottom == nil {
+		t.Fatalf("the thumb disappeared at the bottom:\n%s", m.View())
+	}
+	if last := bottom.top + bottom.len; last != g.mainH-2 {
+		t.Errorf("at the bottom, thumb covers rows [%d,%d), want it flush with the last row %d",
+			bottom.top, last, g.mainH-2)
+	}
+}
+
 // Done-when: scrolling the overlay, and moving the cursor behind it, are
 // not the log's business. Follow is the log's state alone — the rule the
 // scroll keys already hold to for the detail lens — and the place the
@@ -2984,7 +3054,7 @@ func TestAClosedPaneIsNotRefreshed(t *testing.T) {
 
 func TestPanelPaddingIsAsymmetric(t *testing.T) {
 	row := func(pad padding) string {
-		return strings.Split(panelBox("t", false, 10, 3, []string{"abcdefg"}, pad), "\n")[1]
+		return strings.Split(panelBox("t", false, 10, 3, []string{"abcdefg"}, pad, nil), "\n")[1]
 	}
 	if got, want := row(padList), "│ abcdefg│"; got != want {
 		t.Fatalf("list row is %q, want %q — a left pad and the right edge", got, want)
@@ -2999,11 +3069,11 @@ func TestPanelPaddingIsAsymmetric(t *testing.T) {
 // that gives the accent back as plain text. (The promote picker and the ?
 // overlay draw it too — they are lenses that have taken the keyboard.)
 func TestFocusDrawsTheHeavyBox(t *testing.T) {
-	if idle := panelBox("t", false, 10, 3, nil, padList); !strings.Contains(idle, "╭") ||
+	if idle := panelBox("t", false, 10, 3, nil, padList, nil); !strings.Contains(idle, "╭") ||
 		!strings.Contains(idle, "│") {
 		t.Fatalf("an unfocused panel is not the light box:\n%s", idle)
 	}
-	if on := panelBox("t", true, 10, 3, nil, padList); !strings.Contains(on, "┏") ||
+	if on := panelBox("t", true, 10, 3, nil, padList, nil); !strings.Contains(on, "┏") ||
 		!strings.Contains(on, "┃") {
 		t.Fatalf("a focused panel is not the heavy box:\n%s", on)
 	}
