@@ -143,8 +143,14 @@
             option.selected = v === {{ site.Params.version }};
             picker.appendChild(option);
           });
+          // Into that version's manual, not its root: the root of a
+          // versioned build is that version's own frozen copy of the home
+          // page, which (like every non-manual page) carries no picker and
+          // no version label — a reader who just switched versions would
+          // land somewhere that gives no sign the switch worked, with no
+          // picker on the page to correct it from.
           picker.addEventListener("change", function () {
-            window.location.href = new URL(picker.value + "/", root);
+            window.location.href = new URL(picker.value + "/docs/", root);
           });
           picker.hidden = false;
         })

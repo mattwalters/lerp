@@ -87,7 +87,14 @@ jobs:
       - uses: peaceiris/actions-hugo@v3
         with:
           hugo-version: ${{ steps.pin.outputs.version }}
+      # HUGO_PARAMS_VERSION explicitly empty, matching the root build below:
+      # left unset this would default to hugo.toml's "dev" and never equal
+      # "", so the root's own template branch (baseof.html's $unversionedRoot)
+      # would go untested here and get its first real run on the publish that
+      # follows a merge.
       - run: hugo --source docs --destination "$PWD/public"
+        env:
+          HUGO_PARAMS_VERSION: ""
       # The other shape the templates take: a versioned build, which stamps
       # a version, links into that tag on GitHub and looks a directory
       # further up for the manifest. /latest/ and /vX.Y.Z/ both take this
@@ -159,24 +166,26 @@ jobs:
 
       # The root build above is the whole site — home, Why lerp, and the
       # manual alike, because there is one Hugo source and one set of
-      # templates, not two builds to keep in sync. This step throws the
-      # manual pages back out of that build before deploy, leaving the
-      # marketing pages it actually publishes. public/docs is emptied wholesale
-      # rather than by naming today's pages one at a time, so a manual page
-      # added later (docs/content/docs/<page>.md, per CONTRIBUTING.md) is
-      # pruned along with the rest instead of silently surviving onto the
-      # unversioned root. docs/demo.gif is the one file spared: it is a
-      # static mount that happens to land beside the manual's section index
-      # (see hugo.toml), but the splash page embeds it too, at the same path
-      # GitHub renders it from in the README, so it stays put.
-      - name: Prune the manual from the root build
+      # templates, not two builds to keep in sync. This step keeps only the
+      # root pages, named explicitly, and deletes everything else, rather
+      # than naming the manual's pages to delete: the manual grows on its own
+      # (a new docs/content/docs/<page>.md, another root-file mount alongside
+      # README and SCOPE) while the root does not, so a keep-list of what's
+      # small and fixed stays correct where a prune-list of what's open-ended
+      # would silently fall behind and let the next addition onto the manual
+      # leak onto the unversioned root instead. docs/demo.gif is kept
+      # alongside the two root pages though it lives under the manual's own
+      # mount (see hugo.toml): the splash page embeds it too, at the same
+      # path GitHub renders it from in the README, so it has to stay.
+      - name: Stage only the root from the root build
         if: github.ref == 'refs/heads/main'
         run: |
-          mkdir /tmp/demo-gif
-          mv public/docs/demo.gif /tmp/demo-gif/
-          rm -rf public/docs public/readme public/scope
-          mkdir public/docs
-          mv /tmp/demo-gif/demo.gif public/docs/
+          mkdir /tmp/root
+          mv public/index.html public/why public/style.css public/docs/demo.gif /tmp/root/
+          rm -rf public
+          mkdir -p public/docs
+          mv /tmp/root/index.html /tmp/root/why /tmp/root/style.css public/
+          mv /tmp/root/demo.gif public/docs/
 
       # The manual publishes only from a tag, from that tag's own tree —
       # never from main, which is what keeps a manual that ships with an
@@ -258,9 +267,10 @@ jobs:
       # versions.json on a tag push — while everything else already on
       # gh-pages, including every previously released version's directory,
       # stays exactly where it was. The same property in the other
-      # direction: the root can never shed a page, so a deleted or renamed
-      # content file goes on being served from its last build until someone
-      # removes it from the branch by hand.
+      # direction: nothing published this way ever sheds a page on its own —
+      # the root, and /latest/ no less than a frozen /vX.Y.Z/ — so a deleted
+      # or renamed content file goes on being served from its subtree's last
+      # build until someone removes it from the branch by hand.
       #
       # Nothing staged means nothing to publish: a run whose builds all
       # skipped — a dispatch pointed at neither main nor a tag push — stops
