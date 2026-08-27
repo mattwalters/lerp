@@ -122,17 +122,171 @@ func (k keymap) ShortHelp() []key.Binding {
 	return []key.Binding{k.Help, k.Quit}
 }
 
-// Two groups, not three: bubbles lays each one out as a column, and the
-// main pane is narrower than the side panels' table left it. Getting about
-// the terminal by moving through it, then everything a key does to the
-// selection — the split reads, and it fits.
+// Three groups: navigation, actions, display. Bubbles lays each one out as a
+// column in the ? overlay.
 func (k keymap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Attention, k.Work, k.NextPanel, k.PrevPanel,
 			k.Up, k.Down, k.PageUp, k.PageDown, k.Top, k.Bottom},
-		{k.Detail, k.Close, k.Promote, k.Visual, k.VisualAll, k.Eject, k.ForceStart, k.Sort, k.Project, k.Backlog,
-			k.Search, k.Open, k.Raw, k.Fold, k.FoldAll, k.Help, k.Quit},
+		{k.Detail, k.Close, k.Promote, k.Visual, k.VisualAll, k.Eject, k.ForceStart, k.Open, k.Help, k.Quit},
+		{k.Sort, k.Project, k.Backlog, k.Search, k.ClearSearch, k.Raw, k.Fold, k.FoldAll},
 	}
+}
+
+// contextHelp returns the live key bindings for where the operator stands,
+// grouped into navigation, actions, and display.
+func (k keymap) contextHelp(p panel, live rowKeys) [][]key.Binding {
+	var nav, act, disp []key.Binding
+
+	switch {
+	case live.promoting:
+		nav = []key.Binding{k.Up, k.Down}
+		act = []key.Binding{
+			short(k.Detail, "promote"),
+			short(k.Close, "cancel"),
+			k.Help,
+			short(k.Quit, "cancel"),
+		}
+
+	case live.ejecting:
+		act = []key.Binding{
+			short(k.Detail, "eject"),
+			short(k.Close, "cancel"),
+			k.Help,
+			k.Quit,
+		}
+
+	case live.ejection:
+		act = []key.Binding{
+			short(k.Close, "dismiss"),
+			k.Help,
+			k.Quit,
+		}
+
+	case live.searching:
+		act = []key.Binding{
+			short(k.Detail, "accept search"),
+			short(k.Close, "cancel search"),
+			k.Help,
+			k.Quit,
+		}
+
+	case live.visual && p == panelAttention:
+		nav = []key.Binding{
+			k.Up, k.Down, k.PageUp, k.PageDown, k.Top, k.Bottom,
+		}
+		act = []key.Binding{
+			short(k.Promote, fmt.Sprintf("promote %d", live.selected)),
+			short(k.Close, "drop"),
+			k.Help,
+			k.Quit,
+		}
+
+	case live.inMain:
+		nav = []key.Binding{
+			k.Attention, k.Work, k.NextPanel, k.PrevPanel,
+			k.Up, k.Down, k.PageUp, k.PageDown, k.Top, k.Bottom,
+		}
+		act = []key.Binding{
+			short(k.Close, "close detail"),
+		}
+		if live.hasURL {
+			act = append(act, k.Open)
+		}
+		if p == panelAttention && live.canPromote {
+			act = append(act, k.Promote)
+		}
+		if p == panelWork && live.canEject {
+			act = append(act, k.Eject)
+		}
+		act = append(act, k.Help, k.Quit)
+
+		if p == panelAttention && live.canFold {
+			disp = append(disp, k.Fold, k.FoldAll)
+		}
+		if p == panelWork && live.hasLog {
+			disp = append(disp, k.Raw)
+		}
+
+	case p == panelAttention:
+		nav = []key.Binding{
+			k.Attention, k.Work, k.NextPanel, k.PrevPanel,
+			k.Up, k.Down,
+		}
+		if live.canScroll {
+			nav = append(nav, k.PageUp, k.PageDown, k.Top, k.Bottom)
+		}
+
+		if live.canDetail {
+			act = append(act, k.Detail)
+		}
+		if live.filtered {
+			act = append(act, k.ClearSearch)
+		} else if live.detailOpen {
+			act = append(act, k.Close)
+		}
+		if live.canPromote {
+			act = append(act, k.Promote, k.Visual, k.VisualAll)
+		}
+		if live.hasURL {
+			act = append(act, k.Open)
+		}
+		act = append(act, k.Help, k.Quit)
+
+		disp = append(disp, k.Sort)
+		if live.projects {
+			disp = append(disp, k.Project)
+		}
+		disp = append(disp, k.Backlog)
+		if live.canSearch {
+			disp = append(disp, k.Search)
+		}
+		if live.canFold {
+			disp = append(disp, k.Fold, k.FoldAll)
+		}
+
+	case p == panelWork:
+		nav = []key.Binding{
+			k.Attention, k.Work, k.NextPanel, k.PrevPanel,
+			k.Up, k.Down,
+		}
+		if live.canScroll {
+			nav = append(nav, k.PageUp, k.PageDown, k.Top, k.Bottom)
+		}
+
+		if live.canDetail {
+			act = append(act, k.Detail)
+		}
+		if live.detailOpen {
+			act = append(act, k.Close)
+		}
+		if live.canStart {
+			act = append(act, k.ForceStart)
+		}
+		if live.canEject {
+			act = append(act, k.Eject)
+		}
+		if live.hasURL {
+			act = append(act, k.Open)
+		}
+		act = append(act, k.Help, k.Quit)
+
+		if live.hasLog {
+			disp = append(disp, k.Raw)
+		}
+	}
+
+	var groups [][]key.Binding
+	if len(nav) > 0 {
+		groups = append(groups, nav)
+	}
+	if len(act) > 0 {
+		groups = append(groups, act)
+	}
+	if len(disp) > 0 {
+		groups = append(groups, disp)
+	}
+	return groups
 }
 
 // rowKeys says which of a panel's keys are live where the cursor is
@@ -151,9 +305,19 @@ type rowKeys struct {
 	canEject   bool
 	// visual is whether the inbox has a live multi-select; selected is how
 	// many rows it spans — the line's "promote N" while one is on.
-	visual   bool
-	selected int
-	canFold  bool
+	visual     bool
+	selected   int
+	canFold    bool
+	canScroll  bool
+	canDetail  bool
+	canStart   bool
+	canSearch  bool
+	detailOpen bool
+	inMain     bool
+	searching  bool
+	promoting  bool
+	ejecting   bool
+	ejection   bool
 }
 
 // panelHelp is the line a focused panel carries: the keys that act on the

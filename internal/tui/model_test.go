@@ -1075,7 +1075,8 @@ func TestHelpOverlayDecodesTheInboxMarks(t *testing.T) {
 func TestHelpOverlayDecodesTheWorkMarks(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
-	m = update(t, resized.(model), keyMsg("?"))
+	m = update(t, resized.(model), keyMsg("2"))
+	m = update(t, m, keyMsg("?"))
 
 	view := ansi.Strip(m.View())
 	shown, decoded := false, false
@@ -1128,14 +1129,14 @@ func TestTheHelpOverlayIsNotWrittenOverByALiveLog(t *testing.T) {
 	m = update(t, m, keyMsg("?"))
 	appendLog(t, logPath, "brand new agent line\n")
 	m = update(t, m, pollMsg{})
-	if view := m.View(); strings.Contains(view, "brand new agent line") {
+	if view := m.helpVp.View(); strings.Contains(view, "brand new agent line") {
 		t.Fatalf("a live log wrote over the help overlay:\n%s", view)
 	}
 	// So must an event that re-aims the tail, and the raw toggle.
 	m = update(t, m, keyMsg("r"))
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventExited, RunID: "r1", Lane: 1,
 		TicketID: "t1", Ticket: "LERP-1", Queue: "implement"}})
-	if view := m.View(); !strings.Contains(view, "inbox marks") {
+	if view := m.View(); !strings.Contains(view, "work marks") {
 		t.Fatalf("the overlay lost the pane to the log behind it:\n%s", view)
 	}
 
@@ -1295,7 +1296,7 @@ func TestReadingTheHelpDoesNotDisturbTheLogBehindIt(t *testing.T) {
 
 	m, _, _ := newTestModel(t, 1)
 	m = pastTheSplash(t, m)
-	m = resize(t, m, 80, 24)
+	m = resize(t, m, 80, 14)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
 		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
 			{ID: "t1", Identifier: "LERP-1", Title: "running", Assigned: true},
@@ -2944,7 +2945,7 @@ func TestStatusBarAndHelp(t *testing.T) {
 	m = update(t, m, tickedMsg{})
 
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
-		{Ticket: "LERP-1", Title: "one"}, {Ticket: "LERP-2", Title: "two"},
+		{Ticket: "LERP-1", Title: "one", URL: "https://linear.app/issue/LERP-1"}, {Ticket: "LERP-2", Title: "two"},
 	}}})
 	if !strings.Contains(m.View(), "2 in the inbox") {
 		t.Fatalf("status bar does not count inbox:\n%s", m.View())
@@ -4822,6 +4823,10 @@ func TestRunLogRendersActivityAndTogglesToRaw(t *testing.T) {
 // documented for free — and a key nobody can discover may as well not exist.
 func TestRawToggleIsInTheHelpOverlay(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		Ticket: "LERP-1", Queue: "plan", LogPath: "/dev/null"}})
+	m = openMain(t, update(t, m, keyMsg("2")))
 	m = update(t, m, keyMsg("?"))
 	if !strings.Contains(m.View(), "raw log") {
 		t.Fatalf("the raw toggle is missing from the help overlay:\n%s", m.View())
@@ -7051,6 +7056,13 @@ func TestForceStartKeyIsInertOnTheInbox(t *testing.T) {
 // the keymap, so the overlay documents it for free.
 func TestForceStartIsInTheHelpOverlay(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
+			{ID: "t1", Identifier: "LERP-1", Title: "queued", Eligible: true},
+		}},
+	}}})
+	m = update(t, m, keyMsg("2"))
 	m = update(t, m, keyMsg("?"))
 	view := m.View()
 	if !strings.Contains(view, "start past the limit") {
@@ -7996,4 +8008,181 @@ func TestModalNeverCoversStatusBar(t *testing.T) {
 	m.ejection = &ej
 	checkBar("ejection", "esc dismiss")
 	m = update(t, m, keyMsg("esc"))
+}
+
+// Done-when: wherever you stand — inbox, work panel, focused detail pane,
+// promote picker, visual mode, eject — ? pops a context-aware cheat sheet
+// showing only the live keys for that context, grouped into navigation,
+// actions, and display, and esc or ? restores whatever was beneath.
+func TestHelpContextAwareCheatSheet(t *testing.T) {
+	ejector := &recordingEjector{resumable: []string{"implement"}}
+	reader := &recordingReader{}
+	m, _, _ := newTestModelWith(t, 2, defaultTestStatuses, &recordingPromoter{}, ejector, &recordingStarter{}, reader)
+	m = pastTheSplash(t, m)
+	m = resize(t, m, 120, 30)
+
+	// Setup data for inbox and work panels
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-1", Title: "first", Status: "Todo", URL: "https://linear.app/issue/LERP-1", Unblocks: 2},
+		{Ticket: "LERP-2", Title: "second", Status: "Todo", URL: "https://linear.app/issue/LERP-2"},
+	}}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
+			{ID: "w-1", Identifier: "LERP-10", Title: "work one", Eligible: true},
+		}},
+	}}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		TicketID: "w-1", Ticket: "LERP-10", Queue: "implement", LogPath: "/dev/null"}})
+
+	// 1. Context: Inbox panel (list mode)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, keyMsg("?"))
+	if !m.helpOn {
+		t.Fatal("? did not open help on inbox")
+	}
+	hView := ansi.Strip(m.View())
+	if !strings.Contains(hView, "s sort inbox") || !strings.Contains(hView, "p     promote") ||
+		!strings.Contains(hView, "inbox marks") {
+		t.Fatalf("inbox list help missing expected keys:\n%s", hView)
+	}
+	if strings.Contains(hView, "start past the limit") || strings.Contains(hView, "e eject") {
+		t.Fatalf("inbox list help contains work panel keys:\n%s", hView)
+	}
+	m = update(t, m, keyMsg("?")) // close help
+	if m.helpOn {
+		t.Fatal("? did not close help on inbox")
+	}
+
+	// 2. Context: Focused detail pane on Inbox (ticket markdown)
+	m = openMain(t, m)
+	m = selectAndRead(t, m, 0, linear.IssueDetail{Body: "## Section 1\nContent 1\n## Section 2\nContent 2"}, nil, reader)
+	m = update(t, m, keyMsg("tab")) // move keys into main pane
+	if !m.mainFocused() {
+		t.Fatal("tab did not focus main pane")
+	}
+	m = update(t, m, keyMsg("?"))
+	hView = ansi.Strip(m.View())
+	if !strings.Contains(hView, "close detail") || !strings.Contains(hView, "z fold") ||
+		!strings.Contains(hView, "inbox marks") {
+		t.Fatalf("focused inbox detail help missing expected keys:\n%s", hView)
+	}
+	if strings.Contains(hView, "sort inbox") {
+		t.Fatalf("focused detail pane should not offer list sorting:\n%s", hView)
+	}
+	m = update(t, m, keyMsg("esc")) // close help
+	if !m.mainFocused() || m.helpOn {
+		t.Fatal("esc did not restore focused detail pane")
+	}
+	m = update(t, m, keyMsg("esc")) // close detail pane
+
+	// 3. Context: Visual mode on Inbox
+	m = update(t, m, keyMsg("v"))
+	if !m.visual {
+		t.Fatal("v did not enter visual mode")
+	}
+	m = update(t, m, keyMsg("j")) // select 2 items
+	m = update(t, m, keyMsg("?"))
+	hView = ansi.Strip(m.View())
+	if !strings.Contains(hView, "promote 2") || !strings.Contains(hView, "drop") ||
+		!strings.Contains(hView, "inbox marks") {
+		t.Fatalf("visual mode help missing expected keys:\n%s", hView)
+	}
+	m = update(t, m, keyMsg("?"))
+	if !m.visual || m.visualSelectionCount() != 2 {
+		t.Fatalf("closing help did not restore visual mode selection: visual=%v count=%d",
+			m.visual, m.visualSelectionCount())
+	}
+	m = update(t, m, keyMsg("esc")) // drop visual mode
+
+	// 4. Context: Promote picker
+	m = update(t, m, keyMsg("p"))
+	if !m.promoting {
+		t.Fatal("p did not open promote picker")
+	}
+	m = update(t, m, keyMsg("j")) // move selection in picker
+	selWas := m.promoteSel
+	m = update(t, m, keyMsg("?"))
+	if !m.helpOn {
+		t.Fatal("? did not open help over promote picker")
+	}
+	hView = ansi.Strip(m.View())
+	if !strings.Contains(hView, "promote") || !strings.Contains(hView, "cancel") {
+		t.Fatalf("promote picker help missing expected keys:\n%s", hView)
+	}
+	if strings.Contains(hView, "sort inbox") || strings.Contains(hView, "inbox marks") {
+		t.Fatalf("promote picker help should not contain list keys or marks:\n%s", hView)
+	}
+	m = update(t, m, keyMsg("esc")) // close help
+	if !m.promoting || m.promoteSel != selWas {
+		t.Fatalf("closing help did not restore promote picker: promoting=%v sel=%d want %d",
+			m.promoting, m.promoteSel, selWas)
+	}
+	m = update(t, m, keyMsg("esc")) // cancel promote picker
+
+	// 5. Context: Work panel (list mode)
+	m = update(t, m, keyMsg("2"))
+	m = update(t, m, keyMsg("?"))
+	hView = ansi.Strip(m.View())
+	if !strings.Contains(hView, "e eject") || !strings.Contains(hView, "work marks") {
+		t.Fatalf("work panel help missing expected keys:\n%s", hView)
+	}
+	if strings.Contains(hView, "inbox marks") || strings.Contains(hView, "sort inbox") {
+		t.Fatalf("work panel help contains inbox keys or marks:\n%s", hView)
+	}
+	m = update(t, m, keyMsg("?"))
+
+	// 6. Context: Focused detail pane on Work (log tail)
+	m = openMain(t, m)
+	m = update(t, m, keyMsg("tab")) // move keys into main pane
+	m = update(t, m, keyMsg("?"))
+	hView = ansi.Strip(m.View())
+	if !strings.Contains(hView, "close detail") || !strings.Contains(hView, "r raw log") ||
+		!strings.Contains(hView, "work marks") {
+		t.Fatalf("focused work log help missing expected keys:\n%s", hView)
+	}
+	m = update(t, m, keyMsg("esc"))
+	if !m.mainFocused() {
+		t.Fatal("esc did not restore main focus")
+	}
+	m = update(t, m, keyMsg("esc"))
+
+	// 7. Context: Eject confirm modal
+	m = update(t, m, keyMsg("e"))
+	if !m.ejecting {
+		t.Fatal("e did not open eject confirm")
+	}
+	m = update(t, m, keyMsg("?"))
+	hView = ansi.Strip(m.View())
+	if !strings.Contains(hView, "eject") || !strings.Contains(hView, "cancel") {
+		t.Fatalf("eject confirm help missing expected keys:\n%s", hView)
+	}
+	m = update(t, m, keyMsg("esc")) // close help
+	if !m.ejecting {
+		t.Fatal("closing help did not restore eject confirm")
+	}
+	m = update(t, m, keyMsg("esc")) // cancel eject confirm
+}
+
+// Done-when: keymap.contextHelp returns navigation, actions, and display groups
+// matching the per-context liveness rules.
+func TestKeymapContextHelpGroups(t *testing.T) {
+	km := newKeymap()
+
+	// 1. Promoting: nav + act
+	pGroups := km.contextHelp(panelAttention, rowKeys{promoting: true})
+	if len(pGroups) != 2 {
+		t.Fatalf("promoting groups = %d, want 2 (nav, act)", len(pGroups))
+	}
+
+	// 2. Searching: act only
+	sGroups := km.contextHelp(panelAttention, rowKeys{searching: true})
+	if len(sGroups) != 1 {
+		t.Fatalf("searching groups = %d, want 1 (act)", len(sGroups))
+	}
+
+	// 3. Full inbox: nav + act + disp
+	iGroups := km.contextHelp(panelAttention, rowKeys{canPromote: true, canDetail: true, projects: true, canFold: true})
+	if len(iGroups) != 3 {
+		t.Fatalf("inbox groups = %d, want 3 (nav, act, disp)", len(iGroups))
+	}
 }

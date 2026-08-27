@@ -40,10 +40,25 @@ func (m model) promoteContentSize() (w, h int) {
 	return w, h
 }
 
+// helpContentSize computes the natural inner dimensions for the help cheat sheet.
+func (m model) helpContentSize() (w, h int) {
+	text := m.helpText()
+	lines := strings.Split(text, "\n")
+	w = 0
+	for _, l := range lines {
+		w = max(w, lipgloss.Width(l))
+	}
+	return w, len(lines)
+}
+
 // modalContent dispatches to the active modal renderer in priority order
-// (promoting, ejection, ejecting, helpOn), returning the rendered box or "".
+// (helpOn, promoting, ejection, ejecting), returning the rendered box or "".
 func (m model) modalContent() string {
 	switch {
+	case m.helpOn:
+		w, h := m.modalSize(m.helpContentSize())
+		return panelBox(styleTitleFocus.Render("help"), true, w, h,
+			strings.Split(m.helpVp.View(), "\n"), padMain, m.helpScrollbar(h))
 	case m.promoting:
 		w, h := m.modalSize(m.promoteContentSize())
 		return m.promotePicker(w, h)
@@ -53,10 +68,6 @@ func (m model) modalContent() string {
 	case m.ejecting:
 		w, h := m.modalSize(76, 7)
 		return m.ejectConfirm(m.ejectRow, w, h)
-	case m.helpOn:
-		w, h := m.modalSize(70, 40)
-		return panelBox(styleTitleFocus.Render("help"), true, w, h,
-			strings.Split(m.helpVp.View(), "\n"), padMain, m.helpScrollbar(h))
 	default:
 		return ""
 	}
