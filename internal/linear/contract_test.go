@@ -137,8 +137,16 @@ func blockingHandler(t *testing.T) http.HandlerFunc {
 			switch req.Variables["id"] {
 			case "iss-a":
 				if bDone.Load() {
+					// LERP-2 has finished too, so the real API still reports
+					// the relation but with a completed state type — it is
+					// toIssue()'s own filter, exercised here rather than
+					// assumed, that drops it from BlockedBy.
 					writeData(t, w, `{"issue":{"id":"iss-a","identifier":"LERP-1","title":"","state":{"name":"Todo"},
-						"inverseRelations":{"nodes":[]},"relations":{"nodes":[]}}}`)
+						"inverseRelations":{"nodes":[
+							{"type":"blocks","issue":{"identifier":"LERP-2","state":{"type":"completed"}}},
+							{"type":"blocks","issue":{"identifier":"LERP-3","state":{"type":"completed"}}}
+						]},
+						"relations":{"nodes":[]}}}`)
 				} else {
 					writeData(t, w, `{"issue":{"id":"iss-a","identifier":"LERP-1","title":"","state":{"name":"Todo"},
 						"inverseRelations":{"nodes":[
@@ -223,6 +231,14 @@ func contractCases() []contractCase {
 			t.Helper()
 			return func(w http.ResponseWriter, r *http.Request) {
 				req := decodeRequest(t, r)
+				// The exclusion is server-side, so the fixtures below simply
+				// omit LERP-3 and LERP-2 — but that only tests this scenario
+				// if the query actually asks for the exclusion; otherwise a
+				// regression that dropped the real filter would still get
+				// these hand-picked fixtures back and never notice.
+				if !strings.Contains(req.Query, `nin: ["completed", "canceled"]`) {
+					t.Fatalf("query does not exclude finished states: %q", req.Query)
+				}
 				switch {
 				// LERP-3, assigned but canceled, and LERP-2, unassigned but
 				// done, are both absent: the real query excludes them

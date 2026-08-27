@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"reflect"
-	"strings"
 	"testing"
 	"time"
 )
@@ -266,23 +265,16 @@ func TestFakeTeamStates(t *testing.T) {
 	}
 }
 
-// Once a team's states are declared, MoveIssue mirrors the real client's
-// refusal of a name the team does not have — the semantic drift LERP-90
-// exists to close (the fake used to accept any status unconditionally).
-func TestFakeMoveIssueUnknownStatus(t *testing.T) {
+// The refusal itself — MoveIssue mirroring the real client's rejection of a
+// name the team does not have, the semantic drift LERP-90 exists to close —
+// is covered by the "move to a status absent from the team" contract case,
+// against both clients. What only the fake needs to prove is the opt-in: a
+// team nothing has declared states for stays permissive, so the many tests
+// that move issues through ad hoc statuses without modeling a whole board
+// are unaffected.
+func TestFakeMoveIssueUndeclaredTeamStaysPermissive(t *testing.T) {
 	f := newTestFake()
-	f.SetTeamStates("LERP", "Todo", "In Progress", "Done")
-	ctx := context.Background()
-
-	err := f.MoveIssue(ctx, "iss-1", "Nonexistent")
-	if err == nil || !strings.Contains(err.Error(), `no state named "Nonexistent"`) {
-		t.Errorf("err = %v, want unknown-state error", err)
-	}
-
-	// A team nothing has declared states for stays permissive, so tests that
-	// move issues through ad hoc statuses without modeling a whole board are
-	// unaffected.
-	if err := f.MoveIssue(ctx, "iss-4", "Whatever"); err != nil {
+	if err := f.MoveIssue(context.Background(), "iss-4", "Whatever"); err != nil {
 		t.Errorf("MoveIssue on an undeclared team: %v, want no error", err)
 	}
 }
