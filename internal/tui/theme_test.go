@@ -238,6 +238,7 @@ func TestScrollThumbPinsTheEdges(t *testing.T) {
 		{"barely over the track", 37, 36},
 		{"a track much taller than one row", 1000, 50},
 		{"a document not a clean multiple of the track", 241, 36},
+		{"a document long enough the proportion floors to zero", 100000, 20},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			maxOffset := tc.total - tc.height
@@ -264,6 +265,27 @@ func TestScrollThumbPinsTheEdges(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestScrollThumbNeverLosesTheThumbToRounding pins the floor: a document so
+// long that a proportional thumb would round down to zero rows still gets
+// one. Every other case in TestScrollThumbPinsTheEdges keeps
+// height*height/total at 1 or more, so this is the one case that would miss
+// a dropped max(1, …) — the thumb would vanish for exactly the longest
+// documents the indicator exists for, with the rest of the suite still
+// green.
+func TestScrollThumbNeverLosesTheThumbToRounding(t *testing.T) {
+	const total, height = 100000, 20
+	if height*height >= total {
+		t.Fatalf("test setup: height*height (%d) must be less than total (%d) to floor to zero", height*height, total)
+	}
+	sb, ok := scrollThumb(total, height, 0)
+	if !ok {
+		t.Fatalf("scrollThumb(%d, %d, 0) reported no thumb", total, height)
+	}
+	if sb.len != 1 {
+		t.Errorf("thumb length = %d, want 1 — a document this long floors to a zero-length thumb without the max(1, …) floor", sb.len)
 	}
 }
 
