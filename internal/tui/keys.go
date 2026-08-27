@@ -31,6 +31,7 @@ type keymap struct {
 	Eject      key.Binding
 	ForceStart key.Binding
 	Sort       key.Binding
+	Filter     key.Binding
 	Project    key.Binding
 	// Slice advances the inbox to the next status slice in Linear board
 	// order; SliceBack reverses it.
@@ -97,7 +98,8 @@ func newKeymap() keymap {
 		// characters back.
 		ForceStart:  key.NewBinding(key.WithKeys("S"), key.WithHelp("S", "start past the limit")),
 		Sort:        key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort inbox")),
-		Project:     key.NewBinding(key.WithKeys("P"), key.WithHelp("P", "filter by project")),
+		Filter:      key.NewBinding(key.WithKeys("F"), key.WithHelp("F", "filter inbox")),
+		Project:     key.NewBinding(key.WithKeys("P"), key.WithHelp("P", "project (shortcut)")),
 		Slice:       key.NewBinding(key.WithKeys("]"), key.WithHelp("]", "next slice")),
 		SliceBack:   key.NewBinding(key.WithKeys("["), key.WithHelp("[", "previous slice")),
 		Search:      key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "search inbox")),
@@ -129,7 +131,7 @@ func (k keymap) FullHelp() [][]key.Binding {
 		{k.Attention, k.Work, k.NextPanel, k.PrevPanel,
 			k.Up, k.Down, k.PageUp, k.PageDown, k.Top, k.Bottom},
 		{k.Detail, k.Close, k.Promote, k.Visual, k.VisualAll, k.Eject, k.ForceStart, k.Open, k.Help, k.Quit},
-		{k.Sort, k.Project, k.Slice, k.SliceBack, k.Search, k.ClearSearch, k.Raw, k.Fold, k.FoldAll},
+		{k.Sort, k.Filter, k.Project, k.Slice, k.SliceBack, k.Search, k.ClearSearch, k.Raw, k.Fold, k.FoldAll},
 	}
 }
 
@@ -139,6 +141,15 @@ func (k keymap) contextHelp(p panel, live rowKeys) [][]key.Binding {
 	var nav, act, disp []key.Binding
 
 	switch {
+	case live.filtering:
+		nav = []key.Binding{k.Up, k.Down}
+		act = []key.Binding{
+			short(k.Detail, "filter"),
+			short(k.Close, "cancel"),
+			k.Help,
+			short(k.Quit, "cancel"),
+		}
+
 	case live.promoting:
 		nav = []key.Binding{k.Up, k.Down}
 		act = []key.Binding{
@@ -233,7 +244,7 @@ func (k keymap) contextHelp(p panel, live rowKeys) [][]key.Binding {
 		}
 		act = append(act, k.Help, k.Quit)
 
-		disp = append(disp, k.Sort)
+		disp = append(disp, k.Sort, k.Filter)
 		if live.projects {
 			disp = append(disp, k.Project)
 		}
@@ -315,6 +326,7 @@ type rowKeys struct {
 	detailOpen bool
 	inMain     bool
 	searching  bool
+	filtering  bool
 	promoting  bool
 	ejecting   bool
 	ejection   bool
@@ -365,11 +377,7 @@ func (k keymap) panelHelp(p panel, live rowKeys) []key.Binding {
 		if live.canFold {
 			b = append(b, k.Fold, k.FoldAll)
 		}
-		b = append(b, short(k.Sort, "sort"))
-		if live.projects {
-			b = append(b, short(k.Project, "project"))
-		}
-		b = append(b, pair(k.SliceBack, k.Slice, "slice"))
+		b = append(b, short(k.Sort, "sort"), short(k.Filter, "filter"))
 	case panelWork:
 		if live.canEject {
 			b = append(b, k.Eject)
@@ -420,6 +428,18 @@ func (k keymap) promoteHelp() []key.Binding {
 // under what pickerLine drops, not under statusBar's truncation — a window
 // too narrow to hold even these has the bar shear them like anything else.
 func (k keymap) promoteExits() []key.Binding { return k.promoteHelp()[:2] }
+
+// filterHelp is the filter picker's instruction line.
+func (k keymap) filterHelp() []key.Binding {
+	return []key.Binding{
+		short(k.Detail, "filter"),
+		short(k.Close, "cancel"),
+		pair(k.Up, k.Down, "choose"),
+	}
+}
+
+// filterExits is what the filter picker's line falls back to: the two keys that end the modal.
+func (k keymap) filterExits() []key.Binding { return k.filterHelp()[:2] }
 
 // pair renders two bindings as one hint — "↑/k ↓/j choose" — where naming a
 // direction twice would cost more than the line has. Reading the labels off

@@ -1,20 +1,20 @@
 ---
 title: Finding tickets
-summary: Sorting, scoping to a project, searching, and slicing to a status.
+summary: Filtering, sorting, searching, and slicing to a status.
 weight: 70
 ---
 
 # Finding tickets
 
 Four controls on the [Inbox panel](reading-the-board.md#the-inbox-panel) decide
-what it shows and in what order: `s` sorts, `P` scopes to a project, `/`
+what it shows and in what order: `F` filters by field and value, `s` sorts, `/`
 searches, and `]`/`[` slice to a status. All four are session-only — no saved
 views, no filter syntax, and none of them changes which tickets are fetched.
 
 <!-- Cast slot (LERP-70): a full inbox narrowed — s through the sort modes,
-     P onto one project, / typed into, ] cycling through status slices and
+     F onto one project, / typed into, ] cycling through status slices and
      back.
-     keys: [s] · [P] · [/] · []] · [esc] -->
+     keys: [F] · [P] · [s] · [/] · []] · [esc] -->
 
 ## Order
 
@@ -30,11 +30,20 @@ identifier. The promote worth making is the top row of its group.
 a header per boundary — none, when every row is in the same group — and the
 two flat ones order the whole list.
 
-## Scope
+## Filter
 
-`P` scopes the panel to one project and cycles back to all. It drops out of
-the key line on a list with no project in it, because a key that does nothing
-costs one that does.
+`F` opens a two-step modal to filter the inbox: pick a field (project, status,
+or priority), then pick a value. The value list displays row counts and includes
+a type-ahead prompt to narrow the options. `enter` applies the filter; `esc`
+backs out a level. `F` on an active filter reopens it for changing or clearing
+(by choosing the `all <field>` option at the top of the list).
+
+`P` is a shortcut straight to the project value list.
+
+Picking a value under **status** sets the [status slice](#status-slices)
+rather than a separate filter, so `F` and `]`/`[` are two ways of reaching one
+control and can never narrow the panel to two different statuses at once.
+Project and priority compose on top of whichever slice is showing.
 
 ## Search
 
@@ -53,6 +62,10 @@ still quits.
 `]` and `[` cycle the panel through Linear status slices in board order — all,
 then each Linear status present on the board, and back. Slices are display
 over the fetched list, so only unstarted and active statuses present appear.
+
+`F` → status is the same control with the options on screen: it lists every
+status with its row count, so picking one is a choice rather than a guess at
+where the cycle stops.
 
 ## What the title says
 

@@ -52,7 +52,7 @@ func (m model) helpContentSize() (w, h int) {
 }
 
 // modalContent dispatches to the active modal renderer in priority order
-// (helpOn, promoting, ejection, ejecting), returning the rendered box or "".
+// (helpOn, promoting, filtering, ejection, ejecting), returning the rendered box or "".
 func (m model) modalContent() string {
 	switch {
 	case m.helpOn:
@@ -62,6 +62,9 @@ func (m model) modalContent() string {
 	case m.promoting:
 		w, h := m.modalSize(m.promoteContentSize())
 		return m.promotePicker(w, h)
+	case m.filtering:
+		w, h := m.modalSize(m.filterContentSize())
+		return m.filterPicker(w, h)
 	case m.ejection != nil:
 		w, h := m.modalSize(76, 12)
 		return m.ejectResult(*m.ejection, w, h)

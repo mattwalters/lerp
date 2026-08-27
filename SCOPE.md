@@ -236,8 +236,9 @@ conversation, not an extension of this one.
    in an intake status is never folded — no pass can pick it up again while
    the claim stands (invariant 4), so it is blocked on a human wherever
    Linear files it. Sorting it (by leverage, priority, status or project),
-   scoping it to one project, searching it (`/`, a plain substring over the
-   rows on screen) and slicing it to one status are display over the one
+   scoping it to one project or priority (`F`, a field and then a value off
+   the rows already on screen), searching it (`/`, a plain substring over
+   the rows on screen) and slicing it to one status are display over the one
    list the pass already fetched — so the cycle offers only statuses that
    list already contains (Linear's unstarted and active categories),
    session-only, with no saved views and no filter syntax; filtering that

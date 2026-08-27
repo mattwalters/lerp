@@ -1485,20 +1485,24 @@ func TestSortKeepsTheSelectedTicket(t *testing.T) {
 	}
 }
 
-// Done-when: one key scopes the panel to a single project and cycles back
-// to all, and a pass that no longer has the scoped project resets the
+// Done-when: a project filter scopes the inbox to the rows with that
+// project, and a pass that no longer has that project resets the
 // filter rather than leaving the panel hidden behind a stale choice.
 func TestInboxProjectFilter(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: board()})
 
-	// Projects cycle in name order: Open-source readiness, then TUI redesign, then
-	// back to every project. A ticket in no project is not a stop.
+	// Project values list in name order: Open-source readiness, then TUI
+	// redesign, with the no-project bucket under them and the all-project
+	// row above.
 	m = update(t, m, keyMsg("P"))
+	m = update(t, m, keyMsg("down"))
+	m = update(t, m, keyMsg("enter"))
 	panel := m.attentionPanel(96, 14)
-	if m.project != "Open-source readiness" {
-		t.Fatalf("filter = %q, want the first project by name", m.project)
+	if m.filterField != filterFieldProject || m.filterValue != "Open-source readiness" {
+		t.Fatalf("filter = %v %q, want the first project by name", m.filterField, m.filterValue)
 	}
 	if strings.Contains(panel, "LERP-48") || strings.Contains(panel, "LERP-60") {
 		t.Fatalf("the filter kept tickets from other projects:\n%s", panel)
@@ -1506,32 +1510,39 @@ func TestInboxProjectFilter(t *testing.T) {
 	if !strings.Contains(panel, "LERP-1") {
 		t.Fatalf("the filter dropped a ticket in the scoped project:\n%s", panel)
 	}
-	if !strings.Contains(panel, "1/3") || !strings.Contains(panel, "Open-source readiness") {
+	if !strings.Contains(panel, "1/3") || !strings.Contains(panel, "project Open-source readiness") {
 		t.Fatalf("the panel title does not say what it is scoped to:\n%s", panel)
 	}
 
 	m = update(t, m, keyMsg("P"))
-	if m.project != "TUI redesign" {
-		t.Fatalf("filter = %q, want the next project by name", m.project)
+	m = update(t, m, keyMsg("down"))
+	m = update(t, m, keyMsg("enter"))
+	if m.filterField != filterFieldProject || m.filterValue != "TUI redesign" {
+		t.Fatalf("filter = %v %q, want the next project by name", m.filterField, m.filterValue)
 	}
 	if got := len(m.shown); got != 1 {
 		t.Fatalf("the TUI redesign filter shows %d rows, want 1", got)
 	}
 
 	m = update(t, m, keyMsg("P"))
-	if m.project != "" || len(m.shown) != 3 {
-		t.Fatalf("the filter did not cycle back to every project: %q, %d rows", m.project, len(m.shown))
+	m = update(t, m, keyMsg("up"))
+	m = update(t, m, keyMsg("up"))
+	m = update(t, m, keyMsg("enter")) // "all project" is at top
+	if m.filterField != filterFieldNone || m.filterValue != "" || len(m.shown) != 3 {
+		t.Fatalf("the filter did not clear back to every project: %v %q, %d rows", m.filterField, m.filterValue, len(m.shown))
 	}
 
 	// A pass without the scoped project resets the filter; the panel is
 	// never hidden behind a name nothing waits in.
 	m = update(t, m, keyMsg("P"))
+	m = update(t, m, keyMsg("down"))
+	m = update(t, m, keyMsg("enter"))
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
 		{Ticket: "LERP-9", TicketID: "id-9", Title: "Something else", Status: "Needs Attention",
 			Project: "Another project", Relevance: loop.StatusUnnamed},
 	}}})
-	if m.project != "" {
-		t.Fatalf("filter = %q after its project left the list, want every project", m.project)
+	if m.filterField != filterFieldNone {
+		t.Fatalf("filter = %v %q after its project left the list, want filterFieldNone", m.filterField, m.filterValue)
 	}
 	if !strings.Contains(m.attentionPanel(96, 14), "LERP-9") {
 		t.Fatalf("a stale filter hid the whole panel:\n%s", m.attentionPanel(96, 14))
@@ -1666,76 +1677,100 @@ func TestExpandedBacklogRowsTakeTheKeys(t *testing.T) {
 	}
 	cmd()
 	if got := promoter.last(); got.ticketID != "id-22" || got.status != "Planning" {
-		t.Fatalf("Promote call = %+v, want {id-22 Planning}", got)
 	}
 }
 
-// Done-when: P stops only at projects with a row the active slice lets
-// through. Cycling to one whose every ticket is outside the slice would
-// scope the panel to "nothing in X" — a filter that hides the whole panel
-// is the thing the project cycle already refuses to do.
+// Done-when: the project value list offers only projects with a row the
+// active slice lets through. Scoping to one whose every ticket is outside
+// the slice would scope the panel to "nothing in X" — a filter that hides
+// the whole panel is the thing the project list already refuses to offer.
 func TestProjectFilterSkipsAProjectThatIsAllBacklog(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: allBacklogProject()})
 
-	if got := m.projects(); !slices.Equal(got, []string{"Shipping"}) {
-		t.Fatalf("the project cycle offers %v, want only the project with a visible row", got)
+	vals := m.filterValues(filterFieldProject)
+	var valNames []string
+	for _, it := range vals {
+		if !it.isAll {
+			valNames = append(valNames, it.label)
+		}
+	}
+	if !slices.Equal(valNames, []string{"Shipping"}) {
+		t.Fatalf("the project list offers %v, want only the project with a visible row", valNames)
 	}
 	m = update(t, m, keyMsg("P"))
-	if m.project != "Shipping" {
-		t.Fatalf("P scoped to %q, want the one project on screen", m.project)
+	m = update(t, m, keyMsg("down"))
+	m = update(t, m, keyMsg("enter"))
+	if m.filterField != filterFieldProject || m.filterValue != "Shipping" {
+		t.Fatalf("P scoped to %v %q, want the one project on screen", m.filterField, m.filterValue)
 	}
 	m = update(t, m, keyMsg("P"))
-	if m.project != "" {
-		t.Fatalf("P scoped to %q, want back to every project", m.project)
+	m = update(t, m, keyMsg("up"))
+	m = update(t, m, keyMsg("enter"))
+	if m.filterField != filterFieldNone || m.filterValue != "" {
+		t.Fatalf("P scoped to %v %q, want back to every project", m.filterField, m.filterValue)
 	}
 
-	// Slicing to Backlog puts the Later project on the cycle:
+	// Slicing to Backlog puts the Later project on the list: its rows are on
+	// screen there, so scoping to them shows something.
 	m = browseBacklog(t, m)
-	if got := m.projects(); !slices.Equal(got, []string{"Later"}) {
-		t.Fatalf("the backlog slice project cycle offers %v, want Later", got)
+	vals = m.filterValues(filterFieldProject)
+	valNames = nil
+	for _, it := range vals {
+		if !it.isAll {
+			valNames = append(valNames, it.label)
+		}
+	}
+	if !slices.Equal(valNames, []string{"Later"}) {
+		t.Fatalf("the Backlog slice's project list offers %v, want Later", valNames)
 	}
 
-	// Scope to the Later project, then cycle slice back to all: the
-	// scope is a choice the operator made and the slice change is not a
-	// reason to take it back, but P has to leave it in one press. The panel is
-	// showing nothing and the only text on it is the hint that says so.
+	// Scope to the backlog-only project, then slice back to all underneath:
+	// the scope is a choice the operator made and the slice moving off it is
+	// not a reason to take it back. The panel is showing nothing and the
+	// only text on it is the hint that says so.
 	m = update(t, m, keyMsg("P"))
-	if m.project != "Later" {
-		t.Fatalf("P scoped to %q, want the Later project", m.project)
+	m = update(t, m, keyMsg("down"))
+	m = update(t, m, keyMsg("enter"))
+	if m.filterField != filterFieldProject || m.filterValue != "Later" {
+		t.Fatalf("P scoped to %v %q, want the backlog-only project", m.filterField, m.filterValue)
 	}
-	// Cycle back to all:
 	for m.slice != "" {
 		m = update(t, m, keyMsg("]"))
 	}
-	if m.project != "Later" || len(m.shown) != 0 {
-		t.Fatalf("cycling slice changed the scope: %q, %d rows", m.project, len(m.shown))
+	if m.filterField != filterFieldProject || m.filterValue != "Later" || len(m.shown) != 0 {
+		t.Fatalf("slicing changed the scope: %v %q, %d rows", m.filterField, m.filterValue, len(m.shown))
 	}
-	// Hints name both controls:
-	for _, want := range []string{"P cycles the project filter back to all", "] browses the backlog"} {
+	// Both keys: either one can be why the panel is empty, and the note
+	// above the hint does not say which.
+	for _, want := range []string{"F clears or changes the filter", "] browses the backlog"} {
 		if got := m.emptyHint(); !strings.Contains(got, want) {
 			t.Fatalf("the empty panel's hint = %q, want it to name %q", got, want)
 		}
 	}
 	m = update(t, m, keyMsg("P"))
-	if m.project != "" {
-		t.Fatalf("P from a sliced-away project went to %q, want every project", m.project)
+	m = update(t, m, keyMsg("enter"))
+	if m.filterField != filterFieldNone || m.filterValue != "" {
+		t.Fatalf("clearing from a sliced-away project went to %v %q, want every project", m.filterField, m.filterValue)
 	}
 
 	// And a pass does not take the scope away on its own: the project did
 	// not stop existing, it went into a different slice.
 	m = browseBacklog(t, m)
 	m = update(t, m, keyMsg("P"))
-	if m.project != "Later" {
-		t.Fatalf("P scoped to %q, want the Later project", m.project)
+	m = update(t, m, keyMsg("down"))
+	m = update(t, m, keyMsg("enter"))
+	if m.filterField != filterFieldProject || m.filterValue != "Later" {
+		t.Fatalf("P scoped to %v %q, want the backlog-only project", m.filterField, m.filterValue)
 	}
 	for m.slice != "" {
 		m = update(t, m, keyMsg("]"))
 	}
 	m = update(t, m, eventMsg{ev: allBacklogProject()})
-	if m.project != "Later" {
-		t.Fatalf("a pass cleared the scope to %q, though the board did not change", m.project)
+	if m.filterField != filterFieldProject || m.filterValue != "Later" {
+		t.Fatalf("a pass cleared the scope to %v %q, though the board did not change", m.filterField, m.filterValue)
 	}
 }
 
@@ -2580,7 +2615,7 @@ func TestEscDegradesVisualToSingleTicket(t *testing.T) {
 // over drop the selection — a range whose endpoints stay put while the rows
 // between them change is a promote of tickets the operator never saw.
 func TestDisplayControlsDropTheSelection(t *testing.T) {
-	for _, key := range []string{"s", "P", "]", "[", "/"} {
+	for _, key := range []string{"s", "F", "P", "]", "[", "/"} {
 		t.Run(key, func(t *testing.T) {
 			m, _, _, promoter := newPromoteTestModel(t, 1, defaultTestStatuses)
 			m = pastTheSplash(t, m)
@@ -2599,6 +2634,9 @@ func TestDisplayControlsDropTheSelection(t *testing.T) {
 			}
 			if key == "/" {
 				m = update(t, m, keyMsg("esc")) // back out of the prompt it opened
+			}
+			for m.filtering {
+				m = update(t, m, keyMsg("esc")) // back out of the filter modal
 			}
 
 			m = update(t, m, keyMsg("p"))
@@ -2792,9 +2830,11 @@ func TestVisualAllScopedToProjectFilter(t *testing.T) {
 		{Ticket: "LERP-3", TicketID: "id-3", Title: "Third", Status: "Backlog", Project: "Alpha"},
 	}}})
 
-	m = update(t, m, keyMsg("P")) // cycle to Alpha
-	if m.project != "Alpha" {
-		t.Fatalf("test setup: P did not scope to Alpha: %q", m.project)
+	m = update(t, m, keyMsg("P"))
+	m = update(t, m, keyMsg("down"))
+	m = update(t, m, keyMsg("enter"))
+	if m.filterField != filterFieldProject || m.filterValue != "Alpha" {
+		t.Fatalf("test setup: P did not scope to Alpha: %v %q", m.filterField, m.filterValue)
 	}
 	if len(m.shown) != 2 {
 		t.Fatalf("test setup: expected 2 shown rows under Alpha, got %d", len(m.shown))
@@ -3655,8 +3695,10 @@ func TestProjectScopeResetDropsTheSelection(t *testing.T) {
 	}}})
 
 	m = update(t, m, keyMsg("P")) // the only project on the board
-	if m.project != "A" {
-		t.Fatalf("test setup: P did not scope to project A: %q", m.project)
+	m = update(t, m, keyMsg("down"))
+	m = update(t, m, keyMsg("enter"))
+	if m.filterField != filterFieldProject || m.filterValue != "A" {
+		t.Fatalf("test setup: P did not scope to project A: %v %q", m.filterField, m.filterValue)
 	}
 	m = update(t, m, keyMsg("v"))
 	m = update(t, m, keyMsg("j"))
@@ -3672,8 +3714,8 @@ func TestProjectScopeResetDropsTheSelection(t *testing.T) {
 		{Ticket: "LERP-2", TicketID: "id-2", Title: "Second", Status: "Backlog", Project: "B"},
 		{Ticket: "LERP-3", TicketID: "id-3", Title: "Third", Status: "Backlog", Project: "C"},
 	}}})
-	if m.project != "" {
-		t.Fatalf("test setup: the scope did not reset: %q", m.project)
+	if m.filterField != filterFieldNone {
+		t.Fatalf("test setup: the scope did not reset: %v %q", m.filterField, m.filterValue)
 	}
 	if m.visual {
 		t.Fatal("the selection survived the project scope resetting out from under it")
@@ -4104,9 +4146,9 @@ func TestTheKeyLineKeepsTheKeysThatAct(t *testing.T) {
 		}
 	}
 	// Three keys short of the room now v and V are in the mix: search and
-	// both display cycles — sort and project — with the ellipsis to say the
+	// both display cycles — sort and filter — with the ellipsis to say the
 	// ? overlay has the rest.
-	if strings.Contains(line, "s sort") || strings.Contains(line, "P project") {
+	if strings.Contains(line, "s sort") || strings.Contains(line, "F filter") {
 		t.Fatalf("the whole line fits after all — this window should be three keys short:\n%s", line)
 	}
 	if !strings.Contains(line, "…") {
@@ -4116,7 +4158,7 @@ func TestTheKeyLineKeepsTheKeysThatAct(t *testing.T) {
 	// Given the room, both keys come back.
 	wide := resize(t, m, 180, 30)
 	line = lineWith(t, wide.View(), "p promote")
-	for _, want := range []string{"s sort", "P project"} {
+	for _, want := range []string{"s sort", "F filter"} {
 		if !strings.Contains(line, want) {
 			t.Fatalf("a wide panel still drops %q:\n%s", want, line)
 		}
@@ -5277,7 +5319,7 @@ func TestFoldedLengthInteractsWithScrolling(t *testing.T) {
 // as they do.
 func TestFoldHintSurvivesBeforeTheDisplayCycles(t *testing.T) {
 	k := newKeymap()
-	b := k.panelHelp(panelAttention, rowKeys{canFold: true, projects: true, canPromote: true, hasURL: true})
+	b := k.panelHelp(panelAttention, rowKeys{canFold: true, canPromote: true, hasURL: true})
 	pos := func(key string) int {
 		for i, bind := range b {
 			if bind.Help().Key == key {
@@ -5286,12 +5328,12 @@ func TestFoldHintSurvivesBeforeTheDisplayCycles(t *testing.T) {
 		}
 		return -1
 	}
-	foldPos, sortPos, projectPos := pos("z"), pos("s"), pos("P")
-	if foldPos == -1 || sortPos == -1 || projectPos == -1 {
-		t.Fatalf("expected fold, sort and project hints all present, got %v", b)
+	foldPos, sortPos, filterPos := pos("z"), pos("s"), pos("F")
+	if foldPos == -1 || sortPos == -1 || filterPos == -1 {
+		t.Fatalf("expected fold, sort and filter hints all present, got %v", b)
 	}
-	if foldPos > sortPos || foldPos > projectPos {
-		t.Fatalf("fold hint at %d should come before sort (%d) and project (%d), so a narrow panel drops them first", foldPos, sortPos, projectPos)
+	if foldPos > sortPos || foldPos > filterPos {
+		t.Fatalf("fold hint at %d should come before sort (%d) and filter (%d), so a narrow panel drops them first", foldPos, sortPos, filterPos)
 	}
 }
 
@@ -8356,7 +8398,7 @@ func TestStripIgnoresTheSearchAndProjectFilters(t *testing.T) {
 
 	// Apply search filter
 	m.search = "alpha"
-	m.shown = filterAttention(m.attention, m.project, m.search, m.slice)
+	m.shown = filterAttention(m.attention, m.filterField, m.filterValue, m.search, m.slice)
 	if len(m.shown) >= len(m.attention) {
 		t.Fatalf("search filter did not narrow shown items (%d shown)", len(m.shown))
 	}
@@ -8369,8 +8411,9 @@ func TestStripIgnoresTheSearchAndProjectFilters(t *testing.T) {
 
 	// Apply project filter
 	m.search = ""
-	m.project = "ProjB"
-	m.shown = filterAttention(m.attention, m.project, m.search, m.slice)
+	m.filterField = filterFieldProject
+	m.filterValue = "ProjB"
+	m.shown = filterAttention(m.attention, m.filterField, m.filterValue, m.search, m.slice)
 	if len(m.shown) >= len(m.attention) {
 		t.Fatalf("project filter did not narrow shown items (%d shown)", len(m.shown))
 	}
@@ -8599,13 +8642,17 @@ func TestStatusSliceTitleAndCount(t *testing.T) {
 
 	// Project filter on Backlog slice:
 	m = update(t, m, keyMsg("P"))
+	m = update(t, m, keyMsg("down"))
+	m = update(t, m, keyMsg("enter"))
 	panel = m.attentionPanel(96, 14)
-	if !strings.Contains(panel, "● 2/3") || !strings.Contains(panel, "· Open-source readiness") || !strings.Contains(panel, "· Backlog") {
+	if !strings.Contains(panel, "● 2/3") || !strings.Contains(panel, "· project Open-source readiness") || !strings.Contains(panel, "· Backlog") {
 		t.Fatalf("project-filtered slice title unexpected:\n%s", panel)
 	}
 
 	// Search on Backlog slice:
-	m = update(t, m, keyMsg("P")) // back to all projects on Backlog slice
+	m = update(t, m, keyMsg("P")) // reopens on the active project
+	m = update(t, m, keyMsg("up"))
+	m = update(t, m, keyMsg("enter")) // "all project" clears it
 	m = typeSearch(t, update(t, m, keyMsg("/")), "curl")
 	panel = m.attentionPanel(96, 14)
 	if !strings.Contains(panel, "● 1/3") || !strings.Contains(panel, "· /curl") || !strings.Contains(panel, "· Backlog") {
@@ -8640,8 +8687,10 @@ func TestProjectFilterVisualAllPromoteInBacklogSlice(t *testing.T) {
 	m = browseBacklog(t, m)
 	// Scope to "Open-source readiness" project:
 	m = update(t, m, keyMsg("P"))
-	if m.project != "Open-source readiness" {
-		t.Fatalf("expected project scope Open-source readiness, got %q", m.project)
+	m = update(t, m, keyMsg("down"))
+	m = update(t, m, keyMsg("enter"))
+	if m.filterField != filterFieldProject || m.filterValue != "Open-source readiness" {
+		t.Fatalf("expected project scope Open-source readiness, got %v %q", m.filterField, m.filterValue)
 	}
 	if got := shownTickets(m); !slices.Equal(got, []string{"LERP-22", "LERP-23"}) {
 		t.Fatalf("shown = %v, want the two OSS backlog tickets", got)

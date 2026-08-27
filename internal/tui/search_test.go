@@ -168,14 +168,17 @@ func TestSearchIsInertBehindAFullyFoldedInbox(t *testing.T) {
 	// line, by a different road: the pass has rows and the fold base has
 	// rows, and this panel still has none for a prompt to narrow.
 	scoped, _, _ := newTestModel(t, 1)
+	scoped = pastTheSplash(t, scoped)
 	scoped = update(t, scoped, keyMsg("1"))
 	scoped = update(t, scoped, eventMsg{ev: allBacklogProject()})
 	scoped = browseBacklog(t, scoped)
-	scoped = update(t, scoped, keyMsg("P")) // Later, every row of it backlog
-	scoped = update(t, scoped, keyMsg("]")) // cycle slice back to all
-	if len(scoped.shown) != 0 || scoped.project != "Later" {
-		t.Fatalf("setup: %d rows scoped to %q, want none scoped to Later",
-			len(scoped.shown), scoped.project)
+	scoped = update(t, scoped, keyMsg("P")) // opens project value list
+	scoped = update(t, scoped, keyMsg("down"))
+	scoped = update(t, scoped, keyMsg("enter")) // Later, every row of it backlog
+	scoped = update(t, scoped, keyMsg("]"))     // slice back to all, under the scope
+	if len(scoped.shown) != 0 || scoped.filterField != filterFieldProject || scoped.filterValue != "Later" {
+		t.Fatalf("setup: %d rows scoped to field=%v val=%q, want none scoped to Later",
+			len(scoped.shown), scoped.filterField, scoped.filterValue)
 	}
 	scoped = update(t, scoped, keyMsg("/"))
 	if scoped.searching {
@@ -343,21 +346,23 @@ func TestSearchComposesWithSortAndProject(t *testing.T) {
 	// Both filters at once intersect: the OSS project holds no row matching
 	// "work", and the panel says so with both facts on the line.
 	m = update(t, m, keyMsg("P"))
-	if m.project != "Open-source readiness" || m.search != "work" {
-		t.Fatalf("the two filters did not compose: project %q, query %q", m.project, m.search)
+	m = update(t, m, keyMsg("down"))
+	m = update(t, m, keyMsg("enter"))
+	if m.filterField != filterFieldProject || m.filterValue != "Open-source readiness" || m.search != "work" {
+		t.Fatalf("the two filters did not compose: field=%v val=%q, query %q", m.filterField, m.filterValue, m.search)
 	}
 	if len(m.shown) != 0 {
 		t.Fatalf("shown = %v, want no row in both the project and the search", shownTickets(m))
 	}
 	panel := m.attentionPanel(96, 14)
-	if !strings.Contains(panel, "no match for /work in Open-source readiness") {
+	if !strings.Contains(panel, "no match for /work in project Open-source readiness") {
 		t.Fatalf("the panel does not say why it is empty:\n%s", panel)
 	}
 
 	// Clearing the search leaves the project scope standing.
 	m = update(t, m, keyMsg("esc"))
-	if m.project != "Open-source readiness" {
-		t.Fatalf("clearing the search cleared the project scope: %q", m.project)
+	if m.filterField != filterFieldProject || m.filterValue != "Open-source readiness" {
+		t.Fatalf("clearing the search cleared the project scope: field=%v val=%q", m.filterField, m.filterValue)
 	}
 	if got := len(m.shown); got != 2 {
 		t.Fatalf("the project scope shows %d rows, want the 2 it had", got)
