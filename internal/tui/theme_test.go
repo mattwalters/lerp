@@ -184,6 +184,52 @@ func TestPaletteListsEveryColor(t *testing.T) {
 	}
 }
 
+// The carve-out LERP-145's rule 2 asks for: colorWordmark is decoration, so
+// WCAG exempts it from the contrast rules this floor otherwise enforces on
+// every colour in the package, and the exemption is pinned rather than
+// merely granted — a rebalance that quietly bought it more contrast would
+// leave the decoration carve-out wider than it needs to be, and a change
+// that took it under a 1:1 ratio would leave decoration nobody can even
+// squint at. Scoped to this one name: nothing else gets to cite this test
+// for its own exemption, and the floor above stays exactly as strict for
+// everything informational.
+//
+// colorWordmark is a CompleteAdaptiveColor rather than an AdaptiveColor —
+// like colorSelected, it needs an escape from automatic degradation rather
+// than a looser one — so it never enters palette or this file's
+// TestPaletteListsEveryColor scan (that walks AdaptiveColor literals only);
+// this test is the whole of what measures it. Only the truecolor values are
+// checked here, contrastRatio taking #rrggbb; the ANSI256 pair was checked
+// by hand against the same backgrounds when it was chosen (theme.go's
+// comment on colorWordmark), and the ANSI slots are left empty on purpose —
+// termenv's nearest 16-colour match runs well above the floor, so no colour
+// at all is the only degradation that stays this dim (wordmarkVisible reads
+// that as "cannot dim it" and the panel falls back to plain text instead).
+func TestWordmarkIsExemptDecoration(t *testing.T) {
+	for _, tc := range []struct {
+		variant     string
+		fg          string
+		backgrounds []string
+	}{
+		{"light truecolor", colorWordmark.Light.TrueColor, lightBackgrounds},
+		{"dark truecolor", colorWordmark.Dark.TrueColor, darkBackgrounds},
+	} {
+		for _, bg := range tc.backgrounds {
+			t.Run(tc.variant+"/"+bg, func(t *testing.T) {
+				got := contrastRatio(t, tc.fg, bg)
+				if got >= contrastFloor {
+					t.Errorf("colorWordmark %s (%s) on %s is %.2f:1, want under the %.1f:1 floor — it is decoration, not text",
+						tc.variant, tc.fg, bg, got, contrastFloor)
+				}
+				if got <= 1.0 {
+					t.Errorf("colorWordmark %s (%s) on %s is %.2f:1 — invisible, not merely dim",
+						tc.variant, tc.fg, bg, got)
+				}
+			})
+		}
+	}
+}
+
 // NO_COLOR works for free — termenv honours it and every style here goes
 // through termenv — which is exactly the kind of claim that rots into a lie
 // nobody checks. So it is checked: with NO_COLOR set, a styled string is the

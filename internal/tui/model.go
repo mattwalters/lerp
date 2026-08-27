@@ -369,8 +369,14 @@ type model struct {
 
 	// queues is the loop's latest queue snapshot, replaced wholesale on every
 	// pass; nil until the first pass reports. It is display state only — the
-	// work panel edits nothing (SCOPE: not a Linear client).
-	queues []loop.QueueSnapshot
+	// work panel edits nothing (SCOPE: not a Linear client). queuesSeen is
+	// attentionSeen's counterpart: a pass whose evidence reconcile fails
+	// never reaches fill (Reconciler.Tick), so EventQueues never fires and
+	// m.queues stays exactly as empty as a genuinely idle board — without
+	// this, boardEmpty's contentEmpty (see there) could not tell "nothing is
+	// running" from "the work panel was never read at all".
+	queues     []loop.QueueSnapshot
+	queuesSeen bool
 	// The work panel selects a ticket, not a row: workSel is the selected
 	// ticket's ID, and it survives the row moving — to another queue, into a
 	// lane, up or down its group. workPos is where that row last sat, the
@@ -503,6 +509,15 @@ type model struct {
 	// at all, which is the moment the board stops having nothing to draw. It
 	// is what the opening splash gives way to; see splashing.
 	heard bool
+	// boardEmptySettled is the empty-board wordmark's own debounce (LERP-145,
+	// rule 3): true only once a fully-landed pass has reported nothing on
+	// either panel. apply demotes it the instant either panel's own event
+	// shows real content — hiding is always safe — but only tickedMsg
+	// promotes it, because a pass reports the inbox and the work panel as
+	// two separate events and a live read of both mid-pass can catch one
+	// empty a beat before the other, which is the board mid-report rather
+	// than the board actually empty. See boardEmpty and contentEmpty.
+	boardEmptySettled bool
 
 	lastErr string
 	// notes are this interval's transient reports — run outcomes, a
@@ -631,6 +646,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.inFlight = false
 		m.lastPass = time.Now()
+		// The wordmark's promotion half (see boardEmpty): a pass reports the
+		// inbox and the work panel as two independent events, so content
+		// only earns the decoration once the pass that reported it has
+		// actually finished — never mid-pass, where one side can read empty
+		// a beat before the other lands. apply already demotes the instant
+		// either side shows real content, so this only ever raises the flag.
+		//
+		// !m.passHadErr besides: a failed queue listing drops the queues it
+		// could not read rather than skipping the event (loop.listQueues),
+		// so an outage on the work panel's read publishes an empty snapshot
+		// indistinguishable from an actually idle one. Without this the mark
+		// would light up over a pass that errored and hide again the moment
+		// a later pass reads the same tickets back — the "reappears
+		// mid-churn" flap rule 3 rules out, arriving through the one read
+		// contentEmpty cannot itself tell succeeded from failed.
+		if m.contentEmpty() && !m.passHadErr {
+			m.boardEmptySettled = true
+		}
 		return m, tea.Tick(m.o.Interval, func(time.Time) tea.Msg { return tickMsg{} })
 	case eventMsg:
 		m.apply(msg.ev)
@@ -1517,6 +1550,7 @@ func (m *model) apply(ev loop.Event) {
 		}
 	case loop.EventQueues:
 		m.queues = ev.Queues
+		m.queuesSeen = true
 		changed = panelWork
 	case loop.EventAttention:
 		m.attention = ev.Attention
@@ -1584,6 +1618,16 @@ func (m *model) apply(ev loop.Event) {
 	// same care the promote picker takes when its list empties.
 	if m.ejecting && !m.ejectRowIsRunning() {
 		m.ejecting = false
+	}
+	// The wordmark's demotion half (see boardEmpty): the moment either signal
+	// a pass reports shows real content, the mark is wrong immediately — not
+	// once the pass finishes reporting the rest of itself. Promotion is the
+	// opposite case, and it waits for tickedMsg on purpose (see there): a
+	// pass reports the inbox and the work panel as two independent events,
+	// and one landing empty a beat before the other is not the board being
+	// empty, it is the board mid-report.
+	if !m.contentEmpty() {
+		m.boardEmptySettled = false
 	}
 	m.layout()
 	m.retarget()
@@ -2732,6 +2776,45 @@ func (m *model) oneGroup() bool {
 	return true
 }
 
+// contentEmpty is the raw, un-debounced reading behind boardEmpty: both
+// halves of the pass have actually reported, so this is the board's own
+// goal state and not the gap before either has been read even once, and
+// neither panel holds a single ticket — nothing waiting on the operator,
+// backlog included, and nothing running or queued in any lane. attentionSeen
+// and queuesSeen both matter here: a pass whose evidence reconcile fails
+// never reaches fill (Reconciler.Tick), so a broken pass and a genuinely
+// idle board can otherwise look identical — an empty m.queues by omission
+// rather than by report. Read live it is exactly what rule 3 warns against
+// besides: the inbox and the work panel arrive as two independent events
+// one pass apart from each other, so a frame caught between them can read
+// this true for a beat before the second event arrives and contradicts it.
+// apply and tickedMsg are what turn this into boardEmptySettled, the
+// debounced signal the panel actually draws from.
+func (m *model) contentEmpty() bool {
+	return m.attentionSeen && m.queuesSeen && len(m.attention) == 0 && len(m.workRows()) == 0
+}
+
+// boardEmpty is the discrete condition that licenses the empty-board
+// wordmark (LERP-145): the main pane is closed and no search box is open, so
+// there is a candidate centre space at all and nothing else is already
+// drawn where the mark would go, and the board's content has settled empty
+// (see boardEmptySettled) rather than merely reading empty on this one
+// frame. mainOpen, searching and search are read live and not debounced —
+// opening a pane or a search box is a deliberate, instant action, never a
+// race between two halves of one pass, so rule 3's "opening a pane... hides
+// it" is exactly as immediate as it reads.
+//
+// m.search == "", not just !m.searching: closing the box keeps the query
+// (see closeSearch), so a query typed while the inbox was still non-empty
+// can outlive the box itself — and until the next pass clears it (the
+// EventAttention handler's own care about not clearing it out from under a
+// still-open box), the panel still owes that filter its key hint. The
+// wordmark must not draw over a footer line the panel still has a reason to
+// show.
+func (m *model) boardEmpty() bool {
+	return !m.mainOpen() && !m.searching && m.search == "" && m.boardEmptySettled
+}
+
 // attentionEmptyLine is the one line the inbox panel draws instead of a
 // table, empty when there is a table to draw. It is the single reading of
 // that question: the header sits above rows only when there are rows, and
@@ -3059,6 +3142,22 @@ func (m model) attentionPanel(w, h int) string {
 	if ih >= 3 || len(rows) <= ih-1 {
 		if header = m.attentionHeader(inner); header != "" {
 			ih--
+		}
+	}
+	// The wordmark, appended after whatever the panel already drew rather
+	// than replacing it: boardEmpty's rows are just the one empty-state line
+	// (attentionEmptyLine, plus nothing from backlogSummary — the fold has
+	// nothing in it either, board-empty requiring the raw inbox to be
+	// empty). That line stays on screen so the mark stays pure decoration
+	// (rule 1) rather than the one thing standing between a NO_COLOR or
+	// 16-colour terminal and knowing the inbox is empty at all. wordmarkFits
+	// is asked about the room left after that line, not the panel's whole
+	// interior — the mark fills what its neighbour did not need. wordmarkVisible
+	// is the same care from the other direction: a profile that cannot dim it
+	// draws it bare, which is a wall of characters rather than a watermark.
+	if m.boardEmpty() {
+		if room := ih - len(rows); wordmarkFits(inner, room) && wordmarkVisible(lipgloss.DefaultRenderer()) {
+			rows = append(rows, wordmarkPanel(inner, room)...)
 		}
 	}
 	rows = m.panelBody(panelAttention, rows, cur, inner, ih)
