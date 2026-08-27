@@ -164,9 +164,10 @@ A hop on the board is a decision somebody makes, and iteration is not a
 decision: a review stage of its own turns review-and-fix into a cycle nothing
 can bound, since counting the rounds would mean state outside Linear or an
 `if` about your process. So Implementing reviews and fixes its own work
-inside one run — findings go on the pull request, as comments on the lines
-they concern, and the round count is the agent's own context, which costs the
-board nothing. One short verdict comment on the ticket says how it went.
+inside one run — each round leaves a review comment on the pull request,
+findings go on the lines they concern (Low included), and the round count is
+the agent's own context, which costs the board nothing. One short verdict
+comment on the ticket says how it went.
 
 That comment is also what makes a skipped review visible. The hop out of
 Implementing keys on the run's exit code and the ticket's status, never on a

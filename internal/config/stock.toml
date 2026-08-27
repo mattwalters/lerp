@@ -182,7 +182,11 @@ repository's own conventions, and rate what you find high, medium or low.
 Concrete failure scenarios only — no style essays.
 
 Post the findings on the pull request, as review comments on the lines they
-concern. Then fix them, push, and answer each thread. Review the result
+concern — every severity, Low included. Each review round ends with one
+`gh pr review --comment` on the pull request stating the round number, the
+review mechanism (the named reviewer agent or subagent, or self-read-back),
+and the findings count by severity — including an explicit "0 findings" for a
+clean round. Then fix them, push, and answer each thread. Review the result
 again. Stop when a round turns up nothing high or medium, or after three
 rounds — whichever comes first. A round that finds nothing is a good round;
 do not invent work to justify one.
