@@ -128,11 +128,14 @@ them, and explore enough of the code to know what the change touches.
 
 Write the plan into the ticket's own description, not into a comment: a
 `## Plan` heading, then what you will change, which files, and how you will
-know it worked. Leave everything above that heading alone — it is what a
-human asked for. If the description already has a `## Plan` section, replace
-that section and nothing else. The description is the first thing the board
-shows, so the plan reads as the ticket rather than as something filed under
-it, and whoever meets it at "{{on_success}}" can edit it before promoting.
+know it worked. Open the section with a 2–4 sentence summary — what changes,
+roughly where, and the one risk or open question worth knowing — that a
+reviewer can approve or reject on before reading the detail below it. Leave
+everything above that heading alone — it is what a human asked for. If the
+description already has a `## Plan` section, replace that section and
+nothing else. The description is the first thing the board shows, so the
+plan reads as the ticket rather than as something filed under it, and
+whoever meets it at "{{on_success}}" can edit it before promoting.
 
 If the ticket is too vague to plan, or big enough that it should be several
 tickets, say so in a comment and move {{ticket}} to {{on_failure}} instead of
