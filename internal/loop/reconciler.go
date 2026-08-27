@@ -526,16 +526,22 @@ func (r *Reconciler) paused() (time.Duration, bool) {
 	return 0, false
 }
 
-// pauseFor sets resumeAt to the later of d (Linear's own Retry-After) and
-// the next interval, so a 429 that carried no usable delay still costs one
-// interval's pause rather than none — the polling this replaces would have
-// waited that long anyway.
+// pauseFor extends resumeAt to at least the later of d (Linear's own
+// Retry-After) and the next interval, so a 429 that carried no usable delay
+// still costs one interval's pause rather than none — the polling this
+// replaces would have waited that long anyway. It only ever extends: fill
+// and attention can each fail with their own RateLimitError in the same
+// pass, and a header-less second one must not cut a first one's long wait
+// down to one interval.
 func (r *Reconciler) pauseFor(d time.Duration) {
 	if d < r.o.Interval {
 		d = r.o.Interval
 	}
+	until := time.Now().Add(d)
 	r.rateLimitMu.Lock()
-	r.resumeAt = time.Now().Add(d)
+	if until.After(r.resumeAt) {
+		r.resumeAt = until
+	}
 	r.rateLimitMu.Unlock()
 }
 
@@ -656,15 +662,16 @@ func (r *Reconciler) refreshBoard(ctx context.Context, team, viewerID string) (*
 		return r.relistBoard(ctx, team, viewerID)
 	}
 	// Counted before the read, so failures count too. A delta that keeps
-	// failing — a 429, a gateway error, a query Linear stopped accepting —
-	// would otherwise never let the counter reach ResyncEvery, and the
-	// re-list that is this board's only other source would never run again:
-	// the inbox would freeze at whatever the cold start saw, for the life of
-	// the process, while the pass reissued the same failing read every 12
-	// seconds. Escalating to the two listings after ResyncEvery attempts is
-	// the fallback that leaves, and they are cheaper than the delta that is
-	// failing: filtered by state and assignee, where it is filtered by
-	// neither.
+	// failing — a gateway error, a query Linear stopped accepting, or
+	// (paced far slower, on its own resumeAt rather than every interval —
+	// see Tick) a 429 — would otherwise never let the counter reach
+	// ResyncEvery, and the re-list that is this board's only other source
+	// would never run again: the inbox would freeze at whatever the cold
+	// start saw, for the life of the process, while the pass kept reissuing
+	// the same failing read. Escalating to the two listings after
+	// ResyncEvery attempts is the fallback that leaves, and they are
+	// cheaper than the delta that is failing: filtered by state and
+	// assignee, where it is filtered by neither.
 	board.deltas++
 	// Asked from behind the cursor, never from the cursor itself: see
 	// deltaOverlap. The answers are deduped by issue id, so a row this

@@ -2059,12 +2059,12 @@ func TestAttentionRestoresWhatAShortResyncDropped(t *testing.T) {
 
 // Done-when: a delta that keeps failing falls back to the two listings
 // instead of retrying forever. This drives the delta with a plain error
-// rather than *linear.RateLimitError, which Tick now pauses on instead of
-// retrying (see TestTickPausesOnRateLimit) — so here a 429, a gateway error
-// or a query Linear stopped accepting is still a hard failure on every pass,
-// and a counter that only counted successes would never let the re-list run
-// again. The inbox would freeze at whatever the cold start saw for the life
-// of the process.
+// rather than *linear.RateLimitError, which Tick now paces on its own
+// resumeAt instead of every pass (see TestTickPausesOnRateLimit) — so here a
+// gateway error or a query Linear stopped accepting is still a hard failure
+// on every pass, and a counter that only counted successes would never let
+// the re-list run again. The inbox would freeze at whatever the cold start
+// saw for the life of the process.
 func TestAttentionFallsBackToListingWhenTheDeltaKeepsFailing(t *testing.T) {
 	h, counting := newCountingHarness(t)
 	h.resyncEvery(2)
@@ -2169,6 +2169,26 @@ func TestTickPausesOnRateLimit(t *testing.T) {
 	if counting.deltas.Load() != deltasAtFailure+1 {
 		t.Errorf("delta attempts after the pause = %d, want one more: the pause lifted and the "+
 			"pass resumed", counting.deltas.Load())
+	}
+}
+
+// Done-when: a second failure in the same pass, carrying no usable
+// Retry-After, must not cut a longer pause a first failure already set —
+// fill and attention can each fail with their own RateLimitError in one
+// Tick, and attention runs last, so a naive overwrite would let its
+// header-less 429 silently shorten an hour's wait to one interval.
+func TestPauseForNeverShortensALongerPause(t *testing.T) {
+	h := newHarness(t, 1, nil)
+	h.rec.o.Interval = 20 * time.Millisecond
+
+	h.rec.pauseFor(time.Hour)
+	longUntil := h.rec.resumeAt
+
+	h.rec.pauseFor(0) // no usable Retry-After: clamps to the interval alone
+
+	if h.rec.resumeAt.Before(longUntil) {
+		t.Fatalf("resumeAt = %v after a header-less failure, want the hour-long pause still standing (%v)",
+			h.rec.resumeAt, longUntil)
 	}
 }
 
