@@ -1536,6 +1536,10 @@ func (m *model) apply(ev loop.Event) {
 			return it.Project == m.project
 		}) {
 			m.project = ""
+			// The scope just widened to every project, the same way P
+			// itself widens or narrows it — a range drawn under the old
+			// scope is now over rows the operator never saw beside it.
+			m.dropVisual()
 		}
 		// An inbox with nothing in it has nothing to narrow, and the title
 		// stops carrying the query along with the count — so a filter left
@@ -2842,10 +2846,16 @@ const (
 // inner width past the title's own cut, which is why it is laid on the
 // assembled line rather than built into any one cell. failed is a batch
 // promote's sticky ✗ (see promoteErr); see attentionMark for how the gutter
-// draws both at once.
+// draws all three at once.
+//
+// banded && !isCursor is a range row the cursor is not standing on — the
+// one case attentionMark needs a shape for beyond the cursor and the
+// failure, since colorSelected's band renders nothing on a 16-colour
+// terminal (theme.go) and the band was, until visual mode, only ever the
+// cursor's own row wearing its own ▸.
 func attentionRow(it loop.AttentionItem, isCursor, banded, failed bool, c attentionColumns, width int, query string) string {
 	id := padTo(highlight(it.Ticket, query, styleTicket), c.id)
-	row := inboxLine(attentionMark(isCursor, failed), id, leverageCell(it), statusCell(it, c.status, query),
+	row := inboxLine(attentionMark(isCursor, banded && !isCursor, failed), id, leverageCell(it), statusCell(it, c.status, query),
 		projectCell(it.Project, c.project, query), priorityCell(it.Priority),
 		highlight(it.Title, query, stylePlain), width)
 	if banded {
@@ -2856,8 +2866,14 @@ func attentionRow(it loop.AttentionItem, isCursor, banded, failed bool, c attent
 
 // attentionMark is an inbox row's gutter: marker's ▸ for the cursor, a
 // batch promote failure's ✗ in the two columns marker leaves blank
-// otherwise, or nothing.
-func attentionMark(isCursor, failed bool) string {
+// otherwise, a range row's own │ where neither applies, or nothing.
+//
+// │ is its own shape, not a dimmer ▸: the brief is that only the cursor
+// keeps the arrow, and a colour-only distinction would vanish exactly
+// where the band already does (16 colours, colorSelected's slots are
+// deliberately empty). A range the operator cannot see is a promote of
+// tickets they never chose to select.
+func attentionMark(isCursor, inRange, failed bool) string {
 	switch {
 	// The shape stays ▸ — the cursor is never mistaken for a row nobody is
 	// standing on — but a batch that failed on the ticket the cursor already
@@ -2870,6 +2886,8 @@ func attentionMark(isCursor, failed bool) string {
 		return marker(true)
 	case failed:
 		return styleErr.Render("✗ ")
+	case inRange:
+		return styleFocus.Render("│ ")
 	default:
 		return marker(false)
 	}

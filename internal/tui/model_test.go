@@ -2168,8 +2168,8 @@ func TestEscOnAnotherPanelDoesNotSwallowTheVisualSelection(t *testing.T) {
 // not.
 func TestCursorRowStillMarksItsOwnFailure(t *testing.T) {
 	forceColour(t)
-	clean := attentionMark(true, false)
-	failed := attentionMark(true, true)
+	clean := attentionMark(true, false, false)
+	failed := attentionMark(true, false, true)
 	if clean == failed {
 		t.Fatalf("a failed cursor row renders identically to a clean one: %q", clean)
 	}
@@ -2204,7 +2204,7 @@ func TestSingleTicketFailureMarksTheCursorsOwnRow(t *testing.T) {
 	if cur.at < 0 {
 		t.Fatalf("the inbox has no selection: %q", rows)
 	}
-	if want := attentionMark(true, true); !strings.Contains(rows[cur.at], want) {
+	if want := attentionMark(true, false, true); !strings.Contains(rows[cur.at], want) {
 		t.Fatalf("the cursor's own failed row does not carry the recoloured arrow %q:\n%q", want, rows[cur.at])
 	}
 }
@@ -2443,6 +2443,42 @@ func TestVisualRangeRendersTheBandAndTheKeyLine(t *testing.T) {
 	}
 	if arrows != 1 {
 		t.Fatalf("expected exactly one cursor arrow, got %d: %q", arrows, rows)
+	}
+}
+
+// Done-when: a range still reads without colour. The band itself draws
+// nothing on a 16-colour terminal (colorSelected's slots are empty on
+// purpose, see theme.go) — fine while the band only ever marked the
+// cursor's own row, wearing its own ▸, but a range's other rows have no
+// other mark unless the gutter draws one. A selection the operator cannot
+// see is a promote of tickets they never chose.
+func TestVisualRangeReadsWithoutColour(t *testing.T) {
+	was := lipgloss.ColorProfile()
+	t.Cleanup(func() { lipgloss.SetColorProfile(was) })
+	lipgloss.SetColorProfile(termenv.Ascii)
+
+	m, _, _, _ := newPromoteTestModel(t, 1, defaultTestStatuses)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: threeWaiting()})
+	m = update(t, m, keyMsg("v")) // anchor: id-1 (row 0)
+	m = update(t, m, keyMsg("j")) // cursor: id-2 (row 1)
+
+	width := padList.inner(m.geometry().sideW)
+	rows, cur := m.attentionRows(width)
+	if bandOpen() != "" {
+		t.Fatal("test setup: this profile draws a band, which defeats the point of the test")
+	}
+	if cur.at != 1 {
+		t.Fatalf("test setup: expected the cursor on row 1, got %d", cur.at)
+	}
+	if !strings.Contains(rows[0], "│") {
+		t.Fatalf("the range's non-cursor row carries no shape without colour: %q", rows[0])
+	}
+	if strings.Contains(rows[0], "▸") {
+		t.Fatalf("the range's non-cursor row wrongly carries the cursor's own arrow: %q", rows[0])
+	}
+	if strings.Contains(rows[2], "│") {
+		t.Fatalf("a row outside the range carries the range's shape: %q", rows[2])
 	}
 }
 
@@ -3117,6 +3153,56 @@ func TestClearingTheFilterFromAnotherPanelDropsTheSelection(t *testing.T) {
 	}
 
 	m = update(t, m, keyMsg("1"))
+	m = update(t, m, keyMsg("p"))
+	next, cmd := updateCmd(t, m, keyMsg("enter"))
+	m = next
+	if cmd == nil {
+		t.Fatal("enter produced no promote command")
+	}
+	cmd()
+	if len(promoter.calls) != 1 {
+		t.Fatalf("Promote called %d times, want 1 (the cursor's own row, not a stale range): %+v",
+			len(promoter.calls), promoter.calls)
+	}
+}
+
+// Done-when: a pass that silently resets the project scope (because no
+// ticket carries it anymore) does not leave a live range's endpoints
+// standing over rows the scope no longer narrows — the same rule P itself
+// follows when the operator cycles the scope by hand.
+func TestProjectScopeResetDropsTheSelection(t *testing.T) {
+	m, _, _, promoter := newPromoteTestModel(t, 1, defaultTestStatuses)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-1", TicketID: "id-1", Title: "First", Status: "Backlog", Project: "A"},
+		{Ticket: "LERP-2", TicketID: "id-2", Title: "Second", Status: "Backlog", Project: "A"},
+	}}})
+
+	m = update(t, m, keyMsg("P")) // the only project on the board
+	if m.project != "A" {
+		t.Fatalf("test setup: P did not scope to project A: %q", m.project)
+	}
+	m = update(t, m, keyMsg("v"))
+	m = update(t, m, keyMsg("j"))
+	if !m.visual {
+		t.Fatal("test setup: visual mode did not start")
+	}
+
+	// A pass lands where LERP-1 survives (so the anchor has not left) but no
+	// ticket carries project A anymore: the scope silently widens to every
+	// project, the way apply's own project-reset already does by hand.
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-1", TicketID: "id-1", Title: "First", Status: "Backlog", Project: "B"},
+		{Ticket: "LERP-2", TicketID: "id-2", Title: "Second", Status: "Backlog", Project: "B"},
+		{Ticket: "LERP-3", TicketID: "id-3", Title: "Third", Status: "Backlog", Project: "C"},
+	}}})
+	if m.project != "" {
+		t.Fatalf("test setup: the scope did not reset: %q", m.project)
+	}
+	if m.visual {
+		t.Fatal("the selection survived the project scope resetting out from under it")
+	}
+
 	m = update(t, m, keyMsg("p"))
 	next, cmd := updateCmd(t, m, keyMsg("enter"))
 	m = next
