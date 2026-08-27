@@ -27,77 +27,88 @@ dispose = 'git worktree remove --force "$LERP_WORKSPACE"'
 # Runner
 # --------------------------------------------------------------------------
 
-# Claude Code, headless. {{prompt}} carries the queue's prompt, {{session}} a
-# UUID lerp generates so the run can later be resumed by `resume` below —
-# which is what `eject` hands you when you want to take the wheel yourself.
-# That command starts with `cd {{workdir}}` because Claude Code files a
-# session under the directory it ran in: pasted anywhere else, --resume would
-# not find it. Lerp shell-quotes both values, so it stays one safe command.
+# Two vendor kinds, on purpose, not one. This block used to write every
+# stage's shell command out by hand; now each [runners.NAME] names a
+# built-in adapter (SCOPE concept 3) and overrides its Model, Effort and
+# Args — the adapter's own escape valve for a flag it doesn't model —
+# instead of spelling out the CLI invocation. The adapter supplies Command
+# and Resume; a vendor runner may not set `resume` itself (lerp refuses that
+# config), because the adapter already knows its own vendor's shape. Resume
+# is what `eject` hands you when you want to take the wheel yourself.
 #
-# `--output-format stream-json --verbose` streams every event as a JSON line
-# while the run is live. Without it, `claude -p` prints only the final result
-# at exit, and the board's log tail stays empty for the whole run.
+# Planning and merging run on the claude adapter, below. Implementing runs
+# on the antigravity adapter (the agy CLI) instead — a live canary for the
+# second vendor lerp ships, so a regression in that adapter's harness shows
+# up on this board before it shows up in anyone else's repo. The codex
+# adapter (LERP-137) sits out of this file for now, undogfooded; when it
+# earns a slot here it is a queue where a vendor regression is cheap and
+# visible, never the merge queue below, whose refusal clause is the part of
+# this pipeline worth protecting most.
 #
-# PERMISSIONS: with `--permission-mode bypassPermissions`, the agent edits
-# files and runs commands (git, gh, tests) without asking — using your full
-# user account. The worktree that `provision` above builds is a tidiness
-# boundary, not a security one: nothing stops the agent from reading
-# ~/.ssh or writing outside its workspace. Without the flag, a headless run
-# fails at the first tool it is not allowed to use, so the pipeline needs
-# either this grant — made deliberately, in review, where this file lives —
-# or an `--allowedTools` list you curate.
-#
-# Model and effort are pinned right here in the command — the template is the
-# knob, lerp has no model concept. To vary them per stage, add another
-# [runners.NAME] with different flags and point a queue's `runner` at it.
+# PERMISSIONS: no adapter lerp ships ever adds a permission-skipping flag on
+# its own — that grant reaches a command only by being written into a
+# runner's own `args` line, checked in and reviewed like the rest of this
+# file (see SECURITY.md). `--permission-mode bypassPermissions` below and
+# `--dangerously-skip-permissions` on the antigravity runner further down
+# mean the same thing for their own CLIs: the agent edits files and runs
+# commands without asking, using your full user account. The worktree that
+# `provision` above builds is a tidiness boundary, not a security one —
+# nothing stops an agent from reading ~/.ssh or writing outside its
+# workspace. Without the flag, a headless run fails at the first tool it is
+# not allowed to use.
 [runners.claude]
-command = "claude -p {{prompt}} --session-id {{session}} --model claude-opus-5 --effort high --output-format stream-json --verbose --permission-mode bypassPermissions"
-resume = "cd {{workdir}} && claude --resume {{session}}"
+vendor = "claude"
+model = "claude-opus-5"
+effort = "high"
+args = "--permission-mode bypassPermissions"
 
-# The same runner one notch down, for the merge queue below. That queue is
+# The same adapter one notch down, for the merge queue below. That queue is
 # mechanics by its own prompt — rebase, run the check, watch CI, press merge —
 # and every judgment call in it is a refusal rather than a decision, so the
 # capability it needs is the discipline to stop, not the reach to solve. Lower
 # effort should if anything make that clause easier to honour: less appetite
-# for treating a conflict as a puzzle. Planning stays on the runner above,
-# implementing has its own below.
+# for treating a conflict as a puzzle. Planning stays on the runner above;
+# implementing moves to a different vendor entirely, below.
 [runners.claude-merge]
-command = "claude -p {{prompt}} --session-id {{session}} --model claude-sonnet-5 --effort medium --output-format stream-json --verbose --permission-mode bypassPermissions"
-resume = "cd {{workdir}} && claude --resume {{session}}"
+vendor = "claude"
+model = "claude-sonnet-5"
+effort = "medium"
+args = "--permission-mode bypassPermissions"
 
-# Implementing: cheap hands, expensive eyes. Most implement runs execute a
-# plan a human has already read and approved, which is comparatively
-# mechanical, so the hands drop to claude-sonnet-5 — high effort, because
-# thoroughness is still the whole job. Planning keeps the runner above.
+# Implementing, moved off claude on purpose: this queue is the antigravity
+# adapter's canary, the stage most worth running through a second vendor's
+# harness under real load, since most implement runs execute a plan a human
+# has already read and approved — comparatively mechanical work, and the
+# one place a vendor regression is easiest to spot from the diff it leaves
+# behind. gemini-3.7-flash-high is antigravity's cheap-hands tier at its
+# highest reasoning effort — the same "thoroughness is still the whole job"
+# bet the old claude-sonnet-5 pick made, translated to this CLI's own model
+# names, which bake effort into the id rather than taking it as a separate
+# flag.
 #
-# The eyes go the other way. `--agents` defines the roster of subagents this
-# runner may spawn, inline as JSON, and the only one it defines is the
-# reviewer the implement prompt hands its diff to — pinned UP to
-# claude-opus-5 at high effort. That pass gets the brief and the diff and
-# none of the implementer's reasoning: a small context and pure judgment,
-# which is the one place in this pipeline worth the expensive model. Its
-# tools are read-only, so a reviewer cannot quietly become a second author.
-#
-# The roster lives on the runner line rather than in a checked-in
-# `.claude/agents/` file because a file there loads for *every* headless run
-# in this repo, and an agent's `description` doubles as an auto-delegation
-# trigger — so the merge queue, whose refusal clause is the load-bearing part
-# of it, could hand a conflict to a reviewer instead of stopping. Scoped
-# here, each runner line is the complete spec of its stage, reviewed like
-# code, in the file that already holds the rest of the pipeline.
-#
-# If sonnet turns out to be too little for implementing, the board says so
-# instead of hiding it: review rounds start finding real defects and tickets
-# bounce to "Needs Attention". The revert is one word on the line below.
-[runners.claude-implement]
-command = '''claude -p {{prompt}} --session-id {{session}} --model claude-sonnet-5 --effort high --agents '{"reviewer":{"description":"Reviews a finished diff against the brief it was built from. Give it the brief and the diff and nothing else — no reasoning, no defence. Returns findings rated high, medium or low.","prompt":"You are reading a diff someone else wrote, against the brief they were given. You did not write it and you are not defending it. Whatever reasoning went into it, you do not have it — the diff and the brief are the whole of what you are judging, and that is the point of handing the work to you.\n\nJudge two things, in this order.\n\n1. The brief. Does the diff do what the brief asked, all of it? Work the brief did not ask for is a finding too — scope that grew is as much a defect here as scope that shrank.\n2. The conventions of this repository. Read AGENTS.md and SCOPE.md, and read enough of the surrounding code to know what \"like the code around it\" means here. A change that is correct in isolation and foreign in place is a finding.\n\nRate each finding high, medium or low:\n\n- high — it is wrong, or it will break something a person will hit.\n- medium — it is right but fragile, misleading, or off-brief in a way that will cost the next reader.\n- low — worth saying once, not worth blocking on.\n\nEvery finding names a concrete failure: the input or the state, and what happens. \"This is unclear\" is not a finding; \"a config with two teams reaches this line and the second one is dropped\" is. No style essays, no restating what the diff does, no praise.\n\nFinding nothing is a real answer and often the right one. Do not manufacture a medium to look thorough — a padded review costs the author a round of fixes that were never needed, and teaches them to skim the next one.\n\nReport as a short list, highest rating first, each with the file and line it concerns. If you found nothing, say so in one line.","tools":["Read","Grep","Glob"],"model":"claude-opus-5","effort":"high"}}' --output-format stream-json --verbose --permission-mode bypassPermissions'''
-resume = "cd {{workdir}} && claude --resume {{session}}"
+# No reviewer roster rides along, and that is a capability gap rather than a
+# choice: no adapter lerp ships, not even claude's own, models a flag like
+# claude's raw `--agents` JSON — that only exists by writing a runner as
+# `command` instead of `vendor`, which is what this repo's claude-implement
+# runner used to do before this migration. Buying the roster back here would
+# mean giving up the adapter's session bookkeeping (resume, eject) to regain
+# one flag; instead this queue takes the plain shape, and the implement
+# prompt below already tolerates that — "hand it to the reviewer agent if
+# your runner provides one ... otherwise read it back yourself" — so a run
+# here reviews its own diff instead of handing it up to a pinned reviewer.
+# If that proves too little, the fix is a `command` runner here, or moving
+# this queue back to claude.
+[runners.antigravity-implement]
+vendor = "antigravity"
+model = "gemini-3.7-flash-high"
+args = "--dangerously-skip-permissions"
 
-# The agent needs its own Linear access — lerp passes only the ticket
+# Each agent needs its own Linear access — lerp passes only the ticket
 # identifier, never the ticket body, and stage artifacts (the plan in the
 # ticket, the pull request, the note a run leaves behind) are written by the
-# agent, not by lerp. Configure the Linear MCP server in Claude Code before
-# expecting these prompts to work. Lerp's own LINEAR_API_KEY is not a
+# agent, not by lerp. Configure the Linear MCP server in whichever CLI a
+# queue's runner names — Claude Code or Antigravity's own `agy mcp add` —
+# before expecting these prompts to work. Lerp's own LINEAR_API_KEY is not a
 # fallback: lerp drops it once it has read it, so nothing it starts inherits
 # it. That is hygiene, not containment — a command that reaches a login
 # shell, and a session you resume yourself with the command above, both pick
@@ -144,7 +155,7 @@ guessing.
 
 [queues.implement]
 status = "Implementing"
-runner = "claude-implement"
+runner = "antigravity-implement"
 on_success = "In Review"
 on_failure = "Needs Attention"
 prompt = """
