@@ -26,11 +26,13 @@ Type "lerp"
 Sleep 800ms
 Enter
 
-# The board opens on the inbox: what waits on a human, at full width, with
+# The board opens on the summary strip — each stage and its ticket count in
+# board order — above the inbox: what waits on a human, at full width, with
 # every column the table packs in — the leverage, the real Linear status, the
 # project, the priority. Below it the work panel, three lanes already picking
 # tickets up. The folded backlog line is the last thing the inbox draws, so
 # waiting for it is waiting for the whole first frame.
+Wait+Screen /Backlog \d+ · /
 Wait+Screen /waiting to enter the pipeline/
 Sleep 3s
 

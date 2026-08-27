@@ -4371,7 +4371,7 @@ func TestQuietWorkPanelKeepsItsBox(t *testing.T) {
 // rather than truncating into a column of blank lines.
 func TestWorkTakesTheRoomNeedsYouCannotUse(t *testing.T) {
 	m, _, _ := newTestModel(t, 6)
-	m = resize(t, m, 120, 30)
+	m = resize(t, m, 120, 31)
 	m = fillBoard(t, m, 20)
 	// Two items waiting, twenty tickets queued: needs-you cannot fill two
 	// thirds of this column and work has more list than a third holds.
@@ -4579,7 +4579,11 @@ func TestWideMainPaneFillsTheBody(t *testing.T) {
 			t.Fatalf("%s: the main pane is %d lines of a %d-line body",
 				tc.name, g.mainH, g.bodyH)
 		}
-		body := strings.Split(ansi.Strip(m.View()), "\n")[:g.bodyH]
+		lines := strings.Split(ansi.Strip(m.View()), "\n")
+		if m.showStrip() {
+			lines = lines[1:]
+		}
+		body := lines[:g.bodyH]
 		if n := strings.Count(body[g.bodyH-1], "\u2570") + strings.Count(body[g.bodyH-1], "\u2517"); n != 2 {
 			t.Fatalf("%s: %d panels end on the body's last line, want the side column and the main pane:\n%s",
 				tc.name, n, m.View())
@@ -6343,7 +6347,7 @@ func TestScrolledRunKeepsRowsWhole(t *testing.T) {
 	call := `{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash",` +
 		`"input":{"command":"go build ./..."}}]}}` + "\n"
 
-	for _, size := range []struct{ w, h int }{{120, 22}, {120, 25}, {120, 30}, {100, 44}} {
+	for _, size := range []struct{ w, h int }{{120, 23}, {120, 25}, {120, 30}, {100, 44}} {
 		path := filepath.Join(t.TempDir(), "run.log")
 		writeLog(t, path, nil)
 		m, _, _ := newTestModel(t, 5)
@@ -7154,7 +7158,11 @@ func TestTabPutsTheKeysInTheOpenPane(t *testing.T) {
 	// Wide layout: the two panels and the pane share every line, so the top
 	// border carries both boxes — the inbox's on the left, the pane's on the
 	// right — and exactly one of them is heavy.
-	top := strings.Split(m.View(), "\n")[0]
+	lines := strings.Split(m.View(), "\n")
+	top := lines[0]
+	if m.showStrip() {
+		top = lines[1]
+	}
 	if !strings.HasPrefix(top, "╭") {
 		t.Fatalf("the inbox kept the heavy box after the keys left it: %q", top)
 	}
@@ -7362,7 +7370,11 @@ func TestTheOverlayBorrowsThePaneNotItsKeys(t *testing.T) {
 	if !m.mainFocused() {
 		t.Fatal("the overlay took the pane's keys as well as its room")
 	}
-	top := strings.Split(m.View(), "\n")[0]
+	lines := strings.Split(m.View(), "\n")
+	top := lines[0]
+	if m.showStrip() {
+		top = lines[1]
+	}
 	if !strings.HasPrefix(top, "╭") {
 		t.Fatalf("the inbox is lit behind the overlay while the keys are in the pane: %q", top)
 	}
@@ -7396,7 +7408,12 @@ func TestTheOverlayBorrowsThePaneNotItsKeys(t *testing.T) {
 		t.Fatalf("the keys are not back on the inbox list: %v/%v", m.focus, m.mainFocused())
 	}
 	m = update(t, m, keyMsg("?"))
-	if got := strings.Split(m.View(), "\n")[0]; !strings.HasPrefix(got, "┏") {
+	lines = strings.Split(m.View(), "\n")
+	got := lines[0]
+	if m.showStrip() {
+		got = lines[1]
+	}
+	if !strings.HasPrefix(got, "┏") {
 		t.Fatalf("the inbox is dark behind the overlay while the keys are on it: %q", got)
 	}
 	m = update(t, m, keyMsg("j"))
@@ -8184,5 +8201,284 @@ func TestKeymapContextHelpGroups(t *testing.T) {
 	iGroups := km.contextHelp(panelAttention, rowKeys{canPromote: true, canDetail: true, projects: true, canFold: true})
 	if len(iGroups) != 3 {
 		t.Fatalf("inbox groups = %d, want 3 (nav, act, disp)", len(iGroups))
+	}
+}
+
+func TestStripCountsEveryStatusThePassSaw(t *testing.T) {
+	statuses := []string{"Backlog", "Planning", "Implementing", "In Review", "Needs Attention"}
+	m, _, _ := newTestModelWith(t, 3, statuses, &recordingPromoter{}, &recordingEjector{}, &recordingStarter{}, &recordingReader{})
+	m = resize(t, m, 120, 30)
+	m = pastTheSplash(t, m)
+
+	// A folded backlog (2 items), an unserved attention status (1 item in Needs Attention),
+	// a queue with tickets (Implementing with 3 tickets), and an empty queue (Planning with 0 tickets).
+	m = update(t, m, eventMsg{ev: loop.Event{
+		Type: loop.EventAttention,
+		Attention: []loop.AttentionItem{
+			{Ticket: "LERP-1", TicketID: "id-1", Title: "b1", Status: "Backlog", Relevance: loop.StatusBacklog},
+			{Ticket: "LERP-2", TicketID: "id-2", Title: "b2", Status: "Backlog", Relevance: loop.StatusBacklog},
+			{Ticket: "LERP-3", TicketID: "id-3", Title: "na1", Status: "Needs Attention", Relevance: loop.StatusFailed},
+		},
+	}})
+	m = update(t, m, eventMsg{ev: loop.Event{
+		Type: loop.EventQueues,
+		Queues: []loop.QueueSnapshot{
+			{Team: "LERP", Name: "plan", Status: "Planning", Tickets: nil},
+			{Team: "LERP", Name: "implement", Status: "Implementing", Tickets: []loop.QueueTicket{
+				{ID: "id-4", Identifier: "LERP-4", Title: "imp1"},
+				{ID: "id-5", Identifier: "LERP-5", Title: "imp2"},
+				{ID: "id-6", Identifier: "LERP-6", Title: "imp3"},
+			}},
+		},
+	}})
+
+	counts := m.statusCounts()
+	want := []statusCount{
+		{status: "Backlog", n: 2},
+		{status: "Planning", n: 0},
+		{status: "Implementing", n: 3},
+		{status: "Needs Attention", n: 1},
+	}
+	if !slices.Equal(counts, want) {
+		t.Fatalf("got status counts %+v, want %+v", counts, want)
+	}
+
+	// The strip line rendered in View() contains all 4 counts joined by " · "
+	strip := ansi.Strip(m.stripLine(m.width))
+	wantStrip := "Backlog 2 · Planning 0 · Implementing 3 · Needs Attention 1"
+	if strip != wantStrip {
+		t.Fatalf("got strip line %q, want %q", strip, wantStrip)
+	}
+	view := ansi.Strip(m.View())
+	if !strings.HasPrefix(view, wantStrip) {
+		t.Fatalf("View() does not start with summary strip:\n%s", view)
+	}
+}
+
+func TestStripCountsEachTicketOnce(t *testing.T) {
+	m, _, _ := newTestModel(t, 3)
+	m = resize(t, m, 120, 30)
+	m = pastTheSplash(t, m)
+
+	// Same ticket in two teams' listings on one status
+	m = update(t, m, eventMsg{ev: loop.Event{
+		Type: loop.EventQueues,
+		Queues: []loop.QueueSnapshot{
+			{Team: "ALPHA", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
+				{ID: "id-dup", Identifier: "LERP-10", Title: "shared"},
+				{ID: "id-uniq-1", Identifier: "LERP-11", Title: "unique alpha"},
+			}},
+			{Team: "BRAVO", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
+				{ID: "id-dup", Identifier: "LERP-10", Title: "shared"},
+				{ID: "id-uniq-2", Identifier: "LERP-12", Title: "unique bravo"},
+			}},
+		},
+	}})
+
+	counts := m.statusCounts()
+	want := []statusCount{
+		{status: "Todo", n: 3}, // id-dup counted once + uniq-1 + uniq-2
+	}
+	if !slices.Equal(counts, want) {
+		t.Fatalf("got status counts %+v, want %+v", counts, want)
+	}
+}
+
+func TestStripOrdersByBoardPosition(t *testing.T) {
+	statuses := []string{"Backlog", "Planning", "Implementing", "In Review", "Needs Attention"}
+	m, _, _ := newTestModelWith(t, 3, statuses, &recordingPromoter{}, &recordingEjector{}, &recordingStarter{}, &recordingReader{})
+	m = resize(t, m, 120, 30)
+	m = pastTheSplash(t, m)
+
+	m = update(t, m, eventMsg{ev: loop.Event{
+		Type: loop.EventAttention,
+		Attention: []loop.AttentionItem{
+			{Ticket: "LERP-1", TicketID: "id-1", Status: "UnknownZ"},
+			{Ticket: "LERP-2", TicketID: "id-2", Status: "In Review"},
+			{Ticket: "LERP-3", TicketID: "id-3", Status: "UnknownA"},
+			{Ticket: "LERP-4", TicketID: "id-4", Status: "Backlog"},
+		},
+	}})
+	m = update(t, m, eventMsg{ev: loop.Event{
+		Type: loop.EventQueues,
+		Queues: []loop.QueueSnapshot{
+			{Team: "LERP", Name: "plan", Status: "Planning", Tickets: []loop.QueueTicket{
+				{ID: "id-5", Identifier: "LERP-5"},
+			}},
+		},
+	}})
+
+	counts := m.statusCounts()
+	want := []statusCount{
+		{status: "Backlog", n: 1},
+		{status: "Planning", n: 1},
+		{status: "In Review", n: 1},
+		{status: "UnknownA", n: 1},
+		{status: "UnknownZ", n: 1},
+	}
+	if !slices.Equal(counts, want) {
+		t.Fatalf("got status counts %+v, want %+v", counts, want)
+	}
+}
+
+func TestStripIgnoresTheSearchAndProjectFilters(t *testing.T) {
+	m, _, _ := newTestModel(t, 3)
+	m = resize(t, m, 120, 30)
+	m = pastTheSplash(t, m)
+
+	m = update(t, m, eventMsg{ev: loop.Event{
+		Type: loop.EventAttention,
+		Attention: []loop.AttentionItem{
+			{Ticket: "LERP-1", TicketID: "id-1", Title: "alpha ticket", Project: "ProjA", Status: "Backlog", Relevance: loop.StatusBacklog},
+			{Ticket: "LERP-2", TicketID: "id-2", Title: "beta ticket", Project: "ProjB", Status: "Backlog", Relevance: loop.StatusBacklog},
+			{Ticket: "LERP-3", TicketID: "id-3", Title: "gamma ticket", Project: "ProjA", Status: "Needs Attention", Relevance: loop.StatusFailed},
+		},
+	}})
+	m = update(t, m, eventMsg{ev: loop.Event{
+		Type: loop.EventQueues,
+		Queues: []loop.QueueSnapshot{
+			{Team: "LERP", Name: "implement", Status: "Implementing", Tickets: []loop.QueueTicket{
+				{ID: "id-4", Identifier: "LERP-4", Title: "delta"},
+			}},
+		},
+	}})
+
+	baseCounts := m.statusCounts()
+	baseStrip := m.stripLine(m.width)
+
+	// Apply search filter
+	m.search = "alpha"
+	m.shown = filterAttention(m.attention, m.project, m.search, m.backlogOpen)
+	if len(m.shown) >= len(m.attention) {
+		t.Fatalf("search filter did not narrow shown items (%d shown)", len(m.shown))
+	}
+	if !slices.Equal(m.statusCounts(), baseCounts) {
+		t.Fatalf("search filter changed status counts: got %+v, want %+v", m.statusCounts(), baseCounts)
+	}
+	if m.stripLine(m.width) != baseStrip {
+		t.Fatalf("search filter changed strip line: got %q, want %q", m.stripLine(m.width), baseStrip)
+	}
+
+	// Apply project filter
+	m.search = ""
+	m.project = "ProjB"
+	m.shown = filterAttention(m.attention, m.project, m.search, m.backlogOpen)
+	if len(m.shown) >= len(m.attention) {
+		t.Fatalf("project filter did not narrow shown items (%d shown)", len(m.shown))
+	}
+	if !slices.Equal(m.statusCounts(), baseCounts) {
+		t.Fatalf("project filter changed status counts: got %+v, want %+v", m.statusCounts(), baseCounts)
+	}
+	if m.stripLine(m.width) != baseStrip {
+		t.Fatalf("project filter changed strip line: got %q, want %q", m.stripLine(m.width), baseStrip)
+	}
+}
+
+func TestStripCostsExactlyOneRowFromTheBody(t *testing.T) {
+	m, _, _ := newTestModel(t, 3)
+	m = resize(t, m, 120, 30)
+	m = pastTheSplash(t, m)
+	m = fillBoard(t, m, 10)
+
+	if !m.showStrip() {
+		t.Fatal("strip should be showing on 120x30 with populated board")
+	}
+
+	g := m.geometry()
+	if g.bodyH != m.height-2 {
+		t.Fatalf("bodyH = %d, want %d (height-2)", g.bodyH, m.height-2)
+	}
+	if got := g.attnH + g.workH; got != g.bodyH {
+		t.Fatalf("attnH (%d) + workH (%d) = %d, want bodyH (%d)", g.attnH, g.workH, got, g.bodyH)
+	}
+
+	lines := strings.Split(m.View(), "\n")
+	if len(lines) != m.height {
+		t.Fatalf("View() has %d lines, want %d", len(lines), m.height)
+	}
+	if !strings.Contains(lines[0], "·") {
+		t.Fatalf("first line is not the strip: %q", lines[0])
+	}
+}
+
+func TestStripDropsOnNarrowWindowsAndShortOnes(t *testing.T) {
+	m, _, _ := newTestModel(t, 3)
+	m = pastTheSplash(t, m)
+	m = fillBoard(t, m, 10)
+
+	// Under narrowWidth (e.g. 99)
+	m = resize(t, m, 99, 30)
+	if m.showStrip() {
+		t.Fatal("showStrip should be false when width < narrowWidth")
+	}
+	g := m.geometry()
+	if g.bodyH != m.height-1 {
+		t.Fatalf("narrow width: bodyH = %d, want %d (height-1)", g.bodyH, m.height-1)
+	}
+	lines := strings.Split(m.View(), "\n")
+	if !strings.HasPrefix(lines[0], "┏") {
+		t.Fatalf("expected inbox border on line 0 when width < narrowWidth, got %q", lines[0])
+	}
+
+	// At exactly minHeight
+	minH := m.minHeight(m.mainOpen())
+	m = resize(t, m, 120, minH)
+	if m.showStrip() {
+		t.Fatal("showStrip should be false when height == minHeight")
+	}
+	g = m.geometry()
+	if g.bodyH != m.height-1 {
+		t.Fatalf("minHeight: bodyH = %d, want %d (height-1)", g.bodyH, m.height-1)
+	}
+	lines = strings.Split(m.View(), "\n")
+	if !strings.HasPrefix(lines[0], "┏") {
+		t.Fatalf("expected inbox border on line 0 at minHeight, got %q", lines[0])
+	}
+
+	// Below minHeight: too-small guard
+	m = resize(t, m, 120, minH-1)
+	view := m.View()
+	if view != "lerp — window too small\n" {
+		t.Fatalf("below minHeight: got %q, want too-small guard", view)
+	}
+}
+
+func TestStripIsAbsentBeforeTheFirstPass(t *testing.T) {
+	m, _, _ := newTestModel(t, 3)
+	m = resize(t, m, 120, 30)
+	// Before the first pass events: splashing is true
+	if !m.splashing() {
+		t.Fatal("expected splashing before first pass")
+	}
+	if m.showStrip() {
+		t.Fatal("strip should not show while splashing")
+	}
+	view := m.View()
+	if view != m.splash() {
+		t.Fatalf("splash screen was altered:\n%s", view)
+	}
+}
+
+// Done-when: the strip is chrome, in the same class as the status bar — a
+// modal floats over the board, not the frame, so opening one leaves the
+// strip's row byte-for-byte where it was.
+func TestStripSurvivesAnOpenModal(t *testing.T) {
+	m, _, _ := newTestModel(t, 3)
+	m = resize(t, m, 120, 30)
+	m = pastTheSplash(t, m)
+	m = fillBoard(t, m, 10)
+
+	if !m.showStrip() {
+		t.Fatal("strip should be showing on 120x30 with populated board")
+	}
+	before := strings.Split(m.View(), "\n")[0]
+
+	m = update(t, m, keyMsg("?"))
+	if !m.helpOn {
+		t.Fatal("? did not open the help modal")
+	}
+	after := strings.Split(m.View(), "\n")[0]
+	if after != before {
+		t.Fatalf("help modal disturbed the strip row:\nbefore: %q\nafter:  %q", before, after)
 	}
 }
