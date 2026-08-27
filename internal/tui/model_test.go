@@ -1113,6 +1113,16 @@ func TestMainPaneScrollbarTracksThePosition(t *testing.T) {
 	m = update(t, m, keyMsg("enter")) // the inbox reads a ticket once its pane is open
 	m = update(t, m, eventMsg{ev: threeWaiting()})
 
+	// mainView isolates the pane's own rendering — scrollThumbGlyph is also
+	// the sparkline's busiest bar (pulse.go), drawn into the work panel's
+	// rows, so a check against the whole screen would pass today only
+	// because no run happens to be active and could start failing for a
+	// reason that has nothing to do with this pane.
+	mainView := func(m model) string {
+		g := m.geometry()
+		return m.mainPanel(g.mainW, g.mainH)
+	}
+
 	// A ticket short enough to fit the pane outright draws no thumb: a bar
 	// that always reads full would say "there is more" about a document that
 	// has none.
@@ -1121,8 +1131,8 @@ func TestMainPaneScrollbarTracksThePosition(t *testing.T) {
 	if sb := m.mainScrollbar(g.mainH); sb != nil {
 		t.Fatalf("a ticket shorter than the pane drew a thumb: %+v", *sb)
 	}
-	if strings.Contains(m.View(), scrollThumbGlyph) {
-		t.Fatalf("a ticket shorter than the pane drew a thumb:\n%s", m.View())
+	if strings.Contains(mainView(m), scrollThumbGlyph) {
+		t.Fatalf("a ticket shorter than the pane drew a thumb:\n%s", mainView(m))
 	}
 
 	// A ticket far longer than the pane draws one, at the top to start. A
@@ -1133,26 +1143,37 @@ func TestMainPaneScrollbarTracksThePosition(t *testing.T) {
 	g = m.geometry()
 	top := m.mainScrollbar(g.mainH)
 	if top == nil {
-		t.Fatalf("a ticket far longer than the pane drew no thumb:\n%s", m.View())
+		t.Fatalf("a ticket far longer than the pane drew no thumb:\n%s", mainView(m))
 	}
 	if top.top != 0 {
 		t.Errorf("a freshly opened ticket's thumb starts at row %d, want 0", top.top)
 	}
-	if !strings.Contains(m.View(), scrollThumbGlyph) {
-		t.Fatalf("the rendered pane carries no thumb glyph despite one at %+v:\n%s", *top, m.View())
+	if !strings.Contains(mainView(m), scrollThumbGlyph) {
+		t.Fatalf("the rendered pane carries no thumb glyph despite one at %+v:\n%s", *top, mainView(m))
 	}
 
-	// Paging down moves it further into the track rather than leaving it
-	// standing still or flickering back toward the top.
-	m = update(t, m, keyMsg("f"))
-	m = update(t, m, keyMsg("f"))
+	// tab moves the keys into the pane, so j moves it a line at a time
+	// (scrollMain) instead of the list's selection — a page-at-a-time key
+	// here would jump straight to the bottom in one press on a pane this
+	// size and never show an intermediate position at all.
+	m = update(t, m, keyMsg("tab"))
+	if !m.mainFocused() {
+		t.Fatalf("tab did not move the keys into the pane")
+	}
+	for i := 0; i < 5; i++ {
+		m = update(t, m, keyMsg("j"))
+	}
 	g = m.geometry()
 	moved := m.mainScrollbar(g.mainH)
 	if moved == nil {
-		t.Fatalf("the thumb disappeared after paging down:\n%s", m.View())
+		t.Fatalf("the thumb disappeared after scrolling down:\n%s", mainView(m))
 	}
 	if moved.top <= top.top {
-		t.Errorf("after paging down, thumb top = %d, want it past %d", moved.top, top.top)
+		t.Errorf("after scrolling down, thumb top = %d, want it past %d", moved.top, top.top)
+	}
+	if last := moved.top + moved.len; last >= g.mainH-2 {
+		t.Errorf("five lines down already reached the bottom (rows [%d,%d) of %d) — want an intermediate position",
+			moved.top, last, g.mainH-2)
 	}
 
 	// And it reaches the very last row once the pane is following the tail
@@ -1161,7 +1182,7 @@ func TestMainPaneScrollbarTracksThePosition(t *testing.T) {
 	g = m.geometry()
 	bottom := m.mainScrollbar(g.mainH)
 	if bottom == nil {
-		t.Fatalf("the thumb disappeared at the bottom:\n%s", m.View())
+		t.Fatalf("the thumb disappeared at the bottom:\n%s", mainView(m))
 	}
 	if last := bottom.top + bottom.len; last != g.mainH-2 {
 		t.Errorf("at the bottom, thumb covers rows [%d,%d), want it flush with the last row %d",
