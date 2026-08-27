@@ -151,7 +151,7 @@ func openTUI(ctx context.Context, lanes int) error {
 	// team git automation that would move a ticket mid-stage — is shown here
 	// and the run starts anyway.
 	client := linear.New(auth, nil)
-	warnings, err := loop.Verify(ctx, client, repo)
+	warnings, err := loop.Verify(ctx, client, repo, repoDir)
 	if err != nil {
 		return err
 	}
