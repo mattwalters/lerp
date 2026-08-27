@@ -23,7 +23,7 @@ func TestClaudeDecodesTheStream(t *testing.T) {
 		line string
 		want Event
 	}{
-		{"init", claudeInit, Event{Kind: KindInit, Text: "claude-opus-5 · 7420e6f8"}},
+		{"init", claudeInit, Event{Kind: KindInit, Text: "claude-opus-5 · 7420e6f8", Model: "claude-opus-5"}},
 		{"thinking tokens", claudeThinking, Event{Kind: KindThinking, Tokens: 5850}},
 		{"prose", claudeText, Event{Kind: KindText, Text: "I'll start by reading the ticket."}},
 		{"tool call on a path", claudeRead, Event{Kind: KindToolCall, Tool: "Read", Text: "model.go"}},

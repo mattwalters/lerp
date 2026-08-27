@@ -78,6 +78,9 @@ type Event struct {
 	// a kind's, and it is what lets a reader that attached late put the
 	// events it is catching up on where they actually happened.
 	Time time.Time
+	// Model is the model name a runner's init line named, KindInit only.
+	// Empty for a runner that does not say.
+	Model string
 }
 
 // Decoder turns one line of a runner's log into an event. A line a decoder
