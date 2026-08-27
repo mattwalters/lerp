@@ -24,6 +24,14 @@ build there.
 go install github.com/mattwalters/lerp/cmd/lerp@latest
 ```
 
+Without a Go toolchain, `install.sh` downloads the right binary for
+your OS and arch from the latest release, verifies it against the
+published checksum, and installs it to `$HOME/.local/bin`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/mattwalters/lerp/main/install.sh | sh
+```
+
 Prebuilt binaries — macOS and Linux, amd64 and arm64 — are on the
 [releases page](https://github.com/mattwalters/lerp/releases), and
 `make install` builds one from a clone. Then:
