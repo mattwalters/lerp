@@ -88,7 +88,7 @@ source archive with no `.git` — reports the literal `dev`.
 
 | Variable | What it does |
 | --- | --- |
-| `LINEAR_API_KEY` | the Linear personal API key. Every command needs a credential, and this is one of two ways to hold one — set, it wins over the token `lerp login` stores. Lerp drops it from its own environment after reading it, and never passes it to a provision, dispose or runner command. |
+| `LINEAR_API_KEY` | the Linear personal API key. Every command needs a credential, and this is one of two ways to hold one — set, it wins over the token `lerp login` stores. A personal API key defaults to your full workspace access, but Linear can restrict one at creation to specific teams and to permission scopes — give lerp a key restricted to the teams it serves, or create it on a dedicated Linear automation account for harder isolation. Lerp drops it from its own environment after reading it, and never passes it to a provision, dispose or runner command. |
 | `LERP_BACKGROUND` | `light` or `dark`, saying which half of the palette to draw. Read once at startup; any other value is an error rather than a shrug. |
 | `NO_COLOR` | set to any value, turns colour off entirely. |
 
@@ -111,9 +111,14 @@ Lerp sets variables of its own on the commands it starts: `LERP_LANE`,
 [`lerp.toml`'s side](lerp-toml.md#workspace-commands) of the contract, not
 this one.
 
-<!-- Slot (LERP-45): cleanup and uninstall — removing the binary, the .lerp/
-     evidence store and the Linear structure init created — plus the API key
-     scoping note. -->
+## Cleanup and uninstall
+
+Walking away from lerp cleanly takes two steps:
+
+1. **Remove the binary:** `make uninstall` from a clone, or delete the binary from `$HOME/.local/bin` or your `GOBIN`.
+2. **Remove local state:** `rm -rf .lerp/` once all agents have stopped. `.lerp/` holds run records, logs, and lane workspaces. Agents are separate process groups and outlive lerp, and run evidence is how the next `lerp` adopts or reaps them — so only delete `.lerp/` when no agents are live. Workspaces under `.lerp/workspaces/` are git worktrees whose registrations the stock `dispose` unwinds on exit; run `git worktree prune` to clean up any stray registrations.
+
+Linear workflow statuses created by `lerp init` remain on your team until deleted or archived in Linear's settings.
 
 <!-- Slot (LERP-111): the auth section — `lerp login`, `lerp logout`, the
      stored token, and how it and LINEAR_API_KEY relate. The commands exist

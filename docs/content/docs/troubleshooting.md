@@ -77,3 +77,21 @@ Two places, and which one you want depends on whether a run started.
   reap, the eject commands lerp handed back, and the full text of any
   status-bar line a narrow terminal truncated. It is appended to across
   sessions, with a marker line at each start.
+
+## How do I clean up or uninstall?
+
+`make uninstall` from a clone removes the binary `make install` put in your
+`GOBIN`; an install.sh install is removed by deleting `lerp` from
+`$HOME/.local/bin` (or the `--bin-dir` you chose).
+
+To clean up local state, delete `.lerp/` once all agents have stopped:
+
+```sh
+rm -rf .lerp/
+git worktree prune
+```
+
+Run evidence in `.lerp/runs/` is how the next `lerp` adopts or reaps live
+agents, and workspaces under `.lerp/workspaces/` are git worktrees whose
+registrations `dispose` normally unwinds (`git worktree prune` unregisters
+any strays). Losing `.lerp/` state costs compute, never correctness.
