@@ -64,19 +64,55 @@ reasoning is under
 
 Lerp hands the runner a prompt and the ticket identifier, nothing more. The
 stock prompts expect the agent to read the ticket and write stage artifacts
-itself, so Claude Code needs Linear's MCP server. See [Linear's MCP
-documentation](https://linear.app/docs/mcp) for the authoritative endpoint;
-typically:
+itself.
+
+Lerp operates on a **two-credential model**: lerp's own access
+(`LINEAR_API_KEY`, or later `lerp login`'s OAuth token) and the agents' access
+are separate on purpose. Lerp scrubs its own credential from child environments
+before launching runners or workspace commands, so setting up lerp does not
+give agents Linear access, and setting up one does not set up the other.
+
+The general rule: **every CLI a runner names needs its own Linear access,
+configured once in that CLI.** See [Linear's MCP
+documentation](https://linear.app/docs/mcp) for the authoritative endpoint.
+For the built-in vendor adapters:
+
+* **Claude Code (`claude`)**:
+  ```sh
+  claude mcp add --transport http linear https://mcp.linear.app/mcp
+  ```
+  Then start `claude` and run `/mcp` to complete the interactive OAuth flow.
+* **Antigravity (`agy`)**:
+  ```sh
+  agy mcp add linear https://mcp.linear.app/mcp
+  ```
+  Then complete the interactive OAuth authentication in agy's own settings
+  (tokens land in `~/.gemini/antigravity/mcp_oauth_tokens.json` and refresh
+  automatically).
+* **Codex (`codex`)**:
+  ```sh
+  codex mcp add linear --url https://mcp.linear.app/mcp
+  ```
+  Then run `codex mcp login linear`.
+
+Each CLI manages its own tokens, so adopting a second vendor means a second
+one-time MCP setup.
+
+**Shared OAuth bridge option:** If you run multiple CLIs and prefer one shared
+browser login across all of them, you can register the stdio bridge in each CLI
+instead:
 
 ```sh
-claude mcp add --transport http linear https://mcp.linear.app/mcp
+<cli> mcp add linear -- npx -y mcp-remote https://mcp.linear.app/mcp
 ```
 
-Then start `claude` and run `/mcp` to complete the interactive OAuth flow —
-that is a one-time step only you can do, and it must happen before any
-unattended run can reach Linear. What the agent is permitted to do beyond
-reading tickets is the other half of setup: read `lerp.toml` before you run
-it.
+This shares one browser OAuth across all CLIs through `mcp-remote`'s
+`~/.mcp-auth` token cache. The caveats: it adds a Node/npx dependency to the
+agent path, and the shared token cache misbehaves across multiple Linear
+accounts.
+
+What the agent is permitted to do beyond reading tickets is the other half of
+setup: read `lerp.toml` before you run it.
 
 ## 3. Promote a ticket
 

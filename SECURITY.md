@@ -117,13 +117,19 @@ cut the other way:
   removed. That key is lerp's own credential and a personal API key is
   write access to your entire Linear workspace, not just the served
   team; the agent's Linear access is meant to arrive through its own
-  authorization, under its own identity, so lerp does not hand its key
-  down, and it never writes it to disk. Read that as hygiene, not
-  containment: it closes the accidental path — a `provision` script
-  that logs its environment into the lane log — and not a determined
-  one. An agent running as you can still read the shell profile you
-  exported the key in — or, on Linux, lerp's own
-  `/proc/<pid>/environ`.
+  authorization, under its own identity (configured via its CLI's Linear
+  MCP server), so lerp does not hand its key down, and it never writes it to
+  disk. Read that as hygiene, not containment: it closes the accidental
+  path — a `provision` script that logs its environment into the lane
+  log — and not a determined one. An agent running as you can still read
+  the shell profile you exported the key in (such as `~/.zprofile` or
+  `~/.bashrc`), or on Linux, lerp's own `/proc/<pid>/environ`.
+
+  An exported `LINEAR_API_KEY` reaching agents through login shells is
+  precisely that environment leak, not a supported access path: on a machine
+  without that exported key, any runner whose CLI lacks Linear MCP configured
+  will silently fail to read its ticket or leave a verdict.
+
   Everything else in the environment does go down: your cloud tokens,
   your registry credentials, whatever else the shell you started lerp
   in was carrying. Run lerp with an environment you would hand to the

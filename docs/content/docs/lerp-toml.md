@@ -202,8 +202,14 @@ Both worth a deliberate look before you run it:
 - **The agent needs its own Linear access.** Lerp passes the ticket
   identifier and nothing else — never the ticket body — and every durable
   artifact — the plan in the ticket, the pull request, the verdict comment —
-  is written by the agent, not by lerp. For Claude Code that means the Linear
-  MCP server from step 2 of the [quickstart](quickstart.md).
+  is written by the agent, not by lerp. Every CLI a runner names needs its own
+  Linear access configured in that CLI — typically Linear's MCP server, as in
+  step 2 of the [quickstart](quickstart.md). Lerp scrubs `LINEAR_API_KEY` from
+  child environments so agents rely on their own credentials; an exported key
+  reaching agents through login shells or shell profiles is the environment leak
+  the config comments already warn about, not a supported access path. On a
+  machine without that leaked key, any run without MCP configured in its CLI
+  silently fails to read its ticket or leave a verdict.
 - **The agent runs with permissions — if you say so.** An unattended agent
   that cannot run `git`, `gh`, or your tests just fails, so the stock runner
   wants `--permission-mode bypassPermissions`; `lerp init` asks before
