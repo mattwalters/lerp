@@ -97,7 +97,7 @@ func TestConcludeReportsWhereTheTicketRested(t *testing.T) {
 		queue := repo.Queues["plan"]
 
 		issue, viewerID := claimed(t, fake, "one", queue.Status)
-		if err := fake.MoveIssue(ctx, "one", "Implementing"); err != nil {
+		if _, err := fake.MoveIssue(ctx, "one", "Implementing"); err != nil {
 			t.Fatal(err)
 		}
 		_, final, err := conclude(ctx, fake, issue, queue, repo, 0, viewerID, nil)
@@ -170,7 +170,7 @@ func TestConcludeReleasesTheClaimWhenTheAgentMovedIntoAServedStatus(t *testing.T
 	issue, viewerID := claimed(t, fake, "one", queue.Status)
 	// The agent's own move, made while the run was still going, into the
 	// status the implement queue serves.
-	if err := fake.MoveIssue(ctx, "one", "Implementing"); err != nil {
+	if _, err := fake.MoveIssue(ctx, "one", "Implementing"); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := conclude(ctx, fake, issue, queue, repo, 0, viewerID, nil); err != nil {
@@ -207,7 +207,7 @@ func TestATicketMovedOnFromAGateIsACandidateAgain(t *testing.T) {
 	}
 
 	// The human promotes it the way Linear promotes anything: by moving it.
-	if err := fake.MoveIssue(ctx, "one", "Implementing"); err != nil {
+	if _, err := fake.MoveIssue(ctx, "one", "Implementing"); err != nil {
 		t.Fatal(err)
 	}
 	listings, err := listQueues(ctx, fake, repo)

@@ -166,7 +166,7 @@ type Client interface {
 	// pane. Read-only, and only for the ticket the operator selected; no
 	// pass calls it, the TUI issues it on selection.
 	GetIssueDetail(ctx context.Context, issueID string) (IssueDetail, error)
-	MoveIssue(ctx context.Context, issueID, statusName string) error
+	MoveIssue(ctx context.Context, issueID, statusName string) (Issue, error)
 	AssignIssue(ctx context.Context, issueID, userID string) error
 	UnassignIssue(ctx context.Context, issueID string) error
 	Viewer(ctx context.Context) (string, error)

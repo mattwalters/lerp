@@ -474,12 +474,21 @@ query IssueStates($id: String!) {
 
 const moveIssueMutation = `
 mutation MoveIssue($id: String!, $stateId: String!) {
-  issueUpdate(id: $id, input: { stateId: $stateId }) { success }
+  issueUpdate(id: $id, input: { stateId: $stateId }) {
+    success
+    issue {
+      id
+      identifier
+      title
+      updatedAt
+      state { name type }
+    }
+  }
 }`
 
 // MoveIssue moves an issue to the workflow state named statusName,
 // resolved within the issue's own team.
-func (c *HTTP) MoveIssue(ctx context.Context, issueID, statusName string) error {
+func (c *HTTP) MoveIssue(ctx context.Context, issueID, statusName string) (Issue, error) {
 	var resp struct {
 		Issue *struct {
 			Team struct {
@@ -493,10 +502,10 @@ func (c *HTTP) MoveIssue(ctx context.Context, issueID, statusName string) error 
 		} `json:"issue"`
 	}
 	if err := c.do(ctx, issueStatesQuery, map[string]any{"id": issueID}, &resp); err != nil {
-		return fmt.Errorf("move issue: %w", err)
+		return Issue{}, fmt.Errorf("move issue: %w", err)
 	}
 	if resp.Issue == nil {
-		return fmt.Errorf("move issue %s: %w", issueID, ErrNotFound)
+		return Issue{}, fmt.Errorf("move issue %s: %w", issueID, ErrNotFound)
 	}
 	stateID := ""
 	for _, s := range resp.Issue.Team.States.Nodes {
@@ -506,16 +515,46 @@ func (c *HTTP) MoveIssue(ctx context.Context, issueID, statusName string) error 
 		}
 	}
 	if stateID == "" {
-		return fmt.Errorf("move issue %s: no state named %q on its team", issueID, statusName)
+		return Issue{}, fmt.Errorf("move issue %s: no state named %q on its team", issueID, statusName)
 	}
-	var upd updateResult
+	var upd struct {
+		IssueUpdate struct {
+			Success bool `json:"success"`
+			Issue   *struct {
+				ID         string    `json:"id"`
+				Identifier string    `json:"identifier"`
+				Title      string    `json:"title"`
+				UpdatedAt  time.Time `json:"updatedAt"`
+				State      struct {
+					Name string `json:"name"`
+					Type string `json:"type"`
+				} `json:"state"`
+			} `json:"issue"`
+		} `json:"issueUpdate"`
+	}
 	if err := c.do(ctx, moveIssueMutation, map[string]any{"id": issueID, "stateId": stateID}, &upd); err != nil {
-		return fmt.Errorf("move issue: %w", err)
+		return Issue{}, fmt.Errorf("move issue: %w", err)
 	}
 	if !upd.IssueUpdate.Success {
-		return fmt.Errorf("move issue %s: linear reported failure", issueID)
+		return Issue{}, fmt.Errorf("move issue %s: linear reported failure", issueID)
 	}
-	return nil
+	res := Issue{
+		ID:     issueID,
+		Status: statusName,
+	}
+	if upd.IssueUpdate.Issue != nil {
+		if upd.IssueUpdate.Issue.ID != "" {
+			res.ID = upd.IssueUpdate.Issue.ID
+		}
+		res.Identifier = upd.IssueUpdate.Issue.Identifier
+		res.Title = upd.IssueUpdate.Issue.Title
+		if upd.IssueUpdate.Issue.State.Name != "" {
+			res.Status = upd.IssueUpdate.Issue.State.Name
+		}
+		res.StatusType = upd.IssueUpdate.Issue.State.Type
+		res.UpdatedAt = upd.IssueUpdate.Issue.UpdatedAt
+	}
+	return res, nil
 }
 
 const assignIssueMutation = `

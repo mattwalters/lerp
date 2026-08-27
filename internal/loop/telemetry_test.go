@@ -52,7 +52,8 @@ func TestTelemetryRecordsALiveRunsExitCodeAndStatus(t *testing.T) {
 func TestTelemetryRecordsWhereAMovedTicketCameToRest(t *testing.T) {
 	var h *harness
 	h = newHarness(t, 1, func(context.Context, run.Invocation) (run.Result, error) {
-		return run.Result{ExitCode: 0}, h.fake.MoveIssue(context.Background(), "one", "Escalated")
+		_, err := h.fake.MoveIssue(context.Background(), "one", "Escalated")
+		return run.Result{ExitCode: 0}, err
 	})
 	h.fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Todo"})
 
