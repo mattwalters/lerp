@@ -58,7 +58,7 @@ func TestSearchNarrowsAsYouType(t *testing.T) {
 	}
 
 	panel := m.attentionPanel(96, 14)
-	if !strings.Contains(panel, "1/6") {
+	if !strings.Contains(panel, "1/3") {
 		t.Fatalf("the title does not say how much of the list is on screen:\n%s", panel)
 	}
 	if !strings.Contains(panel, "/gore") {
@@ -85,14 +85,13 @@ func TestSearchMatchesTheColumnsOnTheRow(t *testing.T) {
 		query string
 		want  []string
 	}{
-		{"lerp-48", []string{"LERP-48"}},         // identifier, folded
-		{"CURL", []string{"LERP-23"}},            // title, folded
-		{"in review", []string{"LERP-48"}},       // status, with a space in it
-		{"tui redesign", []string{"LERP-48"}},    // project
-		{"work", []string{"LERP-60", "LERP-70"}}, // a substring of two titles
-		{"zzz", nil},                             // nothing
-		{"", []string{"LERP-1", "LERP-22", "LERP-23", // every row, in the sort's order
-			"LERP-48", "LERP-60", "LERP-70"}},
+		{"lerp-22", []string{"LERP-22"}},
+		{"CURL", []string{"LERP-23"}},
+		{"backlog", []string{"LERP-22", "LERP-23", "LERP-70"}},
+		{"open-source", []string{"LERP-22", "LERP-23"}},
+		{"work", []string{"LERP-70"}},
+		{"zzz", nil},
+		{"", []string{"LERP-22", "LERP-23", "LERP-70"}},
 	} {
 		m := searching(t, tc.query)
 		got := shownTickets(m)
@@ -108,7 +107,7 @@ func TestSearchMatchesTheColumnsOnTheRow(t *testing.T) {
 // Done-when: the search reaches the rows on screen and no further. A query
 // only a backlog ticket matches finds nothing while the fold is closed —
 // SCOPE calls the search a substring over the rows the panel is showing, and
-// a folded row is not one — and finds it once B has put the row on screen.
+// a folded row is not one — and finds it once the Backlog slice is selected.
 func TestSearchDoesNotReachAFoldedBacklog(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, keyMsg("1"))
@@ -121,19 +120,19 @@ func TestSearchDoesNotReachAFoldedBacklog(t *testing.T) {
 	}
 	// The panel says the fold is why, rather than leaving the operator to
 	// conclude the ticket is not on the board — but not by naming a key the
-	// prompt would swallow. A `B` typed here is a letter in the query.
+	// prompt would swallow. A `]` typed here is a letter in the query.
 	panel := m.attentionPanel(96, 14)
 	if !strings.Contains(panel, "1 waiting to enter the pipeline") {
 		t.Fatalf("a search that found nothing does not say the fold has rows:\n%s", panel)
 	}
 	if strings.Contains(panel, "to browse") {
-		t.Fatalf("the summary offers B while the prompt owns the keyboard:\n%s", panel)
+		t.Fatalf("the summary offers ] while the prompt owns the keyboard:\n%s", panel)
 	}
 
 	m = update(t, m, keyMsg("enter")) // keep the filter, hand the keys back
 	// The keyboard is back, and so is the key.
-	if panel := m.attentionPanel(96, 14); !strings.Contains(panel, "B to browse") {
-		t.Fatalf("the summary did not offer B once the prompt closed:\n%s", panel)
+	if panel := m.attentionPanel(96, 14); !strings.Contains(panel, "] to browse") {
+		t.Fatalf("the summary did not offer ] once the prompt closed:\n%s", panel)
 	}
 	m = browseBacklog(t, m)
 	if got := shownTickets(m); !slices.Equal(got, []string{"LERP-23"}) {
@@ -173,7 +172,7 @@ func TestSearchIsInertBehindAFullyFoldedInbox(t *testing.T) {
 	scoped = update(t, scoped, eventMsg{ev: allBacklogProject()})
 	scoped = browseBacklog(t, scoped)
 	scoped = update(t, scoped, keyMsg("P")) // Later, every row of it backlog
-	scoped = update(t, scoped, keyMsg("B")) // folded away under the scope
+	scoped = update(t, scoped, keyMsg("]")) // cycle slice back to all
 	if len(scoped.shown) != 0 || scoped.project != "Later" {
 		t.Fatalf("setup: %d rows scoped to %q, want none scoped to Later",
 			len(scoped.shown), scoped.project)
@@ -304,7 +303,7 @@ func TestSearchEscCancelsThenClears(t *testing.T) {
 	// A second search over the first: the prompt opens empty, so the list is
 	// whole again while it is being typed into.
 	m = update(t, m, keyMsg("/"))
-	if len(m.shown) != 6 {
+	if len(m.shown) != 3 {
 		t.Fatalf("the prompt opened onto %d rows, want the whole list", len(m.shown))
 	}
 	m = typeSearch(t, m, "curl")
@@ -322,7 +321,7 @@ func TestSearchEscCancelsThenClears(t *testing.T) {
 	}
 
 	m = update(t, m, keyMsg("esc"))
-	if m.search != "" || len(m.shown) != 6 {
+	if m.search != "" || len(m.shown) != 3 {
 		t.Fatalf("esc with no prompt open did not clear the filter: query %q, %d rows",
 			m.search, len(m.shown))
 	}
@@ -337,8 +336,8 @@ func TestSearchComposesWithSortAndProject(t *testing.T) {
 	if m.search != "work" {
 		t.Fatalf("sorting cleared the search: %q", m.search)
 	}
-	if got := shownTickets(m); !slices.Equal(got, []string{"LERP-60", "LERP-70"}) {
-		t.Fatalf("shown after sorting = %v, want the same two rows", got)
+	if got := shownTickets(m); !slices.Equal(got, []string{"LERP-70"}) {
+		t.Fatalf("shown after sorting = %v, want the same row", got)
 	}
 
 	// Both filters at once intersect: the OSS project holds no row matching
@@ -360,8 +359,8 @@ func TestSearchComposesWithSortAndProject(t *testing.T) {
 	if m.project != "Open-source readiness" {
 		t.Fatalf("clearing the search cleared the project scope: %q", m.project)
 	}
-	if got := len(m.shown); got != 3 {
-		t.Fatalf("the project scope shows %d rows, want the 3 it had", got)
+	if got := len(m.shown); got != 2 {
+		t.Fatalf("the project scope shows %d rows, want the 2 it had", got)
 	}
 }
 
@@ -373,7 +372,6 @@ func TestSearchKeepsTheSelectionOrTakesItToTheTop(t *testing.T) {
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: board()})
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues}})
-	m = browseBacklog(t, m)       // the whole fixture, so "b" has several rows to match
 	m = update(t, m, keyMsg("j")) // LERP-48, second under the status default
 
 	m = typeSearch(t, update(t, m, keyMsg("/")), "read")
@@ -396,8 +394,8 @@ func TestSearchKeepsTheSelectionOrTakesItToTheTop(t *testing.T) {
 		t.Fatalf("selection after cancelling = %s, want the row it started on", got)
 	}
 	m = typeSearch(t, update(t, m, keyMsg("/")), "b")
-	if got := shownTickets(m); len(got) < 3 || got[0] != "LERP-1" {
-		t.Fatalf("shown = %v, want several rows headed by LERP-1", got)
+	if got := shownTickets(m); len(got) < 1 || got[0] != "LERP-1" {
+		t.Fatalf("shown = %v, want rows headed by LERP-1", got)
 	}
 	if got := m.attnSel; got != 0 {
 		t.Fatalf("selection index = %d, want the first row", got)
@@ -419,7 +417,7 @@ func TestSearchSurvivesAPass(t *testing.T) {
 	if m.search != "work" {
 		t.Fatalf("a pass cleared the accepted search: %q", m.search)
 	}
-	if got := shownTickets(m); !slices.Equal(got, []string{"LERP-60", "LERP-70"}) {
+	if got := shownTickets(m); !slices.Equal(got, []string{"LERP-70"}) {
 		t.Fatalf("shown after a pass = %v, want the filtered rows", got)
 	}
 
@@ -461,8 +459,8 @@ func TestSearchSurvivesAPass(t *testing.T) {
 		t.Fatalf("an empty inbox kept a filter nothing shows: %q", m.search)
 	}
 	m = update(t, m, eventMsg{ev: board()})
-	if got := len(m.shown); got != 6 {
-		t.Fatalf("the board came back filtered: %d rows, want all 6", got)
+	if got := len(m.shown); got != 3 {
+		t.Fatalf("the board came back filtered: %d rows, want 3", got)
 	}
 }
 
@@ -487,7 +485,7 @@ func TestSearchTakesTheBoxsOwnMessages(t *testing.T) {
 	m = update(t, m, keyMsg("esc"))
 	m.searchInput.SetValue("gore")
 	m = update(t, m, widgetMsg{})
-	if m.search != "" || len(m.shown) != 6 {
+	if m.search != "" || len(m.shown) != 3 {
 		t.Fatalf("a closed box still filtered the list: query %q, %d rows", m.search, len(m.shown))
 	}
 }
@@ -700,7 +698,7 @@ func TestEscClosesAnOverlayBeforeItClearsTheFilter(t *testing.T) {
 	// panel it is not even on would swallow the key.
 	m = openMain(t, update(t, m, keyMsg("2")))
 	m = update(t, m, keyMsg("esc"))
-	if m.search != "" || len(m.shown) != 6 {
+	if m.search != "" || len(m.shown) != 3 {
 		t.Fatalf("esc off the inbox panel left the filter on: %q, %d rows", m.search, len(m.shown))
 	}
 	if !m.mainOpen() {

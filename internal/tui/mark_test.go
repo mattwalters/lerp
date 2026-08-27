@@ -632,7 +632,7 @@ func TestTheWordmarkHidesWhenTheInboxHasSomething(t *testing.T) {
 }
 
 // The screenshot case (LERP-151): the inbox holds only the empty-state line
-// and the folded-backlog summary ("N waiting to enter the pipeline — B to browse"),
+// and the folded-backlog summary ("N waiting to enter the pipeline — ] to browse"),
 // with three lanes running below in the work panel. The mark renders centered
 // in the inbox body, clear of both text lines by the margin.
 func TestTheWordmarkShowsWithRunningLanesAndFoldedBacklog(t *testing.T) {
@@ -649,8 +649,8 @@ func TestTheWordmarkShowsWithRunningLanesAndFoldedBacklog(t *testing.T) {
 	}}})
 	// Inbox has folded backlog tickets:
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
-		{Ticket: "LERP-10", Title: "backlog 1", Relevance: loop.StatusBacklog},
-		{Ticket: "LERP-11", Title: "backlog 2", Relevance: loop.StatusBacklog},
+		{Ticket: "LERP-10", Title: "backlog 1", Status: "Backlog", Relevance: loop.StatusBacklog},
+		{Ticket: "LERP-11", Title: "backlog 2", Status: "Backlog", Relevance: loop.StatusBacklog},
 	}}})
 	m = update(t, m, tickedMsg{})
 	if !m.inboxEmptySettled {
@@ -693,67 +693,67 @@ func TestTheWordmarkShowsWithRunningLanesAndFoldedBacklog(t *testing.T) {
 	}
 }
 
-// Unfolding the backlog puts rows on screen, which immediately hides the mark.
-// Folding it back restores the mark.
+// Slicing to the Backlog puts rows on screen, which immediately hides the mark.
+// Cycling back to all restores the mark.
 func TestTheWordmarkHidesWhenBacklogUnfolds(t *testing.T) {
 	forceColour(t)
 	m, _, _ := newTestModel(t, 2)
 	m = pastTheSplash(t, m)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
-		{Ticket: "LERP-10", Title: "backlog 1", Relevance: loop.StatusBacklog},
+		{Ticket: "LERP-10", Title: "backlog 1", Status: "Backlog", Relevance: loop.StatusBacklog},
 	}}})
 	m = update(t, m, tickedMsg{})
 	if !hasDimMark(m.View()) {
 		t.Fatalf("setup: mark not showing with folded backlog:\n%s", m.View())
 	}
-	// Press 'B' to unfold backlog:
-	m = update(t, m, keyMsg("B"))
+	// Press ']' to cycle to Backlog slice:
+	m = update(t, m, keyMsg("]"))
 	if hasDimMark(m.View()) {
-		t.Fatalf("the mark remained on screen after unfolding the backlog:\n%s", m.View())
+		t.Fatalf("the mark remained on screen after slicing to Backlog:\n%s", m.View())
 	}
 	if !strings.Contains(m.View(), "LERP-10") {
-		t.Fatalf("backlog item not shown after unfold:\n%s", m.View())
+		t.Fatalf("backlog item not shown after slicing:\n%s", m.View())
 	}
-	// Press 'B' to fold backlog again:
-	m = update(t, m, keyMsg("B"))
+	// Press ']' to cycle back to all:
+	m = update(t, m, keyMsg("]"))
 	if !hasDimMark(m.View()) {
-		t.Fatalf("the mark did not reappear after re-folding the backlog:\n%s", m.View())
+		t.Fatalf("the mark did not reappear after cycling back to all:\n%s", m.View())
 	}
 }
 
-// A poll pass landing while the backlog is unfolded reports the same backlog
-// items, but must not demote inboxEmptySettled — fold state is a view
-// preference, not data arrival. Refolding the backlog restores the mark
+// A poll pass landing while a slice is active reports the same backlog
+// items, but must not demote inboxEmptySettled — slice state is a view
+// preference, not data arrival. Returning to all restores the mark
 // immediately, without having to wait for the next poll pass to settle.
 func TestTheWordmarkRestoresImmediatelyOnRefoldAfterPassLanded(t *testing.T) {
 	forceColour(t)
 	m, _, _ := newTestModel(t, 2)
 	m = pastTheSplash(t, m)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
-		{Ticket: "LERP-10", Title: "backlog 1", Relevance: loop.StatusBacklog},
+		{Ticket: "LERP-10", Title: "backlog 1", Status: "Backlog", Relevance: loop.StatusBacklog},
 	}}})
 	m = update(t, m, tickedMsg{})
 	if !hasDimMark(m.View()) {
 		t.Fatalf("setup: mark not showing with folded backlog:\n%s", m.View())
 	}
-	// Press 'B' to unfold backlog:
-	m = update(t, m, keyMsg("B"))
+	// Press ']' to cycle to Backlog slice:
+	m = update(t, m, keyMsg("]"))
 	if hasDimMark(m.View()) {
-		t.Fatalf("the mark remained on screen after unfolding the backlog:\n%s", m.View())
+		t.Fatalf("the mark remained on screen after slicing to Backlog:\n%s", m.View())
 	}
-	// A pass lands while unfolded:
+	// A pass lands while slice active:
 	m = update(t, m, tickMsg{})
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
-		{Ticket: "LERP-10", Title: "backlog 1", Relevance: loop.StatusBacklog},
+		{Ticket: "LERP-10", Title: "backlog 1", Status: "Backlog", Relevance: loop.StatusBacklog},
 	}}})
 	m = update(t, m, tickedMsg{})
 	if hasDimMark(m.View()) {
-		t.Fatalf("the mark showed while backlog was unfolded:\n%s", m.View())
+		t.Fatalf("the mark showed while slice was active:\n%s", m.View())
 	}
-	// Press 'B' to fold backlog again: mark should return immediately without another tick
-	m = update(t, m, keyMsg("B"))
+	// Press ']' to cycle back to all: mark should return immediately without another tick
+	m = update(t, m, keyMsg("]"))
 	if !hasDimMark(m.View()) {
-		t.Fatalf("the mark did not reappear immediately after re-folding the backlog when a pass landed mid-browse:\n%s", m.View())
+		t.Fatalf("the mark did not reappear immediately after returning to all when a pass landed mid-browse:\n%s", m.View())
 	}
 }
 
@@ -834,19 +834,19 @@ func TestTheWordmarkStaysOffScreenBehindProjectFilter(t *testing.T) {
 	m, _, _ := newTestModel(t, 2)
 	m = pastTheSplash(t, m)
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
-		{Ticket: "LERP-10", Title: "backlog 1", Project: "Core", Relevance: loop.StatusBacklog},
+		{Ticket: "LERP-10", Title: "backlog 1", Status: "Backlog", Project: "Core", Relevance: loop.StatusBacklog},
 	}}})
 	m = update(t, m, tickedMsg{})
 	if !hasDimMark(m.View()) {
 		t.Fatalf("setup: mark not showing with folded backlog:\n%s", m.View())
 	}
-	// Unfold to reach the project cycle, scope to "Core", and refold:
-	m = update(t, m, keyMsg("B"))
+	// Slice to reach the project cycle, scope to "Core", and cycle back to all:
+	m = update(t, m, keyMsg("]"))
 	m = update(t, m, keyMsg("P"))
 	if m.project != "Core" {
 		t.Fatalf("setup: P did not scope to project Core: %q", m.project)
 	}
-	m = update(t, m, keyMsg("B"))
+	m = update(t, m, keyMsg("]"))
 	if m.project != "Core" || len(m.shown) != 0 {
 		t.Fatalf("setup: folding changed the scope: %q, %d rows", m.project, len(m.shown))
 	}
