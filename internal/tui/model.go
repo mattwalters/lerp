@@ -815,37 +815,37 @@ func (m model) handleHelpKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Help), key.Matches(msg, m.keys.Close):
 		m.setHelp(false)
 		return m, nil
-	case key.Matches(msg, m.keys.Attention):
+	case !m.modal() && key.Matches(msg, m.keys.Attention):
 		m.setFocus(panelAttention)
 		m.helpVp.SetContent(m.helpText())
 		return m, nil
-	case key.Matches(msg, m.keys.Work):
+	case !m.modal() && key.Matches(msg, m.keys.Work):
 		m.setFocus(panelWork)
 		m.helpVp.SetContent(m.helpText())
 		return m, nil
-	case key.Matches(msg, m.keys.NextPanel):
+	case !m.modal() && key.Matches(msg, m.keys.NextPanel):
 		m.cycleSurface(1)
 		m.helpVp.SetContent(m.helpText())
 		return m, nil
-	case key.Matches(msg, m.keys.PrevPanel):
+	case !m.modal() && key.Matches(msg, m.keys.PrevPanel):
 		m.cycleSurface(-1)
 		m.helpVp.SetContent(m.helpText())
 		return m, nil
 	case key.Matches(msg, m.keys.Up):
-		if m.mainFocused() {
+		if m.modal() || m.mainFocused() {
 			m.scrollMain(-1)
 		} else {
 			m.moveSelection(-1)
 		}
 		return m, nil
 	case key.Matches(msg, m.keys.Down):
-		if m.mainFocused() {
+		if m.modal() || m.mainFocused() {
 			m.scrollMain(1)
 		} else {
 			m.moveSelection(1)
 		}
 		return m, nil
-	case key.Matches(msg, m.keys.Raw):
+	case !m.modal() && key.Matches(msg, m.keys.Raw):
 		if m.logOnScreen() {
 			m.rawLog = !m.rawLog
 			m.refreshLog()
