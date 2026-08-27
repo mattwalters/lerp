@@ -70,12 +70,12 @@ processes running on this machine; and each pass starts, adopts, or reaps
 agents until the two match. A crash is not an error case — it is drift, and
 the loop repairs drift.
 
-That is why killing lerp is cheap. Agents are their own process groups with
-their run evidence on disk, so they outlive the lerp that started them, and
-the next `lerp` adopts the live ones and reaps the dead. Progress is
-checkpointed only at queue boundaries, as artifacts in Linear — a plan in
-the ticket, a pull request — so the worst case is a re-run stage, never a
-lost ticket.
+That is why an agent is not lerp's child in any sense that matters. Each one
+is its own process group with its run evidence on disk, so it outlives the
+lerp that started it, and the pass that finds it belongs to whichever lerp is
+open — [what a crash or a kill actually
+costs](troubleshooting.md#what-happens-on-crash-or-kill) is a question that
+page answers.
 
 ## The claim
 

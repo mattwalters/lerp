@@ -11,16 +11,9 @@ Lerp is a small, reliable CLI, written in Go, that orchestrates
 software work through Linear. You put tickets on a board; lerp runs
 coding agents to move them across it.
 
-The mental model is three sentences. **Linear is the database**: all
-durable state — what work exists, what stage it is in, who has claimed
-it, what was decided — lives in Linear, and lerp keeps no store of its
-own. **The board is the workflow**: a queue is a Linear status with a
-prompt, a runner, and a status to move to on success; workflow topology
-exists only in where tickets sit and where `on_success` points, never
-in config syntax. **Lerp is a reconciler**: desired state is the board,
-actual state is the agent processes running on this machine, and the
-loop starts, adopts, or reaps agents until the two match — a crash is
-not an error case, it is drift, and the loop repairs drift.
+Linear is the database, the board is the workflow, and lerp is the
+reconciler between them —
+[the model at length](https://mattwalters.github.io/lerp/docs/the-board/).
 
 ## Install
 

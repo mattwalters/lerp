@@ -41,7 +41,9 @@ file if there is none — lerp's run records, logs and workspace worktrees
 live there, and none of it belongs in your history. Commit that change along
 with `lerp.toml`: a colleague who clones a repo that already has a
 `lerp.toml` never runs `lerp init`, so an uncommitted ignore covers only
-your clone.
+your clone. A repository whose ignore list already names `.lerp/` is left
+alone, and an ignore file lerp cannot write is reported, not fatal — init
+still writes `lerp.toml`.
 
 The conversation's last question is whether the stock Claude runner should
 include `--permission-mode bypassPermissions`. The default is no — saying
