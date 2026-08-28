@@ -45,3 +45,10 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # The workflow token above is scoped to this repo; pushing the brew
+          # formula to mattwalters/homebrew-tap needs its own credential — a
+          # fine-grained PAT with contents read/write on the tap repo only,
+          # stored as a repo secret. Absent, the release fails at the brew
+          # step with an empty-token error rather than publishing silently
+          # without a formula.
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}

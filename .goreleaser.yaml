@@ -57,6 +57,39 @@ archives:
 checksum:
   name_template: checksums.txt
 
+# `brew install mattwalters/tap/lerp`. The cask is generated from the
+# release — goreleaser writes Casks/lerp.rb into the tap repo pointing at this
+# release's archives and their checksums; nothing in the tap is written by
+# hand. A cask and not a formula because goreleaser deprecated `brews` in
+# favor of this (and `goreleaser check`, which CI runs, fails on deprecated
+# keys). The trade: casks are macOS-only, so Homebrew-on-Linux users fall
+# back to install.sh or `go install` — both already documented. The push
+# needs a token that can write to the tap repo, which the workflow's own
+# GITHUB_TOKEN cannot: release.yml passes HOMEBREW_TAP_TOKEN, a fine-grained
+# PAT scoped to contents on mattwalters/homebrew-tap alone.
+homebrew_casks:
+  - repository:
+      owner: mattwalters
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Casks
+    homepage: https://lerp.sh
+    description: Orchestrator for Linear — runs coding agents to move tickets across a board
+    # `auto` skips the cask push for prerelease tags, mirroring
+    # `release.prerelease: auto` below: a `v0.2.0-rc1` cuts a GitHub
+    # prerelease but brew keeps serving the last stable cask.
+    skip_upload: auto
+    # Unlike formulae, cask installs quarantine what they download, and the
+    # binaries are ad-hoc signed at best (the Go linker's arm64 signature),
+    # which Gatekeeper kills on first run. This is goreleaser's documented
+    # hook for exactly that: strip the quarantine attribute at install time.
+    hooks:
+      post:
+        install: |
+          if system_command("/usr/bin/xattr", args: ["-h"]).exit_status == 0
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/lerp"]
+          end
+
 # What `make snapshot` builds under. Snapshot mode has no tag to read, so
 # without this every snapshot would claim the last release's version — the
 # one number a snapshot must not be mistaken for.

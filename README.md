@@ -24,6 +24,12 @@ build there.
 go install github.com/mattwalters/lerp/cmd/lerp@latest
 ```
 
+With Homebrew:
+
+```sh
+brew install mattwalters/tap/lerp
+```
+
 Without a Go toolchain, `install.sh` downloads the right binary for
 your OS and arch from the latest release, verifies it against the
 published checksum, and installs it to `$HOME/.local/bin`:
@@ -53,7 +59,8 @@ Linear user account for automation, so lerp acts as its own member.
 
 **How do I clean up or uninstall?**
 `make uninstall` from a clone removes the binary `make install` put in your
-`GOBIN`; an install.sh install is removed by deleting `lerp` from
+`GOBIN`; a brew install is removed by `brew uninstall lerp`; an install.sh
+install is removed by deleting `lerp` from
 `$HOME/.local/bin` (or the `--bin-dir` you chose). To clean up local state,
 `rm -rf .lerp/` once all agents have stopped — run evidence in
 `.lerp/runs/` is how the next `lerp` adopts or reaps live agents, and
