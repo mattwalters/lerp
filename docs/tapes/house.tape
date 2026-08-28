@@ -14,6 +14,11 @@
 # directory-with-a-space quoting to defend against.
 Require lerp
 
+# Sourced from .demo/theme.tape, which the Makefile's render-tape recipe
+# writes per variant before invoking vhs. This is why house.tape is not
+# runnable outside make — which Require lerp already made true.
+Source .demo/theme.tape
+
 Set Shell "bash"
 Set FontSize 14
 Set Width 1200

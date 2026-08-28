@@ -202,13 +202,18 @@ POSTERS_DIR := docs/static/posters
 # GIF bytes are not reproducible, so nothing here diffs them. The caps are the
 # only thing standing between "a couple of MB" and drift. mp4/webm get a
 # smaller cap per file since a cast plays two of them; LERP-132 tightened
-# CAST_MAX_BYTES to 1 MiB and added a 256 KiB cap for the committed poster.
+# CAST_MAX_BYTES to 1 MiB and added a poster cap (raised to 320 KiB in LERP-182
+# to cover the light variant).
 # og.png is the social card, rendered alongside the GIF by demo.tape's
 # Screenshot; a TUI change wants `make demo` re-run.
 DEMO_MAX_BYTES := 3145728
 OG_MAX_BYTES := 524288
 CAST_MAX_BYTES := 1048576
-POSTER_MAX_BYTES := 262144
+POSTER_MAX_BYTES := 327680
+
+THEME_dark := rose-pine-moon
+THEME_light := rose-pine-dawn
+VARIANT ?= dark
 
 # Renders docs/tapes/$(TAPE).tape into $(DEMO_RENDER_DIR), gated on the
 # harness's own exit status — nothing about file size, which the caller
@@ -219,18 +224,27 @@ POSTER_MAX_BYTES := 262144
 # its own environment (which is what lets a sourced house.tape's `Require
 # lerp` see it, and retires the tape's old habit of exporting both into the
 # recorded shell by hand), and reads back the harness's own exit status.
+# LERP_BACKGROUND chooses the palette lerp draws (internal/tui/theme.go)
+# to match the terminal theme written into .demo/theme.tape — the recorded
+# shell inherits that environment, and tui.Run reads the variable at
+# startup (UseBackground), so the palette lerp draws is chosen by the same
+# word that chose the terminal's ground.
 # Not meant to be run directly.
 .PHONY: render-tape
 render-tape:
 	@test -n "$(TAPE)" || { echo 'render-tape: TAPE is required'; exit 1; }
+	@test -n "$(THEME_$(VARIANT))" || { \
+	  echo 'render-tape: VARIANT must be dark or light'; \
+	  exit 1; }
 	@command -v vhs >/dev/null || { \
 	  echo 'render-tape: vhs is not installed — see https://github.com/charmbracelet/vhs'; \
 	  exit 1; }
 	go build -o $(DEMO_BIN)/lerp ./internal/demo
+	@printf 'Set Theme "%s"\n' '$(THEME_$(VARIANT))' > $(DEMO_BIN)/theme.tape
 	rm -rf $(DEMO_RENDER_DIR)
 	mkdir -p $(DEMO_RENDER_DIR)
 	rm -f $(DEMO_EXIT)
-	PATH="$(CURDIR)/$(DEMO_BIN):$$PATH" LERP_DEMO_EXIT="$(CURDIR)/$(DEMO_EXIT)" \
+	PATH="$(CURDIR)/$(DEMO_BIN):$$PATH" LERP_DEMO_EXIT="$(CURDIR)/$(DEMO_EXIT)" LERP_BACKGROUND="$(VARIANT)" \
 	  vhs $(TAPES_DIR)/$(TAPE).tape
 # The harness runs inside the terminal vhs is recording, so its exit code
 # reaches bash and stops there: vhs exits 0 whether the board opened or the
@@ -259,11 +273,11 @@ demo: ## Re-record docs/demo.gif and docs/static/og.png from docs/tapes/demo.tap
 	      '$(DEMO_GIF)' "$$size" '$(DEMO_MAX_BYTES)' '$(DEMO_RENDER_DIR)/demo.gif'; exit 1; }; \
 	  mv $(DEMO_RENDER_DIR)/demo.gif $(DEMO_GIF) && \
 	  printf 'rendered %s (%s bytes)\n' '$(DEMO_GIF)' "$$size"
-	@size=$$(wc -c < $(DEMO_RENDER_DIR)/og.png | tr -d ' '); \
+	@size=$$(wc -c < $(DEMO_RENDER_DIR)/demo.png | tr -d ' '); \
 	  test "$$size" -le $(OG_MAX_BYTES) || { \
 	    printf 'demo: %s came back %s bytes, over the %s cap (left at %s)\n' \
-	      '$(OG_PNG)' "$$size" '$(OG_MAX_BYTES)' '$(DEMO_RENDER_DIR)/og.png'; exit 1; }; \
-	  mv $(DEMO_RENDER_DIR)/og.png $(OG_PNG) && \
+	      '$(OG_PNG)' "$$size" '$(OG_MAX_BYTES)' '$(DEMO_RENDER_DIR)/demo.png'; exit 1; }; \
+	  cp $(DEMO_RENDER_DIR)/demo.png $(OG_PNG) && \
 	  printf 'rendered %s (%s bytes)\n' '$(OG_PNG)' "$$size"
 
 # The GIF cap is checked here too, even though nothing under docs/ needs the
@@ -279,49 +293,72 @@ casts: ## Render every tape under docs/tapes/ into docs/static/casts/ (needs vhs
 	@for f in $(TAPES_DIR)/*.tape; do \
 	  name=$$(basename "$$f" .tape); \
 	  test "$$name" = "house" && continue; \
-	  $(MAKE) render-tape TAPE="$$name" || exit 1; \
-	  if [ -e $(DEMO_RENDER_DIR)/$$name.gif ]; then \
-	    size=$$(wc -c < $(DEMO_RENDER_DIR)/$$name.gif | tr -d ' '); \
-	    test "$$size" -le $(DEMO_MAX_BYTES) || { \
-	      printf 'casts: %s.gif came back %s bytes, over the %s cap\n' \
-	        "$$name" "$$size" '$(DEMO_MAX_BYTES)'; exit 1; }; \
-	  fi; \
-	  if [ -e $(DEMO_RENDER_DIR)/$$name.png ]; then \
-	    size=$$(wc -c < $(DEMO_RENDER_DIR)/$$name.png | tr -d ' '); \
-	    test "$$size" -le $(POSTER_MAX_BYTES) || { \
-	      printf 'casts: %s.png came back %s bytes, over the %s cap\n' \
-	        "$$name" "$$size" '$(POSTER_MAX_BYTES)'; exit 1; }; \
-	    mkdir -p $(POSTERS_DIR); \
-	    mv $(DEMO_RENDER_DIR)/$$name.png $(POSTERS_DIR)/$$name.png; \
-	  fi; \
-	  for out in $(DEMO_RENDER_DIR)/$$name.mp4 $(DEMO_RENDER_DIR)/$$name.webm; do \
-	    test -e "$$out" || continue; \
-	    size=$$(wc -c < "$$out" | tr -d ' '); \
-	    test "$$size" -le $(CAST_MAX_BYTES) || { \
-	      printf 'casts: %s came back %s bytes, over the %s cap\n' \
-	        "$$out" "$$size" '$(CAST_MAX_BYTES)'; exit 1; }; \
-	    cp "$$out" $(CASTS_DIR)/; \
+	  for variant in dark light; do \
+	    suffix=""; \
+	    test "$$variant" = "light" && suffix="-light"; \
+	    $(MAKE) render-tape TAPE="$$name" VARIANT="$$variant" || exit 1; \
+	    if [ -e $(DEMO_RENDER_DIR)/$$name.gif ]; then \
+	      size=$$(wc -c < $(DEMO_RENDER_DIR)/$$name.gif | tr -d ' '); \
+	      test "$$size" -le $(DEMO_MAX_BYTES) || { \
+	        printf 'casts: %s%s.gif came back %s bytes, over the %s cap\n' \
+	          "$$name" "$$suffix" "$$size" '$(DEMO_MAX_BYTES)'; exit 1; }; \
+	    fi; \
+	    if [ -e $(DEMO_RENDER_DIR)/$$name.png ]; then \
+	      size=$$(wc -c < $(DEMO_RENDER_DIR)/$$name.png | tr -d ' '); \
+	      test "$$size" -le $(POSTER_MAX_BYTES) || { \
+	        printf 'casts: %s%s.png came back %s bytes, over the %s cap\n' \
+	          "$$name" "$$suffix" "$$size" '$(POSTER_MAX_BYTES)'; exit 1; }; \
+	      mkdir -p $(POSTERS_DIR); \
+	      mv $(DEMO_RENDER_DIR)/$$name.png $(POSTERS_DIR)/$$name$$suffix.png; \
+	    fi; \
+	    for ext in mp4 webm; do \
+	      out=$(DEMO_RENDER_DIR)/$$name.$$ext; \
+	      test -e "$$out" || continue; \
+	      size=$$(wc -c < "$$out" | tr -d ' '); \
+	      test "$$size" -le $(CAST_MAX_BYTES) || { \
+	        printf 'casts: %s%s.%s came back %s bytes, over the %s cap\n' \
+	          "$$name" "$$suffix" "$$ext" "$$size" '$(CAST_MAX_BYTES)'; exit 1; }; \
+	      cp "$$out" $(CASTS_DIR)/$$name$$suffix.$$ext; \
+	    done; \
+	    printf 'rendered %s (%s)\n' "$$name" "$$variant"; \
 	  done; \
-	  printf 'rendered %s\n' "$$name"; \
 	done
 # The rot check house.tape's Require and demo.tape's Wait+Screen lines do not
 # cover: a `{{< cast >}}` shortcode (docs/layouts/_shortcodes/cast.html)
 # names its webm/mp4 and poster by path from the site root, and every one of
-# those paths must resolve to a file this run just staged — a page embedding
-# a cast or poster no tape renders is otherwise a silently blank frame on the
-# published site.
+# those paths must resolve to a file this run just staged, along with its
+# -light twin — a page embedding a cast or poster no tape renders is otherwise
+# a silently blank frame on the published site.
 	@missing=0; \
 	  for ref in $$(grep -rhoE '(webm|mp4)="casts/[^"]+"' docs/content 2>/dev/null \
 	                | sed -E 's/.*"casts\/([^"]+)"/\1/'); do \
 	    test -e "$(CASTS_DIR)/$$ref" || { \
 	      echo "casts: docs/content references casts/$$ref, which no tape rendered"; \
 	      missing=1; }; \
+	    case "$$ref" in \
+	      *-light.*) ;; \
+	      *) \
+	        light=$$(echo "$$ref" | sed -E 's/\.([^.]+)$$/-light.\1/'); \
+	        test -e "$(CASTS_DIR)/$$light" || { \
+	          echo "casts: docs/content references casts/$$light, which no tape rendered"; \
+	          missing=1; }; \
+	        ;; \
+	    esac; \
 	  done; \
 	  for ref in $$(grep -rhoE 'poster="posters/[^"]+"' docs/content 2>/dev/null \
 	                | sed -E 's/.*"posters\/([^"]+)"/\1/'); do \
 	    test -e "$(POSTERS_DIR)/$$ref" || { \
 	      echo "casts: docs/content references posters/$$ref, which no tape rendered"; \
 	      missing=1; }; \
+	    case "$$ref" in \
+	      *-light.*) ;; \
+	      *) \
+	        light=$$(echo "$$ref" | sed -E 's/\.([^.]+)$$/-light.\1/'); \
+	        test -e "$(POSTERS_DIR)/$$light" || { \
+	          echo "casts: docs/content references posters/$$light, which no tape rendered"; \
+	          missing=1; }; \
+	        ;; \
+	    esac; \
 	  done; \
 	  test "$$missing" -eq 0
 

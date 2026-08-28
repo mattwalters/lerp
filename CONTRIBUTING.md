@@ -70,8 +70,9 @@ The same rules the agents work under (see `AGENTS.md`):
   it. Reproduce it locally with `make casts`, which needs
   [vhs](https://github.com/charmbracelet/vhs); `make demo` does the
   same for the README's tape alone and additionally moves the result
-  into `docs/demo.gif`. A tape's own `Wait+Screen` lines catch a
-  keystroke that no longer drives the UI, but a change to the TUI a
+  into `docs/demo.gif`. Every tape renders twice, dark and light, and a
+  re-record commits the light poster alongside `docs/demo.gif`. A tape's
+  own `Wait+Screen` lines catch a keystroke that no longer drives the UI, but a change to the TUI a
   tape never asks anything of re-records nothing if it touches none of
   the paths above — so if your change dates a cast, run `make demo`
   and commit `docs/demo.gif` with it.
