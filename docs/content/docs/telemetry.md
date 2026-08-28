@@ -12,41 +12,33 @@ outcome.
 
 ## Design stance
 
-Telemetry is history, not state ([SCOPE.md](SCOPE.md) invariant 1). It
-embodies four principles:
+Telemetry is history, not state ([SCOPE.md](SCOPE.md) invariant 1). Four
+principles:
 
 - **Written once at run exit by deterministic code.** The settling lane's
   goroutine totals token usage from the stream log, notes exit timing and
   exit code, and appends the line before freeing the lane.
-- **Read by nothing in lerp.** The reconciling loop and the TUI do not
-  query, parse, or depend on telemetry. Losing the file costs a chart,
-  never a ticket or correctness.
+- **Read by nothing in lerp.** The loop and the TUI do not query, parse,
+  or depend on it. Losing the file costs a chart, never a ticket.
 - **Never posted to Linear.** Linear receives stage-boundary decisions —
   plans, pull requests, verdicts. Process measurements belong to local
   history (SCOPE.md invariant 7), never on a ticket.
 - **Never trusts agent prose.** Measurements come from config, the loop's
-  own evidence records, and deterministic decoders of the stream logs. Lerp
-  never parses agent self-reports or asks agents to report their own spend.
+  own evidence records, and deterministic decoders of the stream logs —
+  never from agents reporting their own spend.
 
 ## Where the file lives
-
-The telemetry file is stored at:
 
 ```
 $XDG_STATE_HOME/lerp/runs.jsonl
 ```
 
-If `XDG_STATE_HOME` is unset, it falls back to:
+With `XDG_STATE_HOME` unset, `~/.local/state/lerp/runs.jsonl`, on both
+macOS and Linux.
 
-```
-~/.local/state/lerp/runs.jsonl
-```
-
-on every platform (macOS and Linux).
-
-The file and its parent directories are created automatically on the first
-finished run. Writes are serialized across lanes with a process mutex, and
-use append mode (`O_APPEND`) so multiple `lerp` processes on different
+The file and its parent directories are created on the first finished
+run. Writes are serialized across lanes with a process mutex and use
+append mode (`O_APPEND`), so multiple `lerp` processes on different
 repositories can append concurrently without tearing lines.
 
 ## The line format
@@ -54,10 +46,10 @@ repositories can append concurrently without tearing lines.
 The format is a stable interface: changes are additive only, and keys are
 never renamed or repurposed.
 
-Fields that a runner or settlement path could not supply are omitted
+Fields a runner or settlement path could not supply are omitted
 (`omitempty`) rather than zero-faked: a command-template runner naming no
-vendor omits `vendor`, and a killed run with no exit file omits `exit_code`
-and `duration_ms`.
+vendor omits `vendor`, and a killed run with no exit file omits
+`exit_code` and `duration_ms`.
 
 | Field | Type | Description |
 | --- | --- | --- |
@@ -84,11 +76,9 @@ and `duration_ms`.
 
 ## Querying with `jq`
 
-Because the file is standard JSON Lines, `jq` is the dashboard.
+The file is standard JSON Lines, so `jq` is the dashboard.
 
 ### Total cost per ticket
-
-Sum the cost across all runs for each ticket:
 
 ```sh
 jq -s 'group_by(.ticket)[] | {
@@ -99,8 +89,6 @@ jq -s 'group_by(.ticket)[] | {
 ```
 
 ### Tokens per queue over the past 7 days
-
-Filter by timestamp and sum token usage and cost per queue:
 
 ```sh
 jq --arg since "$(date -u -v-7d +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '7 days ago' +%Y-%m-%dT%H:%M:%SZ)" \
@@ -114,8 +102,6 @@ jq --arg since "$(date -u -v-7d +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '7
 
 ### Spend and runs by model
 
-Group by model to see where spend and token volume go:
-
 ```sh
 jq -s 'group_by(.model // "unspecified")[] | {
   model: .[0].model // "unspecified",
@@ -126,8 +112,6 @@ jq -s 'group_by(.model // "unspecified")[] | {
 ```
 
 ### Clean exits by queue
-
-Check success rates (`exit_code == 0`) across queues:
 
 ```sh
 jq -s 'group_by(.queue)[] | {

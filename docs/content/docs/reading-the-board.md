@@ -14,13 +14,12 @@ lerp
 open, and there is no daemon.
 
 Two panels share the screen, and lerp opens focused on the **Inbox**: the
-loop runs the board on its own, so what is worth the first look is what
-needs *you*. The list owns that screen — both panels start with their pane
-closed, so each table opens at full width — and `2` moves to the **Work**
-panel.
+loop runs the board on its own, so the first look belongs to what needs
+*you*. Both panels start with their pane closed and their table at full
+width.
 
-`1` and `2` choose a panel and `tab` cycles between them; `↑`/`↓` pick a row.
-`?` opens the full key list at any time, and `q` quits.
+`1` and `2` choose a panel and `tab` cycles between them; `↑`/`↓` pick a
+row. `?` opens the full key list at any time, and `q` quits.
 
 {{< cast webm="casts/board.webm" mp4="casts/board.mp4"
          title="The board opening on the inbox, switching to the work panel, and opening a lane's log"
@@ -29,37 +28,33 @@ panel.
 ## The Work panel
 
 The Work view is one list of what the machine is doing with the board,
-grouped by queue: every ticket sitting in each queue's status, in the loop's
-own pickup order, with the ones running now at the top of their own group.
+grouped by queue: every ticket in each queue's status, in the loop's own
+pickup order, the ones running now at the top of their group.
 
-A running row carries its state — provisioning or running — the run's elapsed
-time, and the tokens it has spent, as its own log reports them, plus a
-dollar figure beside the tokens where its runner's stream states one — no
-lerp price table stands in for a runner that stays silent on cost. Where the
-runner's own log distinguishes subagents and its `[runners.*]` block names a
-`context` window (see [lerp.toml](lerp-toml.md)), the row also carries a
-percentage: how full the fullest agent in the run is, faint until it crosses
-80%, where it turns to `⚠` — a run with no configured window shows tokens
-only, never a guessed figure. A run inherited from a previous `lerp` reads
-as `running` like any other, and carries the run's own age and the run's
-own total, not the stretch since it was adopted: the log it has already
-written is the evidence, and lerp reads it back rather than starting the
-count over. Under it, once the run has a log, a second line reads how that
-run is going — see [watching a
-run](watching-a-run.md).
+A running row carries its state — provisioning or running — the run's
+elapsed time, and the tokens it has spent as its own log reports them,
+plus a dollar figure where the runner's stream states one; no lerp price
+table stands in for a runner silent on cost. Where the runner's log
+distinguishes subagents and its `[runners.*]` block names a `context`
+window (see [lerp.toml](lerp-toml.md)), the row adds a percentage — how
+full the fullest agent in the run is — faint until 80%, then `⚠`; no
+configured window, tokens only, never a guessed figure. A run inherited
+from a previous `lerp` reads as `running` like any other, with the run's
+own age and total read back from its log, not the stretch since adoption.
+Under it, once the run has a log, a second line reads how the run is
+going — see [watching a run](watching-a-run.md).
 
-Claude settles what a run cost only at the very end, on the same line that
-closes its log — the moment the row itself is about to disappear — so that
-figure shows up on the status bar's exit note instead, where it survives the
-row.
+Claude settles cost only on the line that closes its log — as the row
+disappears — so that figure shows up on the status bar's exit note, where
+it survives the row.
 
-A waiting row is shown faint with the reason it waits, blocked or claimed.
+A waiting row is faint, with the reason it waits: blocked or claimed.
 `enter` on one shows where it sits in pickup order and what gates it.
 
-The panel title and the status bar carry the capacity, `2/3 running`, which
-is what says whether anything can start — every live run counts against it,
-whichever lane it landed on, with `· +1 over` beside it while more runs are
-live than the limit allows.
+The panel title and the status bar carry the capacity, `2/3 running` —
+what says whether anything can start. Every live run counts against it,
+whichever lane it landed on, with `· +1 over` beside it while more runs
+are live than the limit allows.
 
 Ordering is not a keystroke. To change what runs *next*, move tickets in
 Linear; to run one now regardless, see
@@ -67,49 +62,46 @@ Linear; to run one now regardless, see
 
 ## The Inbox panel
 
-The Inbox view lists what waits on a human: unclaimed tickets, and the
-operator's own claimed tickets, sitting in a status no queue serves. It is a
-table, one row per ticket, under a header naming its columns — the
-identifier, the leverage, the real Linear status, the project, the priority,
-and then the title, which takes whatever the panel has left. The vocabulary
-is Linear's own, never a category invented by lerp.
+The Inbox lists what waits on a human: unclaimed tickets, and the
+operator's own claimed tickets, sitting in a status no queue serves. One
+row per ticket, under a header naming the columns — identifier, leverage,
+the real Linear status, project, priority, and the title, which takes
+whatever width is left. The vocabulary is Linear's own, never a category
+invented by lerp.
 
-A status the configured pipeline never names — neither a queue's status nor
-any `on_success` or `on_failure` target — is marked, but only where Linear
-files it as started: a ticket resting in a backlog, a triage or a Todo column
-has not entered the pipeline, which is the ordinary state of most of a board,
-while one moved into a status that means work is under way by something the
-pipeline knows nothing about is the fingerprint of a ticket that left it. `?`
-spells out that mark and the other two the table draws.
+A status the pipeline never names — no queue's status, no `on_success` or
+`on_failure` target — is marked, but only where Linear files it as
+started: a ticket in a backlog, triage or Todo column has not entered the
+pipeline, while one in a working status the pipeline knows nothing about
+is the fingerprint of a ticket that left it. `?` spells out that mark and
+the other two the table draws.
 
-The panel opens on what is blocked on you — where runs fail, where they
-finish, and the statuses the pipeline never named the ticket into — with the
-intake it never left folded to one line at the foot of the table: `28 waiting
-to enter the pipeline — ] to browse`. Being blocked-on is an interrupt, while
-pulling from the backlog is a sit-down motion, so only one of them owns the
-default view; [finding tickets](finding-tickets.md) is the other one, and the
-sorting, scoping, slicing and searching that go with it. A ticket you have claimed
-resting in an intake status is never folded: no pass can pick it up again
-while the claim stands, so it is blocked on you wherever Linear files it.
+The panel opens on what is blocked on you — failed runs, finished runs,
+tickets in statuses the pipeline never named — with the intake it never
+left folded to one line at the foot: `28 waiting to enter the pipeline —
+] to browse`. Being blocked-on is an interrupt; pulling from the backlog
+is a sit-down motion; [finding tickets](finding-tickets.md) is that one,
+with the sorting, scoping, slicing and searching. A ticket you have
+claimed is never folded, wherever Linear files it: no pass can pick it up
+while the claim stands, so it is blocked on you.
 
 ## The main pane
 
-The list owns the screen until you ask for a ticket. Selecting a row and
-pressing `enter` reads it into a main pane that opens beside the table and
-closes again with `esc` — its body, where the plan lives, and the comments on
-it, the verdict a run left behind, so a parked ticket can be decided from
-that one screen. Each panel remembers its own answer about whether the pane
-is open.
+The list owns the screen until you ask for a ticket. `enter` on a row
+reads it into a main pane beside the table — the body, where the plan
+lives, and the comments, where a run's verdict lands — so a parked ticket
+can be decided from one screen. `esc` closes it, and each panel remembers
+whether its pane is open.
 
-That is a read and stays one: nothing composes, replies, or navigates on to
-another ticket, and `o` opens the ticket in Linear for everything else.
+It is a read and stays one: nothing composes, replies, or navigates to
+another ticket. `o` opens the ticket in Linear for everything else.
 
-An open main pane is a surface in the `tab` cycle, and while it holds the
-keys its border says so and `↑`/`↓` scroll it a line at a time.
+An open main pane is a surface in the `tab` cycle; while it holds the keys
+its border says so, and `↑`/`↓` scroll it a line at a time.
 
 ## Colour
 
-Colour marks state and never carries it alone: every state also has a shape
-or a word, so what the screen *says* survives a 16-colour terminal and a
-colour-blind operator. Which half of the palette you get, and how to turn
-colour off, are [environment variables](cli.md#environment).
+Colour marks state and never carries it alone: every state also has a
+shape or a word, so what the screen says survives a 16-colour terminal and
+a colour-blind operator. Which half of the palette you get, and how to
+turn colour off, are [environment variables](cli.md#environment).
