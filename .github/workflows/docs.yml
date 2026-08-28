@@ -184,18 +184,19 @@ jobs:
       # SCOPE) while the root does not, so a keep-list of what's small and
       # fixed stays correct where a prune-list of what's open-ended would
       # silently fall behind and let the next addition onto the manual leak
-      # onto the unversioned root instead. Product imagery — posters, og.png,
-      # and the config shots — is staged by the tag path below alongside
-      # casts, so depictions of the product always describe a released
-      # binary.
+      # onto the unversioned root instead — any new static asset referenced
+      # from the root (like brand chrome) must be added to this keep-list by
+      # hand. Product imagery — posters, og.png, and the config shots — is
+      # staged by the tag path below alongside casts, so depictions of the
+      # product always describe a released binary.
       - name: Stage only the root from the root build
         if: github.ref == 'refs/heads/main'
         run: |
           mkdir /tmp/root
-          mv public/index.html public/why public/style.css public/sitemap.xml public/robots.txt /tmp/root/
+          mv public/index.html public/why public/style.css public/favicon.svg public/mark.svg public/sitemap.xml public/robots.txt /tmp/root/
           rm -rf public
           mkdir public
-          mv /tmp/root/index.html /tmp/root/why /tmp/root/style.css /tmp/root/sitemap.xml /tmp/root/robots.txt public/
+          mv /tmp/root/index.html /tmp/root/why /tmp/root/style.css /tmp/root/favicon.svg /tmp/root/mark.svg /tmp/root/sitemap.xml /tmp/root/robots.txt public/
 
       # Casts are rendered from the tag's own tree, same as the manual below,
       # so a recording always shows the released binary rather than whatever
