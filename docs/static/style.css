@@ -205,7 +205,43 @@ main {
   color: var(--fg-soft);
 }
 
-.hero-install { margin: 0; }
+.hero-install {
+  position: relative;
+  margin: 0;
+}
+
+.hero-install pre {
+  margin: 0;
+  padding-right: 4.8rem;
+}
+
+.hero-install .copy-button {
+  position: absolute;
+  top: 50%;
+  right: 0.6rem;
+  transform: translateY(-50%);
+  font: 0.75rem/1 var(--mono);
+  color: var(--fg-soft);
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 0.35rem 0.55rem;
+  min-width: 3.8rem;
+  text-align: center;
+  cursor: pointer;
+  user-select: none;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.hero-install .copy-button:hover {
+  color: var(--fg);
+  border-color: var(--fg-soft);
+}
+
+.hero-install .copy-button.copied {
+  color: var(--accent);
+  border-color: var(--accent);
+}
 
 /* Prose -------------------------------------------------------------- */
 

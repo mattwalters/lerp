@@ -8,7 +8,41 @@
   <h1 class="wordmark">{{ .Title }}</h1>
   <p class="tagline">{{ .Params.tagline }}</p>
   {{ with .Params.install }}
-  <pre class="hero-install"><code>{{ . }}</code></pre>
+  <div class="hero-install">
+    <pre><code>{{ . }}</code></pre>
+    <button type="button" class="copy-button" aria-label="Copy install command" hidden>Copy</button>
+  </div>
+  <script>
+    (function () {
+      if (!navigator.clipboard || typeof navigator.clipboard.writeText !== "function") {
+        return;
+      }
+      var btn = document.querySelector(".hero-install .copy-button");
+      var code = document.querySelector(".hero-install code");
+      if (!btn || !code) {
+        return;
+      }
+      btn.hidden = false;
+      var timer = null;
+      btn.addEventListener("click", function () {
+        var text = code.textContent.trim();
+        navigator.clipboard.writeText(text).then(function () {
+          btn.textContent = "Copied";
+          btn.classList.add("copied");
+          btn.setAttribute("aria-label", "Copied to clipboard");
+          if (timer) {
+            clearTimeout(timer);
+          }
+          timer = setTimeout(function () {
+            btn.textContent = "Copy";
+            btn.classList.remove("copied");
+            btn.setAttribute("aria-label", "Copy install command");
+            timer = null;
+          }, 2000);
+        }).catch(function () {});
+      });
+    })();
+  </script>
   {{ end }}
 </section>
 <div class="prose">
