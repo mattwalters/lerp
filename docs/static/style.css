@@ -10,6 +10,7 @@
   --bg-soft: #f2f1ee;
   --fg: #1f1f1d;
   --fg-soft: #5c5b56;
+  --fg-strong: #000000;
   --rule: #e0deda;
   --link: #1b5e8a;
   --accent: #b7541a;
@@ -32,6 +33,7 @@
     --bg-soft: #1e2024;
     --fg: #e6e5e1;
     --fg-soft: #a3a29c;
+    --fg-strong: #ffffff;
     --rule: #2e3136;
     --link: #79b8dd;
     --accent: #e0904f;
@@ -44,6 +46,7 @@
   --bg-soft: #1e2024;
   --fg: #e6e5e1;
   --fg-soft: #a3a29c;
+  --fg-strong: #ffffff;
   --rule: #2e3136;
   --link: #79b8dd;
   --accent: #e0904f;
@@ -515,6 +518,12 @@ h3 { font-size: 1.1rem; }
 
 p, ul, ol, blockquote { margin: 0 0 1rem; }
 
+/* Bold carries a paragraph's topic sentence, and on the dark ground the
+   weight change alone barely registers against --fg. The strong colour
+   steps past --fg to the palette's extreme so the lead reads set off in
+   both themes. */
+strong { color: var(--fg-strong); }
+
 blockquote {
   margin-left: 0;
   padding-left: 1rem;
@@ -627,6 +636,12 @@ img.shot-dark {
 :root[data-theme="dark"] img.shot-dark { display: inline; }
 :root[data-theme="dark"] figure.cast video.cast-light,
 :root[data-theme="dark"] img.shot-light { display: none; }
+
+/* A shot otherwise sits flush against the paragraph after it: the gap
+   above comes from the previous paragraph's bottom margin, and the
+   paragraph below brings no top margin of its own. */
+img.shot-dark,
+img.shot-light { margin-bottom: 1rem; }
 
 figure.cast figcaption {
   margin-top: 0.55rem;
