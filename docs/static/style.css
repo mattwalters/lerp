@@ -69,7 +69,11 @@ a { color: var(--link); }
 
 header {
   display: flex;
-  align-items: baseline;
+  /* Centred, not baseline: with the 2rem mark leading the wordmark, a
+     shared baseline hangs every text item low in the bar — the mark's
+     height all lands above the line. Centring keeps one vertical rhythm
+     for mark, wordmark, links and pickers alike. */
+  align-items: center;
   flex-wrap: wrap;
   /* A row gap as well as a column one: on a narrow phone the header wraps,
      and every item in it has line-height 1. */
@@ -87,6 +91,18 @@ header .brand {
   font: 600 1.1rem/1 var(--mono);
   color: var(--fg);
   text-decoration: none;
+  /* Flex, so the mark and the word centre on each other instead of
+     meeting at a baseline the mark has no stake in. */
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+/* The interpolation mark beside the wordmark, twice the type size so its
+   geometry parses. */
+header .brand .brand-mark {
+  width: 2rem;
+  height: 2rem;
 }
 
 header .nav {
@@ -98,14 +114,12 @@ header .nav.here { color: var(--accent); }
 
 header .spacer { flex: 1; }
 
-/* The GitHub mark. The header aligns on baselines, so the icon-only link's
-   baseline is the image's bottom edge; nudged down a hair so the mark sits
-   optically level with the text beside it. */
+/* The GitHub mark. display: block, or the inline image rides the text
+   baseline and leaves a descender gap under the icon-only link. */
 header .nav.github svg {
   width: 1rem;
   height: 1rem;
-  position: relative;
-  top: 0.15rem;
+  display: block;
 }
 
 /* The splash pages' version link (see baseof.html): dressed like the manual
@@ -232,6 +246,15 @@ main {
 .sidenav a.mono {
   font-family: var(--mono);
   font-size: 0.86em;
+}
+
+/* The mark closing the rail: a colophon, spaced off the last group
+   rather than sitting in it. */
+.sidenav .sidenav-mark {
+  display: block;
+  width: 2.4rem;
+  height: 2.4rem;
+  margin-top: 2.2rem;
 }
 
 .toc {
@@ -485,6 +508,13 @@ main {
   margin: 2.4rem 0 1.2rem;
 }
 
+/* The full mark signs the homepage off below the CTA — the one placement
+   large enough for its hairline traces to read. */
+.mark-signoff {
+  display: block;
+  margin: 4rem auto 2rem;
+}
+
 .cta a {
   display: inline-block;
   font: 0.95rem/1 var(--mono);
@@ -706,6 +736,10 @@ figure.cast figcaption {
   }
 
   .sidenav h5 { display: none; }
+
+  /* The colophon goes with the column too: under a stacked rail it closes
+     the list, under a row of links it is a stray glyph. */
+  .sidenav .sidenav-mark { display: none; }
 
   .sidenav a {
     display: inline-block;

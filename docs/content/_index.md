@@ -127,3 +127,5 @@ Check out the [docs](docs/install.md) for other install methods.
 The thinking behind it is in [Why lerp](why.md).
 
 {{< cta "/docs/quickstart" >}}$ lerp init →{{< /cta >}}
+
+<img class="mark-signoff" src="mark.svg" alt="" width="120" height="120">

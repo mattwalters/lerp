@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="{{ "favicon.svg" | relURL }}" type="image/svg+xml">
   <script>
     // The stored theme choice, applied before first paint so it never
     // flashes the other theme. No stored choice means following the
@@ -72,7 +73,10 @@
   {{ $why := site.GetPage "/why" }}
   {{ if not $why }}{{ errorf "the header's Why link resolves to nothing — is content/why.md missing, or draft = true?" }}{{ end }}
   <header>
-    <a class="brand" href="{{ "" | relURL }}">lerp</a>
+    {{/* The favicon twin, not mark.svg: at wordmark size the full mark's
+         hairline traces dissolve, and the favicon is the same drawing cut
+         for exactly this scale. Empty alt — the link already says lerp. */}}
+    <a class="brand" href="{{ "" | relURL }}"><img class="brand-mark" src="{{ "favicon.svg" | relURL }}" alt="">lerp</a>
     <span class="spacer"></span>
     {{/* The manual is what most people come here for, so the way into it is
          in the header on every page — including the two that run without the
@@ -159,6 +163,9 @@
       {{ if $current }}{{ $classes = $classes | append "active" }}{{ end }}
       <a href="{{ .URL | relURL }}"{{ with $classes }} class="{{ delimit . " " }}"{{ end }}{{ if $current }} aria-current="page"{{ end }}>{{ .Name }}</a>
       {{ end }}
+      {{/* The mark as the sidebar's colophon: decoration, so empty alt,
+           and dimmed by CSS so the entries above it stay the point. */}}
+      <img class="sidenav-mark" src="{{ "favicon.svg" | relURL }}" alt="">
     </nav>
     {{ end }}
     <main>
