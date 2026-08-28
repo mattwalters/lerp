@@ -113,8 +113,8 @@ jobs:
           grep -qF '<link rel="canonical" href="https://lerp.sh/">' public/index.html
           grep -qF '<link rel="canonical" href="https://lerp.sh/why/">' public/why/index.html
           grep -qF '<meta property="og:image" content="https://lerp.sh/og.png">' public/index.html
-          grep -qF 'https://lerp.sh/' public/sitemap.xml
-          grep -qF 'https://lerp.sh/why/' public/sitemap.xml
+          grep -qF '<loc>https://lerp.sh/</loc>' public/sitemap.xml
+          grep -qF '<loc>https://lerp.sh/why/</loc>' public/sitemap.xml
           ! grep -qF '/docs/' public/sitemap.xml
           ! grep -qF '<loc>' public-frozen/sitemap.xml
 

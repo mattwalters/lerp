@@ -2,7 +2,7 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
 {{- $version := site.Params.version -}}
 {{- if eq $version "" -}}
-  {{- range .Pages -}}
+  {{- range site.Pages -}}
     {{- if not (partial "manual.html" .) }}
   <url>
     <loc>{{ partial "canonical.html" . }}</loc>
@@ -10,7 +10,7 @@
     {{- end -}}
   {{- end -}}
 {{- else if eq $version "latest" -}}
-  {{- range .Pages -}}
+  {{- range site.Pages -}}
     {{- if partial "manual.html" . }}
   <url>
     <loc>{{ partial "canonical.html" . }}</loc>
