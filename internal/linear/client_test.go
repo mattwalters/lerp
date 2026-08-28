@@ -437,7 +437,7 @@ func TestErrorStatuses(t *testing.T) {
 			},
 		},
 		{
-			name: "rate limit 429 with Retry-After",
+			name: "rate limit 429 with Retry-After on API key",
 			handler: func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Retry-After", "30")
 				w.WriteHeader(http.StatusTooManyRequests)
@@ -453,10 +453,16 @@ func TestErrorStatuses(t *testing.T) {
 				if rl.RetryAfter != 30*time.Second {
 					t.Errorf("RetryAfter = %v, want 30s", rl.RetryAfter)
 				}
+				if rl.OAuth {
+					t.Errorf("OAuth = true, want false for API key client")
+				}
+				if !strings.Contains(err.Error(), "personal API key") || !strings.Contains(err.Error(), "lerp login") {
+					t.Errorf("err = %q, want personal API key budget and lerp login remedy named", err)
+				}
 			},
 		},
 		{
-			name: "rate limit 429 without Retry-After",
+			name: "rate limit 429 without Retry-After on API key",
 			handler: func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusTooManyRequests)
 			},
@@ -467,6 +473,9 @@ func TestErrorStatuses(t *testing.T) {
 				}
 				if rl.RetryAfter != 0 {
 					t.Errorf("RetryAfter = %v, want 0", rl.RetryAfter)
+				}
+				if rl.OAuth {
+					t.Errorf("OAuth = true, want false for API key client")
 				}
 			},
 		},
@@ -858,5 +867,34 @@ func TestQueriesShareCommonIssueFields(t *testing.T) {
 		if !strings.Contains(q, issueCommonFields) {
 			t.Errorf("%s does not contain issueCommonFields", name)
 		}
+	}
+}
+
+func TestRateLimitErrorReportsOAuthBudget(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "45")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	t.Cleanup(srv.Close)
+
+	c := New(staticAuth("Bearer test-oauth-token"), srv.Client())
+	c.Endpoint = srv.URL
+
+	_, err := c.Viewer(context.Background())
+	if !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("err = %v, want ErrRateLimited", err)
+	}
+	var rl *RateLimitError
+	if !errors.As(err, &rl) {
+		t.Fatalf("err = %v, want *RateLimitError", err)
+	}
+	if !rl.OAuth {
+		t.Errorf("OAuth = false, want true for Bearer token")
+	}
+	if rl.RetryAfter != 45*time.Second {
+		t.Errorf("RetryAfter = %v, want 45s", rl.RetryAfter)
+	}
+	if !strings.Contains(err.Error(), "OAuth budget (5,000 req/hr)") {
+		t.Errorf("err = %q, want OAuth budget named", err)
 	}
 }

@@ -659,6 +659,46 @@ func TestExecuteDropsTheLinearAPIKeyFromTheRunnerEnvironment(t *testing.T) {
 	}
 }
 
+// Done-when (LERP-110): the token never reaches children under either auth mode
+// (API key or OAuth), and the token file is not inside workdir.
+func TestExecuteNoLinearCredentialsUnderEitherAuthMode(t *testing.T) {
+	for _, mode := range []string{"api_key", "oauth"} {
+		t.Run(mode, func(t *testing.T) {
+			if mode == "api_key" {
+				t.Setenv(childenv.LinearAPIKeyEnv, "lin_api_secret")
+			} else {
+				t.Setenv(childenv.LinearAPIKeyEnv, "")
+			}
+			dir := t.TempDir()
+			script := writeScript(t, dir, "runner.sh", "env")
+			logPath := filepath.Join(dir, "runner.log")
+
+			if _, err := Execute(context.Background(), Invocation{
+				Runner:  config.Runner{Command: shellQuote(script)},
+				Queue:   config.Queue{Prompt: "prompt"},
+				Ticket:  "LERP-42",
+				Workdir: dir,
+				LogPath: logPath,
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			got, err := os.ReadFile(logPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, name := range envNames(string(got)) {
+				if strings.HasPrefix(name, "LINEAR_") {
+					t.Errorf("runner environment contains %s under %s mode", name, mode)
+				}
+			}
+			if strings.Contains(string(got), "lin_api_secret") {
+				t.Errorf("runner environment contains API key secret under %s mode", mode)
+			}
+		})
+	}
+}
+
 // envNames reads the variable names out of `env` output. Only names: a test
 // that reports what it found must not report the values beside them.
 func envNames(output string) []string {

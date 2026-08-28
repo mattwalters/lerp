@@ -180,16 +180,22 @@ var (
 
 // RateLimitError is returned on HTTP 429. It matches ErrRateLimited via
 // errors.Is; use errors.As to read RetryAfter (zero when the server sent
-// no usable Retry-After header).
+// no usable Retry-After header) and OAuth (true when the request was
+// signed with an OAuth token).
 type RateLimitError struct {
 	RetryAfter time.Duration
+	OAuth      bool
 }
 
 func (e *RateLimitError) Error() string {
-	if e.RetryAfter > 0 {
-		return fmt.Sprintf("linear: rate limited (retry after %s)", e.RetryAfter)
+	budget := "OAuth budget (5,000 req/hr)"
+	if !e.OAuth {
+		budget = `personal API key budget (2,500 req/hr; run "lerp login" for 5,000 req/hr OAuth)`
 	}
-	return "linear: rate limited"
+	if e.RetryAfter > 0 {
+		return fmt.Sprintf("linear: rate limited on %s (retry after %s)", budget, e.RetryAfter)
+	}
+	return fmt.Sprintf("linear: rate limited on %s", budget)
 }
 
 func (e *RateLimitError) Is(target error) bool { return target == ErrRateLimited }
@@ -282,7 +288,10 @@ func (c *HTTP) do(ctx context.Context, query string, vars map[string]any, out an
 	case resp.StatusCode == http.StatusUnauthorized:
 		return ErrAuth
 	case resp.StatusCode == http.StatusTooManyRequests:
-		return &RateLimitError{RetryAfter: retryAfter(resp.Header.Get("Retry-After"))}
+		return &RateLimitError{
+			RetryAfter: retryAfter(resp.Header.Get("Retry-After")),
+			OAuth:      strings.HasPrefix(authHeader, "Bearer "),
+		}
 	case resp.StatusCode != http.StatusOK:
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return fmt.Errorf("linear: unexpected status %d: %s", resp.StatusCode, bytes.TrimSpace(snippet))
