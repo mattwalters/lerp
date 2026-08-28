@@ -178,8 +178,8 @@ Lerp is maintained by one person, so those are honest limits rather
 than an SLA. If a report lands, you will be credited in the advisory
 unless you ask otherwise.
 
-Lerp is pre-1.0 and has no tagged releases yet: `main` is what is
-supported, fixes land there, and `go install ...@latest` gets them.
+Releases are tagged; the latest release is what is supported, and fixes
+land on `main` first.
 
 **What is in scope:** anything that lets a party who can neither place
 a ticket in a served status nor write text a served ticket carries
