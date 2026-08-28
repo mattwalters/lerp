@@ -608,6 +608,26 @@ figure.cast video {
   border-radius: 6px;
 }
 
+/* Cast and shot pairs: light twin visible by default, swapped under
+   dark mode across all three states (system preference, explicit dark, explicit
+   light override) mirroring the palette block above. */
+figure.cast video.cast-dark,
+img.shot-dark {
+  display: none;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) figure.cast video.cast-dark { display: block; }
+  :root:not([data-theme="light"]) img.shot-dark { display: inline; }
+  :root:not([data-theme="light"]) figure.cast video.cast-light,
+  :root:not([data-theme="light"]) img.shot-light { display: none; }
+}
+
+:root[data-theme="dark"] figure.cast video.cast-dark { display: block; }
+:root[data-theme="dark"] img.shot-dark { display: inline; }
+:root[data-theme="dark"] figure.cast video.cast-light,
+:root[data-theme="dark"] img.shot-light { display: none; }
+
 figure.cast figcaption {
   margin-top: 0.55rem;
   font-size: 0.85rem;

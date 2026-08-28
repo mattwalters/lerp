@@ -210,6 +210,8 @@ DEMO_MAX_BYTES := 3145728
 OG_MAX_BYTES := 524288
 CAST_MAX_BYTES := 1048576
 POSTER_MAX_BYTES := 327680
+SHOT_SRC := docs/shots/config.toml
+SHOT_MAX_BYTES := 524288
 
 THEME_dark := rose-pine-moon
 THEME_light := rose-pine-dawn
@@ -361,6 +363,33 @@ casts: ## Render every tape under docs/tapes/ into docs/static/casts/ (needs vhs
 	    esac; \
 	  done; \
 	  test "$$missing" -eq 0
+
+.PHONY: config-shot
+config-shot: ## Render docs/static/config.svg and config-light.svg from docs/shots/config.toml (needs freeze)
+	@command -v freeze >/dev/null || { \
+	  echo 'config-shot: freeze is not installed — see https://github.com/charmbracelet/freeze'; \
+	  exit 1; }
+	@rm -rf $(DEMO_RENDER_DIR)
+	@mkdir -p $(DEMO_RENDER_DIR)
+	@for variant in dark light; do \
+	  suffix=""; \
+	  theme="$(THEME_dark)"; \
+	  if [ "$$variant" = "light" ]; then \
+	    suffix="-light"; \
+	    theme="$(THEME_light)"; \
+	  fi; \
+	  out="$(DEMO_RENDER_DIR)/config$$suffix.svg"; \
+	  freeze $(SHOT_SRC) -o "$$out" -l toml --window --font.size 15 --padding 24 --border.radius 10 --theme "$$theme" < /dev/null || exit 1; \
+	  test -s "$$out" || { \
+	    printf 'config-shot: %s rendered empty\n' "$$out"; exit 1; }; \
+	  size=$$(wc -c < "$$out" | tr -d ' '); \
+	  test "$$size" -le $(SHOT_MAX_BYTES) || { \
+	    printf 'config-shot: config%s.svg came back %s bytes, over the %s cap\n' \
+	      "$$suffix" "$$size" '$(SHOT_MAX_BYTES)'; exit 1; }; \
+	  target="docs/static/config$$suffix.svg"; \
+	  mv "$$out" "$$target" && \
+	  printf 'rendered %s (%s bytes)\n' "$$target" "$$size"; \
+	done
 
 # --------------------------------------------------------------------------
 # The docs site

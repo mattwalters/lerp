@@ -37,14 +37,28 @@
          cannot see it, and the keycap caption names keys, not what happens. */ -}}
   {{- errorf "cast: %s has no title saying what the cast shows" .Position -}}
 {{- end -}}
+{{- $webmLight := "" -}}
+{{- with $webm }}{{ $webmLight = replaceRE `\.([^.]+)$` "-light.$1" . }}{{ end -}}
+{{- $mp4Light := "" -}}
+{{- with $mp4 }}{{ $mp4Light = replaceRE `\.([^.]+)$` "-light.$1" . }}{{ end -}}
+{{- $posterLight := "" -}}
+{{- with $poster }}{{ $posterLight = replaceRE `\.([^.]+)$` "-light.$1" . }}{{ end -}}
 <figure class="cast">
   {{/* WebM first: where both play, it is the smaller file. A browser takes
        the first source it supports and ignores the rest. */}}
-  <video controls{{ if $autoplay }} autoplay{{ end }} muted loop playsinline preload="metadata" width="{{ $width }}" height="{{ $height }}"{{ with $poster }} poster="{{ . | relURL }}"{{ end }} aria-label="{{ $title }}">
+  <video class="cast-dark" controls{{ if $autoplay }} autoplay{{ end }} muted loop playsinline preload="metadata" width="{{ $width }}" height="{{ $height }}"{{ with $poster }} poster="{{ . | relURL }}"{{ end }} aria-label="{{ $title }}">
     {{- with $webm }}
     <source src="{{ . | relURL }}" type="video/webm">
     {{- end }}
     {{- with $mp4 }}
+    <source src="{{ . | relURL }}" type="video/mp4">
+    {{- end }}
+  </video>
+  <video class="cast-light" controls{{ if $autoplay }} autoplay{{ end }} muted loop playsinline preload="metadata" width="{{ $width }}" height="{{ $height }}"{{ with $posterLight }} poster="{{ . | relURL }}"{{ end }} aria-label="{{ $title }}">
+    {{- with $webmLight }}
+    <source src="{{ . | relURL }}" type="video/webm">
+    {{- end }}
+    {{- with $mp4Light }}
     <source src="{{ . | relURL }}" type="video/mp4">
     {{- end }}
   </video>
@@ -82,9 +96,11 @@
     // reader gets the poster and the controls, not a screen already moving.
     (function () {
       if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) { return; }
-      var video = document.currentScript.parentElement.querySelector("video");
-      video.removeAttribute("autoplay");
-      video.pause();
+      var videos = document.currentScript.parentElement.querySelectorAll("video");
+      videos.forEach(function (video) {
+        video.removeAttribute("autoplay");
+        video.pause();
+      });
     })();
   </script>
   {{- end }}
