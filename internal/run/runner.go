@@ -112,7 +112,7 @@ func Execute(ctx context.Context, inv Invocation) (Result, error) {
 			return result, err
 		}
 	}
-	log, err := os.OpenFile(inv.LogPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	log, err := os.OpenFile(inv.LogPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
 		return result, fmt.Errorf("opening runner log: %w", err)
 	}

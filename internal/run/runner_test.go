@@ -76,6 +76,14 @@ exit 7
 		t.Errorf("prompt was interpreted by shell: stat error = %v", err)
 	}
 
+	info, err := os.Stat(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Errorf("log file mode = %#o, want 0600", perm)
+	}
+
 	got, err := os.ReadFile(logPath)
 	if err != nil {
 		t.Fatal(err)
