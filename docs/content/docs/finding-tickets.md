@@ -69,7 +69,7 @@ where the cycle stops.
 ## What the title and tabs say
 
 The slice tab row and panel title carry all of it: the active tab shows a
-fraction (`● 4/17` or `4/17`) when narrowed by search or project filter,
+fraction (`4/17`, for example) when narrowed by search or project filter,
 and the title shows any active search (`· /goreleaser`), non-default sort
 (`· by priority`), or project filter. The status bar's `● n on you` is the
 other question — what is blocked on you — and does not move when a slice

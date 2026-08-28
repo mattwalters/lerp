@@ -5910,7 +5910,7 @@ func TestAPassStartingDoesNotMoveTheHintsEither(t *testing.T) {
 		}
 		settled := update(t, running, tickedMsg{})
 
-		for _, seg := range []string{"0/2 running", "● 2 in the inbox", "enter detail", "q quit"} {
+		for _, seg := range []string{"0/2 running", "● 2 on you", "enter detail", "q quit"} {
 			if a, b := statusCol(running.statusBar(), seg), statusCol(settled.statusBar(), seg); a != b {
 				t.Fatalf("at width %d a pass starting moved %q from %d to %d:\n%s\n%s",
 					w, seg, b, a, settled.statusBar(), running.statusBar())
