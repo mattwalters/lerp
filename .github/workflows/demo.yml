@@ -18,15 +18,17 @@ name: demo
 
 on:
   # A PR that touches the casts' own inputs. Every tape under docs/tapes/ is
-  # the script, `internal/demo` is the harness they drive, and the Makefile
-  # holds both the render recipe and the size caps — a change to any of them
-  # can break a render, so each of them pays for the render here. This file
-  # is in the list for the same reason docs.yml lists itself: a change to the
-  # job should be tested by the job.
+  # the script, `internal/demo` is the harness they drive, `internal/tui` is
+  # the surface the tapes actually record (every `Wait+Screen` anchor waits on
+  # TUI-drawn text), and the Makefile holds both the render recipe and the
+  # size caps — a change to any of them can break a render, so each of them
+  # pays for the render here. This file is in the list for the same reason
+  # docs.yml lists itself: a change to the job should be tested by the job.
   pull_request:
     paths:
       - "docs/tapes/**"
       - "internal/demo/**"
+      - "internal/tui/**"
       - "Makefile"
       - ".github/workflows/demo.yml"
   # A tag push, the moment the recordings actually describe something: they
@@ -40,8 +42,7 @@ on:
     tags:
       - "v[0-9]*.[0-9]*.[0-9]*"
   # The escape hatch: re-check on demand, on any ref, without a commit to
-  # push. What to reach for when a PR changed the TUI rather than the tape and
-  # you want to know whether the keystrokes still land.
+  # push.
   workflow_dispatch:
 
 permissions:
