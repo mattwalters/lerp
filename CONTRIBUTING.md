@@ -58,9 +58,9 @@ The same rules the agents work under (see `AGENTS.md`):
   its own and does not run on every PR — installing vhs and its ttyd
   and ffmpeg dependencies is the slowest thing in the run — so it
   fires on a PR touching the casts' own inputs (`docs/tapes/**`,
-  `internal/demo/`, the Makefile), on a version tag, and on demand
-  from the Actions tab. It fails if vhs errors, if a demo harness
-  inside a recording exits non-zero — vhs would happily record a cast
+  `internal/demo/`, `internal/tui/`, the Makefile), on a version tag,
+  and on demand from the Actions tab. It fails if vhs errors, if a demo
+  harness inside a recording exits non-zero — vhs would happily record a cast
   of that error and exit 0, so the harness reports its own status in a
   file — if a tape's `Wait+Screen` line never finds the text it names,
   meaning a keystroke stopped driving the UI it was written against,
