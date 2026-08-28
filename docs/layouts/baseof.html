@@ -60,6 +60,7 @@
   {{ if not $why }}{{ errorf "the header's Why link resolves to nothing — is content/why.md missing, or draft = true?" }}{{ end }}
   <header>
     <a class="brand" href="{{ "" | relURL }}">lerp</a>
+    <span class="spacer"></span>
     {{/* The manual is what most people come here for, so the way into it is
          in the header on every page — including the two that run without the
          sidebar and so have no other door to it. .here marks the part of the
@@ -84,18 +85,25 @@
          lerp is the right tool has not started reading a manual yet, and the
          sidebar is for people who have. */}}
     <a class="nav{{ if eq .RelPermalink $why.RelPermalink }} here{{ end }}" href="{{ $why.RelPermalink }}">{{ $why.Title }}</a>
-    <span class="spacer"></span>
-    <a class="nav" href="{{ site.Params.repo }}">GitHub</a>
+    {{/* The mark, not the word: aria-label carries the name, aria-hidden
+         keeps the path data out of the accessibility tree. Inline and
+         currentColor, so it follows the link colour with no asset to load. */}}
+    <a class="nav github" href="{{ site.Params.repo }}" aria-label="GitHub"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg></a>
     {{/* The picker belongs to manual pages: the root is unversioned, and
          with no option in the list matching an empty site.Params.version,
          a populated <select> would default to its first entry, "latest" —
          showing a version label on the one build that deliberately has
-         none. */}}
+         none. The splash pages carry a link instead: the latest released
+         version, filled in from versions.json by the script below and
+         hidden until it is — a local preview has no manifest, and before
+         the first tag there is nothing to name. */}}
     {{ if $manual }}
     <span class="version">
       <span class="version-label">{{ site.Params.version }}</span>
       <select id="version-picker" hidden aria-label="Documentation version"></select>
     </span>
+    {{ else }}
+    <a class="version-latest" id="version-latest" hidden></a>
     {{ end }}
   </header>
   <div class="wrap">
@@ -184,6 +192,27 @@
             window.location.href = new URL(picker.value + "/docs/", root);
           });
           picker.hidden = false;
+        })
+        .catch(function () {});
+    })();
+  </script>
+  {{ else }}
+  <script>
+    // The splash pages' version link: the newest entry in versions.json
+    // (the manifest is sorted newest first — see docs.yml), pointing into
+    // that release's manual. Same root derivation and same failure mode as
+    // the picker above: no manifest, no link.
+    (function () {
+      var here = new URL(".", document.querySelector('link[rel="stylesheet"]').href);
+      var root = new URL({{ site.Params.versionroot }} + "/", here);
+      fetch(new URL("versions.json", root))
+        .then(function (r) { if (!r.ok) { throw r; } return r.json(); })
+        .then(function (versions) {
+          if (!versions.length) { return; }
+          var latest = document.getElementById("version-latest");
+          latest.textContent = versions[0];
+          latest.href = new URL("latest/docs/", root);
+          latest.hidden = false;
         })
         .catch(function () {});
     })();
