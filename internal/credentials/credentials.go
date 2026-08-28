@@ -23,13 +23,10 @@ import (
 const defaultTokenEndpoint = "https://api.linear.app/oauth/token"
 
 // clientID is the single public OAuth client lerp ships: no secret, one
-// application in the operator's authorized apps (SCOPE invariant 4).
-//
-// Empty until Matt registers the "Lerp" OAuth application in Linear — a
-// one-time step only he can do, from inside Linear's own settings. Login and
-// refresh both refuse cleanly while it is empty rather than sending Linear a
-// request it can only refuse as an unknown client.
-const clientID = ""
+// application in the operator's authorized apps (SCOPE invariant 4). The id
+// identifies the registered "lerp" application and is public by design — a
+// PKCE public client has nothing to hide.
+const clientID = "1030fcd61bcba30bf47997d8db214fdf"
 
 // refreshSkew is how long before its stated expiry an access token counts
 // as expired. Five minutes rather than seconds because a pass that starts
@@ -247,16 +244,6 @@ func (s *oauthSource) fresh() bool {
 // refresh exchanges the refresh token for a new pair. It is called with mu
 // held.
 func (s *oauthSource) refresh(ctx context.Context) error {
-	if s.clientID == "" {
-		// Latched, because no request can change it: a build with no client
-		// id cannot renew a token at all, and Linear would refuse the grant
-		// as a bad client — which reads as ErrLoginRequired and sends the
-		// operator after a `lerp login` that would refuse the same way.
-		// Reachable only from a hand-written token file: Login refuses
-		// before it ever writes one while clientID is empty.
-		s.dead = errors.New("credentials: this lerp has no Linear OAuth client id, so a stored token cannot be renewed; set " + childenv.LinearAPIKeyEnv)
-		return s.dead
-	}
 	next, err := exchange(ctx, s.hc, s.endpoint, s.clientID, s.tok.RefreshToken)
 	if err != nil {
 		// Latched on two grounds: a refusal, which asking again cannot get
