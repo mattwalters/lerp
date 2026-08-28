@@ -43,7 +43,7 @@ var (
 
 const (
 	// demoTeam is the one Linear team on the fake board; board.toml serves it.
-	demoTeam = "DEMO"
+	demoTeam = "ACME"
 	// dirEnv carries the throwaway root to the stub agent. board.toml and
 	// agent.sh both reach their fixture through it, which is what lets the
 	// config file be checked in byte-for-byte as the file that is loaded.
@@ -185,7 +185,7 @@ func run(ctx context.Context) error {
 		// No Log: provision, dispose and runner diagnostics are process
 		// detail, and the cast records a screen, not a file.
 		// Telemetry defaults to the operator's own runs.jsonl, which the
-		// fake DEMO-N tickets have no business writing into — the demo is
+		// fake ACME-N tickets have no business writing into — the demo is
 		// sandboxed in root for everything else, and telemetry is the one
 		// resident outside it.
 		Telemetry: func(telemetry.Run) {},
@@ -220,7 +220,7 @@ func tuiOptions(rec *loop.Reconciler, repo *config.RepoConfig, events <-chan loo
 	}
 }
 
-// boardStates are the DEMO team's workflow states in board order. The
+// boardStates are the ACME team's workflow states in board order. The
 // pipeline in board.toml maps onto a subset of them; the rest exist so the
 // inbox has statuses the pipeline never names to mark as such.
 var boardStates = []string{
@@ -247,33 +247,33 @@ type ticket struct {
 var board = []ticket{
 	// The implement queue. Six eligible tickets for three lanes, so the cast
 	// shows lanes turning over, plus one blocked ticket that never runs.
-	{id: "DEMO-31", title: "Cache the parsed repo config", status: "Implementing", project: "v0.4", priority: 3},
-	{id: "DEMO-30", title: "Retry a status read once before failing the pass", status: "Implementing", project: "v0.4", priority: 2},
-	{id: "DEMO-29", title: "Name the lane in every loop log line", status: "Implementing", project: "v0.4", priority: 3},
-	{id: "DEMO-27", title: "Trim trailing whitespace from prompt templates", status: "Implementing", priority: 4},
-	{id: "DEMO-26", title: "Reap a run whose workspace is already gone", status: "Implementing", project: "v0.4", priority: 2},
-	{id: "DEMO-24", title: "Widen the queue table on narrow terminals", status: "Implementing", project: "Board polish", priority: 3},
-	{id: "DEMO-22", title: "Publish the v0.4 milestone", status: "Implementing", project: "v0.4", priority: 3, blockedBy: "DEMO-34"},
+	{id: "ACME-31", title: "Cache the parsed repo config", status: "Implementing", project: "v0.4", priority: 3},
+	{id: "ACME-30", title: "Retry a status read once before failing the pass", status: "Implementing", project: "v0.4", priority: 2},
+	{id: "ACME-29", title: "Name the lane in every loop log line", status: "Implementing", project: "v0.4", priority: 3},
+	{id: "ACME-27", title: "Trim trailing whitespace from prompt templates", status: "Implementing", priority: 4},
+	{id: "ACME-26", title: "Reap a run whose workspace is already gone", status: "Implementing", project: "v0.4", priority: 2},
+	{id: "ACME-24", title: "Widen the queue table on narrow terminals", status: "Implementing", project: "Board polish", priority: 3},
+	{id: "ACME-22", title: "Publish the v0.4 milestone", status: "Implementing", project: "v0.4", priority: 3, blockedBy: "ACME-34"},
 
 	// The plan queue, picked up once the implement queue drains.
-	{id: "DEMO-33", title: "Multi-repo: one lerp, several clones", status: "Planning", project: "v0.5", priority: 2},
-	{id: "DEMO-32", title: "A Codex runner adapter", status: "Planning", project: "v0.5", priority: 3},
+	{id: "ACME-33", title: "Multi-repo: one lerp, several clones", status: "Planning", project: "v0.5", priority: 2},
+	{id: "ACME-32", title: "A Codex runner adapter", status: "Planning", project: "v0.5", priority: 3},
 
 	// The inbox: statuses no queue serves, which is what puts them in front
 	// of a human.
-	{id: "DEMO-34", title: "Log tail drops its first line after adoption", status: "Needs Attention",
+	{id: "ACME-34", title: "Log tail drops its first line after adoption", status: "Needs Attention",
 		project: "v0.4", priority: 1,
 		body: "The tail skips to the next newline when it attaches mid-line, and\non adoption it attaches at offset zero — where there is no partial\nline to skip.\n\n## Plan\n\nSkip only when the attach offset is past the start of the file."},
-	{id: "DEMO-28", title: "Release notes for v0.3", status: "In Review", project: "v0.4", priority: 3,
-		blockedBy: "DEMO-34",
+	{id: "ACME-28", title: "Release notes for v0.3", status: "In Review", project: "v0.4", priority: 3,
+		blockedBy: "ACME-34",
 		body:      "Draft the notes from the merged pull requests since v0.2.\n\nBlocked until the tail bug is settled — it changes what the log\npane section has to say."},
-	{id: "DEMO-25", title: "Document the runner contract", status: "Plan Review", project: "Docs", priority: 2,
+	{id: "ACME-25", title: "Document the runner contract", status: "Plan Review", project: "Docs", priority: 2,
 		body: "## Plan\n\nOne page under `docs/`: what a runner is handed (a prompt, a working\ndirectory), what lerp reads back (an exit code), and the three\nplaceholders a command template may use."},
-	{id: "DEMO-23", title: "Windows support for provision and dispose", status: "Backlog", project: "v0.5", priority: 4,
+	{id: "ACME-23", title: "Windows support for provision and dispose", status: "Backlog", project: "v0.5", priority: 4,
 		body: "Both commands go through `sh -c`. Deciding what the Windows story is\ncomes before writing any of it."},
-	{id: "DEMO-21", title: "Sanitize Linear titles before rendering", status: "In Review", project: "Board polish", priority: 2,
+	{id: "ACME-21", title: "Sanitize Linear titles before rendering", status: "In Review", project: "Board polish", priority: 2,
 		body: "A ticket title carrying an escape sequence must not reach the\nterminal as one."},
-	{id: "DEMO-18", title: "Decide how eject hands over a session", status: "Triage", priority: 0,
+	{id: "ACME-18", title: "Decide how eject hands over a session", status: "Triage", priority: 0,
 		body: "Nobody has triaged this yet — the pipeline never names \"Triage\", so\nthe board says so on the row."},
 }
 

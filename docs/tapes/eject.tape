@@ -21,7 +21,7 @@ Sleep 1500ms
 
 # e opens the eject confirmation overlay.
 Type "e"
-Wait+Screen /eject DEMO-/
+Wait+Screen /eject ACME-/
 Wait+Screen /stops[ \t]+the agent in lane/
 Sleep 3s
 

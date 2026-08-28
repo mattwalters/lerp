@@ -1,0 +1,38 @@
+# Linear team keys this repo serves. One repo may serve several teams
+# (the monorepo case); two repos may never claim the same team.
+teams = ["LERP"]
+
+# Commands that create and destroy a lane's workspace. Lerp invokes
+# them with a unique lane/run identity and otherwise knows nothing
+# about what they do. Environment isolation — ports, databases,
+# containers — is this repo's problem, solved here.
+provision = 'git worktree add --detach "$LERP_WORKSPACE" HEAD'
+dispose = 'git worktree remove --force "$LERP_WORKSPACE"'
+
+# A runner is an adapter to a coding-agent CLI (or a raw command template).
+# The contract is the lowest common denominator: takes a prompt and a
+# working directory, runs to exit, exit code means done or failed.
+[runners.claude]
+vendor = "claude"
+# model = "opus"
+# effort = "high"
+# context = 200000
+args = "--permission-mode bypassPermissions"
+
+# A queue is a Linear status with instructions attached. Tickets
+# sitting in `status` are picked up, run through `runner` with
+# `prompt`, and moved to `on_success` on a clean exit — unless the
+# agent already moved the ticket itself, which lerp respects.
+[queues.plan]
+status = "Planning"
+prompt = "Read {{ticket}} and post a plan as a comment."
+runner = "claude"
+on_success = "Implementing"
+
+[queues.implement]
+status = "Implementing"
+prompt = "Implement {{ticket}} per its plan comment. Open a PR."
+runner = "claude"
+on_success = "In Review"
+# Optional. Where the ticket goes when the agent exits non-zero.
+on_failure = "Needs Attention"

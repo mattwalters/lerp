@@ -1,5 +1,9 @@
 ---
 title: Why lerp
+# The header link says "Why" — beside the wordmark, "Why lerp" says lerp
+# twice — while the tab title and h1 keep the full phrase, which has to
+# stand alone out of context.
+linkTitle: Why
 description: The case for running coding agents from your Linear board, and why the smallness is the point.
 splash: true
 install: brew install mattwalters/tap/lerp

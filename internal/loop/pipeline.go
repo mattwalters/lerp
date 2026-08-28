@@ -100,7 +100,7 @@ func statusRelevance(repo *config.RepoConfig) func(status, category string) Stat
 // inbox lists unassigned tickets in unserved statuses too, so the gate was
 // always the status and never the claim — while the parked claim stranded
 // every ticket a human then moved on in Linear instead of with `p`, which is
-// the routing the manual documents (LERP-113). The claim is a lock on work in
+// the routing the docs document (LERP-113). The claim is a lock on work in
 // progress; a ticket resting at a gate is not in progress.
 //
 // The one exception returns above: an exit code this queue has no route for

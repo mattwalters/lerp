@@ -3,7 +3,7 @@
 {{- $version := site.Params.version -}}
 {{- if eq $version "" -}}
   {{- range site.Pages -}}
-    {{- if not (partial "manual.html" .) }}
+    {{- if not (partial "docs-page.html" .) }}
   <url>
     <loc>{{ partial "canonical.html" . }}</loc>
   </url>
@@ -11,7 +11,7 @@
   {{- end -}}
 {{- else if eq $version "latest" -}}
   {{- range site.Pages -}}
-    {{- if partial "manual.html" . }}
+    {{- if partial "docs-page.html" . }}
   <url>
     <loc>{{ partial "canonical.html" . }}</loc>
   </url>

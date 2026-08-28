@@ -53,17 +53,17 @@
   <link rel="stylesheet" href="{{ "style.css" | relURL }}">
 </head>
 <body>
-  {{/* Two pages stand outside the manual: the home splash, and the Why page,
+  {{/* Two pages stand outside the docs: the home splash, and the Why page,
        which is a pitch and marked `splash` in its own front matter. They drop
        both rails and carry their own links; everything else — SCOPE
-       included, mounted rather than written — is a page of the manual and
+       included, mounted rather than written — is a page of the docs and
        gets the three-region shell. */}}
-  {{ $manual := partial "manual.html" . }}
+  {{ $docsPage := partial "docs-page.html" . }}
   {{/* Whether this build IS the unversioned root, as opposed to whether the
-       current page is a manual page — the two sound alike but are not: a
+       current page is a docs page — the two sound alike but are not: a
        tag build stages home and Why lerp too (see docs.yml), so a versioned
-       build has non-manual pages of its own, and each of those still needs
-       the manual it ships beside, not the one at the site root. */}}
+       build has non-docs pages of its own, and each of those still needs
+       the docs it ships beside, not the copy at the site root. */}}
   {{ $unversionedRoot := eq site.Params.version "" }}
   {{/* Looked up rather than spelled as a path, so a header link can never
        outlive the page it points at: with no page this fails the build,
@@ -78,30 +78,30 @@
          for exactly this scale. Empty alt — the link already says lerp. */}}
     <a class="brand" href="{{ "" | relURL }}"><img class="brand-mark" src="{{ "favicon.svg" | relURL }}" alt="">lerp</a>
     <span class="spacer"></span>
-    {{/* The manual is what most people come here for, so the way into it is
-         in the header on every page — including the two that run without the
-         sidebar and so have no other door to it. .here marks the part of the
-         site you are already in.
+    {{/* The docs are what most people come here for, so the way into them
+         is in the header on every page — including the two that run without
+         the sidebar and so have no other door to them. .here marks the part
+         of the site you are already in.
 
-         Keyed on $unversionedRoot, not $manual: every page of a versioned
+         Keyed on $unversionedRoot, not $docsPage: every page of a versioned
          build (home and Why lerp included, since a tag stages the whole
-         site) has that build's own manual right beside it, so "docs/" |
+         site) has that build's own docs right beside it, so "docs/" |
          relURL resolves within this build for all of them. Only the
-         unversioned root build genuinely has no manual after the publish
-         workflow prunes it back out — that is the one case needing
+         unversioned root build genuinely has no docs after the publish
+         workflow prunes them back out — that is the one case needing
          "/latest/docs/" | relURL instead: /latest/ is a sibling build this
          one has never heard of, so the path has to name it explicitly, and
          relURL still leaves Hugo's relativeURLs pass free to turn it into a
          page-relative link that survives being served from any host or
          subdirectory (see hugo.toml). Until the first tag exists that
          404s; accepted rather than adding manifest-gated hide/show logic
-         for one link, on a project that has no manual to publish before
+         for one link, on a project that has no docs to publish before
          the first tag regardless. */}}
-    <a class="nav{{ if $manual }} here{{ end }}" href="{{ if $unversionedRoot }}{{ "/latest/docs/" | relURL }}{{ else }}{{ "docs/" | relURL }}{{ end }}">Docs</a>
-    {{/* Beside the manual, not inside it: somebody still deciding whether
-         lerp is the right tool has not started reading a manual yet, and the
+    <a class="nav{{ if $docsPage }} here{{ end }}" href="{{ if $unversionedRoot }}{{ "/latest/docs/" | relURL }}{{ else }}{{ "docs/" | relURL }}{{ end }}">Docs</a>
+    {{/* Beside the docs, not inside them: somebody still deciding whether
+         lerp is the right tool has not started reading docs yet, and the
          sidebar is for people who have. */}}
-    <a class="nav{{ if eq .RelPermalink $why.RelPermalink }} here{{ end }}" href="{{ $why.RelPermalink }}">{{ $why.Title }}</a>
+    <a class="nav{{ if eq .RelPermalink $why.RelPermalink }} here{{ end }}" href="{{ $why.RelPermalink }}">{{ $why.LinkTitle }}</a>
     {{/* The mark, not the word: aria-label carries the name, aria-hidden
          keeps the path data out of the accessibility tree. Inline and
          currentColor, so it follows the link colour with no asset to load. */}}
@@ -112,7 +112,7 @@
          label is painted by the script below. */}}
     <button type="button" id="theme-picker" class="theme" aria-label="Theme">◐ system</button>
     <a class="nav github" href="{{ site.Params.repo }}" target="_blank" rel="noopener" aria-label="GitHub"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg></a>
-    {{/* The picker belongs to manual pages: the root is unversioned, and
+    {{/* The picker belongs to docs pages: the root is unversioned, and
          with no option in the list matching an empty site.Params.version,
          a populated <select> would default to its first entry, "latest" —
          showing a version label on the one build that deliberately has
@@ -120,21 +120,31 @@
          version, filled in from versions.json by the script below and
          hidden until it is — a local preview has no manifest, and before
          the first tag there is nothing to name. */}}
-    {{ if $manual }}
+    {{ if $docsPage }}
     <span class="version">
-      <span class="version-label">{{ site.Params.version }}</span>
+      {{/* The number, not the word: a /latest/ build knows the tag it was
+           cut from (ref), and the header wears that concrete release the
+           way every frozen build already wears its own. "dev" stays "dev" —
+           a local preview has no release to name. */}}
+      <span class="version-label">{{ if eq site.Params.version "latest" }}{{ site.Params.ref }}{{ else }}{{ site.Params.version }}{{ end }}</span>
       <select id="version-picker" hidden aria-label="Documentation version"></select>
     </span>
     {{ else }}
-    <a class="version-latest" id="version-latest" hidden></a>
+    {{/* The same chip on the splash pages, so the header reads uniformly
+         across the site: prefilled at build time where the build knows a
+         version (a tag build's ref; "dev" locally), and on the unversioned
+         root — which deliberately has none — hidden until versions.json
+         names the newest release. The script below fills the number in and
+         points it at that release's docs. */}}
+    <a class="version-latest" id="version-latest"{{ if eq site.Params.version "" }} hidden{{ end }}>{{ if eq site.Params.version "dev" }}dev{{ else if ne site.Params.version "" }}{{ site.Params.ref }}{{ end }}</a>
     {{ end }}
   </header>
   <div class="wrap">
-    {{ if $manual }}
+    {{ if $docsPage }}
     {{/* Labelled, because the rail below is a <nav> too: unlabelled, the two
          landmarks announce as "navigation, navigation" with nothing to tell
-         the manual's contents from this page's. */}}
-    <nav class="sidenav" aria-label="Manual">
+         the docs' contents from this page's. */}}
+    <nav class="sidenav" aria-label="Docs">
       {{/* The sidebar is curated in hugo.toml rather than derived from the
            content tree: grouping and order are editorial, and a page nobody
            listed simply does not appear here (it is still published, and its
@@ -155,7 +165,7 @@
       {{ if and (not .Page) (not .URL) }}{{ errorf "menu entry %q resolves to nothing — is its pageRef a typo, or is the page it names draft = true?" .Name }}{{ end }}
       {{ $current := $.IsMenuCurrent "main" . }}
       {{/* Entries naming a command carry mono in hugo.toml: their names are
-           things you type, and a manual sets them in the face you type them
+           things you type, and they are set in the face you type them
            in. Not <code> inside the link — the menu name is a plain string
            Hugo escapes, so the face is a class on the link instead. */}}
       {{ $classes := slice }}
@@ -173,9 +183,9 @@
     </main>
     {{/* plainify strips the empty <nav> Hugo emits for a page with no
          headings, so the rail appears only when it has somewhere to point:
-         a short manual page gets no rail, and the long mounted files do. */}}
+         a short docs page gets no rail, and the long mounted files do. */}}
     {{ $toc := .TableOfContents }}
-    {{ if and $manual (plainify $toc) }}
+    {{ if and $docsPage (plainify $toc) }}
     <nav class="toc" aria-label="On this page">
       <h5>On this page</h5>
       {{ $toc }}
@@ -219,7 +229,7 @@
       });
     })();
   </script>
-  {{ if $manual }}
+  {{ if $docsPage }}
   <script>
     // The version picker. Each release is frozen under /vX.Y.Z/ beside a
     // moving /latest/, and versions.json sits one level above them all at the
@@ -241,13 +251,17 @@
           ["latest"].concat(versions).forEach(function (v) {
             var option = document.createElement("option");
             option.value = v;
-            option.textContent = v;
+            // The moving entry names its release: the manifest is sorted
+            // newest first, and /latest/ is rebuilt on every tag, so
+            // versions[0] is exactly what /latest/ serves.
+            option.textContent = v === "latest" && versions.length
+              ? versions[0] + " · latest" : v;
             option.selected = v === {{ site.Params.version }};
             picker.appendChild(option);
           });
-          // Into that version's manual, not its root: the root of a
+          // Into that version's docs, not its root: the root of a
           // versioned build is that version's own frozen copy of the home
-          // page, which (like every non-manual page) carries no picker and
+          // page, which (like every non-docs page) carries no picker and
           // no version label — a reader who just switched versions would
           // land somewhere that gives no sign the switch worked, with no
           // picker on the page to correct it from.
@@ -263,7 +277,7 @@
   <script>
     // The splash pages' version link: the newest entry in versions.json
     // (the manifest is sorted newest first — see docs.yml), pointing into
-    // that release's manual. Same root derivation and same failure mode as
+    // that release's docs. Same root derivation and same failure mode as
     // the picker above: no manifest, no link.
     (function () {
       var here = new URL(".", document.querySelector('link[rel="stylesheet"]').href);

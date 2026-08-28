@@ -187,7 +187,7 @@ func TestConcludeReleasesTheClaimWhenTheAgentMovedIntoAServedStatus(t *testing.T
 
 // LERP-113's acceptance, from the pipeline's own two halves: a plan run parks
 // its ticket at a gate, a human reads it and moves it on in Linear itself —
-// the routing the manual documents, and the move `p` is not — and the next
+// the routing the docs document, and the move `p` is not — and the next
 // pass finds it as a candidate. Before the gate released its claim the
 // listing came back empty and nothing reported why.
 func TestATicketMovedOnFromAGateIsACandidateAgain(t *testing.T) {
@@ -249,13 +249,13 @@ func claimed(t *testing.T, fake *linear.Fake, issueID, status string) (linear.Is
 	return issue, viewerID
 }
 
-// statusFieldPage is the manual page carrying "Lerp needs the status field" —
+// statusFieldPage is the docs page carrying "Lerp needs the status field" —
 // the adopter-facing account of an automation eating a stage's hop, and the
 // only page that quotes the warning verbatim. It moved out of the README when
-// the manual was written (LERP-123); the two tests below follow it.
+// the docs were written (LERP-123); the two tests below follow it.
 const statusFieldPage = "docs/content/docs/install.md"
 
-// The manual quotes this note as what an adopter sees when an automation has
+// The docs quote this note as what an adopter sees when an automation has
 // eaten a stage's hop — the string they will have in front of them, and the
 // one they grep for. A quoted string with nothing holding it to its source
 // goes stale on the first reword, with a green gate, and the page a surprised
@@ -267,7 +267,7 @@ const statusFieldPage = "docs/content/docs/install.md"
 // the code and miss the note losing its second sentence — the "an external
 // automation may be moving tickets" hint, which is the whole diagnostic that
 // page exists to explain — while it went on quoting it.
-func TestSkippedHopNoteIsWhatTheManualQuotes(t *testing.T) {
+func TestSkippedHopNoteIsWhatTheDocsQuote(t *testing.T) {
 	note := skippedHopNote(
 		linear.Issue{Identifier: "LERP-42"},
 		config.Queue{Status: "Implementing", OnSuccess: "In Review"},
@@ -283,11 +283,11 @@ func TestSkippedHopNoteIsWhatTheManualQuotes(t *testing.T) {
 	}
 }
 
-// The four trigger names the manual tells an adopter to look for are the same
+// The four trigger names the docs tell an adopter to look for are the same
 // four the startup warning prints. They were wrong once already, in the code
 // (LERP-55), and a rename that fixes one side and not the other sends the
 // adopter to a settings row under a name the screen does not use.
-func TestTheManualNamesTheMidStageTriggers(t *testing.T) {
+func TestTheDocsNameTheMidStageTriggers(t *testing.T) {
 	page := flatten(string(readFile(t, statusFieldPage)))
 	for _, ev := range midStageEvents {
 		if !strings.Contains(page, ev.label) {
@@ -326,7 +326,7 @@ func pageBlockquote(t *testing.T, name string) string {
 }
 
 // flatten collapses wrapping so a comparison is about words, not line breaks:
-// the manual wraps its prose and the code does not.
+// the docs wrap their prose and the code does not.
 func flatten(s string) string { return strings.Join(strings.Fields(s), " ") }
 
 func readFile(t *testing.T, name string) []byte {

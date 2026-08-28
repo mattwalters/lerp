@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.0//EN" "http://www.w3.org/TR/2001/REC-SVG-20010904/DTD/svg10.dtd">
-<svg width="628.36" height="490.50" xmlns="http://www.w3.org/2000/svg">
+<svg width="726.57" height="760.50" xmlns="http://www.w3.org/2000/svg">
 <style>
 @font-face {
 	font-family: &apos;JetBrains Mono&apos;;
@@ -8,31 +8,46 @@
 	font-weight: normal;
 	font-style: normal;
 }
-</style><rect width="628.36" height="490.50" fill="#eff1f5" rx="10.00" ry="10.00" x="0.00px" y="0.00px"/>
-<g font-family="JetBrains Mono" font-size="15.00px" fill="#4c4f69" clip-path="url(#terminalMask)">
-<text x="24.00px" y="57.00px" xml:space="preserve">teams = [<tspan fill="#40a02b">&quot;LERP&quot;</tspan>]
-</text><text x="24.00px" y="75.00px" xml:space="preserve">
-</text><text x="24.00px" y="93.00px" xml:space="preserve"><tspan fill="#9ca0b0" font-style="italic"># lerp sets $LERP_WORKSPACE per lane</tspan>
-</text><text x="24.00px" y="111.00px" xml:space="preserve">provision = <tspan fill="#40a02b">&apos;git worktree add --detach &quot;$LERP_WORKSPACE&quot; HEAD&apos;</tspan>
-</text><text x="24.00px" y="129.00px" xml:space="preserve">dispose = <tspan fill="#40a02b">&apos;git worktree remove --force &quot;$LERP_WORKSPACE&quot;&apos;</tspan>
-</text><text x="24.00px" y="147.00px" xml:space="preserve">
-</text><text x="24.00px" y="165.00px" xml:space="preserve">[runners.claude]
-</text><text x="24.00px" y="183.00px" xml:space="preserve">vendor = <tspan fill="#40a02b">&quot;claude&quot;</tspan>
-</text><text x="24.00px" y="201.00px" xml:space="preserve">
-</text><text x="24.00px" y="219.00px" xml:space="preserve">[runners.antigravity]
-</text><text x="24.00px" y="237.00px" xml:space="preserve">vendor = <tspan fill="#40a02b">&quot;antigravity&quot;</tspan>
-</text><text x="24.00px" y="255.00px" xml:space="preserve">
-</text><text x="24.00px" y="273.00px" xml:space="preserve">[queues.plan]
-</text><text x="24.00px" y="291.00px" xml:space="preserve">status = <tspan fill="#40a02b">&quot;Planning&quot;</tspan>
-</text><text x="24.00px" y="309.00px" xml:space="preserve">prompt = <tspan fill="#40a02b">&quot;Read {{ticket}} and post a plan as a comment.&quot;</tspan>
-</text><text x="24.00px" y="327.00px" xml:space="preserve">runner = <tspan fill="#40a02b">&quot;claude&quot;</tspan>
-</text><text x="24.00px" y="345.00px" xml:space="preserve">on_success = <tspan fill="#40a02b">&quot;Plan Review&quot;</tspan>
-</text><text x="24.00px" y="363.00px" xml:space="preserve">
-</text><text x="24.00px" y="381.00px" xml:space="preserve">[queues.implement]
-</text><text x="24.00px" y="399.00px" xml:space="preserve">status = <tspan fill="#40a02b">&quot;In Progress&quot;</tspan>
-</text><text x="24.00px" y="417.00px" xml:space="preserve">prompt = <tspan fill="#40a02b">&quot;Implement {{ticket}} per its plan comment. Open a PR.&quot;</tspan>
-</text><text x="24.00px" y="435.00px" xml:space="preserve">runner = <tspan fill="#40a02b">&quot;antigravity&quot;</tspan>
-</text><text x="24.00px" y="453.00px" xml:space="preserve">on_success = <tspan fill="#40a02b">&quot;In Review&quot;</tspan>
+</style><rect width="726.57" height="760.50" fill="#1e1e2e" rx="10.00" ry="10.00" x="0.00px" y="0.00px"/>
+<g font-family="JetBrains Mono" font-size="15.00px" fill="#cdd6f4" clip-path="url(#terminalMask)">
+<text x="24.00px" y="57.00px" xml:space="preserve"><tspan fill="#6c7086" font-style="italic"># Linear team keys this repo serves. One repo may serve several teams</tspan>
+</text><text x="24.00px" y="75.00px" xml:space="preserve"><tspan fill="#6c7086" font-style="italic"># (the monorepo case); two repos may never claim the same team.</tspan>
+</text><text x="24.00px" y="93.00px" xml:space="preserve">teams = [<tspan fill="#a6e3a1">&quot;LERP&quot;</tspan>]
+</text><text x="24.00px" y="111.00px" xml:space="preserve">
+</text><text x="24.00px" y="129.00px" xml:space="preserve"><tspan fill="#6c7086" font-style="italic"># Commands that create and destroy a lane&apos;s workspace. Lerp invokes</tspan>
+</text><text x="24.00px" y="147.00px" xml:space="preserve"><tspan fill="#6c7086" font-style="italic"># them with a unique lane/run identity and otherwise knows nothing</tspan>
+</text><text x="24.00px" y="165.00px" xml:space="preserve"><tspan fill="#6c7086" font-style="italic"># about what they do. Environment isolation — ports, databases,</tspan>
+</text><text x="24.00px" y="183.00px" xml:space="preserve"><tspan fill="#6c7086" font-style="italic"># containers — is this repo&apos;s problem, solved here.</tspan>
+</text><text x="24.00px" y="201.00px" xml:space="preserve">provision = <tspan fill="#a6e3a1">&apos;git worktree add --detach &quot;$LERP_WORKSPACE&quot; HEAD&apos;</tspan>
+</text><text x="24.00px" y="219.00px" xml:space="preserve">dispose = <tspan fill="#a6e3a1">&apos;git worktree remove --force &quot;$LERP_WORKSPACE&quot;&apos;</tspan>
+</text><text x="24.00px" y="237.00px" xml:space="preserve">
+</text><text x="24.00px" y="255.00px" xml:space="preserve"><tspan fill="#6c7086" font-style="italic"># A runner is an adapter to a coding-agent CLI (or a raw command template).</tspan>
+</text><text x="24.00px" y="273.00px" xml:space="preserve"><tspan fill="#6c7086" font-style="italic"># The contract is the lowest common denominator: takes a prompt and a</tspan>
+</text><text x="24.00px" y="291.00px" xml:space="preserve"><tspan fill="#6c7086" font-style="italic"># working directory, runs to exit, exit code means done or failed.</tspan>
+</text><text x="24.00px" y="309.00px" xml:space="preserve">[runners.claude]
+</text><text x="24.00px" y="327.00px" xml:space="preserve">vendor = <tspan fill="#a6e3a1">&quot;claude&quot;</tspan>
+</text><text x="24.00px" y="345.00px" xml:space="preserve"><tspan fill="#6c7086" font-style="italic"># model = &quot;opus&quot;</tspan>
+</text><text x="24.00px" y="363.00px" xml:space="preserve"><tspan fill="#6c7086" font-style="italic"># effort = &quot;high&quot;</tspan>
+</text><text x="24.00px" y="381.00px" xml:space="preserve"><tspan fill="#6c7086" font-style="italic"># context = 200000</tspan>
+</text><text x="24.00px" y="399.00px" xml:space="preserve">args = <tspan fill="#a6e3a1">&quot;--permission-mode bypassPermissions&quot;</tspan>
+</text><text x="24.00px" y="417.00px" xml:space="preserve">
+</text><text x="24.00px" y="435.00px" xml:space="preserve"><tspan fill="#6c7086" font-style="italic"># A queue is a Linear status with instructions attached. Tickets</tspan>
+</text><text x="24.00px" y="453.00px" xml:space="preserve"><tspan fill="#6c7086" font-style="italic"># sitting in `status` are picked up, run through `runner` with</tspan>
+</text><text x="24.00px" y="471.00px" xml:space="preserve"><tspan fill="#6c7086" font-style="italic"># `prompt`, and moved to `on_success` on a clean exit — unless the</tspan>
+</text><text x="24.00px" y="489.00px" xml:space="preserve"><tspan fill="#6c7086" font-style="italic"># agent already moved the ticket itself, which lerp respects.</tspan>
+</text><text x="24.00px" y="507.00px" xml:space="preserve">[queues.plan]
+</text><text x="24.00px" y="525.00px" xml:space="preserve">status = <tspan fill="#a6e3a1">&quot;Planning&quot;</tspan>
+</text><text x="24.00px" y="543.00px" xml:space="preserve">prompt = <tspan fill="#a6e3a1">&quot;Read {{ticket}} and post a plan as a comment.&quot;</tspan>
+</text><text x="24.00px" y="561.00px" xml:space="preserve">runner = <tspan fill="#a6e3a1">&quot;claude&quot;</tspan>
+</text><text x="24.00px" y="579.00px" xml:space="preserve">on_success = <tspan fill="#a6e3a1">&quot;Implementing&quot;</tspan>
+</text><text x="24.00px" y="597.00px" xml:space="preserve">
+</text><text x="24.00px" y="615.00px" xml:space="preserve">[queues.implement]
+</text><text x="24.00px" y="633.00px" xml:space="preserve">status = <tspan fill="#a6e3a1">&quot;Implementing&quot;</tspan>
+</text><text x="24.00px" y="651.00px" xml:space="preserve">prompt = <tspan fill="#a6e3a1">&quot;Implement {{ticket}} per its plan comment. Open a PR.&quot;</tspan>
+</text><text x="24.00px" y="669.00px" xml:space="preserve">runner = <tspan fill="#a6e3a1">&quot;claude&quot;</tspan>
+</text><text x="24.00px" y="687.00px" xml:space="preserve">on_success = <tspan fill="#a6e3a1">&quot;In Review&quot;</tspan>
+</text><text x="24.00px" y="705.00px" xml:space="preserve"><tspan fill="#6c7086" font-style="italic"># Optional. Where the ticket goes when the agent exits non-zero.</tspan>
+</text><text x="24.00px" y="723.00px" xml:space="preserve">on_failure = <tspan fill="#a6e3a1">&quot;Needs Attention&quot;</tspan>
 </text>
 </g>
 <svg x="0.00px" y="0.00px"><circle cx="13.50" cy="12.00" r="5.50" fill="#FF5A54"/><circle cx="32.50" cy="12.00" r="5.50" fill="#E6BF29"/><circle cx="51.50" cy="12.00" r="5.50" fill="#52C12B"/></svg></svg>

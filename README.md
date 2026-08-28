@@ -90,20 +90,20 @@ strays). Losing `.lerp/` costs compute, never correctness. Linear workflow
 statuses created by `lerp init` stay on the team until you delete or
 archive them in Linear's settings.
 
-## The manual
+## The docs
 
-**[The manual](https://lerp.sh/latest/docs/)** is the docs site:
+**[The docs](https://lerp.sh/latest/docs/)** are the site:
 [install](https://lerp.sh/latest/docs/install/) and the
 [quickstart](https://lerp.sh/latest/docs/quickstart/), the
 [model the board is a picture of](https://lerp.sh/latest/docs/the-board/),
 a page per motion through the interface, and the reference for
 `lerp.toml`, the command line and
 [troubleshooting](https://lerp.sh/latest/docs/troubleshooting/).
-It is published from this repository, and every release tag freezes the
-copy that shipped with it.
+They are published from this repository, and every release tag freezes
+the copy that shipped with it.
 
 Three files stay here in the repository, where they are edited alongside
-the code they describe. SCOPE.md is a page of the manual too, mounted into
+the code they describe. SCOPE.md is a page of the docs too, mounted into
 the site rather than copied:
 
 - [SCOPE.md](SCOPE.md) is the fence around the project: five concepts,

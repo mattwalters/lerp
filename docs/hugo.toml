@@ -1,11 +1,11 @@
 # The docs site, published to GitHub Pages by .github/workflows/docs.yml.
 #
-# The manual — everything but the root — is versioned documentation and
-# publishes only on a tag: /latest/ and /vX.Y.Z/ are both built from that
+# The docs — everything but the root — are versioned documentation and
+# publish only on a tag: /latest/ and /vX.Y.Z/ are both built from that
 # tag's own tree, and neither is ever rebuilt from main. The root — the
 # splash page and Why lerp — is marketing, stays unversioned, and keeps
 # tracking main instead. One Hugo source builds both: a main push prunes the
-# manual back out of its build before deploy, so root and manual are never
+# docs back out of its build before deploy, so root and docs are never
 # byte-identical the way the root and /latest/ briefly were under the model
 # this superseded.
 #
@@ -50,8 +50,8 @@ unsafe = true
 
 [markup.goldmark.parser]
 # SCOPE is read on GitHub too, and GitHub derives heading anchors this way.
-# Keeping the same scheme keeps the in-page links the manual writes into it —
-# and the ones the manual's own pages write to each other — resolving here.
+# Keeping the same scheme keeps the in-page links the docs write into it —
+# and the ones the docs' own pages write to each other — resolving here.
 autoHeadingIDType = "github"
 
 [params]
@@ -106,13 +106,6 @@ weight = 10
 section = "Start"
 
 [[menus.main]]
-name = "Overview"
-pageRef = "/docs/overview"
-weight = 20
-[menus.main.params]
-section = "Start"
-
-[[menus.main]]
 name = "Install"
 pageRef = "/docs/install"
 weight = 30
@@ -138,8 +131,8 @@ weight = 50
 section = "Concepts"
 
 # One page per motion through the screen, in the order an operator meets
-# them: what the board shows, how to find a ticket in it, and then the four
-# keys that do something to the row under the cursor.
+# them: what the board shows, how to find a ticket in it, the run under way
+# (watching it, taking it over), and then the two routing writes.
 [[menus.main]]
 name = "Reading the board"
 pageRef = "/docs/reading-the-board"
@@ -155,8 +148,8 @@ weight = 70
 section = "The interface"
 
 [[menus.main]]
-name = "Promoting"
-pageRef = "/docs/promoting"
+name = "Watching a run"
+pageRef = "/docs/watching-a-run"
 weight = 80
 [menus.main.params]
 section = "The interface"
@@ -169,8 +162,8 @@ weight = 90
 section = "The interface"
 
 [[menus.main]]
-name = "Watching a run"
-pageRef = "/docs/watching-a-run"
+name = "Promoting"
+pageRef = "/docs/promoting"
 weight = 100
 [menus.main.params]
 section = "The interface"
@@ -211,9 +204,9 @@ weight = 140
 [menus.main.params]
 section = "Reference"
 
-# SCOPE.md is a page of the manual too — mounted below rather than rewritten,
+# SCOPE.md is a page of the docs too — mounted below rather than rewritten,
 # so there is no second copy of the fence to drift out of sync with the
-# first. The README is not: since the manual took over what it used to carry,
+# first. The README is not: since the docs took over what it used to carry,
 # what is left of it is a front door — install, the cast, a pointer to here —
 # and mounting that would put a second copy of this site's home page in the
 # sidebar.

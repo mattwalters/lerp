@@ -18,9 +18,9 @@ Sleep 1s
 Up 6
 Sleep 500ms
 
-# Down to DEMO-32 queued in the plan queue.
+# Down to ACME-32 queued in the plan queue.
 Down 4
-Wait+Screen /DEMO-32/
+Wait+Screen /ACME-32/
 Sleep 1500ms
 
 # Shift+S force-starts the ticket past the lane limit.

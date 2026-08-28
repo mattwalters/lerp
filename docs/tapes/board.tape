@@ -15,9 +15,9 @@ Enter
 Wait+Screen /waiting to enter the pipeline/
 Sleep 2s
 
-# Down to DEMO-25 in Plan Review, then enter to read its plan in the main pane.
+# Down to ACME-25 in Plan Review, then enter to read its plan in the main pane.
 Down
-Wait+Screen /DEMO-25/
+Wait+Screen /ACME-25/
 Sleep 1500ms
 Enter
 Wait+Screen /One page under docs/

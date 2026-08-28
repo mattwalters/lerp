@@ -14,9 +14,9 @@ Enter
 Wait+Screen /waiting to enter the pipeline/
 Sleep 2s
 
-# Select DEMO-25 in Plan Review and read the plan in the main pane.
+# Select ACME-25 in Plan Review and read the plan in the main pane.
 Down
-Wait+Screen /DEMO-25/
+Wait+Screen /ACME-25/
 Sleep 1500ms
 Enter
 Wait+Screen /One page under docs/
@@ -24,7 +24,7 @@ Sleep 3s
 
 # Press p to open the promote picker.
 Type "p"
-Wait+Screen /promote DEMO-25/
+Wait+Screen /promote ACME-25/
 Sleep 1500ms
 
 # Pick Implementing and confirm with enter.
@@ -34,9 +34,9 @@ Sleep 1500ms
 Enter
 Sleep 2s
 
-# 2 across to the work panel to see DEMO-25 in the queue.
+# 2 across to the work panel to see ACME-25 in the queue.
 Type "2"
-Wait+Screen /DEMO-25/
+Wait+Screen /ACME-25/
 Sleep 4s
 
 Type "q"
