@@ -60,11 +60,11 @@ func TestNormalizeArgsLeavesOtherArgsAlone(t *testing.T) {
 	}
 }
 
-// cliPage is the manual's reference page for the command line, which opens
+// cliPage is the docs' reference page for the command line, which opens
 // with this usage text verbatim.
 const cliPage = "docs/content/docs/cli.md"
 
-// The manual quotes the usage block as the whole of lerp's surface, and a
+// The docs quote the usage block as the whole of lerp's surface, and a
 // quoted string with nothing holding it to its source goes stale on the
 // first flag, with a green gate — the same reasoning that pins the
 // skipped-hop note to the page that quotes it, and lerp.example.toml to the
@@ -73,7 +73,7 @@ const cliPage = "docs/content/docs/cli.md"
 //
 // The block is found by its own first line rather than by position, so
 // rewriting the prose around it costs nothing.
-func TestTheManualQuotesTheUsage(t *testing.T) {
+func TestTheDocsQuoteTheUsage(t *testing.T) {
 	page, err := os.ReadFile(filepath.Join("..", "..", cliPage))
 	if err != nil {
 		t.Fatal(err)

@@ -24,46 +24,7 @@ Linear, both covered [below](#the-stock-pipeline).
 
 ## The shape of it
 
-```toml
-# Linear team keys this repo serves. One repo may serve several teams
-# (the monorepo case); two repos may never claim the same team.
-teams = ["LERP"]
-
-# Commands that create and destroy a lane's workspace. Lerp invokes
-# them with a unique lane/run identity and otherwise knows nothing
-# about what they do. Environment isolation — ports, databases,
-# containers — is this repo's problem, solved here.
-provision = 'git worktree add --detach "$LERP_WORKSPACE" HEAD'
-dispose = 'git worktree remove --force "$LERP_WORKSPACE"'
-
-# A runner is an adapter to a coding-agent CLI (or a raw command template).
-# The contract is the lowest common denominator: takes a prompt and a
-# working directory, runs to exit, exit code means done or failed.
-[runners.claude]
-vendor = "claude"
-# model = "opus"
-# effort = "high"
-# context = 200000
-args = "--permission-mode bypassPermissions"
-
-# A queue is a Linear status with instructions attached. Tickets
-# sitting in `status` are picked up, run through `runner` with
-# `prompt`, and moved to `on_success` on a clean exit — unless the
-# agent already moved the ticket itself, which lerp respects.
-[queues.plan]
-status = "Planning"
-prompt = "Read {{ticket}} and post a plan as a comment."
-runner = "claude"
-on_success = "Implementing"
-
-[queues.implement]
-status = "Implementing"
-prompt = "Implement {{ticket}} per its plan comment. Open a PR."
-runner = "claude"
-on_success = "In Review"
-# Optional. Where the ticket goes when the agent exits non-zero.
-on_failure = "Needs Attention"
-```
+{{< shot src="lerp-toml-shape.svg" alt="A minimal lerp.toml, every field annotated: a teams list; provision and dispose commands building a git worktree per lane; a claude runner with commented-out model, effort and context overrides and an explicit permission grant in args; and two queues — plan, watching Planning and moving to Implementing, and implement, watching Implementing and moving to In Review, with Needs Attention as its on_failure." >}}
 
 The queue fields above are the complete set — `status`, `prompt`,
 `runner`, `on_success`, and optionally `on_failure`. There is deliberately
@@ -100,11 +61,7 @@ prompt and working directory in, exit code out. Reach for one for an
 unsupported CLI, agents inside a container or VM (`docker exec ...`), or a
 custom wrapper:
 
-```toml
-[runners.custom]
-command = "my-agent --prompt {{prompt}} --dir {{workdir}} --session {{session}}"
-resume = "cd {{workdir}} && my-agent --resume {{session}}"
-```
+{{< shot src="runner-command.svg" alt="A command-template runner: command invokes my-agent with prompt, workdir and session placeholders; resume changes into the workdir and resumes the session, the command eject hands back." >}}
 
 ### Runner configuration keys
 

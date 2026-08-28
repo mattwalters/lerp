@@ -1,7 +1,7 @@
 ---
 title: Watching a run
 summary: The activity line, the live log tail, the raw view, and following.
-weight: 100
+weight: 80
 ---
 
 # Watching a run

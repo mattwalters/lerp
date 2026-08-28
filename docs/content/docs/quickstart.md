@@ -135,6 +135,6 @@ rule. A pass runs every twelve seconds, so the promoted ticket should be
 on the Work panel with a lane under it almost at once.
 [The board](the-board.md) is what that screen is a picture of.
 
-From here the manual is the motions: [promoting](promoting.md) for the
-gates the stock pipeline waits at, [watching a run](watching-a-run.md) for
-the log.
+From here the docs are the motions: [watching a run](watching-a-run.md)
+for the log, [promoting](promoting.md) for the gates the stock pipeline
+waits at.

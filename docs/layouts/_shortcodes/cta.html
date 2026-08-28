@@ -4,8 +4,8 @@
        {{< cta "/docs/quickstart" >}}$ lerp init →{{< /cta >}}
 
      The href gets the same treatment render-link.html gives .md links:
-     on the unversioned root the manual is pruned before deploy, so a
-     link to a manual page reaches into /latest/ where it is actually
+     on the unversioned root the docs are pruned before deploy, so a
+     link to a docs page reaches into /latest/ where it is actually
      served, and relativeURLs then makes the result page-relative. */ -}}
 {{- $target := .Get 0 -}}
 {{- $page := site.GetPage $target -}}

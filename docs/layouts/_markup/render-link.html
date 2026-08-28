@@ -24,7 +24,7 @@
   {{- $path := strings.TrimPrefix "/" $clean -}}
   {{/* Asked of the page first, then of the site. The mounted files sit at
        the site root, so for them the two are the same lookup — but a page of
-       the manual sits in a directory, and there the ordinary markdown
+       the docs sits in a directory, and there the ordinary markdown
        spelling of a link to its neighbour is a bare filename. Rooted first,
        that bare name misses every page and leaves for a GitHub blob URL that
        does not exist, because a Hugo content file is not at that repo path.
@@ -35,9 +35,9 @@
     {{- $page = site.GetPage (printf "/%s" (strings.TrimSuffix ".md" (lower $path))) -}}
   {{- end -}}
   {{- if $page -}}
-    {{/* On the unversioned root, the manual subtree is pruned before deploy,
-         so links targeting manual pages (anything other than home and splash
-         pages) reach into /latest/ where the manual is actually served. */}}
+    {{/* On the unversioned root, the docs subtree is pruned before deploy,
+         so links targeting docs pages (anything other than home and splash
+         pages) reach into /latest/ where the docs are actually served. */}}
     {{- if and (eq site.Params.version "") (and (not $page.IsHome) (not $page.Params.splash)) -}}
       {{- $href = printf "/latest%s" $page.RelPermalink -}}
     {{- else -}}

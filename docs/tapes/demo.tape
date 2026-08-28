@@ -83,15 +83,15 @@ Sleep 3s
 # "In Review — a run finished here". The panel already seeds two tickets at
 # "In Review" before any run finishes, so "In Review" alone is on screen
 # from the first frame and proves nothing here — the wait instead names
-# DEMO-24/26/27, the three tickets running above (internal/demo/main.go's
+# ACME-24/26/27, the three tickets running above (internal/demo/main.go's
 # board, in identifier order — linear.Fake.ListIssues sorts by identifier,
-# and DEMO-22 is blocked, so these three are always the first wave),
+# and ACME-22 is blocked, so these three are always the first wave),
 # immediately followed on their own row by the status it lands in, which
 # only that ticket's own move can produce. [ \t] rather than \s so the
 # match cannot stretch across a line break onto some other row's
 # "In Review".
 Type "1"
-Wait+Screen /DEMO-2[467][ \t]+\S+[ \t]+In Review/
+Wait+Screen /ACME-2[467][ \t]+\S+[ \t]+In Review/
 Sleep 2s
 # Every run so far has landed here, which is the shape of the thing: the loop
 # works the board down, and what it finishes stacks up waiting on a human.

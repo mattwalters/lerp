@@ -77,9 +77,9 @@ The same rules the agents work under (see `AGENTS.md`):
   tape never asks anything of re-records nothing if it touches none of
   the paths above — so if your change dates a cast, run `make demo`
   and `make casts`, and commit `docs/demo.gif` and the posters with it.
-- `make config-shot` re-renders the homepage's config snippet
-  (`docs/shots/config.toml`) into `docs/static/config.svg` and
-  `docs/static/config-light.svg`. It needs
+- `make shots` re-renders every config snippet under `docs/shots/` —
+  the homepage's `config.toml` and the docs' lerp.toml shots — into
+  dark and light SVG pairs in `docs/static/`. It needs
   [freeze](https://github.com/charmbracelet/freeze) and renders both
   variants with pinned geometry flags and theme pairs.
 - The third is `release-config`: `goreleaser check` and then `make
@@ -91,11 +91,11 @@ The same rules the agents work under (see `AGENTS.md`):
   tag on origin with no release attached. Reproduce it locally with
   `make snapshot`, which needs
   [goreleaser](https://goreleaser.com/install/) v2.6 or newer.
-- The docs site is the manual under `docs/content/docs/` plus
+- The docs site is the pages under `docs/content/docs/` plus
   SCOPE.md, which is mounted into it rather than copied — so a PR
   touching either builds the site as a gate. The README is not part of
-  the site: it is the repository's front door, and the manual is where
-  what it used to carry now lives. A new manual page reaches the sidebar
+  the site: it is the repository's front door, and the docs are where
+  what it used to carry now lives. A new docs page reaches the sidebar
   only once it has a `[[menus.main]]` entry in `docs/hugo.toml` — the
   sidebar is curated, not derived — though its section index lists it
   either way. A page not ready to be read is `draft = true`, and its

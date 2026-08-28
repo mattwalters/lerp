@@ -1,7 +1,7 @@
 # The docs site on GitHub Pages.
 #
-# Two kinds of page, two triggers. The manual is versioned documentation and
-# publishes only on tags: /latest/ and /vX.Y.Z/ are both built from the tag's
+# Two kinds of page, two triggers. The docs are versioned documentation and
+# publish only on tags: /latest/ and /vX.Y.Z/ are both built from the tag's
 # own tree and neither is ever rebuilt from main, so a repo pinned to lerp
 # vX.Y.Z — and `go install …@latest`, which resolves to the last tag, not
 # main — can always read docs that match the binary. The root — the splash
@@ -10,7 +10,7 @@
 # and nothing there should wait for a release to change.
 #
 # One Hugo source, staged twice rather than built twice: a main push runs the
-# whole site through Hugo once and then prunes the manual pages back out
+# whole site through Hugo once and then prunes the docs pages back out
 # before deploy, since the templates and content that shape are the same
 # for both destinations. The tag build appends to versions.json, the same
 # manifest the root's own picker reads.
@@ -21,8 +21,8 @@
 # to a branch nobody serves.
 #
 # One-time cleanup, the first time this version of the workflow runs: earlier
-# deploys, from before the root and the manual split, already put the manual
-# at the site root (gh-pages:/docs/, /readme/, /scope/). Pruning it from the
+# deploys, from before the root and the docs split, already put the docs
+# at the site root (gh-pages:/docs/, /readme/, /scope/). Pruning them from the
 # stage keep_files does not retroactively delete what an older deploy already
 # published — those three directories go on being served, unversioned and
 # frozen at whatever main was on the last pre-split deploy, until someone
@@ -152,8 +152,8 @@ jobs:
       # No baseURL is passed to any of these builds: every emitted link is
       # relative (see docs/hugo.toml), so the same pages serve from any host
       # and any directory, and only the stamped version label differs between
-      # them. Root and manual are built by different runs of this job now —
-      # a main push builds only the root, a tag push only the manual — so
+      # them. Root and docs are built by different runs of this job now —
+      # a main push builds only the root, a tag push only the docs — so
       # unlike before, at most one of the two ever runs in the same
       # execution; neither stages inside the other.
       #
@@ -171,19 +171,19 @@ jobs:
         run: hugo --source docs --destination "$PWD/public"
         env:
           # Empty, not "latest": the root is unversioned. Stamping it
-          # "latest" would say it is a copy of the manual, which after the
+          # "latest" would say it is a copy of the docs, which after the
           # prune step below it no longer is.
           HUGO_PARAMS_VERSION: ""
 
       # The root build above is the whole site — home, Why lerp, and the
-      # manual alike, because there is one Hugo source and one set of
+      # docs alike, because there is one Hugo source and one set of
       # templates, not two builds to keep in sync. This step keeps only the
       # root pages, named explicitly, and deletes everything else, rather
-      # than naming the manual's pages to delete: the manual grows on its own
+      # than naming the docs' pages to delete: the docs grow on their own
       # (a new docs/content/docs/<page>.md, another root-file mount alongside
       # SCOPE) while the root does not, so a keep-list of what's small and
       # fixed stays correct where a prune-list of what's open-ended would
-      # silently fall behind and let the next addition onto the manual leak
+      # silently fall behind and let the next addition onto the docs leak
       # onto the unversioned root instead — any new static asset referenced
       # from the root (like brand chrome) must be added to this keep-list by
       # hand. Product imagery — posters, og.png, and the config shots — is
@@ -198,13 +198,13 @@ jobs:
           mkdir public
           mv /tmp/root/index.html /tmp/root/why /tmp/root/style.css /tmp/root/favicon.svg /tmp/root/mark.svg /tmp/root/sitemap.xml /tmp/root/robots.txt public/
 
-      # Casts are rendered from the tag's own tree, same as the manual below,
+      # Casts are rendered from the tag's own tree, same as the docs below,
       # so a recording always shows the released binary rather than whatever
       # merged last. Ahead of the Hugo builds: hugo.toml already mounts
       # docs/static into every build's static/, so a build that runs after
       # this step picks up docs/static/casts/ for free and needs no copy of
       # its own. workflow_dispatch cannot reach this step either, for the
-      # same reason it cannot reach the manual builds below.
+      # same reason it cannot reach the docs builds below.
       - name: Set up Go
         if: github.event_name == 'push' && github.ref_type == 'tag'
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
@@ -244,8 +244,8 @@ jobs:
           cp -r docs/static/posters/. public/posters/
           cp docs/static/og.png docs/static/config.svg docs/static/config-light.svg public/
 
-      # The manual publishes only from a tag, from that tag's own tree —
-      # never from main, which is what keeps a manual that ships with an
+      # The docs publish only from a tag, from that tag's own tree —
+      # never from main, which is what keeps docs that ship with an
       # installable binary from describing code the binary doesn't have.
       # workflow_dispatch cannot reach these two steps (it is not a push),
       # so replaying /latest/ or a frozen version without cutting a new tag

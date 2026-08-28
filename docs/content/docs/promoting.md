@@ -1,7 +1,7 @@
 ---
 title: Promoting
 summary: Moving a ticket into the next stage — the one routing decision, and one of the board's two writes.
-weight: 80
+weight: 100
 ---
 
 # Promoting

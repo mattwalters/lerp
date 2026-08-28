@@ -6,5 +6,5 @@
 // Unix only: the clone lock is an advisory flock and liveness is a signal-0
 // kill. Every file here carries a //go:build unix constraint, so a new one
 // needs it too. Of the platforms that constraint admits, macOS and Linux
-// are the supported ones — see the manual's Install page.
+// are the supported ones — see the docs' Install page.
 package evidence

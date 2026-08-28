@@ -3,7 +3,7 @@
 # pipeline as configuration exactly as a real repo does (SCOPE invariant 5):
 # nothing about the demo is an `if` in the engine.
 
-teams = ["DEMO"]
+teams = ["ACME"]
 
 # The workspace a lane gets is a plain directory. A real repo builds a git
 # worktree here; the stub agent below never touches its workspace, so a

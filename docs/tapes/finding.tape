@@ -48,7 +48,7 @@ Sleep 1500ms
 Type "/"
 Wait+Screen /\/.*filter the list/
 Type "sanit"
-Wait+Screen /DEMO-21/
+Wait+Screen /ACME-21/
 Sleep 2s
 Escape
 Sleep 1500ms
