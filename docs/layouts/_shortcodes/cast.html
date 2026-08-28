@@ -76,4 +76,16 @@
     {{- end -}}
   </figcaption>
   {{- end }}
+  {{- if $autoplay }}
+  <script>
+    // Autoplay is a courtesy and prefers-reduced-motion withdraws it: that
+    // reader gets the poster and the controls, not a screen already moving.
+    (function () {
+      if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) { return; }
+      var video = document.currentScript.parentElement.querySelector("video");
+      video.removeAttribute("autoplay");
+      video.pause();
+    })();
+  </script>
+  {{- end }}
 </figure>

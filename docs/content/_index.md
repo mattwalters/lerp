@@ -11,8 +11,6 @@ You put tickets on a board; lerp runs coding agents to move them across it.
          title="The lerp board: an inbox of tickets waiting on a human, a work panel of queues and three lanes running coding agents beneath it, and a main pane that opens beside them to read a ticket or tail a lane's log"
          autoplay=true >}}
 
-<sub>A recording, against a fake board and a stub agent.</sub>
-
 One binary and one screen. Lerp opens on the Linear board you already have,
 fills a few lanes with coding agents, and answers the two questions an
 operator actually has: what is waiting on me, and what is the machine doing
