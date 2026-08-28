@@ -107,12 +107,12 @@ func TestRunJSON(t *testing.T) {
 
 	t.Run("full", func(t *testing.T) {
 		run := Run{
-			At: at, Repo: "/Users/matt/src/donewell/lerp", Team: "LERP", Ticket: "LERP-138",
+			At: at, Repo: "/home/you/src/lerp", Team: "LERP", Ticket: "LERP-138",
 			Queue: "implement", Runner: "claude", Vendor: "claude", Model: "claude-opus-4-6",
 			Session: "7420e6f8", DurationMS: 742318, Tokens: 1284310, CostUSD: 3.71,
 			ExitCode: &code, Status: "In Review",
 		}
-		want := `{"at":"2026-08-27T10:04:11Z","repo":"/Users/matt/src/donewell/lerp","team":"LERP",` +
+		want := `{"at":"2026-08-27T10:04:11Z","repo":"/home/you/src/lerp","team":"LERP",` +
 			`"ticket":"LERP-138","queue":"implement","runner":"claude","vendor":"claude",` +
 			`"model":"claude-opus-4-6","session":"7420e6f8","duration_ms":742318,"tokens":1284310,` +
 			`"cost_usd":3.71,"exit_code":0,"status":"In Review"}`

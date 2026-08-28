@@ -54,7 +54,7 @@ vendor omits `vendor`, and a killed run with no exit file omits
 | Field | Type | Description |
 | --- | --- | --- |
 | `at` | string | ISO 8601 UTC timestamp when the run finished or was reaped (e.g. `"2026-08-27T10:04:11Z"`). Always present. |
-| `repo` | string | Absolute path to the repository directory (e.g. `"/Users/matt/src/donewell/lerp"`). Always present. |
+| `repo` | string | Absolute path to the repository directory (e.g. `"/home/you/src/lerp"`). Always present. |
 | `team` | string | Linear team key prefix from the ticket (e.g. `"LERP"`). Always present. |
 | `ticket` | string | Linear ticket identifier (e.g. `"LERP-138"`). Always present. |
 | `queue` | string | Name of the queue that ran the ticket (e.g. `"implement"`). Always present. |
@@ -71,7 +71,7 @@ vendor omits `vendor`, and a killed run with no exit file omits
 ### Example line
 
 ```json
-{"at":"2026-08-27T10:04:11Z","repo":"/Users/matt/src/donewell/lerp","team":"LERP","ticket":"LERP-138","queue":"implement","runner":"claude","vendor":"claude","model":"claude-opus-4-6","session":"7420e6f8","duration_ms":742318,"tokens":1284310,"cost_usd":3.71,"exit_code":0,"status":"In Review"}
+{"at":"2026-08-27T10:04:11Z","repo":"/home/you/src/lerp","team":"LERP","ticket":"LERP-138","queue":"implement","runner":"claude","vendor":"claude","model":"claude-opus-4-6","session":"7420e6f8","duration_ms":742318,"tokens":1284310,"cost_usd":3.71,"exit_code":0,"status":"In Review"}
 ```
 
 ## Querying with `jq`
