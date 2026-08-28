@@ -110,12 +110,13 @@ args = "--dangerously-skip-permissions"
 # ticket, the pull request, the note a run leaves behind) are written by the
 # agent, not by lerp. Configure the Linear MCP server in whichever CLI a
 # queue's runner names — Claude Code or Antigravity's own `agy mcp add` —
-# before expecting these prompts to work. Lerp's own LINEAR_API_KEY is not a
-# fallback: lerp drops it once it has read it, so nothing it starts inherits
-# it. That is hygiene, not containment — a command that reaches a login
-# shell, and a session you resume yourself with the command an adapter
-# generates for eject, both pick the key back up from wherever you exported
-# it; that leak is not a supported access path.
+# before expecting these prompts to work. Lerp's own credentials (from `lerp login`
+# or LINEAR_API_KEY) are not a fallback: lerp never passes stored tokens down
+# and drops LINEAR_API_KEY once read, so nothing it starts inherits them. That
+# is hygiene, not containment — a command that reaches a login shell, and a
+# session you resume yourself with the command an adapter generates for eject,
+# both pick an exported key back up from wherever you exported it; that leak
+# is not a supported access path.
 
 # --------------------------------------------------------------------------
 # Queues

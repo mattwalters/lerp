@@ -1,6 +1,6 @@
 ---
 title: The command line
-summary: The whole surface — `lerp`, `lerp login`, `lerp init`, `lerp version` — and the environment they read.
+summary: The whole surface — `lerp`, `lerp login`, `lerp logout`, `lerp init`, `lerp version` — and the environment they read.
 weight: 130
 ---
 
@@ -47,10 +47,36 @@ waits briefly for a pass already in flight to settle. The agents are never
 touched: they are their own processes, with run evidence on disk, and the
 next `lerp` adopts them.
 
+## `lerp login`
+
+```sh
+lerp login
+```
+
+Signs in to Linear via OAuth 2.0 with PKCE (RFC 8252). It opens an ephemeral
+loopback listener on `127.0.0.1`, launches your browser to Linear's
+authorization page, catches the redirect callback, and saves the resulting
+token pair. It takes no flags.
+
+Login requests only `read,write` permissions (`actor=user`), never `admin`.
+The token is written to `token.json` under your user config directory
+(`~/.config/lerp/token.json` on Linux, `~/Library/Application Support/lerp/token.json`
+on macOS) with file mode `0600` inside a `0700` directory. The stored access
+token auto-renews before expiry.
+
+## `lerp logout`
+
+```sh
+lerp logout
+```
+
+Signs out of Linear: sends a best-effort revocation request to Linear's token
+revocation endpoint and deletes the local `token.json` file. It takes no flags.
+
 ## `lerp init`
 
 ```sh
-LINEAR_API_KEY=... lerp init --team LERP --team-name "Lerp"
+lerp init --team LERP --team-name "Lerp"
 ```
 
 | Flag | Meaning |
@@ -84,11 +110,33 @@ version for a `go install pkg@version` build, or a pseudo-version for a plain
 Only a build with no VCS info at all — `go build -buildvcs=false`, or a
 source archive with no `.git` — reports the literal `dev`.
 
+## Authentication
+
+Every lerp command needs a Linear credential. Lerp resolves credentials in
+this order:
+
+1. **`LINEAR_API_KEY` environment variable:** if set, lerp uses this
+   personal API key directly and skips reading the token file.
+2. **Stored OAuth token:** loaded from `token.json` in your user config
+   directory, saved by `lerp login`.
+3. **No credentials:** exits with an error directing you to run `lerp login`
+   or export `LINEAR_API_KEY`.
+
+`lerp login` is the recommended path: OAuth tokens are scoped (`read,write`,
+no `admin`) and expiring, and OAuth clients receive Linear's 5,000
+requests/hour rate limit. Personal API keys in `LINEAR_API_KEY` default to
+full workspace access, never expire, and share Linear's 2,500 requests/hour
+personal key limit.
+
+Credentials are used only by lerp itself: lerp never passes stored OAuth
+tokens to child processes (`provision`, `dispose`, or runners), and drops
+`LINEAR_API_KEY` from its environment after reading it.
+
 ## Environment
 
 | Variable | What it does |
 | --- | --- |
-| `LINEAR_API_KEY` | the Linear personal API key. Every command needs a credential, and this is one of two ways to hold one — set, it wins over the token `lerp login` stores. A personal API key defaults to your full workspace access, but Linear can restrict one at creation to specific teams and to permission scopes — give lerp a key restricted to the teams it serves, or create it on a dedicated Linear automation account for harder isolation. Lerp drops it from its own environment after reading it, and never passes it to a provision, dispose or runner command. |
+| `LINEAR_API_KEY` | the Linear personal API key. Supported as a fallback for headless servers and CI runners. When set, it takes precedence over the token `lerp login` stores. A personal API key defaults to your full workspace access unless restricted at creation. Lerp drops it from its own environment after reading it, and never passes it to a provision, dispose or runner command. |
 | `LERP_BACKGROUND` | `light` or `dark`, saying which half of the palette to draw. Read once at startup; any other value is an error rather than a shrug. |
 | `LERP_OPEN` | `desktop` to rewrite ticket URLs to Linear's `linear://` deep-link scheme on `o`, opening directly in Linear's desktop app instead of bouncing through the browser. Unset or any other value keeps the default `https://` behavior. |
 | `NO_COLOR` | set to any value, turns colour off entirely. |
@@ -115,15 +163,10 @@ this one.
 
 ## Cleanup and uninstall
 
-Walking away from lerp cleanly takes two steps:
+Walking away from lerp cleanly takes three steps:
 
 1. **Remove the binary:** `make uninstall` from a clone, or delete the binary from `$HOME/.local/bin` or your `GOBIN`.
-2. **Remove local state:** `rm -rf .lerp/` once all agents have stopped. `.lerp/` holds run records, logs, and lane workspaces. Agents are separate process groups and outlive lerp, and run evidence is how the next `lerp` adopts or reaps them — so only delete `.lerp/` when no agents are live. Workspaces under `.lerp/workspaces/` are git worktrees whose registrations the stock `dispose` unwinds on exit; run `git worktree prune` to clean up any stray registrations. To clear run metrics too, remove `$XDG_STATE_HOME/lerp/runs.jsonl` (or `~/.local/state/lerp/runs.jsonl`).
+2. **Remove stored credentials:** `lerp logout` (or delete `token.json` from your user config directory) to revoke and remove local OAuth tokens.
+3. **Remove local state:** `rm -rf .lerp/` once all agents have stopped. `.lerp/` holds run records, logs, and lane workspaces. Agents are separate process groups and outlive lerp, and run evidence is how the next `lerp` adopts or reaps them — so only delete `.lerp/` when no agents are live. Workspaces under `.lerp/workspaces/` are git worktrees whose registrations the stock `dispose` unwinds on exit; run `git worktree prune` to clean up any stray registrations. To clear run metrics too, remove `$XDG_STATE_HOME/lerp/runs.jsonl` (or `~/.local/state/lerp/runs.jsonl`).
 
 Linear workflow statuses created by `lerp init` remain on your team until deleted or archived in Linear's settings.
-
-<!-- Slot (LERP-111): the auth section — `lerp login`, `lerp logout`, the
-     stored token, and how it and LINEAR_API_KEY relate. The commands exist
-     (LERP-109) and `internal/credentials` resolves both sources
-     (LINEAR_API_KEY first, then the token file, then an error naming both
-     remedies); what is missing is the page saying so. -->

@@ -7,7 +7,7 @@ weight: 60
 # Reading the board
 
 ```sh
-LINEAR_API_KEY=... lerp
+lerp
 ```
 
 `lerp` opens the TUI, and the TUI is the engine: the loop runs while it is

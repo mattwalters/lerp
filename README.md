@@ -40,28 +40,41 @@ curl -fsSL https://raw.githubusercontent.com/mattwalters/lerp/main/install.sh | 
 
 Prebuilt binaries — macOS and Linux, amd64 and arm64 — are on the
 [releases page](https://github.com/mattwalters/lerp/releases), and
-`make install` builds one from a clone. Then:
+`make install` builds one from a clone.
+
+## Getting started
 
 ```sh
-LINEAR_API_KEY=... lerp init --team LERP    # wire this repo to a Linear team
-LINEAR_API_KEY=... lerp                     # open the board
+lerp login                                  # sign in to Linear (loopback OAuth)
+lerp init --team LERP                       # wire this repo to a Linear team
+lerp                                        # open the board
 ```
+
+`lerp login` opens your browser to Linear's consent screen, requesting only `read,write` access (never `admin`) to read and update tickets on the teams you serve.
+
+### Headless and CI
+
+In environments without a browser (CI runners, headless servers), set a personal API key instead:
+
+```sh
+LINEAR_API_KEY=... lerp init --team LERP
+LINEAR_API_KEY=... lerp
+```
+
+When set, `LINEAR_API_KEY` takes precedence over any stored OAuth token.
 
 ## FAQ
 
-**How is the Linear API key scoped?**
-`LINEAR_API_KEY` is a Linear personal API key. Left unrestricted it carries
-your user's full workspace access, but Linear lets you restrict a key when
-you create it — to specific teams, and to permission scopes (read, write,
-admin, create issues, create comments) — so give lerp a key restricted to
-the teams it serves. For harder isolation, create that key on a dedicated
-Linear user account for automation, so lerp acts as its own member.
+**How is authentication handled and scoped?**
+`lerp login` is the recommended path: it uses OAuth with PKCE to store an expiring, auto-renewing token in your user config directory (`~/.config/lerp/token.json` on Linux, `~/Library/Application Support/lerp/token.json` on macOS) with `0600` permissions. OAuth tokens are scoped (`read,write`, no `admin`) and expire, whereas personal API keys are non-expiring and carry your full workspace access unless restricted at creation. OAuth also benefits from Linear's higher rate limit (5,000 requests/hr vs 2,500/hr for personal keys). Revocation is immediate via `lerp logout` or in Linear's settings under **Authorized applications**.
 
 **How do I clean up or uninstall?**
 `make uninstall` from a clone removes the binary `make install` put in your
 `GOBIN`; a brew install is removed by `brew uninstall lerp`; an install.sh
 install is removed by deleting `lerp` from
-`$HOME/.local/bin` (or the `--bin-dir` you chose). To clean up local state,
+`$HOME/.local/bin` (or the `--bin-dir` you chose). Run `lerp logout` (or
+delete the stored token file) to revoke and remove local credentials. To
+clean up local state,
 `rm -rf .lerp/` once all agents have stopped — run evidence in
 `.lerp/runs/` is how the next `lerp` adopts or reaps live agents, and
 workspaces under `.lerp/workspaces/` are git worktrees whose registrations

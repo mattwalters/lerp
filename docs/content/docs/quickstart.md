@@ -7,17 +7,23 @@ weight: 40
 # Quickstart
 
 Four steps, from a repository with no lerp in it to an agent working a
-ticket. It assumes you have [installed lerp](install.md), exported
-`LINEAR_API_KEY`, and given the team's status field to lerp — that last one
-is a settings change nothing here can do for you, and skipping it costs
-every ticket its last hop.
+ticket. It assumes you have [installed lerp](install.md), signed in with
+`lerp login` (or set `LINEAR_API_KEY`), and given the team's status field to
+lerp — that last one is a settings change nothing here can do for you, and
+skipping it costs every ticket its last hop.
 
 ## 1. Wire the repo to a team
 
-From anywhere inside your Git repository:
+Sign in to Linear if you have not already:
 
 ```sh
-LINEAR_API_KEY=... lerp init --team LERP --team-name "Lerp"
+lerp login
+```
+
+Then from anywhere inside your Git repository:
+
+```sh
+lerp init --team LERP --team-name "Lerp"
 ```
 
 `--team` is the Linear team key — the ticket prefix, the LERP in LERP-42 —
@@ -122,9 +128,9 @@ there that nothing makes it [ineligible](the-board.md#the-claim) — an
 assignee left on the ticket is the one that surprises people.
 
 ## 4. Run it
-
+ 
 ```sh
-LINEAR_API_KEY=... lerp
+lerp
 ```
 
 Bare `lerp` opens the TUI, and [the loop runs while it is

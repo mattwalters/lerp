@@ -13,12 +13,13 @@ is no server, no scheduler and no store of lerp's own.
 
 ## What is in the box
 
-The whole surface is the board plus two commands. Bare `lerp` opens the TUI,
+The whole surface is the board plus four commands. Bare `lerp` opens the TUI,
 and the reconciling loop runs while it is open — N lanes, adopting live
 runs, reaping dead ones, repairing drift. Both panels are built, and the
 board's only two write actions are the inbox's [promote](promoting.md) and
 the work panel's [force-start](starting-past-the-limit.md). Beyond those,
-`lerp init` and `lerp version` complete [the command line](cli.md).
+`lerp login`, `lerp logout`, `lerp init` and `lerp version` complete
+[the command line](cli.md).
 
 Everything else about a ticket still happens in Linear. Lerp reads the
 board, runs agents, and moves tickets between statuses; it does not compose
