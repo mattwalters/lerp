@@ -30,6 +30,14 @@ const defaultAuthorizeURL = "https://linear.app/oauth/authorize"
 // enough that an abandoned login does not hold the loopback port forever.
 const loginTimeout = 2 * time.Minute
 
+// loginPorts are the loopback ports login may bind, tried in order. Fixed,
+// not ephemeral: Linear matches redirect URIs against the registration
+// exactly — port included, no wildcards — so each of these is registered on
+// the lerp OAuth application as http://127.0.0.1:<port>/callback. Three of
+// them, so a busy port degrades to the next rather than to a failed login;
+// still no --port flag (LERP-109's fence, LERP-200's finding).
+var loginPorts = []int{47831, 47832, 47833}
+
 // viewerReader is the one method Login needs of a Linear client: confirming
 // who it just signed in as. A one-method interface, the way initcmd holds
 // Board, so a test can fake it without a second httptest server for
@@ -45,6 +53,7 @@ type loginFlow struct {
 	authorizeURL  string
 	tokenEndpoint string
 	clientID      string
+	ports         []int
 	store         store
 	hc            *http.Client
 	open          func(rawURL string) error
@@ -61,6 +70,7 @@ func Login(ctx context.Context, out io.Writer) error {
 		authorizeURL:  defaultAuthorizeURL,
 		tokenEndpoint: defaultTokenEndpoint,
 		clientID:      clientID,
+		ports:         loginPorts,
 		store:         store{},
 		hc:            &http.Client{Timeout: 30 * time.Second},
 		open:          browser.Open,
@@ -99,9 +109,9 @@ func login(ctx context.Context, out io.Writer, flow loginFlow) error {
 		return errors.New("credentials: this lerp has no Linear OAuth client id built in; login cannot proceed")
 	}
 
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := listenLoopback(flow.ports)
 	if err != nil {
-		return fmt.Errorf("credentials: login: open loopback listener: %w", err)
+		return err
 	}
 
 	verifier, err := randomURLSafe(32)
@@ -218,6 +228,22 @@ func login(ctx context.Context, out io.Writer, flow loginFlow) error {
 		fmt.Fprintf(out, "%s is still set, so lerp and lerp init will keep using it rather than this login\n", childenv.LinearAPIKeyEnv)
 	}
 	return nil
+}
+
+// listenLoopback binds the first available of ports, in order. A port of 0
+// asks the kernel for an ephemeral one — tests use that to stay
+// collision-free; the real flow cannot, because Linear requires the redirect
+// URI's port to match a registered one exactly.
+func listenLoopback(ports []int) (net.Listener, error) {
+	var errs []error
+	for _, p := range ports {
+		l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", p))
+		if err == nil {
+			return l, nil
+		}
+		errs = append(errs, err)
+	}
+	return nil, fmt.Errorf("credentials: login: every login port is unavailable (%v): %w", ports, errors.Join(errs...))
 }
 
 func sendResult(ch chan<- callbackResult, r callbackResult) {
