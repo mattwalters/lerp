@@ -1,6 +1,7 @@
 package linear
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -48,13 +49,14 @@ func (c *HTTP) EnsureTeam(ctx context.Context, key, name string) error {
 
 const teamStatesByKeyQuery = `
 query TeamStates($key: String!) {
-  teams(filter: { key: { eq: $key } }, first: 1) { nodes { id states(first: 100) { nodes { name type } } } }
+  teams(filter: { key: { eq: $key } }, first: 1) { nodes { id states(first: 100) { nodes { name type position } } } }
 }`
 
 // teamState is one workflow state as the states query reports it.
 type teamState struct {
-	Name string `json:"name"`
-	Type string `json:"type"`
+	Name     string  `json:"name"`
+	Type     string  `json:"type"`
+	Position float64 `json:"position"`
 }
 
 // teamStates reads a team's id and workflow states by team key.
@@ -79,16 +81,45 @@ func (c *HTTP) teamStates(ctx context.Context, teamKey string) (string, []teamSt
 	return team.ID, team.States.Nodes, nil
 }
 
+// stateTypeRank maps Linear workflow state types to canonical board order:
+// backlog → unstarted → started → completed → canceled. Unknown types sort last.
+func stateTypeRank(t string) int {
+	switch strings.ToLower(t) {
+	case CategoryTriage:
+		return 0
+	case CategoryBacklog:
+		return 1
+	case CategoryUnstarted:
+		return 2
+	case CategoryStarted:
+		return 3
+	case CategoryCompleted:
+		return 4
+	case CategoryCanceled:
+		return 5
+	default:
+		return 6
+	}
+}
+
 // TeamStates reports the names of every workflow state on the team, in
-// Linear's listing order. Unlike this file's Ensure methods it is a pure
-// read, safe outside setup: the loop's startup verification calls it once
-// per configured team to check that every configured status names a real
-// state (and to show the team's actual names next to a miss).
+// Linear board order (canonical category order: backlog → unstarted → started
+// → completed → canceled, then position within each category). Unlike this
+// file's Ensure methods it is a pure read, safe outside setup: the loop's
+// startup verification calls it once per configured team to check that every
+// configured status names a real state (and to show the team's actual names
+// next to a miss), and the TUI uses it to order statuses across the board.
 func (c *HTTP) TeamStates(ctx context.Context, teamKey string) ([]string, error) {
 	_, states, err := c.teamStates(ctx, teamKey)
 	if err != nil {
 		return nil, fmt.Errorf("team states: %w", err)
 	}
+	slices.SortStableFunc(states, func(a, b teamState) int {
+		if c := cmp.Compare(stateTypeRank(a.Type), stateTypeRank(b.Type)); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.Position, b.Position)
+	})
 	names := make([]string, len(states))
 	for i, s := range states {
 		names[i] = s.Name

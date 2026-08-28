@@ -56,17 +56,12 @@ type Issue struct {
 	UpdatedAt time.Time
 }
 
-// Linear's own workflow-state categories, as its API spells them. The first
-// three are the ones a ticket sits in before any work starts on it — nothing
-// has routed it anywhere — which is a different thing from a ticket resting
-// in a status something moved it to. The two finished ones are named because
-// a delta read is not filtered by state (see ListTeamIssuesUpdatedSince), so
-// its reader has to recognise a ticket that has finished. The remaining
-// category, started, is not named here because nothing reads it.
+// Linear's own workflow-state categories, as its API spells them.
 const (
 	CategoryTriage    = "triage"
 	CategoryBacklog   = "backlog"
 	CategoryUnstarted = "unstarted"
+	CategoryStarted   = "started"
 	CategoryCompleted = "completed"
 	CategoryCanceled  = "canceled"
 )
