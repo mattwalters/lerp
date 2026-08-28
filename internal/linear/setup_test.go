@@ -61,16 +61,57 @@ func TestTeamStatesReportsNamesInBoardOrder(t *testing.T) {
 		if !strings.Contains(req.Query, "TeamStates") {
 			t.Errorf("unexpected query: %s", req.Query)
 		}
+		if !strings.Contains(req.Query, "position") {
+			t.Errorf("query does not request position: %s", req.Query)
+		}
 		if req.Variables["key"] != "LERP" {
 			t.Errorf("key = %v", req.Variables["key"])
 		}
-		writeData(t, w, `{"teams":{"nodes":[{"id":"team-1","states":{"nodes":[{"name":"Backlog","type":"backlog"},{"name":"Todo","type":"unstarted"},{"name":"Done","type":"completed"}]}}]}}`)
+		// States delivered in creation order (out of board order) across multiple categories and positions.
+		writeData(t, w, `{"teams":{"nodes":[{"id":"team-1","states":{"nodes":[
+			{"name":"Done","type":"completed","position":10},
+			{"name":"Plan Review","type":"unstarted","position":20},
+			{"name":"Backlog","type":"backlog","position":5},
+			{"name":"Implementing","type":"started","position":10},
+			{"name":"Planning","type":"unstarted","position":10},
+			{"name":"In Review","type":"started","position":20},
+			{"name":"Canceled","type":"canceled","position":10},
+			{"name":"Triage","type":"triage","position":1}
+		]}}]}}`)
 	})
 	names, err := c.TeamStates(context.Background(), "LERP")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"Backlog", "Todo", "Done"}; !reflect.DeepEqual(names, want) {
+	want := []string{
+		"Triage",
+		"Backlog",
+		"Planning",
+		"Plan Review",
+		"Implementing",
+		"In Review",
+		"Done",
+		"Canceled",
+	}
+	if !reflect.DeepEqual(names, want) {
+		t.Errorf("names = %v, want %v", names, want)
+	}
+}
+
+func TestTeamStatesPreservesOrderOnEqualPositionAndSortsUnknownTypesLast(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		writeData(t, w, `{"teams":{"nodes":[{"id":"team-1","states":{"nodes":[
+			{"name":"Custom","type":"custom_type","position":0},
+			{"name":"Alpha","type":"started","position":10},
+			{"name":"Beta","type":"started","position":10}
+		]}}]}}`)
+	})
+	names, err := c.TeamStates(context.Background(), "LERP")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"Alpha", "Beta", "Custom"}
+	if !reflect.DeepEqual(names, want) {
 		t.Errorf("names = %v, want %v", names, want)
 	}
 }
