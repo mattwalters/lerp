@@ -65,6 +65,9 @@ When set, `LINEAR_API_KEY` takes precedence over any stored OAuth token.
 
 ## FAQ
 
+**Does lerp update itself?**
+No. Lerp launches coding agents with `bypassPermissions` and your full account; the binary holding that grant changes only by deliberate human action, and a package manager's bookkeeping (Homebrew, `go install`) stays consistent. Lerp performs an anonymous, unauthenticated GET of GitHub's releases API at most once every 24 hours to check for newer tags, caching the result in `$XDG_STATE_HOME/lerp/update.json` (`~/.local/state/lerp/update.json`). The check never runs without a terminal (skipping CI and scripts), never blocks startup or delays the board, and can be disabled entirely with `LERP_NO_UPDATE_CHECK=1`.
+
 **How is authentication handled and scoped?**
 `lerp login` is the recommended path: it uses OAuth with PKCE to store an expiring, auto-renewing token in your user config directory (`~/.config/lerp/token.json` on Linux, `~/Library/Application Support/lerp/token.json` on macOS) with `0600` permissions. OAuth tokens are scoped (`read,write`, no `admin`) and expire, whereas personal API keys are non-expiring and carry your full workspace access unless restricted at creation. OAuth also benefits from Linear's higher rate limit (5,000 requests/hr vs 2,500/hr for personal keys). Revocation is immediate via `lerp logout` or in Linear's settings under **Authorized applications**.
 

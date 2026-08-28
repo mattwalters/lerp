@@ -98,8 +98,9 @@ defaults does any of this for you.
 
 ### What lerp itself does
 
-Lerp's own footprint is small: it speaks exactly one external API
-(Linear), listens on no port while the board runs, and runs no daemon.
+Lerp's own footprint is small: it speaks one external API (Linear)
+plus an anonymous GET of GitHub's releases API to check for updates,
+listens on no port while the board runs, and runs no daemon.
 The one port exception is setup time: `lerp login` opens a loopback socket
 on `127.0.0.1` on an ephemeral port for the few seconds an OAuth redirect
 takes, and closes it before anything runs.

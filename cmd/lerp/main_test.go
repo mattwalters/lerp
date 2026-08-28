@@ -11,6 +11,8 @@ import (
 
 	"github.com/mattwalters/lerp/internal/config"
 	"github.com/mattwalters/lerp/internal/linear"
+	"github.com/mattwalters/lerp/internal/update"
+	"github.com/mattwalters/lerp/internal/version"
 )
 
 // The operator's surface says concurrency, never lane. Lane stays the
@@ -219,4 +221,102 @@ func TestBoardStatusesPreservesOrderAndDeduplicates(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Errorf("boardStatuses = %v, want %v", got, want)
 	}
+}
+
+func TestPrintVersion(t *testing.T) {
+	// Temporarily override version.Version for predictable testing
+	origVersion := version.Version
+	version.Version = "v0.1.0"
+	defer func() { version.Version = origVersion }()
+
+	t.Run("no cache prints one line", func(t *testing.T) {
+		t.Setenv("XDG_STATE_HOME", t.TempDir())
+		var out strings.Builder
+		printVersion(&out)
+		lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+		if len(lines) != 1 {
+			t.Errorf("lines = %d, want 1; output = %q", len(lines), out.String())
+		}
+		if lines[0] != "lerp v0.1.0" {
+			t.Errorf("line = %q, want %q", lines[0], "lerp v0.1.0")
+		}
+	})
+
+	t.Run("matching cache prints one line", func(t *testing.T) {
+		tmp := t.TempDir()
+		t.Setenv("XDG_STATE_HOME", tmp)
+		path, err := update.Path()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(`{"checked_at":"2026-08-27T00:00:00Z","latest":"v0.1.0"}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		var out strings.Builder
+		printVersion(&out)
+		lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+		if len(lines) != 1 {
+			t.Errorf("lines = %d, want 1; output = %q", len(lines), out.String())
+		}
+		if lines[0] != "lerp v0.1.0" {
+			t.Errorf("line = %q, want %q", lines[0], "lerp v0.1.0")
+		}
+	})
+
+	t.Run("newer cache prints two lines", func(t *testing.T) {
+		tmp := t.TempDir()
+		t.Setenv("XDG_STATE_HOME", tmp)
+		path, err := update.Path()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(`{"checked_at":"2026-08-27T00:00:00Z","latest":"v0.2.0"}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		var out strings.Builder
+		printVersion(&out)
+		lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+		if len(lines) != 2 {
+			t.Fatalf("lines = %d, want 2; output = %q", len(lines), out.String())
+		}
+		if lines[0] != "lerp v0.1.0" {
+			t.Errorf("lines[0] = %q, want %q", lines[0], "lerp v0.1.0")
+		}
+		if lines[1] != "latest v0.2.0 — brew upgrade lerp" {
+			t.Errorf("lines[1] = %q, want %q", lines[1], "latest v0.2.0 — brew upgrade lerp")
+		}
+	})
+
+	t.Run("corrupt cache prints exactly one line", func(t *testing.T) {
+		tmp := t.TempDir()
+		t.Setenv("XDG_STATE_HOME", tmp)
+		path, err := update.Path()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(`{corrupt`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		var out strings.Builder
+		printVersion(&out)
+		lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+		if len(lines) != 1 {
+			t.Errorf("lines = %d, want 1; output = %q", len(lines), out.String())
+		}
+		if lines[0] != "lerp v0.1.0" {
+			t.Errorf("line = %q, want %q", lines[0], "lerp v0.1.0")
+		}
+	})
 }

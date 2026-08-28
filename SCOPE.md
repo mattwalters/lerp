@@ -108,15 +108,17 @@ five. If that trade is unappealing, the feature is out of scope.
 ## Invariants
 
 1. **Linear is the only durable store.** Local disk holds config,
-   the operator's credentials, evidence of running processes, and run
-   telemetry, nothing else. Losing all local state may cost compute;
-   it may never cost correctness. `rm -rf .lerp/runs` under live
-   agents means orphaned processes and re-run stages — never lost or
-   corrupted tickets. Telemetry is the deliberate fourth resident: an
-   append-only file of finished-run measurements — tokens, cost,
-   duration, outcome — written once at run exit and read by nothing in
-   the loop. It is history, not state: losing it costs a chart, never
-   a ticket.
+   the operator's credentials, evidence of running processes, run
+   telemetry, and the update check cache, nothing else. Losing all
+   local state may cost compute; it may never cost correctness.
+   `rm -rf .lerp/runs` under live agents means orphaned processes and
+   re-run stages — never lost or corrupted tickets. Telemetry is the
+   deliberate fourth resident: an append-only file of finished-run
+   measurements — tokens, cost, duration, outcome — written once at
+   run exit and read by nothing in the loop. It is history, not state:
+   losing it costs a chart, never a ticket. The update cache is the
+   fifth: it is a cache, not state. Losing it costs one HTTP request
+   and possibly one repeated notice, never a ticket.
 
 2. **Team → repo is a function** (many-to-one allowed, not a
    bijection). Every ticket must resolve to exactly one working
@@ -185,6 +187,13 @@ five. If that trade is unappealing, the feature is out of scope.
    by the next stage's prompt. Lerp never calls a code host and never
    inspects a branch. The engine that has never heard of PRs is the
    engine that works for people who don't make PRs.
+
+   The one carve-out is an unauthenticated GET of GitHub's releases API
+   at startup, to learn a version number and nothing else. Lerp still
+   never reads a branch, a commit, a pull request or any other
+   repository fact from a code host; the engine that has never heard of
+   PRs still hasn't. The check happens at startup, not during work, and
+   no queue run, claim, or move depends on it.
 
 9. **Workspaces are provisioned by config, not by lerp.** A lane's
    workspace is created and destroyed by two config-supplied commands,
@@ -310,6 +319,10 @@ that wants a scheduler wants a different product.
   composing or replying, never navigating on to another ticket.
   Everything else — create, edit, comment, assign outside the claim
   protocol — stays in Linear.
+- Not a self-updater. Lerp launches agents with `bypassPermissions`
+  and the operator's full account; the binary holding that grant
+  changes only by deliberate human action, and a package manager's
+  bookkeeping stays right.
 - Not infrastructure for any other product to depend on. It is a
   standalone tool.
 
