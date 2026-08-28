@@ -51,8 +51,7 @@ The same rules the agents work under (see `AGENTS.md`):
   your local check was green. `govulncheck` scans the dependency tree
   against a vulnerability database that is only ever current, so it
   can fail a PR that changed nothing — a newly published
-  vulnerability, or a govulncheck release, is about the tree, not your
-  diff.
+  vulnerability is about the tree, not your diff.
 - The other is `make casts`: it re-records every tape under
   `docs/tapes/` — the README's cast among them. It has a workflow of
   its own and does not run on every PR — installing vhs and its ttyd

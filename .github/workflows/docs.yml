@@ -75,7 +75,7 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - id: pin
         # Assigned first, so a make that fails takes the step down with it:
         # inside printf's arguments its exit status is discarded, and the
@@ -84,7 +84,7 @@ jobs:
         run: |
           version="$(make -s hugo-version)"
           printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
-      - uses: peaceiris/actions-hugo@v3
+      - uses: peaceiris/actions-hugo@2752ce1d29631191ea3f27c23495fa06139a5b78 # v3
         with:
           hugo-version: ${{ steps.pin.outputs.version }}
       # HUGO_PARAMS_VERSION explicitly empty, matching the root build below:
@@ -136,7 +136,7 @@ jobs:
     concurrency:
       group: docs-publish-${{ github.ref }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - id: pin
         # Assigned first, so a make that fails takes the step down with it:
         # inside printf's arguments its exit status is discarded, and the
@@ -145,7 +145,7 @@ jobs:
         run: |
           version="$(make -s hugo-version)"
           printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
-      - uses: peaceiris/actions-hugo@v3
+      - uses: peaceiris/actions-hugo@2752ce1d29631191ea3f27c23495fa06139a5b78 # v3
         with:
           hugo-version: ${{ steps.pin.outputs.version }}
 
@@ -207,12 +207,12 @@ jobs:
       # same reason it cannot reach the manual builds below.
       - name: Set up Go
         if: github.event_name == 'push' && github.ref_type == 'tag'
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
       # install-only, same as demo.yml: the render itself stays `make casts`,
       # the same command a local re-record runs.
-      - uses: charmbracelet/vhs-action@v2
+      - uses: charmbracelet/vhs-action@f6d7db07a432fcd3b06772628d36a57f96d95dcf # v2
         if: github.event_name == 'push' && github.ref_type == 'tag'
       - name: Render casts
         if: github.event_name == 'push' && github.ref_type == 'tag'
@@ -345,7 +345,7 @@ jobs:
       # one a deploy can overwrite.
       - name: Deploy
         if: hashFiles('public/**') != ''
-        uses: peaceiris/actions-gh-pages@v4
+        uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./public
