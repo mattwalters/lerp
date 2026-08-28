@@ -258,7 +258,7 @@ every developer runs the same pipeline against the same board.</p>
 <p>No durable state lives in this file or anywhere else on disk — <a href="../../docs/the-board/#tickets-and-where-state-lives">Linear is
 the database</a>. The file is
 strictly parsed: an unknown key is an error, not a shrug.</p>
-<p><a href="https://github.com/mattwalters/lerp/blob/v0.0.5/lerp.example.toml">lerp.example.toml</a> is the stock pipeline in full, with
+<p><a href="https://github.com/mattwalters/lerp/blob/v0.0.6/lerp.example.toml">lerp.example.toml</a> is the stock pipeline in full, with
 prompts you can read and argue with. <code>lerp init --team KEY</code> writes it into
 the repo (see <a href="../../docs/quickstart/">Quickstart</a>). Read it before you run it: it
 may grant the agent broad permissions and it assumes your runner can reach
@@ -410,7 +410,7 @@ write the grant explicitly into your runner&rsquo;s <code>args</code> (or <code>
 <p>The worktree that <code>provision</code> builds is a tidiness boundary, not a
 security sandbox: nothing stops the agent from reading <code>~/.ssh</code> or writing
 outside its workspace. Stating grants in checked-in <code>lerp.toml</code> keeps them
-versioned and reviewed like code (see <a href="https://github.com/mattwalters/lerp/blob/v0.0.5/SECURITY.md">SECURITY.md</a>).</p>
+versioned and reviewed like code (see <a href="https://github.com/mattwalters/lerp/blob/v0.0.6/SECURITY.md">SECURITY.md</a>).</p>
 <h2 id="workspace-commands">Workspace commands</h2>
 <p>Lerp runs <code>provision</code> before starting a runner and <code>dispose</code> when reaping
 its lane. Each command runs from the repo root, writes stdout and stderr
@@ -424,7 +424,7 @@ to the lane log, and receives:</p>
 <code>LINEAR_API_KEY</code> is lerp&rsquo;s own credential and does not go down to a
 provision, dispose or runner command (stored OAuth tokens are never passed
 either). A command that needs Linear carries its own credential. See
-<a href="https://github.com/mattwalters/lerp/blob/v0.0.5/SECURITY.md">SECURITY.md</a> for what that does and does not buy.</p>
+<a href="https://github.com/mattwalters/lerp/blob/v0.0.6/SECURITY.md">SECURITY.md</a> for what that does and does not buy.</p>
 <p>If provisioning fails, lerp leaves the ticket untouched and does not start
 the runner. A disposal failure is recorded in the lane log but never keeps
 a lane occupied.</p>
@@ -480,7 +480,7 @@ know which ticket it was started for.</p>
 <p><strong>Name target statuses by placeholder.</strong> &ldquo;Move {{ticket}} to
 {{on_failure}}&rdquo; follows status renames and remaps in config on its own.</p>
 <h2 id="the-stock-pipeline">The stock pipeline</h2>
-<p><a href="https://github.com/mattwalters/lerp/blob/v0.0.5/lerp.example.toml">lerp.example.toml</a> ships one opinion. Lerp holds
+<p><a href="https://github.com/mattwalters/lerp/blob/v0.0.6/lerp.example.toml">lerp.example.toml</a> ships one opinion. Lerp holds
 none: the order below exists only in the config&rsquo;s <code>on_success</code> pointers,
 and rewriting them into a different shape needs no code change.</p>
 <table>
@@ -581,7 +581,7 @@ lives in a checked-in <code>lerp.toml</code>, adding, reviewing, or narrowing it
 </ul>
 <p>Both of those, and the half that is not about this config at all — who can
 trigger a run, and what a ticket&rsquo;s text is to the agent that reads it —
-are set out in <a href="https://github.com/mattwalters/lerp/blob/v0.0.5/SECURITY.md">SECURITY.md</a>, which is also where to report a
+are set out in <a href="https://github.com/mattwalters/lerp/blob/v0.0.6/SECURITY.md">SECURITY.md</a>, which is also where to report a
 vulnerability.</p>
 
 </div>

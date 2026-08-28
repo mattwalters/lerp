@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+  <script>
+    
+    
+    
+    (function () {
+      try {
+        var t = localStorage.getItem("lerp-theme");
+        if (t === "light" || t === "dark") {
+          document.documentElement.dataset.theme = t;
+        }
+      } catch (e) {}
+    })();
+  </script>
+  
+  
+  
+  
+  <title>Reading the board · lerp</title>
+  
+  
+  
+  
+  
+  <meta name="description" content="The two panels, what each row says, and the main pane that opens beside them.">
+  
+  <link rel="canonical" href="https://lerp.sh/latest/docs/reading-the-board/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="lerp">
+  <meta property="og:title" content="Reading the board · lerp">
+  <meta property="og:description" content="The two panels, what each row says, and the main pane that opens beside them.">
+  <meta property="og:url" content="https://lerp.sh/latest/docs/reading-the-board/">
+  <meta property="og:image" content="https://lerp.sh/og.png">
+  <meta property="og:image:alt" content="The lerp board: tickets waiting on a human in the On you panel, a work panel of queues and three lanes running coding agents">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="640">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Reading the board · lerp">
+  <meta name="twitter:description" content="The two panels, what each row says, and the main pane that opens beside them.">
+  <meta name="twitter:image" content="https://lerp.sh/og.png">
+  <meta name="twitter:image:alt" content="The lerp board: tickets waiting on a human in the On you panel, a work panel of queues and three lanes running coding agents">
+  <link rel="stylesheet" href="../../style.css">
+</head>
+<body>
+  
+  
+  
+  
+  
+  
+  
+  <header>
+    
+    <a class="brand" href="../../"><img class="brand-mark" src="../../favicon.svg" alt="">lerp</a>
+    <span class="spacer"></span>
+    
+    <a class="nav here" href="../../docs/">Docs</a>
+    
+    <a class="nav" href="../../why/">Why lerp</a>
+    
+    
+    <button type="button" id="theme-picker" class="theme" aria-label="Theme">◐ system</button>
+    <a class="nav github" href="https://github.com/mattwalters/lerp" target="_blank" rel="noopener" aria-label="GitHub"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg></a>
+    
+    
+    <span class="version">
+      <span class="version-label">v0.0.6</span>
+      <select id="version-picker" hidden aria-label="Documentation version"></select>
+    </span>
+    
+  </header>
+  <div class="wrap">
+    
+    
+    <nav class="sidenav" aria-label="Manual">
+      
+      
+      
+      <h5>Start</h5>
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/">Documentation</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/overview/">Overview</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/install/">Install</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/quickstart/">Quickstart</a>
+      
+      <h5>Concepts</h5>
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/the-board/">The board</a>
+      
+      <h5>The interface</h5>
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/reading-the-board/" class="active" aria-current="page">Reading the board</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/finding-tickets/">Finding tickets</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/promoting/">Promoting</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/ejecting/">Ejecting</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/watching-a-run/">Watching a run</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/starting-past-the-limit/">Starting past the limit</a>
+      
+      <h5>Reference</h5>
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/lerp-toml/" class="mono">lerp.toml</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/telemetry/">Telemetry</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/cli/">The command line</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/troubleshooting/">Troubleshooting</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../scope/">SCOPE</a>
+      
+      
+      <img class="sidenav-mark" src="../../favicon.svg" alt="">
+    </nav>
+    
+    <main>
+      
+
+<div class="prose">
+  <h1 id="reading-the-board">Reading the board</h1>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sh" data-lang="sh"><span class="line"><span class="cl">lerp
+</span></span></code></pre></div><p><code>lerp</code> opens the TUI, and the TUI is the engine: the loop runs while it is
+open, and there is no daemon.</p>
+<p>Two panels share the screen, and lerp opens focused on <strong>On you</strong>: the
+loop runs the board on its own, so the first look belongs to what needs
+<em>you</em>. Both panels start with their pane closed and their table at full
+width.</p>
+<p><code>1</code> and <code>2</code> choose a panel and <code>tab</code> cycles between them; <code>↑</code>/<code>↓</code> pick a
+row. <code>?</code> opens the full key list at any time, and <code>q</code> quits.</p>
+<figure class="cast">
+  
+  <video class="cast-dark" controls muted loop playsinline preload="metadata" width="1200" height="640" aria-label="The board opening on the On you panel, switching to the work panel, and opening a lane&#39;s log">
+    <source src="../../casts/board.webm" type="video/webm">
+    <source src="../../casts/board.mp4" type="video/mp4">
+  </video>
+  <video class="cast-light" controls muted loop playsinline preload="metadata" width="1200" height="640" aria-label="The board opening on the On you panel, switching to the work panel, and opening a lane&#39;s log">
+    <source src="../../casts/board-light.webm" type="video/webm">
+    <source src="../../casts/board-light.mp4" type="video/mp4">
+  </video>
+  <figcaption class="keys"><kbd>1</kbd> <span class="sep" aria-hidden="true">·</span> <kbd>2</kbd> <span class="sep" aria-hidden="true">·</span> <kbd>tab</kbd> <span class="sep" aria-hidden="true">·</span> <kbd>enter</kbd> <span class="sep" aria-hidden="true">·</span> <kbd>esc</kbd></figcaption>
+</figure>
+
+<h2 id="the-work-panel">The Work panel</h2>
+<p>The Work view is one list of what the machine is doing with the board,
+grouped by queue: every ticket in each queue&rsquo;s status, in the loop&rsquo;s own
+pickup order, the ones running now at the top of their group.</p>
+<p>A running row carries its state — provisioning or running — the run&rsquo;s
+elapsed time, and the tokens it has spent as its own log reports them,
+plus a dollar figure where the runner&rsquo;s stream states one; no lerp price
+table stands in for a runner silent on cost. Where the runner&rsquo;s log
+distinguishes subagents and its <code>[runners.*]</code> block names a <code>context</code>
+window (see <a href="../../docs/lerp-toml/">lerp.toml</a>), the row adds a percentage — how
+full the fullest agent in the run is — faint until 80%, then <code>⚠</code>; no
+configured window, tokens only, never a guessed figure. A run inherited
+from a previous <code>lerp</code> reads as <code>running</code> like any other, with the run&rsquo;s
+own age and total read back from its log, not the stretch since adoption.
+Under it, once the run has a log, a second line reads how the run is
+going — see <a href="../../docs/watching-a-run/">watching a run</a>.</p>
+<p>Claude settles cost only on the line that closes its log — as the row
+disappears — so that figure shows up on the status bar&rsquo;s exit note, where
+it survives the row.</p>
+<p>A waiting row is faint, with the reason it waits: blocked or claimed.
+<code>enter</code> on one shows where it sits in pickup order and what gates it.</p>
+<p>The panel title and the status bar carry the capacity, <code>2/3 running</code> —
+what says whether anything can start. Every live run counts against it,
+whichever lane it landed on, with <code>· +1 over</code> beside it while more runs
+are live than the limit allows.</p>
+<p>Ordering is not a keystroke. To change what runs <em>next</em>, move tickets in
+Linear; to run one now regardless, see
+<a href="../../docs/starting-past-the-limit/">starting past the limit</a>.</p>
+<h2 id="the-on-you-panel">The On you panel</h2>
+<p>The On you panel lists what waits on a human: unclaimed tickets, and the
+operator&rsquo;s own claimed tickets, sitting in a status no queue serves.</p>
+<p>Above the column header sits the pinned slice tab row: <code>all</code> followed by
+each Linear status present on the board, each with its ticket count. The
+active tab is highlighted with the focus accent, while inactive tabs remain
+faint. Slicing with <code>]</code> or <code>[</code> moves the focus across tabs to show only that
+status; <code>all</code> returns to showing all active tickets (with the backlog folded).</p>
+<p>Under the tab row sits the header naming the columns — identifier, leverage,
+the real Linear status, project, priority, and the title, which takes
+whatever width is left. The vocabulary is Linear&rsquo;s own, never a category
+invented by lerp.</p>
+<p>A status the pipeline never names — no queue&rsquo;s status, no <code>on_success</code> or
+<code>on_failure</code> target — is marked, but only where Linear files it as
+started: a ticket in a backlog, triage or Todo column has not entered the
+pipeline, while one in a working status the pipeline knows nothing about
+is the fingerprint of a ticket that left it. <code>?</code> spells out that mark and
+the other two the table draws.</p>
+<p>The panel opens on what is blocked on you — failed runs, finished runs,
+tickets in statuses the pipeline never named — with the intake it never
+left folded to one line at the foot: <code>28 waiting to enter the pipeline — ] to browse</code>. Being blocked-on is an interrupt; pulling from the backlog
+is a sit-down motion; <a href="../../docs/finding-tickets/">finding tickets</a> is that one,
+with the sorting, scoping, slicing and searching. A ticket you have
+claimed is never folded, wherever Linear files it: no pass can pick it up
+while the claim stands, so it is blocked on you.</p>
+<h2 id="the-main-pane">The main pane</h2>
+<p>The list owns the screen until you ask for a ticket. <code>enter</code> on a row
+reads it into a main pane beside the table — the body, where the plan
+lives, and the comments, where a run&rsquo;s verdict lands — so a parked ticket
+can be decided from one screen. <code>esc</code> closes it, and each panel remembers
+whether its pane is open.</p>
+<p>It is a read and stays one: nothing composes, replies, or navigates to
+another ticket. <code>o</code> opens the ticket in Linear for everything else.</p>
+<p>An open main pane is a surface in the <code>tab</code> cycle; while it holds the keys
+its border says so, and <code>↑</code>/<code>↓</code> scroll it a line at a time.</p>
+<h2 id="colour">Colour</h2>
+<p>Colour marks state and never carries it alone: every state also has a
+shape or a word, so what the screen says survives a 16-colour terminal and
+a colour-blind operator. Which half of the palette you get, and how to
+turn colour off, are <a href="../../docs/cli/#environment">environment variables</a>.</p>
+
+</div>
+
+    </main>
+    
+    
+    
+    <nav class="toc" aria-label="On this page">
+      <h5>On this page</h5>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#the-work-panel">The Work panel</a></li>
+    <li><a href="#the-on-you-panel">The On you panel</a></li>
+    <li><a href="#the-main-pane">The main pane</a></li>
+    <li><a href="#colour">Colour</a></li>
+  </ul>
+</nav>
+    </nav>
+    
+  </div>
+  <script>
+    
+    
+    
+    
+    (function () {
+      var modes = ["system", "light", "dark"];
+      var glyphs = { system: "◐", light: "○", dark: "●" };
+      var picker = document.getElementById("theme-picker");
+      var current = "system";
+      try {
+        var stored = localStorage.getItem("lerp-theme");
+        if (stored === "light" || stored === "dark") { current = stored; }
+      } catch (e) {}
+      function paint() {
+        picker.textContent = glyphs[current] + " " + current;
+        picker.setAttribute("aria-label", "Theme: " + current);
+        if (current === "system") {
+          delete document.documentElement.dataset.theme;
+        } else {
+          document.documentElement.dataset.theme = current;
+        }
+      }
+      paint();
+      picker.addEventListener("click", function () {
+        current = modes[(modes.indexOf(current) + 1) % modes.length];
+        try {
+          if (current === "system") {
+            localStorage.removeItem("lerp-theme");
+          } else {
+            localStorage.setItem("lerp-theme", current);
+          }
+        } catch (e) {}
+        paint();
+      });
+    })();
+  </script>
+  
+  <script>
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    (function () {
+      var here = new URL(".", document.querySelector('link[rel="stylesheet"]').href);
+      var root = new URL(".." + "/", here);
+      fetch(new URL("versions.json", root))
+        .then(function (r) { if (!r.ok) { throw r; } return r.json(); })
+        .then(function (versions) {
+          var picker = document.getElementById("version-picker");
+          ["latest"].concat(versions).forEach(function (v) {
+            var option = document.createElement("option");
+            option.value = v;
+            option.textContent = v;
+            option.selected = v === "v0.0.6";
+            picker.appendChild(option);
+          });
+          
+          
+          
+          
+          
+          
+          picker.addEventListener("change", function () {
+            window.location.href = new URL(picker.value + "/docs/", root);
+          });
+          picker.hidden = false;
+        })
+        .catch(function () {});
+    })();
+  </script>
+  
+</body>
+</html>

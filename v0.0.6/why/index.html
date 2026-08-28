@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+  <script>
+    
+    
+    
+    (function () {
+      try {
+        var t = localStorage.getItem("lerp-theme");
+        if (t === "light" || t === "dark") {
+          document.documentElement.dataset.theme = t;
+        }
+      } catch (e) {}
+    })();
+  </script>
+  
+  
+  
+  
+  <title>Why lerp · lerp</title>
+  
+  
+  
+  
+  
+  <meta name="description" content="The case for running coding agents from your Linear board, and why the smallness is the point.">
+  
+  <link rel="canonical" href="https://lerp.sh/why/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="lerp">
+  <meta property="og:title" content="Why lerp · lerp">
+  <meta property="og:description" content="The case for running coding agents from your Linear board, and why the smallness is the point.">
+  <meta property="og:url" content="https://lerp.sh/why/">
+  <meta property="og:image" content="https://lerp.sh/og.png">
+  <meta property="og:image:alt" content="The lerp board: tickets waiting on a human in the On you panel, a work panel of queues and three lanes running coding agents">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="640">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Why lerp · lerp">
+  <meta name="twitter:description" content="The case for running coding agents from your Linear board, and why the smallness is the point.">
+  <meta name="twitter:image" content="https://lerp.sh/og.png">
+  <meta name="twitter:image:alt" content="The lerp board: tickets waiting on a human in the On you panel, a work panel of queues and three lanes running coding agents">
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+  
+  
+  
+  
+  
+  
+  
+  <header>
+    
+    <a class="brand" href="../"><img class="brand-mark" src="../favicon.svg" alt="">lerp</a>
+    <span class="spacer"></span>
+    
+    <a class="nav" href="../docs/">Docs</a>
+    
+    <a class="nav here" href="../why/">Why lerp</a>
+    
+    
+    <button type="button" id="theme-picker" class="theme" aria-label="Theme">◐ system</button>
+    <a class="nav github" href="https://github.com/mattwalters/lerp" target="_blank" rel="noopener" aria-label="GitHub"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg></a>
+    
+    
+    <a class="version-latest" id="version-latest" hidden></a>
+    
+  </header>
+  <div class="wrap">
+    
+    <main>
+      
+
+<div class="prose">
+  <h1 id="why-lerp">Why lerp</h1>
+<p>Running a coding agent in a terminal is genuinely good at one ticket.</p>
+<p>It stops scaling at about two.</p>
+<p>By the third you are naming tmux panes: nothing says which work is
+claimed, nothing survives closing the laptop, and the record of what was
+decided lives in scrollback. Meanwhile your tracker, the tool whose
+entire job is <em>who is doing what, and what happened</em>, knows none of it.</p>
+<p>The usual fixes are all bigger machines: a hosted agent platform, agents
+wired into CI, a workflow engine. Each one adds a second system of
+record and asks you to keep it fed.</p>
+<p>Lerp&rsquo;s bet is that the system of record you need already exists. It is
+your Linear board.</p>
+<h2 id="what-a-day-with-lerp-looks-like">What a day with lerp looks like</h2>
+<p>Lerp is an operator&rsquo;s TUI over that board. You open it; it fills a few
+lanes with coding agents and moves tickets across the board as they
+finish; you close it and everything stops. No daemon, no server, no
+webhook, no account with anybody but Linear.</p>
+<figure class="cast">
+  
+  <video class="cast-dark" controls muted loop playsinline preload="metadata" width="1200" height="640" aria-label="The board opening on the On you panel, switching to the work panel, and opening a lane&#39;s log">
+    <source src="../casts/board.webm" type="video/webm">
+    <source src="../casts/board.mp4" type="video/mp4">
+  </video>
+  <video class="cast-light" controls muted loop playsinline preload="metadata" width="1200" height="640" aria-label="The board opening on the On you panel, switching to the work panel, and opening a lane&#39;s log">
+    <source src="../casts/board-light.webm" type="video/webm">
+    <source src="../casts/board-light.mp4" type="video/mp4">
+  </video>
+  <figcaption class="keys"><kbd>1</kbd> <span class="sep" aria-hidden="true">·</span> <kbd>2</kbd> <span class="sep" aria-hidden="true">·</span> <kbd>tab</kbd> <span class="sep" aria-hidden="true">·</span> <kbd>enter</kbd> <span class="sep" aria-hidden="true">·</span> <kbd>esc</kbd></figcaption>
+</figure>
+
+<p>Drop a ticket into a status configured as a queue and an agent picks it
+up, works it, and moves it on. Statuses no queue serves are where work
+waits for a human: a finished plan parks there until you promote it, and
+the promote is the approval. The two questions that actually nag an
+operator are the two panels of the screen:</p>
+<ol>
+<li>What&rsquo;s blocked on me?</li>
+<li>Are the agents still working?</li>
+</ol>
+<p><strong>The board is the pipeline.</strong> A queue is a Linear status plus a prompt,
+a runner, and where to go on success. There is no DAG file; the topology
+is where tickets sit and where those pointers go, legible to anyone who
+can read the board.</p>
+<p><strong>Close the laptop.</strong> Desired state is the board; actual state is the
+agent processes on your machine; lerp reconciles the two. Killing lerp,
+or the laptop dying mid-run, is drift, not damage: progress checkpoints
+at queue boundaries as artifacts in Linear, and the worst outcome is a
+stage that runs again.</p>
+<p><strong>It is you on the board, not a bot.</strong> Lerp authenticates as the
+operator, and claiming a ticket means assigning it to your Linear user.
+&ldquo;Sarah has LERP-42 in Implementing&rdquo; reads the same whether Sarah or
+Sarah&rsquo;s agent is typing. No integration to install, no bot seat to
+explain.</p>
+<p><strong>Take the wheel whenever.</strong> A runner wraps a coding-agent CLI: Claude
+Code, Codex, whatever exits non-zero when it fails. When a ticket turns
+out to want your hands, <code>eject</code> stops the agent, frees the lane, and
+hands you the vendor&rsquo;s own resume command with the session&rsquo;s context
+intact. Nothing is trapped inside lerp, because nothing lives inside
+lerp.</p>
+<h2 id="what-it-deliberately-is-not">What it deliberately is not</h2>
+<p>The missing features are load-bearing: each is a thing you never have to
+operate, secure, or debug.</p>
+<ul>
+<li><strong>Not a service.</strong> Nothing listens on a port while lerp works, except
+the few seconds <code>lerp login</code> holds a loopback socket open for an OAuth
+redirect at setup time.</li>
+<li><strong>Not a database.</strong> All durable state is Linear&rsquo;s. Local disk holds
+config, credentials, and evidence of running processes. Deleting it may
+cost compute; it may never cost correctness.</li>
+<li><strong>Not a workflow engine.</strong> No conditionals, no DAG language, no plugin
+hooks, no retry policies. If a stage needs to branch, an agent or a
+human moves the ticket and the loop respects it.</li>
+<li><strong>Not a code-host client.</strong> Lerp speaks exactly one external API:
+Linear. Git, GitHub and pull requests belong to the agents&rsquo; prompts and
+to you. The engine has never heard of a pull request.</li>
+<li><strong>Not a team scheduler.</strong> No work stealing, no global queue, no
+fairness guarantees. Each developer runs their own lerp against their
+own clone, and claims arbitrate.</li>
+<li><strong>Not an agent framework, a CI system, a process supervisor, or a
+deployment tool.</strong></li>
+</ul>
+<h2 id="the-bigger-machines">The bigger machines</h2>
+<p><strong>A hosted agent platform</strong> gets you a queue, a dashboard, and somebody
+else&rsquo;s compute. It also gets you a second system of record, seats to
+buy, and your repository in their cloud. Lerp adds none of that: the board you already
+run stand-ups from is the one the agents work from, and nothing leaves
+your machine but what you would have typed into Linear anyway.</p>
+<p><strong>Agents wired into CI</strong> are good for one job on one trigger and poor
+for a pipeline: state lives in the code host, a stage that needs a human
+decision has nowhere to wait, and watching a run means reading logs in a
+browser tab. Lerp&rsquo;s stages end at a status, human gates are statuses no
+queue serves, and a run&rsquo;s stream is a live tail beside the board.</p>
+<p><strong>A general workflow engine</strong> (Temporal, Airflow, an n8n-shaped thing)
+is the right tool for durable, distributed, long-running processes, with
+its own store, topology language, and operational surface. A backlog of
+coding work needs none of it: Linear is already the durable store, and
+the board is already the topology.</p>
+<p>The pitch in one line: everyone else sells you a bigger machine. Lerp is
+smaller, because you already have the big parts: the store, the
+topology, the shared view.</p>
+<h2 id="when-lerp-is-the-wrong-tool">When lerp is the wrong tool</h2>
+<ul>
+<li><strong>You do not use Linear.</strong> The tracker being the database is the design,
+not an adapter.</li>
+<li><strong>You want work to happen while nobody is watching.</strong> The TUI is the
+engine. Work happens while lerp is open, on the operator&rsquo;s machine.</li>
+<li><strong>You have fifty developers and want one scheduler over them.</strong> Different
+product. Lerp&rsquo;s multiplayer story is Linear&rsquo;s: claims, and nothing else.</li>
+<li><strong>You are on Windows.</strong> macOS and Linux only: the loop uses process
+groups and an advisory <code>flock</code> that Windows does not have. WSL2 counts as
+Linux.</li>
+</ul>
+<h2 id="try-it">Try it</h2>
+<p><a href="../docs/">The docs</a> take you from install to a first promoted ticket, with
+a page per motion after that.</p>
+<p>If you want the design argued at full length, that lives in
+<a href="../scope/">SCOPE.md</a>.</p>
+<div class="hero-install">
+  <pre><code>brew install mattwalters/tap/lerp</code></pre>
+  <button type="button" class="copy-button" aria-label="Copy install command" hidden>Copy</button>
+</div>
+<script>
+  (function () {
+    if (!navigator.clipboard || typeof navigator.clipboard.writeText !== "function") {
+      return;
+    }
+    var btn = document.querySelector(".hero-install .copy-button");
+    var code = document.querySelector(".hero-install code");
+    if (!btn || !code) {
+      return;
+    }
+    btn.hidden = false;
+    var timer = null;
+    btn.addEventListener("click", function () {
+      var text = code.textContent.trim();
+      navigator.clipboard.writeText(text).then(function () {
+        btn.textContent = "Copied";
+        btn.classList.add("copied");
+        btn.setAttribute("aria-label", "Copied to clipboard");
+        if (timer) {
+          clearTimeout(timer);
+        }
+        timer = setTimeout(function () {
+          btn.textContent = "Copy";
+          btn.classList.remove("copied");
+          btn.setAttribute("aria-label", "Copy install command");
+          timer = null;
+        }, 2000);
+      }).catch(function () {});
+    });
+  })();
+</script>
+
+<p class="cta"><a href="../docs/quickstart/">$ lerp init →</a></p>
+
+
+</div>
+
+    </main>
+    
+    
+    
+  </div>
+  <script>
+    
+    
+    
+    
+    (function () {
+      var modes = ["system", "light", "dark"];
+      var glyphs = { system: "◐", light: "○", dark: "●" };
+      var picker = document.getElementById("theme-picker");
+      var current = "system";
+      try {
+        var stored = localStorage.getItem("lerp-theme");
+        if (stored === "light" || stored === "dark") { current = stored; }
+      } catch (e) {}
+      function paint() {
+        picker.textContent = glyphs[current] + " " + current;
+        picker.setAttribute("aria-label", "Theme: " + current);
+        if (current === "system") {
+          delete document.documentElement.dataset.theme;
+        } else {
+          document.documentElement.dataset.theme = current;
+        }
+      }
+      paint();
+      picker.addEventListener("click", function () {
+        current = modes[(modes.indexOf(current) + 1) % modes.length];
+        try {
+          if (current === "system") {
+            localStorage.removeItem("lerp-theme");
+          } else {
+            localStorage.setItem("lerp-theme", current);
+          }
+        } catch (e) {}
+        paint();
+      });
+    })();
+  </script>
+  
+  <script>
+    
+    
+    
+    
+    (function () {
+      var here = new URL(".", document.querySelector('link[rel="stylesheet"]').href);
+      var root = new URL(".." + "/", here);
+      fetch(new URL("versions.json", root))
+        .then(function (r) { if (!r.ok) { throw r; } return r.json(); })
+        .then(function (versions) {
+          if (!versions.length) { return; }
+          var latest = document.getElementById("version-latest");
+          latest.textContent = versions[0];
+          latest.href = new URL("latest/docs/", root);
+          latest.hidden = false;
+        })
+        .catch(function () {});
+    })();
+  </script>
+  
+</body>
+</html>

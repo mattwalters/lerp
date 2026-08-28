@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+  <script>
+    
+    
+    
+    (function () {
+      try {
+        var t = localStorage.getItem("lerp-theme");
+        if (t === "light" || t === "dark") {
+          document.documentElement.dataset.theme = t;
+        }
+      } catch (e) {}
+    })();
+  </script>
+  
+  
+  
+  
+  <title>Finding tickets · lerp</title>
+  
+  
+  
+  
+  
+  <meta name="description" content="Filtering, sorting, searching, and slicing to a status.">
+  
+  <link rel="canonical" href="https://lerp.sh/latest/docs/finding-tickets/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="lerp">
+  <meta property="og:title" content="Finding tickets · lerp">
+  <meta property="og:description" content="Filtering, sorting, searching, and slicing to a status.">
+  <meta property="og:url" content="https://lerp.sh/latest/docs/finding-tickets/">
+  <meta property="og:image" content="https://lerp.sh/og.png">
+  <meta property="og:image:alt" content="The lerp board: tickets waiting on a human in the On you panel, a work panel of queues and three lanes running coding agents">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="640">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Finding tickets · lerp">
+  <meta name="twitter:description" content="Filtering, sorting, searching, and slicing to a status.">
+  <meta name="twitter:image" content="https://lerp.sh/og.png">
+  <meta name="twitter:image:alt" content="The lerp board: tickets waiting on a human in the On you panel, a work panel of queues and three lanes running coding agents">
+  <link rel="stylesheet" href="../../style.css">
+</head>
+<body>
+  
+  
+  
+  
+  
+  
+  
+  <header>
+    
+    <a class="brand" href="../../"><img class="brand-mark" src="../../favicon.svg" alt="">lerp</a>
+    <span class="spacer"></span>
+    
+    <a class="nav here" href="../../docs/">Docs</a>
+    
+    <a class="nav" href="../../why/">Why lerp</a>
+    
+    
+    <button type="button" id="theme-picker" class="theme" aria-label="Theme">◐ system</button>
+    <a class="nav github" href="https://github.com/mattwalters/lerp" target="_blank" rel="noopener" aria-label="GitHub"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg></a>
+    
+    
+    <span class="version">
+      <span class="version-label">v0.0.6</span>
+      <select id="version-picker" hidden aria-label="Documentation version"></select>
+    </span>
+    
+  </header>
+  <div class="wrap">
+    
+    
+    <nav class="sidenav" aria-label="Manual">
+      
+      
+      
+      <h5>Start</h5>
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/">Documentation</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/overview/">Overview</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/install/">Install</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/quickstart/">Quickstart</a>
+      
+      <h5>Concepts</h5>
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/the-board/">The board</a>
+      
+      <h5>The interface</h5>
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/reading-the-board/">Reading the board</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/finding-tickets/" class="active" aria-current="page">Finding tickets</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/promoting/">Promoting</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/ejecting/">Ejecting</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/watching-a-run/">Watching a run</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/starting-past-the-limit/">Starting past the limit</a>
+      
+      <h5>Reference</h5>
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/lerp-toml/" class="mono">lerp.toml</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/telemetry/">Telemetry</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/cli/">The command line</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/troubleshooting/">Troubleshooting</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../scope/">SCOPE</a>
+      
+      
+      <img class="sidenav-mark" src="../../favicon.svg" alt="">
+    </nav>
+    
+    <main>
+      
+
+<div class="prose">
+  <h1 id="finding-tickets">Finding tickets</h1>
+<p>Four controls on the <a href="../../docs/reading-the-board/#the-on-you-panel">On you panel</a>
+decide what it shows and in what order: <code>F</code> filters by field and value,
+<code>s</code> sorts, <code>/</code> searches, and <code>]</code>/<code>[</code> slice to a status. All four are
+session-only — no saved views, no filter syntax — and none of them changes
+which tickets are fetched.</p>
+<figure class="cast">
+  
+  <video class="cast-dark" controls muted loop playsinline preload="metadata" width="1200" height="640" aria-label="Narrowing the list: sorting, filtering by project, searching, and cycling status slices">
+    <source src="../../casts/finding.webm" type="video/webm">
+    <source src="../../casts/finding.mp4" type="video/mp4">
+  </video>
+  <video class="cast-light" controls muted loop playsinline preload="metadata" width="1200" height="640" aria-label="Narrowing the list: sorting, filtering by project, searching, and cycling status slices">
+    <source src="../../casts/finding-light.webm" type="video/webm">
+    <source src="../../casts/finding-light.mp4" type="video/mp4">
+  </video>
+  <figcaption class="keys"><kbd>F</kbd> <span class="sep" aria-hidden="true">·</span> <kbd>P</kbd> <span class="sep" aria-hidden="true">·</span> <kbd>s</kbd> <span class="sep" aria-hidden="true">·</span> <kbd>/</kbd> <span class="sep" aria-hidden="true">·</span> <kbd>]</kbd> <span class="sep" aria-hidden="true">·</span> <kbd>esc</kbd></figcaption>
+</figure>
+
+<h2 id="order">Order</h2>
+<p>Rows are grouped by status by default, in the pipeline&rsquo;s own order, so the
+run to retriage and the review to read are the top rows rather than two of
+sixteen.</p>
+<p>Within a group, rows fall through to <strong>leverage</strong> — how many other listed
+tickets promoting this one would transitively unblock — then priority,
+then identifier. The promote worth making is the top row of its group.</p>
+<p><code>s</code> cycles the order to project, leverage or priority. The two grouping
+modes draw a header per boundary; the two flat ones order the whole list.</p>
+<h2 id="filter">Filter</h2>
+<p><code>F</code> opens a two-step modal: pick a field (project, status, or priority),
+then pick a value. The value list shows row counts and takes type-ahead.
+<code>enter</code> applies; <code>esc</code> backs out a level. <code>F</code> on an active filter reopens
+it for changing or clearing (the <code>all &lt;field&gt;</code> option at the top).</p>
+<p><code>P</code> is a shortcut straight to the project value list.</p>
+<p>Picking a value under <strong>status</strong> sets the <a href="#status-slices">status slice</a>
+rather than a separate filter, so <code>F</code> and <code>]</code>/<code>[</code> are two ways to reach
+one control and can never narrow the panel to two different statuses at
+once. Project and priority compose on top of whichever slice is showing.</p>
+<h2 id="search">Search</h2>
+<p><code>/</code> opens a prompt (<code>filter the list</code>) and narrows the panel as you type — a case-insensitive
+substring over the identifier, title, status and project already on the
+row, with matches marked.</p>
+<p><code>enter</code> keeps the filter and hands the keys back to the list, so you can
+<a href="../../docs/promoting/">promote</a> what you found; <code>esc</code> cancels the prompt, and
+<code>esc</code> again clears a filter the prompt already closed on. While the prompt
+is open it has the keyboard — a <code>p</code> or a <code>q</code> typed into it is text — and
+<code>ctrl+c</code> still quits.</p>
+<h2 id="status-slices">Status slices</h2>
+<p><code>]</code> and <code>[</code> cycle the panel through Linear status slices in board order —
+all, then each status present, and back. The active tab is highlighted in
+the slice tab row. Slices are display over the fetched list, so only
+unstarted and active statuses present appear.</p>
+<p><code>F</code> → status is the same control with the options on screen: every status
+with its row count, so picking one is a choice rather than a guess at
+where the cycle stops.</p>
+<h2 id="what-the-title-and-tabs-say">What the title and tabs say</h2>
+<p>The slice tab row and panel title carry all of it: the active tab shows a
+fraction (<code>4/17</code>, for example) when narrowed by search or project filter,
+and the title shows any active search (<code>· /goreleaser</code>), non-default sort
+(<code>· by priority</code>), or project filter. The status bar&rsquo;s <code>● n on you</code> is the
+other question — what is blocked on you — and does not move when a slice
+is active.</p>
+
+</div>
+
+    </main>
+    
+    
+    
+    <nav class="toc" aria-label="On this page">
+      <h5>On this page</h5>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#order">Order</a></li>
+    <li><a href="#filter">Filter</a></li>
+    <li><a href="#search">Search</a></li>
+    <li><a href="#status-slices">Status slices</a></li>
+    <li><a href="#what-the-title-and-tabs-say">What the title and tabs say</a></li>
+  </ul>
+</nav>
+    </nav>
+    
+  </div>
+  <script>
+    
+    
+    
+    
+    (function () {
+      var modes = ["system", "light", "dark"];
+      var glyphs = { system: "◐", light: "○", dark: "●" };
+      var picker = document.getElementById("theme-picker");
+      var current = "system";
+      try {
+        var stored = localStorage.getItem("lerp-theme");
+        if (stored === "light" || stored === "dark") { current = stored; }
+      } catch (e) {}
+      function paint() {
+        picker.textContent = glyphs[current] + " " + current;
+        picker.setAttribute("aria-label", "Theme: " + current);
+        if (current === "system") {
+          delete document.documentElement.dataset.theme;
+        } else {
+          document.documentElement.dataset.theme = current;
+        }
+      }
+      paint();
+      picker.addEventListener("click", function () {
+        current = modes[(modes.indexOf(current) + 1) % modes.length];
+        try {
+          if (current === "system") {
+            localStorage.removeItem("lerp-theme");
+          } else {
+            localStorage.setItem("lerp-theme", current);
+          }
+        } catch (e) {}
+        paint();
+      });
+    })();
+  </script>
+  
+  <script>
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    (function () {
+      var here = new URL(".", document.querySelector('link[rel="stylesheet"]').href);
+      var root = new URL(".." + "/", here);
+      fetch(new URL("versions.json", root))
+        .then(function (r) { if (!r.ok) { throw r; } return r.json(); })
+        .then(function (versions) {
+          var picker = document.getElementById("version-picker");
+          ["latest"].concat(versions).forEach(function (v) {
+            var option = document.createElement("option");
+            option.value = v;
+            option.textContent = v;
+            option.selected = v === "v0.0.6";
+            picker.appendChild(option);
+          });
+          
+          
+          
+          
+          
+          
+          picker.addEventListener("change", function () {
+            window.location.href = new URL(picker.value + "/docs/", root);
+          });
+          picker.hidden = false;
+        })
+        .catch(function () {});
+    })();
+  </script>
+  
+</body>
+</html>
