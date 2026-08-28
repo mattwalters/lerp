@@ -6,4 +6,8 @@ public/
 # make casts renders these fresh from docs/tapes/ into the scratch dir and
 # copies them here; committing them would mean a growing pile of binaries in
 # git for something a make target regenerates deterministically enough.
+# static/posters/ is deliberately NOT ignored: posters are lightweight stills
+# committed to git so the unversioned main-tracking root can paint its hero
+# poster before and between release tags, while the heavier mp4/webm video
+# binaries render only on tags.
 static/casts/

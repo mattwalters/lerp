@@ -198,14 +198,17 @@ DEMO_EXIT := $(DEMO_BIN)/exit
 DEMO_GIF := docs/demo.gif
 OG_PNG := docs/static/og.png
 CASTS_DIR := docs/static/casts
+POSTERS_DIR := docs/static/posters
 # GIF bytes are not reproducible, so nothing here diffs them. The caps are the
 # only thing standing between "a couple of MB" and drift. mp4/webm get a
-# smaller cap per file since a cast plays two of them; LERP-132 is where that
-# knob gets argued with. og.png is the social card, rendered alongside the
-# GIF by demo.tape's Screenshot; a TUI change wants `make demo` re-run.
+# smaller cap per file since a cast plays two of them; LERP-132 tightened
+# CAST_MAX_BYTES to 1 MiB and added a 256 KiB cap for the committed poster.
+# og.png is the social card, rendered alongside the GIF by demo.tape's
+# Screenshot; a TUI change wants `make demo` re-run.
 DEMO_MAX_BYTES := 3145728
 OG_MAX_BYTES := 524288
-CAST_MAX_BYTES := 2097152
+CAST_MAX_BYTES := 1048576
+POSTER_MAX_BYTES := 262144
 
 # Renders docs/tapes/$(TAPE).tape into $(DEMO_RENDER_DIR), gated on the
 # harness's own exit status — nothing about file size, which the caller
@@ -283,6 +286,14 @@ casts: ## Render every tape under docs/tapes/ into docs/static/casts/ (needs vhs
 	      printf 'casts: %s.gif came back %s bytes, over the %s cap\n' \
 	        "$$name" "$$size" '$(DEMO_MAX_BYTES)'; exit 1; }; \
 	  fi; \
+	  if [ -e $(DEMO_RENDER_DIR)/$$name.png ]; then \
+	    size=$$(wc -c < $(DEMO_RENDER_DIR)/$$name.png | tr -d ' '); \
+	    test "$$size" -le $(POSTER_MAX_BYTES) || { \
+	      printf 'casts: %s.png came back %s bytes, over the %s cap\n' \
+	        "$$name" "$$size" '$(POSTER_MAX_BYTES)'; exit 1; }; \
+	    mkdir -p $(POSTERS_DIR); \
+	    mv $(DEMO_RENDER_DIR)/$$name.png $(POSTERS_DIR)/$$name.png; \
+	  fi; \
 	  for out in $(DEMO_RENDER_DIR)/$$name.mp4 $(DEMO_RENDER_DIR)/$$name.webm; do \
 	    test -e "$$out" || continue; \
 	    size=$$(wc -c < "$$out" | tr -d ' '); \
@@ -295,16 +306,21 @@ casts: ## Render every tape under docs/tapes/ into docs/static/casts/ (needs vhs
 	done
 # The rot check house.tape's Require and demo.tape's Wait+Screen lines do not
 # cover: a `{{< cast >}}` shortcode (docs/layouts/_shortcodes/cast.html)
-# names its webm/mp4 by path from the site root, and every one of those paths
-# must resolve to a file this run just staged — a page embedding a cast no
-# tape renders is otherwise a silently blank frame on the published site.
-# Nothing to find until a page calls the shortcode; it is here so it exists
-# before one does.
+# names its webm/mp4 and poster by path from the site root, and every one of
+# those paths must resolve to a file this run just staged — a page embedding
+# a cast or poster no tape renders is otherwise a silently blank frame on the
+# published site.
 	@missing=0; \
 	  for ref in $$(grep -rhoE '(webm|mp4)="casts/[^"]+"' docs/content 2>/dev/null \
 	                | sed -E 's/.*"casts\/([^"]+)"/\1/'); do \
 	    test -e "$(CASTS_DIR)/$$ref" || { \
 	      echo "casts: docs/content references casts/$$ref, which no tape rendered"; \
+	      missing=1; }; \
+	  done; \
+	  for ref in $$(grep -rhoE 'poster="posters/[^"]+"' docs/content 2>/dev/null \
+	                | sed -E 's/.*"posters\/([^"]+)"/\1/'); do \
+	    test -e "$(POSTERS_DIR)/$$ref" || { \
+	      echo "casts: docs/content references posters/$$ref, which no tape rendered"; \
 	      missing=1; }; \
 	  done; \
 	  test "$$missing" -eq 0

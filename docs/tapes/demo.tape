@@ -35,6 +35,7 @@ Enter
 Wait+Screen /Backlog \d+ · /
 Wait+Screen /waiting to enter the pipeline/
 Screenshot ".demo/out/og.png"
+Screenshot ".demo/out/demo.png"
 Sleep 3s
 
 # Both lists own the screen until one is asked for a ticket. Down to a review
@@ -42,11 +43,11 @@ Sleep 3s
 # table with the ticket's body, its real Linear status and why it is sitting
 # with a human, and `esc` gives the width back.
 Down
-Sleep 2500ms
+Sleep 1500ms
 Enter
-Sleep 4500ms
+Sleep 3s
 Escape
-Sleep 2s
+Sleep 1500ms
 
 # `2` focuses the work panel, which owns its screen the same way — both
 # panels draw every frame regardless of focus, so nothing about this
@@ -54,9 +55,9 @@ Sleep 2s
 # known (Up clamps at the first row, so the count only has to be at least
 # the distance).
 Type "2"
-Sleep 1s
+Sleep 500ms
 Up 6
-Sleep 2500ms
+Sleep 1500ms
 
 # `enter` opens that lane's log tail in the main pane, formatted from the
 # agent's stream: thinking, tool calls, the result. The footer's `r raw`
@@ -67,16 +68,16 @@ Sleep 2500ms
 # the pane the same way.
 Enter
 Wait+Screen /r raw/
-Sleep 4s
+Sleep 2500ms
 Down
-Sleep 4s
+Sleep 2500ms
 Down
-Sleep 4s
+Sleep 2500ms
 
 # The first three runs exit while their logs are on screen, their tickets move
 # to "In Review", and the next three come off the queue into the lanes that
 # just freed.
-Sleep 5s
+Sleep 3s
 
 # `1` back to the inbox, where the finished tickets have just landed under
 # "In Review — a run finished here". The inbox already seeds two tickets at
@@ -91,35 +92,35 @@ Sleep 5s
 # "In Review".
 Type "1"
 Wait+Screen /DEMO-2[467][ \t]+\S+[ \t]+In Review/
-Sleep 3s
+Sleep 2s
 # Every run so far has landed here, which is the shape of the thing: the loop
 # works the board down, and what it finishes stacks up waiting on a human.
 Down
-Sleep 3s
+Sleep 2s
 
 # The inbox browses stages in Linear board order: `]` cycles through the
 # status slices — all, Triage, Backlog, Plan Review — and `[` walks them
 # back. Slices are display over the list already fetched.
 Type "]"
 Wait+Screen /· Triage/
-Sleep 2s
+Sleep 1500ms
 Type "]"
 Wait+Screen /· Backlog/
-Sleep 2500ms
+Sleep 1500ms
 Type "]"
 Wait+Screen /· Plan Review/
-Sleep 2500ms
+Sleep 1500ms
 Type "["
 Wait+Screen /· Backlog/
-Sleep 1500ms
+Sleep 1s
 Type "["
 Wait+Screen /· Triage/
-Sleep 1500ms
+Sleep 1s
 Type "["
-Sleep 2s
+Sleep 1500ms
 
 Type "q"
-Sleep 2s
+Sleep 1500ms
 
 # Off the recording. Quitting is not instant — tui.Run waits out a
 # reconciliation pass already in flight, and the harness removes its throwaway
