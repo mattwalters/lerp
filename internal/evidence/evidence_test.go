@@ -37,8 +37,12 @@ func TestRecordsRoundTripAndRemove(t *testing.T) {
 	if got.RunID == "" || got.LogPath == "" || got.ExitPath == "" {
 		t.Fatalf("Create did not set run ID, log path and exit path: %#v", got)
 	}
-	if _, err := os.Stat(got.LogPath); err != nil {
+	info, err := os.Stat(got.LogPath)
+	if err != nil {
 		t.Fatalf("run log: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Errorf("run log mode = %#o, want 0600", perm)
 	}
 	runDir := filepath.Dir(got.LogPath)
 	if filepath.Dir(got.ExitPath) != runDir {
