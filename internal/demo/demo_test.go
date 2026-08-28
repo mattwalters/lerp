@@ -105,6 +105,11 @@ func TestTheHarnessWiresEveryOptionTheTUIRequires(t *testing.T) {
 	if err := tuiOptions(rec, repo, events).Validate(); err != nil {
 		t.Fatalf("the harness would render a cast of this error instead of lerp: %v", err)
 	}
+	for _, q := range []string{"plan", "implement"} {
+		if can, why := rec.CanEject(q); !can {
+			t.Errorf("demo queue %q cannot be ejected: %s", q, why)
+		}
+	}
 }
 
 // TestTheHarnessReportsItsExitStatus pins the file `make demo` gates on. The

@@ -11,9 +11,9 @@ board: select a row in the [Inbox](reading-the-board.md#the-inbox-panel) and
 press `p`, pick a target from the configured queue statuses or a pipeline
 exit, and lerp moves it there.
 
-<!-- Cast slot (LERP-70): a plan read in the main pane, then promoted out of
-     the gate into the next queue and picked up on the following pass.
-     keys: [enter] · [p] · pick a status · [enter] -->
+{{< cast webm="casts/promote.webm" mp4="casts/promote.mp4"
+         title="A ticket's plan read in the main pane and promoted to the implement queue"
+         keys="[enter] · [p] · pick a status · [enter]" >}}
 
 ## What promoting is for
 

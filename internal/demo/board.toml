@@ -17,7 +17,8 @@ dispose = 'rm -rf "$LERP_WORKSPACE"'
 # needs no runner capability of its own. $LERP_DEMO_DIR is where the harness
 # wrote the script; it is on the environment every command here inherits.
 [runners.agent]
-command = 'sh "$LERP_DEMO_DIR/agent.sh"'
+command = 'sh "$LERP_DEMO_DIR/agent.sh" --session {{session}}'
+resume = 'agent --resume {{session}}'
 # Exercises the key on a command runner too: the fixture log's own readings
 # stay well under it, so the cast draws a real, unalarming load figure.
 context = 200000

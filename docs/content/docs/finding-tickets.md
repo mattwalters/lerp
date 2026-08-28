@@ -11,10 +11,9 @@ what it shows and in what order: `F` filters by field and value, `s` sorts, `/`
 searches, and `]`/`[` slice to a status. All four are session-only — no saved
 views, no filter syntax, and none of them changes which tickets are fetched.
 
-<!-- Cast slot (LERP-70): a full inbox narrowed — s through the sort modes,
-     F onto one project, / typed into, ] cycling through status slices and
-     back.
-     keys: [F] · [P] · [s] · [/] · []] · [esc] -->
+{{< cast webm="casts/finding.webm" mp4="casts/finding.mp4"
+         title="Narrowing the inbox: sorting, filtering by project, searching, and cycling status slices"
+         keys="[F] · [P] · [s] · [/] · []] · [esc]" >}}
 
 ## Order
 

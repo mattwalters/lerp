@@ -11,9 +11,9 @@ stops that agent, frees the lane, and hands back the runner's own `resume`
 command — so the headless run becomes your interactive session, in the
 workspace lerp leaves standing.
 
-<!-- Cast slot (LERP-70): a run that has gone quiet, ejected; the resume
-     command shown, the lane freed, the ticket untouched.
-     keys: [e] · the resume command · [esc] -->
+{{< cast webm="casts/eject.webm" mp4="casts/eject.mp4"
+         title="Ejecting a running agent, showing the resume command and freeing the lane"
+         keys="[e] · the resume command · [esc]" >}}
 
 ## What ejecting does not do
 
