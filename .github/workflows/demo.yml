@@ -63,8 +63,16 @@ jobs:
   # the one command a local re-record runs — the same target that also
   # covers the README's tape, so a PR touching any tape's inputs proves the
   # whole set rather than just one cast.
+  #
+  # Split across two runners by variant (dark and light) so the ~15 minutes
+  # of wall-clock halves to ~7–8 minutes. `fail-fast: false` ensures a cap
+  # breach on one variant does not hide whether the other also breaks.
   demo:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [dark, light]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -76,4 +84,4 @@ jobs:
       # three is the slowest thing in this repository's CI, which is why it
       # now happens on the runs above and not on every push.
       - uses: charmbracelet/vhs-action@v2
-      - run: make casts
+      - run: make casts VARIANTS=${{ matrix.variant }}
