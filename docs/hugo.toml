@@ -25,11 +25,15 @@
 # subpath would be mis-relativized by Hugo, which writes the subpath into the
 # relative link.) CI passes no baseURL, so this value only ever serves the
 # local preview.
+#
+# That rule is narrowed deliberately, not repealed: no absolute URLs except
+# canonical, og:url, sitemap <loc> and robots.txt's Sitemap lines — every one
+# of which is a place where an absolute URL is the point.
 baseURL = "https://lerp.sh/"
 title = "lerp"
 relativeURLs = true
 
-disableKinds = ["taxonomy", "term", "rss", "sitemap"]
+disableKinds = ["taxonomy", "term", "rss"]
 
 [markup.highlight]
 # Classes, not inline styles: no chroma stylesheet ships, so code renders on
@@ -236,9 +240,11 @@ target = "static"
 source = "demo.gif"
 target = "static/docs/demo.gif"
 
-# A mounted file carries no front matter, so its title is set here. Without
-# this the site would title it from its filename ("Scope").
+# A mounted file carries no front matter, so its title and description are set
+# here. Without this the site would title it from its filename ("Scope") and
+# have no meta description for it.
 [[cascade]]
 title = "SCOPE"
+description = "The fence around the project: five concepts, nine invariants, and the litmus tests every change runs through."
 [cascade.target]
 path = "/scope"

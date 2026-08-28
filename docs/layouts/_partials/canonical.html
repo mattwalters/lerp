@@ -1,0 +1,7 @@
+{{- $manual := partial "manual.html" . -}}
+{{- $base := strings.TrimSuffix "/" site.BaseURL -}}
+{{- if $manual -}}
+{{- printf "%s/latest%s" $base .RelPermalink -}}
+{{- else -}}
+{{- printf "%s%s" $base .RelPermalink -}}
+{{- end -}}

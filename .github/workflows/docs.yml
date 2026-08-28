@@ -106,6 +106,17 @@ jobs:
           HUGO_PARAMS_VERSION: v0.0.0
           HUGO_PARAMS_VERSIONROOT: ".."
           HUGO_PARAMS_REF: v0.0.0
+      - name: Assert SEO artifacts
+        run: |
+          grep -qF '<link rel="canonical" href="https://lerp.sh/latest/docs/install/">' public-frozen/docs/install/index.html
+          grep -qF '<link rel="canonical" href="https://lerp.sh/">' public-frozen/index.html
+          grep -qF '<link rel="canonical" href="https://lerp.sh/">' public/index.html
+          grep -qF '<link rel="canonical" href="https://lerp.sh/why/">' public/why/index.html
+          grep -qF '<meta property="og:image" content="https://lerp.sh/og.png">' public/index.html
+          grep -qF 'https://lerp.sh/' public/sitemap.xml
+          grep -qF 'https://lerp.sh/why/' public/sitemap.xml
+          ! grep -qF '/docs/' public/sitemap.xml
+          ! grep -qF '<loc>' public-frozen/sitemap.xml
 
   publish:
     if: github.event_name != 'pull_request'
@@ -181,10 +192,10 @@ jobs:
         if: github.ref == 'refs/heads/main'
         run: |
           mkdir /tmp/root
-          mv public/index.html public/why public/style.css public/docs/demo.gif /tmp/root/
+          mv public/index.html public/why public/style.css public/sitemap.xml public/robots.txt public/og.png public/docs/demo.gif /tmp/root/
           rm -rf public
           mkdir -p public/docs
-          mv /tmp/root/index.html /tmp/root/why /tmp/root/style.css public/
+          mv /tmp/root/index.html /tmp/root/why /tmp/root/style.css /tmp/root/sitemap.xml /tmp/root/robots.txt /tmp/root/og.png public/
           mv /tmp/root/demo.gif public/docs/
 
       # Casts are rendered from the tag's own tree, same as the manual below,

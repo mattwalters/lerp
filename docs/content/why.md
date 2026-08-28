@@ -1,5 +1,6 @@
 ---
 title: Why lerp
+description: What lerp is, what it deliberately is not, and how that differs from the other ways to put agents on a backlog.
 splash: true
 ---
 

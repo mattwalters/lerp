@@ -1,0 +1,21 @@
+{{ printf "<?xml version=\"1.0\" encoding=\"utf-8\" standalone=\"yes\"?>" | safeHTML }}
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+{{- $version := site.Params.version -}}
+{{- if eq $version "" -}}
+  {{- range .Pages -}}
+    {{- if not (partial "manual.html" .) }}
+  <url>
+    <loc>{{ partial "canonical.html" . }}</loc>
+  </url>
+    {{- end -}}
+  {{- end -}}
+{{- else if eq $version "latest" -}}
+  {{- range .Pages -}}
+    {{- if partial "manual.html" . }}
+  <url>
+    <loc>{{ partial "canonical.html" . }}</loc>
+  </url>
+    {{- end -}}
+  {{- end -}}
+{{- end }}
+</urlset>

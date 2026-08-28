@@ -1,5 +1,6 @@
 ---
 title: Documentation
+description: Lerp's manual — install to a first promoted ticket, the concepts, the interface, and reference.
 ---
 
 # Documentation
