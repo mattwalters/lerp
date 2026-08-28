@@ -16,9 +16,11 @@
 
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   --sans: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
-  /* One column width, shared by the header and the prose, so the page has a
-     single left edge from the wordmark down. */
   --measure: 40rem;
+  /* The full shell: 12rem sidebar + 3rem gap + 40rem measure + 3rem gap +
+     14rem rail. The wrap and the header both centre on it, so the wordmark
+     and the sidebar share a left edge however wide the window is. */
+  --shell: 72rem;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -53,7 +55,10 @@ header {
   /* A row gap as well as a column one: on a narrow phone the header wraps,
      and every item in it has line-height 1. */
   gap: 0.35rem 1rem;
-  padding: 0.9rem 1.5rem;
+  /* The border runs the whole window, but the contents stop at the shell's
+     edges: once the window outgrows the shell, the side padding absorbs the
+     difference, which is the same arithmetic margin: auto does on .wrap. */
+  padding: 0.9rem max(1.5rem, calc((100% - var(--shell)) / 2));
   border-bottom: 1px solid var(--rule);
 }
 
@@ -97,12 +102,22 @@ header .version:has(select:not([hidden])) .version-label { display: none; }
   gap: 3rem;
   align-items: flex-start;
   padding: 2rem 1.5rem 6rem;
+  /* Centred as a box, not as contents: a manual page short enough to have no
+     rail keeps its sidebar and prose exactly where every other page puts
+     them, instead of drifting right to re-centre a narrower row. */
+  max-width: calc(var(--shell) + 3rem);
+  margin: 0 auto;
 }
 
 main {
   min-width: 0;
   max-width: var(--measure);
 }
+
+/* The two splash pages (home and Why lerp) run without either rail, so main
+   is the wrap's only child; a lone reading column left-flush in a centred
+   shell reads as off-balance, so it centres itself instead. */
+.wrap > main:only-child { margin-inline: auto; }
 
 .prose { overflow-wrap: break-word; }
 
