@@ -94,7 +94,15 @@
 </script>
 
 <section class="hero">
-  <h1 class="wordmark">lerp</h1>
+  <h1 class="wordmark" aria-label="lerp">
+    <!-- Source of truth: internal/tui/mark.go -->
+    <pre aria-hidden="true"> _
+| | ___  _ _  _ __
+| |/ -_)| '_|| '_ \
+|_|\___||_|  | .__/
+             |_|</pre>
+    <span class="fallback" aria-hidden="true">lerp</span>
+  </h1>
   <p class="tagline">A TUI that runs coding agents over your Linear board.</p>
 </section>
 <div class="prose">
