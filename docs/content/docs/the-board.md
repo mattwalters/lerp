@@ -20,14 +20,12 @@ what work exists, what stage it is in, who has claimed it, what was decided —
 lives there, and lerp keeps no store of its own. [SCOPE.md](SCOPE.md)
 invariant 1 is what holds that.
 
-Locally lerp keeps exactly two things: `lerp.toml` (config, checked in) and
-an evidence store, `.lerp/` at the repo root (gitignored, by init) — one
-record per run under `.lerp/runs` (pid, log file, ticket, workspace path, and
-the exit status the run records for itself as it ends), workspaces under
-`.lerp/workspaces`, an advisory lock at `.lerp/lock` that keeps it to one
-loop per clone, and the loop's diagnostics in `.lerp/loop.log`. Local state
-is evidence, never truth: losing all of it may cost compute, never
-correctness.
+Locally, disk holds four things: `lerp.toml` (config, checked in), an
+evidence store at `.lerp/` at the repo root (gitignored by init; run records,
+logs, workspaces, and lock), the operator's credentials, and run
+[telemetry](telemetry.md) at `$XDG_STATE_HOME/lerp/runs.jsonl` (or
+`~/.local/state/lerp/runs.jsonl`). Local state is evidence and history, never
+truth: losing all of it may cost compute or a chart, never correctness.
 
 ## Queues, and why there is no workflow syntax
 
@@ -48,11 +46,19 @@ stock arrangement of them.
 
 ## Runners
 
-A runner is an adapter to a coding-agent CLI, and the contract is the lowest
-common denominator: it takes a prompt and a working directory, runs to exit,
-and its exit code means done or failed. Lerp does not parse an agent's
-output to decide anything — it reads it only to draw it on the screen. What
-the agent writes into Linear, it writes itself, with its own credentials.
+A runner is an adapter to a coding-agent CLI (or a raw command template). The
+contract is the lowest common denominator: it takes a prompt and a working
+directory, runs to exit, and its exit code means done or failed.
+
+Lerp ships built-in vendor adapters for Claude Code (`claude`), Codex
+(`codex`), and Antigravity (`antigravity`), which package flag spellings,
+streaming log decoders for the live UI, and session bookkeeping for eject. A
+raw command runner is available for custom CLI invocations and wrappers. See
+[`lerp.toml`](lerp-toml.md#runners) for every runner configuration key.
+
+Lerp does not parse an agent's output to decide anything — it reads it only to
+draw it on the screen and record telemetry at exit. What the agent writes into
+Linear, it writes itself, with its own credentials.
 
 ## Lanes
 

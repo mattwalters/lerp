@@ -191,6 +191,13 @@ section = "Reference"
 mono = true
 
 [[menus.main]]
+name = "Telemetry"
+pageRef = "/docs/telemetry"
+weight = 125
+[menus.main.params]
+section = "Reference"
+
+[[menus.main]]
 name = "The command line"
 pageRef = "/docs/cli"
 weight = 130

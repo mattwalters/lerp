@@ -69,7 +69,7 @@ dependent tickets before the work had actually landed.
 
 ## Where are the logs?
 
-Two places, and which one you want depends on whether a run started.
+Three places, depending on what you want to read:
 
 - `.lerp/runs/` holds one record and one log per run — the agent's own
   output, which is what [the main pane tails](watching-a-run.md#the-log).
@@ -77,6 +77,9 @@ Two places, and which one you want depends on whether a run started.
   reap, the eject commands lerp handed back, and the full text of any
   status-bar line a narrow terminal truncated. It is appended to across
   sessions, with a marker line at each start.
+- `$XDG_STATE_HOME/lerp/runs.jsonl` (or `~/.local/state/lerp/runs.jsonl`)
+  holds the append-only [telemetry](telemetry.md) records for finished
+  runs.
 
 ## How do I clean up or uninstall?
 
@@ -94,4 +97,6 @@ git worktree prune
 Run evidence in `.lerp/runs/` is how the next `lerp` adopts or reaps live
 agents, and workspaces under `.lerp/workspaces/` are git worktrees whose
 registrations `dispose` normally unwinds (`git worktree prune` unregisters
-any strays). Losing `.lerp/` state costs compute, never correctness.
+any strays). To clear run history too, remove `$XDG_STATE_HOME/lerp/runs.jsonl`
+(or `~/.local/state/lerp/runs.jsonl`). Losing local state costs compute or
+charts, never correctness.

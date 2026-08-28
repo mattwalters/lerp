@@ -34,21 +34,18 @@ teams = ["LERP"]
 # them with a unique lane/run identity and otherwise knows nothing
 # about what they do. Environment isolation — ports, databases,
 # containers — is this repo's problem, solved here.
-provision = "scripts/lerp-provision"
-dispose = "scripts/lerp-dispose"
+provision = 'git worktree add --detach "$LERP_WORKSPACE" HEAD'
+dispose = 'git worktree remove --force "$LERP_WORKSPACE"'
 
-# A runner is an adapter to a coding-agent CLI. The contract is the
-# lowest common denominator: takes a prompt and a working directory,
-# runs to exit, exit code means done or failed.
+# A runner is an adapter to a coding-agent CLI (or a raw command template).
+# The contract is the lowest common denominator: takes a prompt and a
+# working directory, runs to exit, exit code means done or failed.
 [runners.claude]
-command = "claude -p {{prompt}} --session-id {{session}}"
-# Optional. Handed to you on eject so a headless run becomes your
-# interactive session. {{session}} is the id lerp generated for the
-# run — so a command without {{session}} cannot be ejected either,
-# however this line reads — and {{workdir}} is the workspace lerp
-# leaves standing, which Claude Code needs to be in to find the
-# session.
-resume = "cd {{workdir}} && claude --resume {{session}}"
+vendor = "claude"
+# model = "opus"
+# effort = "high"
+# context = 200000
+args = "--permission-mode bypassPermissions"
 
 # A queue is a Linear status with instructions attached. Tickets
 # sitting in `status` are picked up, run through `runner` with
@@ -64,61 +61,102 @@ on_success = "Implementing"
 status = "Implementing"
 prompt = "Implement {{ticket}} per its plan comment. Open a PR."
 runner = "claude"
-on_success = "Reviewing"
+on_success = "In Review"
 # Optional. Where the ticket goes when the agent exits non-zero.
-on_failure = "Human Review"
+on_failure = "Needs Attention"
 ```
 
-The queue fields above are the complete set — status, prompt, runner,
+The queue fields above are the complete set — `status`, `prompt`, `runner`,
 `on_success`, and optionally `on_failure`. There is deliberately no
 conditional, template, or DAG syntax: [topology lives on the
 board](the-board.md#queues-and-why-there-is-no-workflow-syntax), and
 branching is a human or an agent moving a ticket.
 
-## Notes
+## Runners
 
-- `on_success` / `on_failure` name Linear statuses, not queues. They
-  may point at a status no queue watches (a human review column) —
-  that is how work exits the automated path.
-- A status may drive at most one queue; two queues sharing a `status`
-  is a config error.
-- Every queue's `runner` must be defined under `[runners]`.
-- `command` is run by `sh -c`. Use `{{prompt}}`, `{{ticket}}` and
-  `{{workdir}}` to insert the queue prompt, the ticket identifier and
-  the workspace directory; lerp shell-quotes every value, so nothing in
-  a ticket can alter the command you configured. If the runner accepts
-  a caller-chosen session ID (for example, Claude Code's
-  `--session-id`), include `{{session}}` in its command. Lerp generates
-  that ID before the run starts and records it with the run, which is
-  what makes the run [ejectable](ejecting.md) later — including by a
-  `lerp` that did not start it. `resume` may use `{{session}}`,
-  `{{ticket}}` and `{{workdir}}`, quoted the same way.
-- **Name the ticket in your prompt.** `{{ticket}}` is expanded inside
-  the prompt as well as the command, and the identifier reaches the
-  runner as `LERP_TICKET`. A prompt is shared by every ticket in its
-  queue, so one that never names the ticket leaves the agent no way to
-  know which ticket it was started for — while lerp will still advance
-  that ticket on a clean exit. Write `prompt = "Implement {{ticket}}
-  ..."`, not `prompt = "Implement the ticket ..."`.
-- **`context` is a display denominator, never a capability.** Set it on a
-  runner to the model's context window in tokens (`context = 200000`) and
-  the board turns a run's context reading into a percentage; leave it unset
-  and the row shows tokens with no percentage. Lerp carries no
-  model→window table — windows vary by model and by flags — so an unset
-  `context` is the honest state, not a gap to fill in.
-- **Name statuses by placeholder, not by name.** A prompt may also use
-  `{{status}}`, `{{on_success}}`, and `{{on_failure}}`, expanded from
-  its own queue's fields — no other queue's, and nothing more. Prose
-  like "move {{ticket}} to {{on_failure}}" then follows a status rename
-  or remap, where a literal name would silently point agents at a
-  status that no longer exists. Referencing `{{on_failure}}` in a queue
-  that does not set `on_failure` is a config error.
+A runner defines how lerp invokes a coding-agent CLI for a queue. Lerp
+supports two kinds of runners:
 
-Every ticket must resolve to exactly one working directory: one repo may
-serve several teams, but two repos may never claim the same team. A single
-repo config can only vouch for its own repo, and today lerp does not verify
-the cross-repo half of that rule — keeping it is your job when you copy a
-pipeline between repos.
+1. **Vendor adapters** (`vendor = "claude"` / `"codex"` / `"antigravity"`) —
+   built-in adapters for supported coding-agent CLIs.
+2. **Command templates** (`command = "..."`) — raw shell templates for custom
+   wrappers, containers, or unsupported agent CLIs.
+
+### The two kinds of runners
+
+#### Vendor adapters
+
+The built-in adapters package vendor-specific flag spellings, streaming JSON
+formats, and session bookkeeping that a command template cannot express
+cleanly:
+
+- **Streaming log decoders:** Each adapter supplies the flags needed to stream
+  events live (such as `--output-format stream-json --verbose` for Claude Code
+  and Antigravity, or `--json` for Codex). Lerp's log pane decodes these
+  streams into structured activity lines, token usage, and live sparklines.
+- **Session tracking for eject:** Claude Code accepts a caller-chosen UUID
+  (`--session-id`), which lerp mints up front. Codex and Antigravity assign
+  their own thread or conversation IDs, which lerp extracts automatically
+  from the run's stream log. Either way, [ejecting](ejecting.md) hands back the
+  correct `resume` command with full session context intact.
+
+**When to reach for an adapter:** Reach for a vendor adapter for any supported
+CLI (`claude`, `codex`, `antigravity`). It gives you live log formatting,
+accurate token/cost metrics, and eject support with no shell boilerplate.
+
+#### Command templates
+
+A command runner specifies the exact shell command to run via `sh -c`. It
+keeps the contract at the lowest common denominator: prompt and working
+directory in, exit code out.
+
+**When to reach for a command template:** Reach for a command template when
+using an unsupported agent CLI, running agents inside a container or VM
+(`docker exec ...`), or wrapping the invocation in custom scripts.
+
+To step outside the adapter entirely, configure a command runner:
+
+```toml
+[runners.custom]
+command = "my-agent --prompt {{prompt}} --dir {{workdir}} --session {{session}}"
+resume = "cd {{workdir}} && my-agent --resume {{session}}"
+```
+
+### Runner configuration keys
+
+| Key | Type | Kind | Description |
+| --- | --- | --- | --- |
+| `vendor` | string | vendor only | Names a built-in vendor adapter: `"claude"`, `"codex"`, or `"antigravity"`. Exactly one of `vendor` or `command` must be set. |
+| `model` | string | vendor only | Model override passed to the CLI (`--model <model>` on claude/codex/antigravity). Shell-quoted. |
+| `effort` | string | vendor only | Reasoning effort override (`--effort <effort>` on claude/antigravity, `-c model_reasoning_effort=<effort>` on codex). Shell-quoted. |
+| `args` | string | vendor only | Extra CLI flags appended verbatim and last to the command template. Unquoted shell text; overrides earlier flags on last-wins CLIs. |
+| `context` | integer | vendor or command | The model's context window in tokens (e.g. `200000`). Display denominator for token percentage on the board; `0` (default) means unset (no percentage shown). |
+| `command` | string | command only | Raw shell command template executed via `sh -c`. Supports `{{prompt}}`, `{{ticket}}`, `{{workdir}}`, and `{{session}}`. Shell-quoted placeholders. |
+| `resume` | string | command only | Resume command template handed to operator on eject. Supports `{{session}}`, `{{ticket}}`, `{{workdir}}`. |
+
+Validation rules:
+- Exactly one of `vendor` or `command` must be set per runner.
+- Setting `model`, `effort`, or `args` on a command runner is refused at startup.
+- Setting `resume` on a vendor runner is refused at startup (the adapter supplies its own resume template).
+- Setting a negative `context` is refused at startup.
+
+### Permission grants in checked-in config
+
+**Permissions are always stated in checked-in config, never defaulted.**
+
+No adapter lerp ships ever adds permission-skipping flags on its own. An
+unattended agent that cannot edit files or run `git`, `gh`, and tests fails at
+the first restricted tool call. To permit unattended execution, write the
+grant explicitly into your runner's `args` (or `command`):
+
+- **Claude Code:** `args = "--permission-mode bypassPermissions"`
+- **Antigravity:** `args = "--dangerously-skip-permissions"`
+
+The worktree that `provision` builds is a tidiness boundary, not a security
+sandbox: nothing stops the agent from reading `~/.ssh` or modifying files
+outside its workspace. Stating grants in checked-in `lerp.toml` ensures that
+permissions are versioned and reviewed like code (see
+[SECURITY.md](SECURITY.md)).
 
 ## Workspace commands
 
@@ -139,6 +177,34 @@ does not buy you.
 If provisioning fails, lerp leaves the ticket untouched and does not start
 the runner. A disposal failure is recorded in the lane log but never keeps a
 lane occupied.
+
+## Queues
+
+A queue connects a Linear status to a runner and a prompt.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `status` | string | The Linear status this queue watches. Must match a status on the team's board. Each status may drive at most one queue. |
+| `prompt` | string | Instructions passed to the runner. plain text. |
+| `runner` | string | Name of a runner defined under `[runners]`. |
+| `on_success` | string | Linear status to move the ticket to on a clean exit (exit code 0), unless the agent already moved the ticket itself. |
+| `on_failure` | string | Optional. Linear status to move the ticket to when the agent exits non-zero. |
+
+### Prompt placeholders
+
+Prompts support four runtime placeholders:
+
+- `{{ticket}}` — the Linear ticket identifier (e.g. `LERP-42`). Also exported to runners as `LERP_TICKET`.
+- `{{status}}` — this queue's own `status` field.
+- `{{on_success}}` — this queue's own `on_success` status.
+- `{{on_failure}}` — this queue's own `on_failure` status (referencing `{{on_failure}}` when unset is a config error).
+
+**Name the ticket in your prompt.** A prompt is shared across all tickets in
+its queue; one that never names `{{ticket}}` leaves the agent no way to know
+which ticket it was started for.
+
+**Name target statuses by placeholder.** Prose like "move {{ticket}} to
+{{on_failure}}" automatically follows status renames and remaps in config.
 
 ## The stock pipeline
 
