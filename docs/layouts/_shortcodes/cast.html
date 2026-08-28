@@ -19,11 +19,16 @@
        prose, because a caption interleaves the two — neither position nor
        word count tells them apart, so the author does.
 
-       No autoplay: a page of casts that all start moving at once is a page
-       nobody can read. */ -}}
+       No autoplay by default: a page of casts that all start moving at once is
+       a page nobody can read. The home page opts in for its single hero;
+       controls stays on in both modes so a reader can always pause the loop. */ -}}
 {{- $webm := .Get "webm" -}}
 {{- $mp4 := .Get "mp4" -}}
 {{- $title := .Get "title" -}}
+{{- $poster := .Get "poster" -}}
+{{- $width := .Get "width" | default "1200" -}}
+{{- $height := .Get "height" | default "640" -}}
+{{- $autoplay := .Get "autoplay" -}}
 {{- if and (not $webm) (not $mp4) -}}
   {{- errorf "cast: %s names neither a webm nor an mp4 — there is nothing to play" .Position -}}
 {{- end -}}
@@ -35,7 +40,7 @@
 <figure class="cast">
   {{/* WebM first: where both play, it is the smaller file. A browser takes
        the first source it supports and ignores the rest. */}}
-  <video controls muted loop playsinline preload="metadata" aria-label="{{ $title }}">
+  <video controls{{ if $autoplay }} autoplay{{ end }} muted loop playsinline preload="metadata" width="{{ $width }}" height="{{ $height }}"{{ with $poster }} poster="{{ . | relURL }}"{{ end }} aria-label="{{ $title }}">
     {{- with $webm }}
     <source src="{{ . | relURL }}" type="video/webm">
     {{- end }}

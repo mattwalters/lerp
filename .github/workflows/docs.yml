@@ -181,22 +181,20 @@ jobs:
       # root pages, named explicitly, and deletes everything else, rather
       # than naming the manual's pages to delete: the manual grows on its own
       # (a new docs/content/docs/<page>.md, another root-file mount alongside
-      # README and SCOPE) while the root does not, so a keep-list of what's
-      # small and fixed stays correct where a prune-list of what's open-ended
-      # would silently fall behind and let the next addition onto the manual
-      # leak onto the unversioned root instead. docs/demo.gif is kept
-      # alongside the two root pages though it lives under the manual's own
-      # mount (see hugo.toml): the splash page embeds it too, at the same
-      # path GitHub renders it from in the README, so it has to stay.
+      # SCOPE) while the root does not, so a keep-list of what's small and
+      # fixed stays correct where a prune-list of what's open-ended would
+      # silently fall behind and let the next addition onto the manual leak
+      # onto the unversioned root instead. public/posters is kept alongside
+      # the two root pages so the splash page can paint its hero poster
+      # without waiting for a release tag.
       - name: Stage only the root from the root build
         if: github.ref == 'refs/heads/main'
         run: |
           mkdir /tmp/root
-          mv public/index.html public/why public/style.css public/sitemap.xml public/robots.txt public/og.png public/docs/demo.gif /tmp/root/
+          mv public/index.html public/why public/style.css public/sitemap.xml public/robots.txt public/og.png public/posters /tmp/root/
           rm -rf public
-          mkdir -p public/docs
-          mv /tmp/root/index.html /tmp/root/why /tmp/root/style.css /tmp/root/sitemap.xml /tmp/root/robots.txt /tmp/root/og.png public/
-          mv /tmp/root/demo.gif public/docs/
+          mkdir public
+          mv /tmp/root/index.html /tmp/root/why /tmp/root/style.css /tmp/root/sitemap.xml /tmp/root/robots.txt /tmp/root/og.png /tmp/root/posters public/
 
       # Casts are rendered from the tag's own tree, same as the manual below,
       # so a recording always shows the released binary rather than whatever
@@ -225,9 +223,9 @@ jobs:
       # them too. keep_files preserves it between tags: a push to main stages
       # nothing at public/casts (main renders no casts of its own), so it
       # goes on serving whatever the last tag put here. Before the first tag
-      # this step has not run yet and the root has no casts at all; deciding
-      # what the splash page does about that is LERP-132's call, not this
-      # one's.
+      # this step has not run yet and the root has no casts at all: the
+      # splash page paints its poster (staged by the root build above) and
+      # plays nothing until the first release cuts casts/.
       - name: Stage this release's casts at the site root
         if: github.event_name == 'push' && github.ref_type == 'tag'
         run: |

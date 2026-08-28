@@ -6,7 +6,10 @@ install: curl -fsSL https://raw.githubusercontent.com/mattwalters/lerp/main/inst
 
 You put tickets on a board; lerp runs coding agents to move them across it.
 
-![The lerp board: an inbox of tickets waiting on a human, a work panel of queues and three lanes running coding agents beneath it, and a main pane that opens beside them to read a ticket or tail a lane's log](docs/demo.gif)
+{{< cast webm="casts/demo.webm" mp4="casts/demo.mp4"
+         poster="posters/demo.png"
+         title="The lerp board: an inbox of tickets waiting on a human, a work panel of queues and three lanes running coding agents beneath it, and a main pane that opens beside them to read a ticket or tail a lane's log"
+         autoplay=true >}}
 
 <sub>A recording, against a fake board and a stub agent.</sub>
 

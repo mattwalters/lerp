@@ -236,16 +236,9 @@ target = "content"
 source = "../SCOPE.md"
 target = "content/scope.md"
 
-# The cast the README and the home page both open with, served at the path
-# the README writes, so that one image reference resolves on GitHub and on
-# the site alike.
 [[module.mounts]]
 source = "static"
 target = "static"
-
-[[module.mounts]]
-source = "demo.gif"
-target = "static/docs/demo.gif"
 
 # A mounted file carries no front matter, so its title and description are set
 # here. Without this the site would title it from its filename ("Scope") and
