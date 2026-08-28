@@ -41,6 +41,7 @@ Sleep 2s
 Type "F"
 Wait+Screen /all project/
 Sleep 1500ms
+Up
 Enter
 Sleep 1500ms
 
