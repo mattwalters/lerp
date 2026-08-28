@@ -233,14 +233,14 @@ func newer(current, latest string) bool {
 	if !validTag(latest) {
 		return false
 	}
-	cMaj, cMin, cPatch, cOK := parseVersion(current, true)
+	cMaj, cMin, cPatch, cOK := parseVersion(current)
 	if !cOK {
 		return false
 	}
 	if cMaj == 0 && cMin == 0 && cPatch == 0 {
 		return false
 	}
-	lMaj, lMin, lPatch, lOK := parseVersion(latest, false)
+	lMaj, lMin, lPatch, lOK := parseVersion(latest)
 	if !lOK {
 		return false
 	}
@@ -253,7 +253,7 @@ func newer(current, latest string) bool {
 	return lPatch > cPatch
 }
 
-func parseVersion(s string, stripSuffix bool) (maj, min, patch int, ok bool) {
+func parseVersion(s string) (maj, min, patch int, ok bool) {
 	if !strings.HasPrefix(s, "v") {
 		return 0, 0, 0, false
 	}

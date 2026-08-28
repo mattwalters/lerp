@@ -912,6 +912,9 @@ func (m model) handleUpgradeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Close):
 		m.upgradeOn = false
 		return m, nil
+	case key.Matches(msg, m.keys.Help):
+		m.setHelp(!m.helpOn)
+		return m, nil
 	}
 	return m, nil
 }

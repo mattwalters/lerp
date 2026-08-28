@@ -88,6 +88,16 @@ func TestUpgradeModalWorkflow(t *testing.T) {
 		}
 	}
 
+	// Pressing '?' toggles the help overlay even while upgrade modal is on
+	m = update(t, m, keyMsg("?"))
+	if !m.helpOn {
+		t.Fatalf("? failed to open help overlay from upgrade modal")
+	}
+	m = update(t, m, keyMsg("?"))
+	if m.helpOn {
+		t.Fatalf("? failed to close help overlay")
+	}
+
 	// Pressing 'esc' dismisses the modal
 	m = update(t, m, keyMsg("esc"))
 	if m.upgradeOn {
