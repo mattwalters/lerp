@@ -115,7 +115,7 @@ args = "--dangerously-skip-permissions"
 # it. That is hygiene, not containment — a command that reaches a login
 # shell, and a session you resume yourself with the command an adapter
 # generates for eject, both pick the key back up from wherever you exported
-# it.
+# it; that leak is not a supported access path.
 
 # --------------------------------------------------------------------------
 # Queues
