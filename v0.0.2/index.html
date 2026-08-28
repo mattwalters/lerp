@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta name="generator" content="Hugo 0.165.0">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>lerp</title>
+  <meta name="description" content="A small, reliable CLI that orchestrates software work through Linear.">
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  
+  
+  
+  
+  
+  
+  
+  <header>
+    <a class="brand" href="./">lerp</a>
+    
+    <a class="nav" href="./docs/">Docs</a>
+    
+    <a class="nav" href="./why/">Why lerp</a>
+    <span class="spacer"></span>
+    <a class="nav" href="https://github.com/mattwalters/lerp">GitHub</a>
+    
+    
+  </header>
+  <div class="wrap">
+    
+    <main>
+      
+
+<section class="hero">
+  <h1 class="wordmark">lerp</h1>
+  <p class="tagline">A small, reliable CLI that orchestrates software work through Linear.</p>
+  
+  <pre class="hero-install"><code>go install github.com/mattwalters/lerp/cmd/lerp@latest</code></pre>
+  
+</section>
+<div class="prose">
+  <p>You put tickets on a board; lerp runs coding agents to move them across it.</p>
+<p><img src="./docs/demo.gif" alt="The lerp board: an inbox of tickets waiting on a human, a work panel of queues and three lanes running coding agents beneath it, and a main pane that opens beside them to read a ticket or tail a lane’s log" loading="lazy">
+</p>
+<p><sub>A recording, against a fake board and a stub agent.</sub></p>
+<p>One binary and one screen. Lerp opens on the Linear board you already have,
+fills a few lanes with coding agents, and answers the two questions an
+operator actually has: what is waiting on me, and what is the machine doing
+right now. Nothing runs on a server and nothing is stored anywhere but
+Linear — close the laptop and the work stops; open lerp again and the loop
+picks the same board back up.</p>
+<h2 id="the-mental-model">The mental model</h2>
+<p><strong>Linear is the database</strong>: all durable state — what work exists, what stage
+it is in, who has claimed it, what was decided — lives in Linear, and lerp
+keeps no store of its own. <strong>The board is the workflow</strong>: a queue is a Linear
+status with a prompt, a runner, and a status to move to on success. <strong>Lerp is
+a reconciler</strong>: desired state is the board, actual state is the agent
+processes running on this machine, and the loop starts, adopts, or reaps
+agents until the two match.</p>
+<h2 id="start-here">Start here</h2>
+<p><strong><a href="./docs/overview/">Overview</a>
+</strong> — what lerp is in a page, and where the rest
+of the manual is.</p>
+<p><strong><a href="./why/">Why lerp</a>
+</strong> — what it deliberately is not, and how that differs
+from the other ways to put agents on a backlog. Read this one first if you
+are still deciding.</p>
+<p><strong><a href="./docs/quickstart/">Quickstart</a>
+</strong> — <code>lerp init</code>, a first run, and a first
+promoted ticket, following only the manual.</p>
+<p><strong><a href="./scope/">SCOPE.md</a>
+</strong> — the fence around the project: five concepts, nine
+invariants, and the litmus tests every change runs through.</p>
+<p>This page isn&rsquo;t versioned — the manual is. Open Docs and the picker in its
+header moves between releases.</p>
+
+</div>
+
+    </main>
+    
+    
+    
+  </div>
+  
+</body>
+</html>

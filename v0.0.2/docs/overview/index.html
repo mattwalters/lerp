@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Overview · lerp</title>
+  <meta name="description" content="A small, reliable CLI that orchestrates software work through Linear.">
+  <link rel="stylesheet" href="../../style.css">
+</head>
+<body>
+  
+  
+  
+  
+  
+  
+  
+  <header>
+    <a class="brand" href="../../">lerp</a>
+    
+    <a class="nav here" href="../../docs/">Docs</a>
+    
+    <a class="nav" href="../../why/">Why lerp</a>
+    <span class="spacer"></span>
+    <a class="nav" href="https://github.com/mattwalters/lerp">GitHub</a>
+    
+    
+    <span class="version">
+      <span class="version-label">v0.0.2</span>
+      <select id="version-picker" hidden aria-label="Documentation version"></select>
+    </span>
+    
+  </header>
+  <div class="wrap">
+    
+    
+    <nav class="sidenav" aria-label="Manual">
+      
+      
+      
+      <h5>Start</h5>
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/">Documentation</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/overview/" class="active" aria-current="page">Overview</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/install/">Install</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/quickstart/">Quickstart</a>
+      
+      <h5>Concepts</h5>
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/the-board/">The board</a>
+      
+      <h5>The interface</h5>
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/reading-the-board/">Reading the board</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/finding-tickets/">Finding tickets</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/promoting/">Promoting</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/ejecting/">Ejecting</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/watching-a-run/">Watching a run</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/starting-past-the-limit/">Starting past the limit</a>
+      
+      <h5>Reference</h5>
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/lerp-toml/" class="mono">lerp.toml</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/cli/">The command line</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/troubleshooting/">Troubleshooting</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../scope/">SCOPE</a>
+      
+    </nav>
+    
+    <main>
+      
+
+<div class="prose">
+  <h1 id="overview">Overview</h1>
+<p>Lerp is one binary and one screen. You put tickets on a Linear board; lerp
+runs coding agents to move them across it. <code>lerp init</code> wires a repository to
+a Linear team, and running <code>lerp</code> opens the board that moves the work. There
+is no server, no scheduler and no store of lerp&rsquo;s own.</p>
+<h2 id="what-is-in-the-box">What is in the box</h2>
+<p>The whole surface is the board plus two commands. Bare <code>lerp</code> opens the TUI,
+and the reconciling loop runs while it is open — N lanes, adopting live
+runs, reaping dead ones, repairing drift. Both panels are built, and the
+board&rsquo;s only two write actions are the inbox&rsquo;s <a href="../../docs/promoting/">promote</a>
+ and
+the work panel&rsquo;s <a href="../../docs/starting-past-the-limit/">force-start</a>
+. Beyond those,
+<code>lerp init</code> and <code>lerp version</code> complete <a href="../../docs/cli/">the command line</a>
+.</p>
+<p>Everything else about a ticket still happens in Linear. Lerp reads the
+board, runs agents, and moves tickets between statuses; it does not compose
+comments, invent work items, or keep a queue of its own.</p>
+<h2 id="where-to-start">Where to start</h2>
+<p><a href="../../docs/install/">Install</a>
+ is the binary and the two prerequisites lerp cannot
+satisfy for you. <a href="../../docs/quickstart/">Quickstart</a>
+ is <code>lerp init</code> to a first
+promoted ticket. <a href="../../docs/the-board/">The board</a>
+ is the model underneath both, and
+<a href="../../scope/">SCOPE.md</a>
+ is the fence around the whole project — read that one
+before proposing a change.</p>
+
+</div>
+
+    </main>
+    
+    
+    
+    <nav class="toc" aria-label="On this page">
+      <h5>On this page</h5>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#what-is-in-the-box">What is in the box</a></li>
+    <li><a href="#where-to-start">Where to start</a></li>
+  </ul>
+</nav>
+    </nav>
+    
+  </div>
+  
+  <script>
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    (function () {
+      var here = new URL(".", document.querySelector('link[rel="stylesheet"]').href);
+      var root = new URL(".." + "/", here);
+      fetch(new URL("versions.json", root))
+        .then(function (r) { if (!r.ok) { throw r; } return r.json(); })
+        .then(function (versions) {
+          var picker = document.getElementById("version-picker");
+          ["latest"].concat(versions).forEach(function (v) {
+            var option = document.createElement("option");
+            option.value = v;
+            option.textContent = v;
+            option.selected = v === "v0.0.2";
+            picker.appendChild(option);
+          });
+          
+          
+          
+          
+          
+          
+          picker.addEventListener("change", function () {
+            window.location.href = new URL(picker.value + "/docs/", root);
+          });
+          picker.hidden = false;
+        })
+        .catch(function () {});
+    })();
+  </script>
+  
+</body>
+</html>

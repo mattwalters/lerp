@@ -1,0 +1,399 @@
+/* The whole theme. One stylesheet, no build step, no preprocessor: the site
+   is prose, and the layout it needs is a header, a sidebar, a column of text
+   and a rail. Colours are declared once as custom properties and swapped by
+   the reader's light/dark preference. */
+
+:root {
+  color-scheme: light dark;
+
+  --bg: #fdfdfc;
+  --bg-soft: #f2f1ee;
+  --fg: #1f1f1d;
+  --fg-soft: #5c5b56;
+  --rule: #e0deda;
+  --link: #1b5e8a;
+  --accent: #b7541a;
+
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  /* One column width, shared by the header and the prose, so the page has a
+     single left edge from the wordmark down. */
+  --measure: 40rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16171a;
+    --bg-soft: #1e2024;
+    --fg: #e6e5e1;
+    --fg-soft: #a3a29c;
+    --rule: #2e3136;
+    --link: #79b8dd;
+    --accent: #e0904f;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 16px/1.6 var(--sans);
+}
+
+a { color: var(--link); }
+
+/* Header ------------------------------------------------------------- */
+
+header {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  /* A row gap as well as a column one: on a narrow phone the header wraps,
+     and every item in it has line-height 1. */
+  gap: 0.35rem 1rem;
+  padding: 0.9rem 1.5rem;
+  border-bottom: 1px solid var(--rule);
+}
+
+header .brand {
+  font: 600 1.1rem/1 var(--mono);
+  color: var(--fg);
+  text-decoration: none;
+}
+
+header .nav {
+  font: 0.85rem/1 var(--mono);
+  text-decoration: none;
+}
+
+header .nav.here { color: var(--accent); }
+
+header .spacer { flex: 1; }
+
+header .version {
+  font: 0.8rem/1 var(--mono);
+  color: var(--fg-soft);
+}
+
+header .version select {
+  font: inherit;
+  color: inherit;
+  background: var(--bg-soft);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 0.1rem 0.2rem;
+}
+
+/* The picker replaces the static label once versions.json has loaded, so the
+   two are never both on screen. */
+header .version:has(select:not([hidden])) .version-label { display: none; }
+
+/* Page shell --------------------------------------------------------- */
+
+.wrap {
+  display: flex;
+  gap: 3rem;
+  align-items: flex-start;
+  padding: 2rem 1.5rem 6rem;
+}
+
+main {
+  min-width: 0;
+  max-width: var(--measure);
+}
+
+.prose { overflow-wrap: break-word; }
+
+/* Sidebar ------------------------------------------------------------ */
+
+/* The curated rail (see the menu in hugo.toml). It scrolls on its own once
+   it outgrows the window, so a long manual never pushes the entry you are
+   reaching for below the fold of a sticky column. */
+.sidenav {
+  position: sticky;
+  top: 2rem;
+  flex: 0 0 12rem;
+  max-height: calc(100vh - 4rem);
+  overflow-y: auto;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.sidenav h5 {
+  margin: 1.5rem 0 0.4rem;
+  font: 600 0.7rem/1 var(--sans);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-soft);
+}
+
+.sidenav h5:first-child { margin-top: 0; }
+
+.sidenav a {
+  display: block;
+  padding: 0.18rem 0;
+  color: var(--fg);
+  text-decoration: none;
+}
+
+.sidenav a:hover { color: var(--link); }
+
+.sidenav a.active {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* Entries naming a command, marked mono in hugo.toml. Not <code>: the menu
+   name is a plain string, so the face is set here. */
+.sidenav a.mono {
+  font-family: var(--mono);
+  font-size: 0.86em;
+}
+
+.toc {
+  position: sticky;
+  top: 2rem;
+  flex: 0 0 14rem;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: var(--fg-soft);
+}
+
+.toc h5 {
+  margin: 0 0 0.5rem;
+  font: 600 0.7rem/1 var(--sans);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-soft);
+}
+
+.toc ul {
+  margin: 0;
+  padding-left: 1rem;
+  list-style: none;
+}
+
+.toc > ul { padding-left: 0; }
+
+.toc a {
+  display: block;
+  padding: 0.15rem 0;
+  color: var(--fg-soft);
+  text-decoration: none;
+}
+
+.toc a:hover { color: var(--link); }
+
+/* Home --------------------------------------------------------------- */
+
+.hero {
+  max-width: var(--measure);
+  margin-bottom: 2.5rem;
+}
+
+.hero .wordmark {
+  margin: 0;
+  font: 700 2.6rem/1 var(--mono);
+  letter-spacing: -0.02em;
+}
+
+.hero .tagline {
+  margin: 0.6rem 0 1.4rem;
+  font-size: 1.15rem;
+  color: var(--fg-soft);
+}
+
+.hero-install { margin: 0; }
+
+/* Prose -------------------------------------------------------------- */
+
+h1, h2, h3, h4 {
+  line-height: 1.25;
+  margin: 2.2rem 0 0.8rem;
+}
+
+h1 { font-size: 1.9rem; }
+h2 { font-size: 1.35rem; }
+h3 { font-size: 1.1rem; }
+
+/* The first heading of a published file is its own title; it should sit
+   where a page title sits, not two lines below the header. */
+.prose > h1:first-child { margin-top: 0; }
+
+p, ul, ol, blockquote { margin: 0 0 1rem; }
+
+blockquote {
+  margin-left: 0;
+  padding-left: 1rem;
+  border-left: 3px solid var(--rule);
+  color: var(--fg-soft);
+}
+
+img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+}
+
+sub { color: var(--fg-soft); }
+
+hr {
+  border: 0;
+  border-top: 1px solid var(--rule);
+  margin: 2rem 0;
+}
+
+code {
+  font-family: var(--mono);
+  font-size: 0.87em;
+  background: var(--bg-soft);
+  border-radius: 4px;
+  padding: 0.1em 0.3em;
+}
+
+pre {
+  background: var(--bg-soft);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 0.9rem 1rem;
+  overflow-x: auto;
+}
+
+pre code {
+  background: none;
+  padding: 0;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin-bottom: 1rem;
+}
+
+th, td {
+  border: 1px solid var(--rule);
+  padding: 0.4rem 0.6rem;
+  text-align: left;
+}
+
+/* Section indexes ---------------------------------------------------- */
+
+/* A section's children, each with the one line its summary front matter
+   gives it (see list.html). */
+.pagelist { margin: 1.6rem 0 0; }
+
+.pagelist dt { margin-top: 1.1rem; }
+
+.pagelist dt a { text-decoration: none; }
+
+.pagelist dd {
+  margin: 0.15rem 0 0;
+  color: var(--fg-soft);
+}
+
+/* Casts -------------------------------------------------------------- */
+
+/* A recording of the TUI, with the keys it presses named underneath — the
+   caption is where the keystrokes are, because VHS cannot draw them into the
+   frame (see the cast shortcode). */
+figure.cast { margin: 1.6rem 0; }
+
+figure.cast video {
+  display: block;
+  width: 100%;
+  height: auto;
+  /* `auto` first, so the real ratio wins the moment metadata lands; the
+     fallback is the tape size docs/tapes/house.tape sets, which is what a
+     cast recorded by this repo's own harness comes back as. Without it a
+     video lays out at the spec's 300x150 until metadata arrives and then
+     jumps, shoving the prose under it down the page. */
+  aspect-ratio: auto 1200 / 640;
+  background: var(--bg-soft);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+}
+
+figure.cast figcaption {
+  margin-top: 0.55rem;
+  font-size: 0.85rem;
+  color: var(--fg-soft);
+}
+
+/* The separators are in the markup (see the cast shortcode), so they need
+   nothing here but a colour that keeps them behind the words — the soft
+   foreground, not the rule colour, which is mixed for 1px lines and is all
+   but invisible as text. */
+.keys .sep { color: var(--fg-soft); }
+
+/* Scoped to the caption, not a bare kbd: goldmark runs with unsafe = true,
+   so a <kbd> written into the README would otherwise pick up keycap chrome
+   with no cast anywhere near it. */
+.keys kbd {
+  font: 0.85em var(--mono);
+  color: var(--fg);
+  background: var(--bg-soft);
+  border: 1px solid var(--rule);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  padding: 0.1em 0.4em;
+}
+
+/* Narrow screens ----------------------------------------------------- */
+
+/* Two rails and a reading column need 75rem: 40rem of measure, 12 of
+   sidebar, 14 of rail, and the padding and gaps between them. Below that the
+   "On this page" rail goes first — it is the one a scrollbar substitutes for,
+   and the sidebar is the only way between pages. The cost is real and worth
+   naming: on a 1000px window the README and SCOPE lose a rail they used to
+   have. The alternative was both rails standing while the prose they frame
+   ran at 26rem, which is worse for the same two pages. */
+@media (max-width: 75rem) {
+  .toc { display: none; }
+}
+
+@media (max-width: 60rem) {
+  /* The sidebar stays — it is the only way between pages — but folds into a
+     row of links above the text, because a column beside the prose at this
+     width leaves neither of them room. The group headings go with the
+     column: stacked they were signposts, in a row they are noise.
+     This is a rule for a short menu. A row of twenty links is a screenful
+     of undifferentiated names before a phone reader reaches a word of
+     prose, and with the headings suppressed nothing separates the groups —
+     when the manual gets there, this is the rule to revisit, and the answer
+     is a fold, not a script. */
+  .wrap {
+    display: block;
+    padding: 1.5rem 1.25rem 4rem;
+  }
+
+  .sidenav {
+    position: static;
+    max-height: none;
+    overflow: visible;
+    margin-bottom: 1.5rem;
+    padding-bottom: 0.9rem;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  .sidenav h5 { display: none; }
+
+  .sidenav a {
+    display: inline-block;
+    margin-right: 1.1rem;
+  }
+  .hero .wordmark { font-size: 2.1rem; }
+  /* The README's pipeline table is three columns of prose. It is set tighter
+     here to leave the widest column room, and deliberately left as a table:
+     making it scroll sideways costs more than it buys — auto layout already
+     gives the prose column most of the width, and a table overridden to
+     display:block leaves the accessibility tree with no rows or columns at
+     exactly the size where the table is hardest to follow. */
+  th, td {
+    padding: 0.3rem 0.4rem;
+    font-size: 0.92rem;
+  }
+}
