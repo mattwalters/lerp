@@ -203,12 +203,16 @@ POSTERS_DIR := docs/static/posters
 # only thing standing between "a couple of MB" and drift. mp4/webm get a
 # smaller cap per file since a cast plays two of them; LERP-132 tightened
 # CAST_MAX_BYTES to 1 MiB and added a poster cap (raised to 320 KiB in LERP-182
-# to cover the light variant).
+# to cover the light variant). LERP-187 raised CAST_MAX_BYTES to 1.25 MiB:
+# the tab row (LERP-185) over the sister themes (LERP-182) encodes the demo
+# mp4 ~6% past 1 MiB, and a browser only plays one of a cast's two files, so
+# the page pays ~60 KB for 15-20% of headroom on a gate whose encodes are
+# not byte-reproducible.
 # og.png is the social card, rendered alongside the GIF by demo.tape's
 # Screenshot; a TUI change wants `make demo` re-run.
 DEMO_MAX_BYTES := 3145728
 OG_MAX_BYTES := 524288
-CAST_MAX_BYTES := 1048576
+CAST_MAX_BYTES := 1310720
 POSTER_MAX_BYTES := 327680
 
 THEME_dark := rose-pine-moon
