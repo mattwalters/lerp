@@ -4,6 +4,24 @@
      it is still one Hugo source and one template set, not a separate
      marketing site to keep in sync. Its words live in content/_index.md;
      only the arrangement of the hero is here. */}}
+{{ $installPage := site.GetPage "/docs/install" }}
+{{ $installURL := partial "canonical.html" $installPage }}
+{{ $canonical := partial "canonical.html" . }}
+{{ $schema := dict
+  "@context" "https://schema.org"
+  "@type" "SoftwareApplication"
+  "name" site.Title
+  "description" .Params.tagline
+  "url" $canonical
+  "applicationCategory" "DeveloperApplication"
+  "operatingSystem" "macOS, Linux"
+  "codeRepository" site.Params.repo
+  "license" "https://opensource.org/licenses/MIT"
+  "installUrl" $installURL
+}}
+<script type="application/ld+json">
+{{ $schema | jsonify (dict "indent" "  ") | safeJS }}
+</script>
 <section class="hero">
   <h1 class="wordmark">{{ .Title }}</h1>
   <p class="tagline">{{ .Params.tagline }}</p>

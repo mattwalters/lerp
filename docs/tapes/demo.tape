@@ -34,6 +34,7 @@ Enter
 # waiting for it is waiting for the whole first frame.
 Wait+Screen /Backlog \d+ · /
 Wait+Screen /waiting to enter the pipeline/
+Screenshot ".demo/out/og.png"
 Sleep 3s
 
 # Both lists own the screen until one is asked for a ticket. Down to a review

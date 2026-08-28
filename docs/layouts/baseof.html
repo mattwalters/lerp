@@ -3,8 +3,39 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{{ if not .IsHome }}{{ .Title }} · {{ end }}{{ site.Title }}</title>
-  <meta name="description" content="{{ site.Home.Params.tagline | default site.Title }}">
+  {{ $title := "" }}
+  {{ if .IsHome }}
+  {{ $title = printf "%s — %s" site.Title (site.Home.Params.tagline | strings.TrimSuffix ".") }}
+  {{ else }}
+  {{ $title = printf "%s · %s" .Title site.Title }}
+  {{ end }}
+  <title>{{ $title }}</title>
+  {{ $description := "" }}
+  {{ if .IsHome }}
+  {{ $description = site.Home.Params.tagline | default site.Title }}
+  {{ else }}
+  {{ $description = .Params.description | default .Params.summary }}
+  {{ if not $description }}
+  {{ errorf "page %q has neither a description nor a summary in front matter" .Path }}
+  {{ end }}
+  {{ end }}
+  <meta name="description" content="{{ $description }}">
+  {{ $canonical := partial "canonical.html" . }}
+  <link rel="canonical" href="{{ $canonical }}">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="{{ site.Title }}">
+  <meta property="og:title" content="{{ $title }}">
+  <meta property="og:description" content="{{ $description }}">
+  <meta property="og:url" content="{{ $canonical }}">
+  <meta property="og:image" content="{{ printf "%s/og.png" (strings.TrimSuffix "/" site.BaseURL) }}">
+  <meta property="og:image:alt" content="The lerp board: an inbox of tickets waiting on a human, a work panel of queues and three lanes running coding agents">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="640">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="{{ $title }}">
+  <meta name="twitter:description" content="{{ $description }}">
+  <meta name="twitter:image" content="{{ printf "%s/og.png" (strings.TrimSuffix "/" site.BaseURL) }}">
+  <meta name="twitter:image:alt" content="The lerp board: an inbox of tickets waiting on a human, a work panel of queues and three lanes running coding agents">
   <link rel="stylesheet" href="{{ "style.css" | relURL }}">
 </head>
 <body>
@@ -13,7 +44,7 @@
        both rails and carry their own links; everything else — SCOPE
        included, mounted rather than written — is a page of the manual and
        gets the three-region shell. */}}
-  {{ $manual := and (not .IsHome) (not .Params.splash) }}
+  {{ $manual := partial "manual.html" . }}
   {{/* Whether this build IS the unversioned root, as opposed to whether the
        current page is a manual page — the two sound alike but are not: a
        tag build stages home and Why lerp too (see docs.yml), so a versioned

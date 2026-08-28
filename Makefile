@@ -196,12 +196,15 @@ DEMO_RENDER_DIR := $(DEMO_BIN)/out
 # as LERP_DEMO_EXIT; the two spellings have to agree.
 DEMO_EXIT := $(DEMO_BIN)/exit
 DEMO_GIF := docs/demo.gif
+OG_PNG := docs/static/og.png
 CASTS_DIR := docs/static/casts
 # GIF bytes are not reproducible, so nothing here diffs them. The caps are the
 # only thing standing between "a couple of MB" and drift. mp4/webm get a
 # smaller cap per file since a cast plays two of them; LERP-132 is where that
-# knob gets argued with.
+# knob gets argued with. og.png is the social card, rendered alongside the
+# GIF by demo.tape's Screenshot; a TUI change wants `make demo` re-run.
 DEMO_MAX_BYTES := 3145728
+OG_MAX_BYTES := 524288
 CAST_MAX_BYTES := 2097152
 
 # Renders docs/tapes/$(TAPE).tape into $(DEMO_RENDER_DIR), gated on the
@@ -243,7 +246,7 @@ render-tape:
 	  fi
 
 .PHONY: demo
-demo: ## Re-record docs/demo.gif from docs/tapes/demo.tape (needs vhs)
+demo: ## Re-record docs/demo.gif and docs/static/og.png from docs/tapes/demo.tape (needs vhs)
 	$(MAKE) render-tape TAPE=demo
 # Moved into place only once it is under the cap, so a render that fails or
 # comes back oversized leaves the committed asset exactly where it was.
@@ -253,6 +256,12 @@ demo: ## Re-record docs/demo.gif from docs/tapes/demo.tape (needs vhs)
 	      '$(DEMO_GIF)' "$$size" '$(DEMO_MAX_BYTES)' '$(DEMO_RENDER_DIR)/demo.gif'; exit 1; }; \
 	  mv $(DEMO_RENDER_DIR)/demo.gif $(DEMO_GIF) && \
 	  printf 'rendered %s (%s bytes)\n' '$(DEMO_GIF)' "$$size"
+	@size=$$(wc -c < $(DEMO_RENDER_DIR)/og.png | tr -d ' '); \
+	  test "$$size" -le $(OG_MAX_BYTES) || { \
+	    printf 'demo: %s came back %s bytes, over the %s cap (left at %s)\n' \
+	      '$(OG_PNG)' "$$size" '$(OG_MAX_BYTES)' '$(DEMO_RENDER_DIR)/og.png'; exit 1; }; \
+	  mv $(DEMO_RENDER_DIR)/og.png $(OG_PNG) && \
+	  printf 'rendered %s (%s bytes)\n' '$(OG_PNG)' "$$size"
 
 # The GIF cap is checked here too, even though nothing under docs/ needs the
 # file itself: only demo.tape declares one (see its Output lines), and `demo`
