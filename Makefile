@@ -220,6 +220,7 @@ SHOT_MAX_BYTES := 524288
 THEME_dark := rose-pine-moon
 THEME_light := rose-pine-dawn
 VARIANT ?= dark
+VARIANTS ?= dark light
 
 # Renders docs/tapes/$(TAPE).tape into $(DEMO_RENDER_DIR), gated on the
 # harness's own exit status — nothing about file size, which the caller
@@ -299,7 +300,7 @@ casts: ## Render every tape under docs/tapes/ into docs/static/casts/ (needs vhs
 	@for f in $(TAPES_DIR)/*.tape; do \
 	  name=$$(basename "$$f" .tape); \
 	  test "$$name" = "house" && continue; \
-	  for variant in dark light; do \
+	  for variant in $(VARIANTS); do \
 	    suffix=""; \
 	    test "$$variant" = "light" && suffix="-light"; \
 	    $(MAKE) render-tape TAPE="$$name" VARIANT="$$variant" || exit 1; \
@@ -332,39 +333,40 @@ casts: ## Render every tape under docs/tapes/ into docs/static/casts/ (needs vhs
 # The rot check house.tape's Require and demo.tape's Wait+Screen lines do not
 # cover: a `{{< cast >}}` shortcode (docs/layouts/_shortcodes/cast.html)
 # names its webm/mp4 and poster by path from the site root, and every one of
-# those paths must resolve to a file this run just staged, along with its
-# -light twin — a page embedding a cast or poster no tape renders is otherwise
-# a silently blank frame on the published site.
+# those paths must resolve to a file this run just staged — a page embedding
+# a cast or poster no tape renders is otherwise a silently blank frame on the
+# published site.
+#
+# The check follows the variants this run rendered: dark checks the unsuffixed
+# refs, light checks the -light twins.
 	@missing=0; \
-	  for ref in $$(grep -rhoE '(webm|mp4)="casts/[^"]+"' docs/content 2>/dev/null \
-	                | sed -E 's/.*"casts\/([^"]+)"/\1/'); do \
-	    test -e "$(CASTS_DIR)/$$ref" || { \
-	      echo "casts: docs/content references casts/$$ref, which no tape rendered"; \
-	      missing=1; }; \
-	    case "$$ref" in \
-	      *-light.*) ;; \
-	      *) \
-	        light=$$(echo "$$ref" | sed -E 's/\.([^.]+)$$/-light.\1/'); \
-	        test -e "$(CASTS_DIR)/$$light" || { \
-	          echo "casts: docs/content references casts/$$light, which no tape rendered"; \
-	          missing=1; }; \
-	        ;; \
-	    esac; \
-	  done; \
-	  for ref in $$(grep -rhoE 'poster="posters/[^"]+"' docs/content 2>/dev/null \
-	                | sed -E 's/.*"posters\/([^"]+)"/\1/'); do \
-	    test -e "$(POSTERS_DIR)/$$ref" || { \
-	      echo "casts: docs/content references posters/$$ref, which no tape rendered"; \
-	      missing=1; }; \
-	    case "$$ref" in \
-	      *-light.*) ;; \
-	      *) \
-	        light=$$(echo "$$ref" | sed -E 's/\.([^.]+)$$/-light.\1/'); \
-	        test -e "$(POSTERS_DIR)/$$light" || { \
-	          echo "casts: docs/content references posters/$$light, which no tape rendered"; \
-	          missing=1; }; \
-	        ;; \
-	    esac; \
+	  for variant in $(VARIANTS); do \
+	    for ref in $$(grep -rhoE '(webm|mp4)="casts/[^"]+"' docs/content 2>/dev/null \
+	                  | sed -E 's/.*"casts\/([^"]+)"/\1/'); do \
+	      target="$$ref"; \
+	      if [ "$$variant" = "light" ]; then \
+	        case "$$ref" in \
+	          *-light.*) ;; \
+	          *) target=$$(echo "$$ref" | sed -E 's/\.([^.]+)$$/-light.\1/') ;; \
+	        esac; \
+	      fi; \
+	      test -e "$(CASTS_DIR)/$$target" || { \
+	        echo "casts: docs/content references casts/$$target, which no tape rendered"; \
+	        missing=1; }; \
+	    done; \
+	    for ref in $$(grep -rhoE 'poster="posters/[^"]+"' docs/content 2>/dev/null \
+	                  | sed -E 's/.*"posters\/([^"]+)"/\1/'); do \
+	      target="$$ref"; \
+	      if [ "$$variant" = "light" ]; then \
+	        case "$$ref" in \
+	          *-light.*) ;; \
+	          *) target=$$(echo "$$ref" | sed -E 's/\.([^.]+)$$/-light.\1/') ;; \
+	        esac; \
+	      fi; \
+	      test -e "$(POSTERS_DIR)/$$target" || { \
+	        echo "casts: docs/content references posters/$$target, which no tape rendered"; \
+	        missing=1; }; \
+	    done; \
 	  done; \
 	  test "$$missing" -eq 0
 

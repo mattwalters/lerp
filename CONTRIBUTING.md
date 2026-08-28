@@ -67,7 +67,8 @@ The same rules the agents work under (see `AGENTS.md`):
   or if a rendered file comes back over its size cap. Nothing diffs
   the bytes, so read the failure message before you read your diff;
   the cap is the usual answer, and the Makefile says what to do about
-  it. Reproduce it locally with `make casts`, which needs
+  it. Reproduce it locally with `make casts` (or `make casts VARIANTS=dark` /
+  `VARIANTS=light` for a single theme), which needs
   [vhs](https://github.com/charmbracelet/vhs); every tape renders
   twice, dark and light, and a re-record with `make casts` commits
   `docs/static/posters/demo-light.png` alongside `docs/demo.gif`. `make
