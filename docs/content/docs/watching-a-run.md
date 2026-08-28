@@ -9,10 +9,9 @@ weight: 100
 A run says how it is going twice: once on its row, in a line you get without
 asking, and once in full when you open its log.
 
-<!-- Cast slot (LERP-70): a lane's log tailing live — tool calls landing one
-     line each, pgup into the scrollback, r for the raw output, end back to
-     following.
-     keys: [enter] · [pgup] · [r] · [end] · [esc] -->
+{{< cast webm="casts/watching.webm" mp4="casts/watching.mp4"
+         title="A live log tail in the main pane: scrollback, raw output, and following"
+         keys="[enter] · [pgup] · [r] · [end] · [esc]" >}}
 
 ## The activity line
 

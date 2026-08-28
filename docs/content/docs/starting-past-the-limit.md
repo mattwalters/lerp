@@ -9,9 +9,9 @@ weight: 110
 Select a queued ticket in the [Work panel](reading-the-board.md#the-work-panel)
 and press `S`: it starts now, past the lane limit.
 
-<!-- Cast slot (LERP-70): a ticket left claimed by a run nothing reaped,
-     force-started from the work panel and taken back over.
-     keys: [S] -->
+{{< cast webm="casts/force-start.webm" mp4="casts/force-start.mp4"
+         title="Force-starting a queued ticket past the lane limit with S"
+         keys="[S]" >}}
 
 ## What it overrides, and what it does not
 

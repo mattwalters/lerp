@@ -22,9 +22,9 @@ panel.
 `1` and `2` choose a panel and `tab` cycles between them; `↑`/`↓` pick a row.
 `?` opens the full key list at any time, and `q` quits.
 
-<!-- Cast slot (LERP-70): the board opening on the inbox, 2 across to the
-     work panel, enter into a lane's log, esc back out.
-     keys: [1] · [2] · [tab] · [enter] · [esc] -->
+{{< cast webm="casts/board.webm" mp4="casts/board.mp4"
+         title="The board opening on the inbox, switching to the work panel, and opening a lane's log"
+         keys="[1] · [2] · [tab] · [enter] · [esc]" >}}
 
 ## The Work panel
 
