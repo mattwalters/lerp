@@ -38,7 +38,7 @@ func Run(ctx context.Context, o Options) error {
 		return err
 	}
 	m := newModel(ctx, o)
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithFPS(30))
 	_, err := p.Run()
 	awaitPasses(os.Stderr, m.passes, o.Events, quitWait)
 	return err
