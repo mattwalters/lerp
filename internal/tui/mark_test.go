@@ -62,7 +62,7 @@ func TestLerpOpensOnTheMarkAndASpinner(t *testing.T) {
 	}
 	// Nothing else: two empty panels behind a spinner are the blank board
 	// this replaces.
-	for _, gone := range []string{"[1] inbox", "[2] work", "q quit"} {
+	for _, gone := range []string{"[1] on you", "[2] work", "q quit"} {
 		if strings.Contains(view, gone) {
 			t.Errorf("the opening screen still draws %q:\n%s", gone, view)
 		}
@@ -520,7 +520,7 @@ func TestTheWordmarkDecoratesTheEmptyBoard(t *testing.T) {
 	// empty-state line stays on screen beside the mark, so a NO_COLOR
 	// terminal or one where colorWordmark quantizes toward invisible still
 	// gets the fact in words, not just a blank box.
-	if !strings.Contains(view, "the inbox is empty") {
+	if !strings.Contains(view, "nothing is on you") {
 		t.Errorf("the plain empty-state text did not survive alongside the mark:\n%s", view)
 	}
 }
@@ -534,7 +534,7 @@ func TestTheWordmarkLeavesRoomForTheEmptyStateLine(t *testing.T) {
 	lines := strings.Split(view, "\n")
 	textAt, markAt := -1, -1
 	for i, line := range lines {
-		if strings.Contains(line, "the inbox is empty") {
+		if strings.Contains(line, "nothing is on you") {
 			textAt = i
 		}
 		if strings.Contains(line, strings.TrimLeft(strings.Split(markBlock, "\n")[0], " ")) {
@@ -940,7 +940,7 @@ func TestTheWordmarkNeverClipsOnATightBoard(t *testing.T) {
 	if hasDimMark(view) {
 		t.Fatalf("the mark rendered on a board too tight to hold it whole:\n%s", view)
 	}
-	if !strings.Contains(view, "the inbox is empty") {
+	if !strings.Contains(view, "nothing is on you") {
 		t.Fatalf("the tight board lost its plain empty-state text along with the mark:\n%s", view)
 	}
 }

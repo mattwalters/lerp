@@ -26,15 +26,15 @@ Type "lerp"
 Sleep 800ms
 Enter
 
-# The board opens on the summary strip — each stage and its ticket count in
-# board order — above the inbox: what waits on a human, at full width, with
-# every column the table packs in — the leverage, the real Linear status, the
-# project, the priority. Below it the work panel, three lanes already picking
-# tickets up. The folded backlog line is the last thing the inbox draws, so
-# waiting for it is waiting for the whole first frame.
-Wait+Screen /Backlog \d+ · /
+# The board opens on the On you panel with its slice tab row, column header,
+# and what waits on a human at full width. Below it the work panel, three lanes
+# already picking tickets up. The folded backlog line is the last thing the
+# panel draws, so waiting for it is waiting for the whole first frame.
+Wait+Screen /all \d+/
 Wait+Screen /waiting to enter the pipeline/
+Sleep 500ms
 Screenshot ".demo/out/og.png"
+Sleep 500ms
 Screenshot ".demo/out/demo.png"
 Sleep 3s
 
@@ -79,8 +79,8 @@ Sleep 2500ms
 # just freed.
 Sleep 3s
 
-# `1` back to the inbox, where the finished tickets have just landed under
-# "In Review — a run finished here". The inbox already seeds two tickets at
+# `1` back to the On you panel, where the finished tickets have just landed under
+# "In Review — a run finished here". The panel already seeds two tickets at
 # "In Review" before any run finishes, so "In Review" alone is on screen
 # from the first frame and proves nothing here — the wait instead names
 # DEMO-24/26/27, the three tickets running above (internal/demo/main.go's
@@ -98,23 +98,23 @@ Sleep 2s
 Down
 Sleep 2s
 
-# The inbox browses stages in Linear board order: `]` cycles through the
+# The On you panel browses stages in Linear board order: `]` cycles through the
 # status slices — all, Triage, Backlog, Plan Review — and `[` walks them
 # back. Slices are display over the list already fetched.
 Type "]"
-Wait+Screen /· Triage/
+Wait+Screen /Triage/
 Sleep 1500ms
 Type "]"
-Wait+Screen /· Backlog/
+Wait+Screen /Backlog/
 Sleep 1500ms
 Type "]"
-Wait+Screen /· Plan Review/
+Wait+Screen /Plan Review/
 Sleep 1500ms
 Type "["
-Wait+Screen /· Backlog/
+Wait+Screen /Backlog/
 Sleep 1s
 Type "["
-Wait+Screen /· Triage/
+Wait+Screen /Triage/
 Sleep 1s
 Type "["
 Sleep 1500ms

@@ -7,7 +7,7 @@ weight: 80
 # Promoting
 
 Routing is done by placing a ticket, and promoting is that act from the
-board: select a row in the [Inbox](reading-the-board.md#the-inbox-panel),
+board: select a row in [On you](reading-the-board.md#the-on-you-panel),
 press `p`, pick a target from the configured queue statuses or a pipeline
 exit, and lerp moves it there.
 

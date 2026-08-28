@@ -27,7 +27,7 @@ import (
 func newSearchInput() textinput.Model {
 	ti := textinput.New()
 	ti.Prompt = "/"
-	ti.Placeholder = "filter the inbox"
+	ti.Placeholder = "filter the list"
 	ti.PromptStyle = styleFocus
 	ti.PlaceholderStyle = styleFaint
 	ti.Cursor.SetMode(textcursor.CursorStatic)

@@ -10,7 +10,6 @@ Type "lerp"
 Sleep 800ms
 Enter
 
-Wait+Screen /Backlog \d+ · /
 Wait+Screen /waiting to enter the pipeline/
 Sleep 2s
 
@@ -25,7 +24,7 @@ Type "s"
 Wait+Screen /by priority/
 Sleep 1500ms
 Type "s"
-Wait+Screen /by status/
+Wait+Screen /a run finished here/
 Sleep 1500ms
 
 # P opens the project filter shortcut directly.
@@ -47,7 +46,7 @@ Sleep 1500ms
 
 # / searches across identifier, title, status and project.
 Type "/"
-Wait+Screen /\/.*filter the inbox/
+Wait+Screen /\/.*filter the list/
 Type "sanit"
 Wait+Screen /DEMO-21/
 Sleep 2s
@@ -56,19 +55,19 @@ Sleep 1500ms
 
 # ] and [ cycle through Linear status slices in board order.
 Type "]"
-Wait+Screen /· Triage/
+Wait+Screen /Triage/
 Sleep 1500ms
 Type "]"
-Wait+Screen /· Backlog/
+Wait+Screen /Backlog/
 Sleep 1500ms
 Type "]"
-Wait+Screen /· Plan Review/
+Wait+Screen /Plan Review/
 Sleep 1500ms
 Type "["
-Wait+Screen /· Backlog/
+Wait+Screen /Backlog/
 Sleep 1200ms
 Type "["
-Wait+Screen /· Triage/
+Wait+Screen /Triage/
 Sleep 1200ms
 Type "["
 Sleep 1500ms

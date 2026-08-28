@@ -324,7 +324,7 @@ func TestWorkPanelShowsTheRunLifecycle(t *testing.T) {
 	m, _, _ := newTestModel(t, 2)
 	m = pastTheSplash(t, m)
 	view := m.View()
-	for _, want := range []string{"inbox", "work", "q quit"} {
+	for _, want := range []string{"on you", "work", "q quit"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("initial view is missing %q:\n%s", want, view)
 		}
@@ -770,7 +770,7 @@ func TestInboxListsWhatWaits(t *testing.T) {
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, keyMsg("enter"))
 
-	if view := m.View(); strings.Contains(view, "the inbox is empty") {
+	if view := m.View(); strings.Contains(view, "nothing is on you") {
 		t.Fatalf("view claims the goal state before any pass reported:\n%s", view)
 	}
 
@@ -803,7 +803,7 @@ func TestInboxListsWhatWaits(t *testing.T) {
 	// A later pass with nothing waiting clears the list and says so.
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention}})
 	view = m.View()
-	if !strings.Contains(view, "the inbox is empty") {
+	if !strings.Contains(view, "nothing is on you") {
 		t.Fatalf("empty inbox list does not read as the goal state:\n%s", view)
 	}
 	if !strings.Contains(view, "shows unclaimed tickets") {
@@ -969,8 +969,8 @@ func TestInboxTableNamesItsColumns(t *testing.T) {
 	}
 
 	panel := m.attentionPanel(120, 14)
-	// The header is the panel's first body line, above every row.
-	header := ansi.Strip(strings.Split(panel, "\n")[1])
+	// The header is the panel's body line below the tab row, above every row.
+	header := ansi.Strip(strings.Split(panel, "\n")[2])
 	row := ansi.Strip(rowOf(t, panel, "LERP-1"))
 	for _, c := range []struct{ name, cell string }{
 		{hdrTicket, "LERP-1"}, {hdrLeverage, "↓0"}, {hdrStatus, "Needs Attention"},
@@ -992,7 +992,7 @@ func TestInboxTableNamesItsColumns(t *testing.T) {
 	if !strings.Contains(scrolled, "⋯") {
 		t.Fatalf("the short panel did not window its rows, so nothing scrolled:\n%s", scrolled)
 	}
-	if got := ansi.Strip(strings.Split(scrolled, "\n")[1]); !strings.Contains(got, hdrTicket) {
+	if got := ansi.Strip(strings.Split(scrolled, "\n")[2]); !strings.Contains(got, hdrTicket) {
 		t.Fatalf("the header scrolled away with the rows:\n%s", scrolled)
 	}
 	// The header belongs to the table and not to the cursor: with one row
@@ -1016,7 +1016,7 @@ func TestInboxTableNamesItsColumns(t *testing.T) {
 		one = update(t, one, keyMsg(focus))
 		g := one.geometry()
 		panel := one.attentionPanel(g.sideW, g.attnH)
-		if !strings.Contains(strings.Split(ansi.Strip(panel), "\n")[1], hdrTicket) {
+		if !strings.Contains(strings.Split(ansi.Strip(panel), "\n")[2], hdrTicket) {
 			t.Fatalf("with focus on panel %s the inbox lost its column header:\n%s", focus, panel)
 		}
 	}
@@ -1375,8 +1375,8 @@ func TestInboxSortModesCycle(t *testing.T) {
 	if got := order(panel, want...); !slices.Equal(got, want) {
 		t.Fatalf("status order = %v, want %v:\n%s", got, want, panel)
 	}
-	if !strings.Contains(panel, "by status") {
-		t.Fatalf("the panel title does not name the sort mode:\n%s", panel)
+	if strings.Contains(panel, "by status") {
+		t.Fatalf("the panel title should not name the default sort mode:\n%s", panel)
 	}
 	for _, note := range []string{"a run failed here", "a run finished here",
 		"the pipeline never names it"} {
@@ -1429,8 +1429,11 @@ func TestInboxSortModesCycle(t *testing.T) {
 	// One more press is back to the grouped default, headers and all.
 	m = update(t, m, keyMsg("s"))
 	panel = m.attentionPanel(96, 16)
-	if !strings.Contains(panel, "by status") {
-		t.Fatalf("the sort key does not cycle back to the default:\n%s", panel)
+	if m.sortMode != sortStatus {
+		t.Fatalf("the sort key does not cycle back to the default: got %v", m.sortMode)
+	}
+	if strings.Contains(panel, "by status") {
+		t.Fatalf("the title carried default sort mode:\n%s", panel)
 	}
 	if !strings.Contains(panel, "a run failed here") {
 		t.Fatalf("the grouped default draws no headers:\n%s", panel)
@@ -1450,7 +1453,7 @@ func TestSingleGroupDrawsNoHeader(t *testing.T) {
 			Reason: `claimed in "Needs Attention" — a run failed here`},
 	}}})
 
-	panel := m.attentionPanel(60, 5) // the column header, one row, the hint
+	panel := m.attentionPanel(60, 6) // the tab row, column header, one row, the hint
 	if strings.Contains(panel, "a run failed here") {
 		t.Fatalf("one group still drew a header:\n%s", panel)
 	}
@@ -1603,9 +1606,9 @@ func TestBacklogSliceInPlace(t *testing.T) {
 	if strings.Contains(panel, "to browse") {
 		t.Fatalf("the summary line survived the slice switch:\n%s", panel)
 	}
-	// The way back is in the title, beside the other controls a key changed.
-	if !strings.Contains(panel, "· Backlog") {
-		t.Fatalf("the title does not name the active slice:\n%s", panel)
+	// The active slice is highlighted in the slice tab row.
+	if !strings.Contains(panel, "Backlog 3") {
+		t.Fatalf("the tab row does not name the active slice:\n%s", panel)
 	}
 
 	// Cycle until back to all:
@@ -1616,12 +1619,12 @@ func TestBacklogSliceInPlace(t *testing.T) {
 	if got := shownTickets(m); len(got) != 3 {
 		t.Fatalf("cycling back left %v, want the three blocked on a human", got)
 	}
-	if strings.Contains(panel, "· Backlog") {
-		t.Fatalf("the all-slice title still names the Backlog slice:\n%s", panel)
+	if !strings.Contains(panel, "all 3") {
+		t.Fatalf("the all-slice tab row does not show all active:\n%s", panel)
 	}
 }
 
-// Done-when: "● n in the inbox" counts only what is blocked on a human, so
+// Done-when: "● n on you" counts only what is blocked on a human, so
 // it is the same number whichever slice is active — that is what makes it
 // mean "something to look up at". The panel's own count is the other
 // question, what is in this panel, and follows the slice.
@@ -1631,19 +1634,19 @@ func TestTheInboxCountIsWhatIsBlockedOnYou(t *testing.T) {
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: board()})
 
-	if got := m.View(); !strings.Contains(got, "● 3 in the inbox") {
+	if got := m.View(); !strings.Contains(got, "● 3 on you") {
 		t.Fatalf("the status bar counts the backlog into the inbox:\n%s", got)
 	}
-	if panel := m.attentionPanel(96, 18); !strings.Contains(panel, "● 3") {
-		t.Fatalf("the all-slice panel title does not count its rows:\n%s", panel)
+	if panel := m.attentionPanel(96, 18); !strings.Contains(panel, "all 3") {
+		t.Fatalf("the all-slice tab row does not count its rows:\n%s", panel)
 	}
 
 	m = browseBacklog(t, m)
-	if got := m.View(); !strings.Contains(got, "● 3 in the inbox") {
+	if got := m.View(); !strings.Contains(got, "● 3 on you") {
 		t.Fatalf("slicing to the backlog moved the status bar's count:\n%s", got)
 	}
-	if panel := m.attentionPanel(96, 18); !strings.Contains(panel, "● 3") {
-		t.Fatalf("the backlog slice panel title does not count what it shows:\n%s", panel)
+	if panel := m.attentionPanel(96, 18); !strings.Contains(panel, "Backlog 3") {
+		t.Fatalf("the backlog slice tab row does not count what it shows:\n%s", panel)
 	}
 }
 
@@ -1803,19 +1806,18 @@ func TestAFoldedBacklogDoesNotClaimTheGoalState(t *testing.T) {
 	if !strings.Contains(panel, "nothing is waiting on you") {
 		t.Fatalf("an inbox of nothing but backlog does not say so:\n%s", panel)
 	}
-	if strings.Contains(panel, "the inbox is empty") {
+	if strings.Contains(panel, "nothing is on you") {
 		t.Fatalf("the fold claimed the goal state:\n%s", panel)
 	}
 	if !strings.Contains(panel, "1 waiting to enter the pipeline — ] to browse") {
 		t.Fatalf("the one line that is on you is precisely when the key must show:\n%s", panel)
 	}
-	if got := m.View(); strings.Contains(got, "in the inbox") {
+	if got := m.statusBar(); strings.Contains(got, "on you") {
 		t.Fatalf("the status bar counts a backlog nobody is blocked on:\n%s", got)
 	}
-	// No count to show is not no title: the sort is still in force, and a
-	// panel that says nothing about it makes `s` a silent state change.
-	if !strings.Contains(panel, "by status") {
-		t.Fatalf("the title dropped the sort mode along with the count:\n%s", panel)
+	// Default sort mode does not clutter the title.
+	if strings.Contains(panel, "by status") {
+		t.Fatalf("the title carried default sort mode:\n%s", panel)
 	}
 	m = update(t, m, keyMsg("s"))
 	if got := m.attentionPanel(96, 14); !strings.Contains(got, "by project") {
@@ -1827,7 +1829,7 @@ func TestAFoldedBacklogDoesNotClaimTheGoalState(t *testing.T) {
 	// has no fold to advertise.
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention}})
 	panel = m.attentionPanel(96, 14)
-	if !strings.Contains(panel, "the inbox is empty") {
+	if !strings.Contains(panel, "nothing is on you") {
 		t.Fatalf("an empty board no longer reads as the goal state:\n%s", panel)
 	}
 	if strings.Contains(panel, "to browse") {
@@ -1876,7 +1878,7 @@ func TestAClaimedTicketInIntakeIsNeverFolded(t *testing.T) {
 	if got := shownTickets(m); !slices.Equal(got, []string{"LERP-5"}) {
 		t.Fatalf("the folded inbox shows %v, want the stranded claimed ticket", got)
 	}
-	if got := m.View(); !strings.Contains(got, "● 1 in the inbox") {
+	if got := m.View(); !strings.Contains(got, "● 1 on you") {
 		t.Fatalf("the status bar does not count the stranded claimed ticket:\n%s", got)
 	}
 	// And the one beside it, which nobody has claimed, is behind the fold.
@@ -2282,7 +2284,7 @@ func TestPromotePickerFollowsTheKeymap(t *testing.T) {
 // clipped.
 func TestThePickersLineGivesWayBeforeTheInboxCount(t *testing.T) {
 	for _, cfg := range []struct{ lanes, items int }{{lanes: 2, items: 12}, {lanes: 10, items: 120}} {
-		count := fmt.Sprintf("● %d in the inbox", cfg.items)
+		count := fmt.Sprintf("● %d on you", cfg.items)
 		var whole []int
 		for w := 30; w <= 120; w++ {
 			m, _, _, _ := newPromoteTestModel(t, cfg.lanes, defaultTestStatuses)
@@ -2995,8 +2997,8 @@ func TestStatusBarAndHelp(t *testing.T) {
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
 		{Ticket: "LERP-1", Title: "one", URL: "https://linear.app/issue/LERP-1"}, {Ticket: "LERP-2", Title: "two"},
 	}}})
-	if !strings.Contains(m.View(), "2 in the inbox") {
-		t.Fatalf("status bar does not count inbox:\n%s", m.View())
+	if !strings.Contains(m.View(), "2 on you") {
+		t.Fatalf("status bar does not count on you:\n%s", m.View())
 	}
 
 	m = update(t, m, keyMsg("?"))
@@ -3877,13 +3879,13 @@ func TestTheStatusBarKeepsTheCountOverTheHint(t *testing.T) {
 	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
 		{Ticket: "LERP-1", Title: "one"}, {Ticket: "LERP-2", Title: "two"},
 	}}})
-	if !strings.Contains(m.View(), "2 in the inbox") {
-		t.Fatalf("the hint truncated the inbox count away:\n%s", m.View())
+	if !strings.Contains(m.View(), "2 on you") {
+		t.Fatalf("the hint truncated the on you count away:\n%s", m.View())
 	}
 
 	// Wide enough for both, and then the hint is there.
 	view := resize(t, m, 120, 30).View()
-	if !strings.Contains(view, "2 in the inbox") || !strings.Contains(view, "esc close") {
+	if !strings.Contains(view, "2 on you") || !strings.Contains(view, "esc close") {
 		t.Fatalf("120 columns should carry the count and the hint:\n%s", view)
 	}
 }
@@ -4062,8 +4064,8 @@ func TestTheHeavyBoxFollowsFocus(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = pastTheSplash(t, m)
 	for _, tc := range []struct{ key, focused, idle string }{
-		{"1", "[1] inbox", "[2] work"},
-		{"2", "[2] work", "[1] inbox"},
+		{"1", "[1] on you", "[2] work"},
+		{"2", "[2] work", "[1] on you"},
 	} {
 		m = update(t, m, keyMsg(tc.key))
 		view := m.View()
@@ -4252,7 +4254,7 @@ func TestAShortPanelKeepsItsRowsOverItsKeys(t *testing.T) {
 	// business, not this test's: sweep the short end and assert the rule
 	// against the height needs-you actually got.
 	seen := map[bool]bool{}
-	for h := 8; h <= 14; h++ {
+	for h := 8; h <= 16; h++ {
 		m, _, _ := newTestModel(t, 1)
 		m = pastTheSplash(t, m)
 		m = resize(t, m, 120, h)
@@ -4266,10 +4268,10 @@ func TestAShortPanelKeepsItsRowsOverItsKeys(t *testing.T) {
 
 		view := m.View()
 		inner := m.geometry().attnH - 2
-		if inner < 2 || inner > 4 || strings.HasPrefix(view, "lerp — window too small") {
+		if inner < 2 || inner > 5 || strings.HasPrefix(view, "lerp — window too small") {
 			continue // not the squeeze this test is about
 		}
-		want := inner >= 4
+		want := inner >= 5
 		seen[want] = true
 		if !strings.Contains(view, "LERP-1 ") {
 			t.Fatalf("a %d-row panel dropped the selected row to make room:\n%s", inner, view)
@@ -4297,13 +4299,14 @@ func TestOneRowStillGetsItsKeys(t *testing.T) {
 		tickets[i] = loop.QueueTicket{ID: fmt.Sprintf("t%d", i),
 			Identifier: fmt.Sprintf("QUEUED-%d", i+1), Title: "work", Eligible: true}
 	}
-	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+	one, _ := m.Update(eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
 		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: tickets},
 	}}})
+	m = one.(model)
 
 	view := m.View()
-	if g := m.geometry(); g.attnH != 5 {
-		t.Fatalf("needs-you is %d lines, want the 5 this case is about:\n%s", g.attnH, view)
+	if g := m.geometry(); g.attnH != 6 {
+		t.Fatalf("needs-you is %d lines, want the 6 this case is about:\n%s", g.attnH, view)
 	}
 	if !strings.Contains(view, "LERP-1 ") {
 		t.Fatalf("the one waiting ticket is not on screen:\n%s", view)
@@ -4630,9 +4633,6 @@ func TestWideMainPaneFillsTheBody(t *testing.T) {
 				tc.name, g.mainH, g.bodyH)
 		}
 		lines := strings.Split(ansi.Strip(m.View()), "\n")
-		if m.showStrip() {
-			lines = lines[1:]
-		}
 		body := lines[:g.bodyH]
 		if n := strings.Count(body[g.bodyH-1], "\u2570") + strings.Count(body[g.bodyH-1], "\u2517"); n != 2 {
 			t.Fatalf("%s: %d panels end on the body's last line, want the side column and the main pane:\n%s",
@@ -5873,9 +5873,9 @@ func TestAPassStartingDoesNotMoveTheCountsAlong(t *testing.T) {
 	if !m.inFlight {
 		t.Fatal("the first pass is not in flight")
 	}
-	inFlight := [2]int{col(m, "0/2 running"), col(m, "● 2 in the inbox")}
+	inFlight := [2]int{col(m, "0/2 running"), col(m, "● 2 on you")}
 	settled := update(t, m, tickedMsg{})
-	if got := [2]int{col(settled, "0/2 running"), col(settled, "● 2 in the inbox")}; got != inFlight {
+	if got := [2]int{col(settled, "0/2 running"), col(settled, "● 2 on you")}; got != inFlight {
 		t.Errorf("the pass landing moved the counts from %v to %v", inFlight, got)
 	}
 }
@@ -7210,9 +7210,6 @@ func TestTabPutsTheKeysInTheOpenPane(t *testing.T) {
 	// right — and exactly one of them is heavy.
 	lines := strings.Split(m.View(), "\n")
 	top := lines[0]
-	if m.showStrip() {
-		top = lines[1]
-	}
 	if !strings.HasPrefix(top, "╭") {
 		t.Fatalf("the inbox kept the heavy box after the keys left it: %q", top)
 	}
@@ -7422,9 +7419,6 @@ func TestTheOverlayBorrowsThePaneNotItsKeys(t *testing.T) {
 	}
 	lines := strings.Split(m.View(), "\n")
 	top := lines[0]
-	if m.showStrip() {
-		top = lines[1]
-	}
 	if !strings.HasPrefix(top, "╭") {
 		t.Fatalf("the inbox is lit behind the overlay while the keys are in the pane: %q", top)
 	}
@@ -7460,9 +7454,6 @@ func TestTheOverlayBorrowsThePaneNotItsKeys(t *testing.T) {
 	m = update(t, m, keyMsg("?"))
 	lines = strings.Split(m.View(), "\n")
 	got := lines[0]
-	if m.showStrip() {
-		got = lines[1]
-	}
 	if !strings.HasPrefix(got, "┏") {
 		t.Fatalf("the inbox is dark behind the overlay while the keys are on it: %q", got)
 	}
@@ -8108,8 +8099,8 @@ func TestHelpContextAwareCheatSheet(t *testing.T) {
 		t.Fatal("? did not open help on inbox")
 	}
 	hView := ansi.Strip(m.View())
-	if !strings.Contains(hView, "s sort inbox") || !strings.Contains(hView, "p     promote") ||
-		!strings.Contains(hView, "inbox marks") {
+	if !strings.Contains(hView, "s sort") || !strings.Contains(hView, "p     promote") ||
+		!strings.Contains(hView, "row marks") {
 		t.Fatalf("inbox list help missing expected keys:\n%s", hView)
 	}
 	if strings.Contains(hView, "start past the limit") || strings.Contains(hView, "e eject") {
@@ -8130,10 +8121,10 @@ func TestHelpContextAwareCheatSheet(t *testing.T) {
 	m = update(t, m, keyMsg("?"))
 	hView = ansi.Strip(m.View())
 	if !strings.Contains(hView, "close detail") || !strings.Contains(hView, "z fold") ||
-		!strings.Contains(hView, "inbox marks") {
+		!strings.Contains(hView, "row marks") {
 		t.Fatalf("focused inbox detail help missing expected keys:\n%s", hView)
 	}
-	if strings.Contains(hView, "sort inbox") {
+	if strings.Contains(hView, "s sort") {
 		t.Fatalf("focused detail pane should not offer list sorting:\n%s", hView)
 	}
 	m = update(t, m, keyMsg("esc")) // close help
@@ -8151,7 +8142,7 @@ func TestHelpContextAwareCheatSheet(t *testing.T) {
 	m = update(t, m, keyMsg("?"))
 	hView = ansi.Strip(m.View())
 	if !strings.Contains(hView, "promote 2") || !strings.Contains(hView, "drop") ||
-		!strings.Contains(hView, "inbox marks") {
+		!strings.Contains(hView, "row marks") {
 		t.Fatalf("visual mode help missing expected keys:\n%s", hView)
 	}
 	m = update(t, m, keyMsg("?"))
@@ -8176,7 +8167,7 @@ func TestHelpContextAwareCheatSheet(t *testing.T) {
 	if !strings.Contains(hView, "promote") || !strings.Contains(hView, "cancel") {
 		t.Fatalf("promote picker help missing expected keys:\n%s", hView)
 	}
-	if strings.Contains(hView, "sort inbox") || strings.Contains(hView, "inbox marks") {
+	if strings.Contains(hView, "s sort") || strings.Contains(hView, "row marks") {
 		t.Fatalf("promote picker help should not contain list keys or marks:\n%s", hView)
 	}
 	m = update(t, m, keyMsg("esc")) // close help
@@ -8193,7 +8184,7 @@ func TestHelpContextAwareCheatSheet(t *testing.T) {
 	if !strings.Contains(hView, "e eject") || !strings.Contains(hView, "work marks") {
 		t.Fatalf("work panel help missing expected keys:\n%s", hView)
 	}
-	if strings.Contains(hView, "inbox marks") || strings.Contains(hView, "sort inbox") {
+	if strings.Contains(hView, "row marks") || strings.Contains(hView, "s sort") {
 		t.Fatalf("work panel help contains inbox keys or marks:\n%s", hView)
 	}
 	m = update(t, m, keyMsg("?"))
@@ -8254,124 +8245,67 @@ func TestKeymapContextHelpGroups(t *testing.T) {
 	}
 }
 
-func TestStripCountsEveryStatusThePassSaw(t *testing.T) {
+func TestTabRowCountsEveryStatusPresentInBoardOrder(t *testing.T) {
+	statuses := []string{"Triage", "Backlog", "Planning", "Plan Review", "Implementing", "In Review", "Needs Attention", "Done", "Canceled"}
+	m, _, _ := newTestModelWith(t, 3, statuses, &recordingPromoter{}, &recordingEjector{}, &recordingStarter{}, &recordingReader{})
+	m = resize(t, m, 120, 30)
+	m = pastTheSplash(t, m)
+
+	m = update(t, m, eventMsg{ev: loop.Event{
+		Type: loop.EventAttention,
+		Attention: []loop.AttentionItem{
+			{Ticket: "LERP-1", TicketID: "id-1", Title: "t1", Status: "Triage", Relevance: loop.StatusFinished},
+			{Ticket: "LERP-2", TicketID: "id-2", Title: "b1", Status: "Backlog", Relevance: loop.StatusBacklog},
+			{Ticket: "LERP-3", TicketID: "id-3", Title: "pr1", Status: "Plan Review", Relevance: loop.StatusFinished},
+			{Ticket: "LERP-4", TicketID: "id-4", Title: "na1", Status: "Needs Attention", Relevance: loop.StatusFailed},
+		},
+	}})
+
+	tabs := m.sliceTabs()
+	want := []sliceTab{
+		{status: "", n: 3}, // LERP-1 (Triage), LERP-3 (Plan Review), LERP-4 (Needs Attention); LERP-2 (unclaimed Backlog) folded
+		{status: "Triage", n: 1},
+		{status: "Backlog", n: 1},
+		{status: "Plan Review", n: 1},
+		{status: "Needs Attention", n: 1},
+	}
+	if !slices.Equal(tabs, want) {
+		t.Fatalf("got slice tabs %+v, want %+v", tabs, want)
+	}
+
+	tabLine := ansi.Strip(m.sliceTabLine(m.width))
+	wantLine := "all 3 · Triage 1 · Backlog 1 · Plan Review 1 · Needs Attention 1"
+	if tabLine != wantLine {
+		t.Fatalf("got tab line %q, want %q", tabLine, wantLine)
+	}
+}
+
+func TestTabRowAllCountExcludesFoldedBacklogWhileBacklogTabIncludesIt(t *testing.T) {
 	statuses := []string{"Backlog", "Planning", "Implementing", "In Review", "Needs Attention"}
 	m, _, _ := newTestModelWith(t, 3, statuses, &recordingPromoter{}, &recordingEjector{}, &recordingStarter{}, &recordingReader{})
 	m = resize(t, m, 120, 30)
 	m = pastTheSplash(t, m)
 
-	// A folded backlog (2 items), an unserved attention status (1 item in Needs Attention),
-	// a queue with tickets (Implementing with 3 tickets), and an empty queue (Planning with 0 tickets).
 	m = update(t, m, eventMsg{ev: loop.Event{
 		Type: loop.EventAttention,
 		Attention: []loop.AttentionItem{
 			{Ticket: "LERP-1", TicketID: "id-1", Title: "b1", Status: "Backlog", Relevance: loop.StatusBacklog},
 			{Ticket: "LERP-2", TicketID: "id-2", Title: "b2", Status: "Backlog", Relevance: loop.StatusBacklog},
-			{Ticket: "LERP-3", TicketID: "id-3", Title: "na1", Status: "Needs Attention", Relevance: loop.StatusFailed},
-		},
-	}})
-	m = update(t, m, eventMsg{ev: loop.Event{
-		Type: loop.EventQueues,
-		Queues: []loop.QueueSnapshot{
-			{Team: "LERP", Name: "plan", Status: "Planning", Tickets: nil},
-			{Team: "LERP", Name: "implement", Status: "Implementing", Tickets: []loop.QueueTicket{
-				{ID: "id-4", Identifier: "LERP-4", Title: "imp1"},
-				{ID: "id-5", Identifier: "LERP-5", Title: "imp2"},
-				{ID: "id-6", Identifier: "LERP-6", Title: "imp3"},
-			}},
+			{Ticket: "LERP-3", TicketID: "id-3", Title: "b3", Status: "Backlog", Relevance: loop.StatusBacklog},
+			{Ticket: "LERP-4", TicketID: "id-4", Title: "na1", Status: "Needs Attention", Relevance: loop.StatusFailed},
 		},
 	}})
 
-	counts := m.statusCounts()
-	want := []statusCount{
-		{status: "Backlog", n: 2},
-		{status: "Planning", n: 0},
-		{status: "Implementing", n: 3},
-		{status: "Needs Attention", n: 1},
+	tabs := m.sliceTabs()
+	if tabs[0].n != 1 {
+		t.Fatalf("all tab count = %d, want 1 (folded backlog excluded)", tabs[0].n)
 	}
-	if !slices.Equal(counts, want) {
-		t.Fatalf("got status counts %+v, want %+v", counts, want)
-	}
-
-	// The strip line rendered in View() contains all 4 counts joined by " · "
-	strip := ansi.Strip(m.stripLine(m.width))
-	wantStrip := "Backlog 2 · Planning 0 · Implementing 3 · Needs Attention 1"
-	if strip != wantStrip {
-		t.Fatalf("got strip line %q, want %q", strip, wantStrip)
-	}
-	view := ansi.Strip(m.View())
-	if !strings.HasPrefix(view, wantStrip) {
-		t.Fatalf("View() does not start with summary strip:\n%s", view)
+	if tabs[1].status != "Backlog" || tabs[1].n != 3 {
+		t.Fatalf("Backlog tab = %+v, want status Backlog and count 3", tabs[1])
 	}
 }
 
-func TestStripCountsEachTicketOnce(t *testing.T) {
-	m, _, _ := newTestModel(t, 3)
-	m = resize(t, m, 120, 30)
-	m = pastTheSplash(t, m)
-
-	// Same ticket in two teams' listings on one status
-	m = update(t, m, eventMsg{ev: loop.Event{
-		Type: loop.EventQueues,
-		Queues: []loop.QueueSnapshot{
-			{Team: "ALPHA", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
-				{ID: "id-dup", Identifier: "LERP-10", Title: "shared"},
-				{ID: "id-uniq-1", Identifier: "LERP-11", Title: "unique alpha"},
-			}},
-			{Team: "BRAVO", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
-				{ID: "id-dup", Identifier: "LERP-10", Title: "shared"},
-				{ID: "id-uniq-2", Identifier: "LERP-12", Title: "unique bravo"},
-			}},
-		},
-	}})
-
-	counts := m.statusCounts()
-	want := []statusCount{
-		{status: "Todo", n: 3}, // id-dup counted once + uniq-1 + uniq-2
-	}
-	if !slices.Equal(counts, want) {
-		t.Fatalf("got status counts %+v, want %+v", counts, want)
-	}
-}
-
-func TestStripOrdersByBoardPosition(t *testing.T) {
-	statuses := []string{"Backlog", "Planning", "Implementing", "In Review", "Needs Attention"}
-	m, _, _ := newTestModelWith(t, 3, statuses, &recordingPromoter{}, &recordingEjector{}, &recordingStarter{}, &recordingReader{})
-	m = resize(t, m, 120, 30)
-	m = pastTheSplash(t, m)
-
-	m = update(t, m, eventMsg{ev: loop.Event{
-		Type: loop.EventAttention,
-		Attention: []loop.AttentionItem{
-			{Ticket: "LERP-1", TicketID: "id-1", Status: "UnknownZ"},
-			{Ticket: "LERP-2", TicketID: "id-2", Status: "In Review"},
-			{Ticket: "LERP-3", TicketID: "id-3", Status: "UnknownA"},
-			{Ticket: "LERP-4", TicketID: "id-4", Status: "Backlog"},
-		},
-	}})
-	m = update(t, m, eventMsg{ev: loop.Event{
-		Type: loop.EventQueues,
-		Queues: []loop.QueueSnapshot{
-			{Team: "LERP", Name: "plan", Status: "Planning", Tickets: []loop.QueueTicket{
-				{ID: "id-5", Identifier: "LERP-5"},
-			}},
-		},
-	}})
-
-	counts := m.statusCounts()
-	want := []statusCount{
-		{status: "Backlog", n: 1},
-		{status: "Planning", n: 1},
-		{status: "In Review", n: 1},
-		{status: "UnknownA", n: 1},
-		{status: "UnknownZ", n: 1},
-	}
-	if !slices.Equal(counts, want) {
-		t.Fatalf("got status counts %+v, want %+v", counts, want)
-	}
-}
-
-func TestStripIgnoresTheSearchAndProjectFilters(t *testing.T) {
+func TestTabRowIgnoresTheSearchAndProjectFiltersOnInactiveTabs(t *testing.T) {
 	m, _, _ := newTestModel(t, 3)
 	m = resize(t, m, 120, 30)
 	m = pastTheSplash(t, m)
@@ -8384,153 +8318,133 @@ func TestStripIgnoresTheSearchAndProjectFilters(t *testing.T) {
 			{Ticket: "LERP-3", TicketID: "id-3", Title: "gamma ticket", Project: "ProjA", Status: "Needs Attention", Relevance: loop.StatusFailed},
 		},
 	}})
-	m = update(t, m, eventMsg{ev: loop.Event{
-		Type: loop.EventQueues,
-		Queues: []loop.QueueSnapshot{
-			{Team: "LERP", Name: "implement", Status: "Implementing", Tickets: []loop.QueueTicket{
-				{ID: "id-4", Identifier: "LERP-4", Title: "delta"},
-			}},
-		},
-	}})
 
-	baseCounts := m.statusCounts()
-	baseStrip := m.stripLine(m.width)
+	baseTabs := m.sliceTabs()
 
-	// Apply search filter
-	m.search = "alpha"
+	// Apply search filter on all-slice
+	m.search = "gamma"
 	m.shown = filterAttention(m.attention, m.filterField, m.filterValue, m.search, m.slice)
 	if len(m.shown) >= len(m.attention) {
 		t.Fatalf("search filter did not narrow shown items (%d shown)", len(m.shown))
 	}
-	if !slices.Equal(m.statusCounts(), baseCounts) {
-		t.Fatalf("search filter changed status counts: got %+v, want %+v", m.statusCounts(), baseCounts)
+	if !slices.Equal(m.sliceTabs(), baseTabs) {
+		t.Fatalf("search filter changed slice tabs: got %+v, want %+v", m.sliceTabs(), baseTabs)
 	}
-	if m.stripLine(m.width) != baseStrip {
-		t.Fatalf("search filter changed strip line: got %q, want %q", m.stripLine(m.width), baseStrip)
+	line := ansi.Strip(m.sliceTabLine(m.width))
+	if !strings.Contains(line, "all 1/1") || !strings.Contains(line, "Backlog 2") {
+		t.Fatalf("searched tab line unexpected: %q", line)
 	}
 
-	// Apply project filter
+	// Apply project filter on Backlog slice
 	m.search = ""
+	m.slice = "Backlog"
 	m.filterField = filterFieldProject
 	m.filterValue = "ProjB"
 	m.shown = filterAttention(m.attention, m.filterField, m.filterValue, m.search, m.slice)
-	if len(m.shown) >= len(m.attention) {
-		t.Fatalf("project filter did not narrow shown items (%d shown)", len(m.shown))
+	if !slices.Equal(m.sliceTabs(), baseTabs) {
+		t.Fatalf("project filter changed slice tabs: got %+v, want %+v", m.sliceTabs(), baseTabs)
 	}
-	if !slices.Equal(m.statusCounts(), baseCounts) {
-		t.Fatalf("project filter changed status counts: got %+v, want %+v", m.statusCounts(), baseCounts)
-	}
-	if m.stripLine(m.width) != baseStrip {
-		t.Fatalf("project filter changed strip line: got %q, want %q", m.stripLine(m.width), baseStrip)
+	line = ansi.Strip(m.sliceTabLine(m.width))
+	if !strings.Contains(line, "all 1") || !strings.Contains(line, "Backlog 1/2") {
+		t.Fatalf("filtered tab line unexpected: %q", line)
 	}
 }
 
-func TestStripCostsExactlyOneRowFromTheBody(t *testing.T) {
-	m, _, _ := newTestModel(t, 3)
-	m = resize(t, m, 120, 30)
+func TestTabRowTruncationKeepsActiveTabVisible(t *testing.T) {
+	statuses := []string{"Triage", "Backlog", "Planning", "Plan Review", "Implementing", "In Review", "Needs Attention"}
+	m, _, _ := newTestModelWith(t, 3, statuses, &recordingPromoter{}, &recordingEjector{}, &recordingStarter{}, &recordingReader{})
 	m = pastTheSplash(t, m)
-	m = fillBoard(t, m, 10)
 
-	if !m.showStrip() {
-		t.Fatal("strip should be showing on 120x30 with populated board")
+	m = update(t, m, eventMsg{ev: loop.Event{
+		Type: loop.EventAttention,
+		Attention: []loop.AttentionItem{
+			{Ticket: "LERP-1", Status: "Triage", Relevance: loop.StatusFinished},
+			{Ticket: "LERP-2", Status: "Backlog", Relevance: loop.StatusBacklog},
+			{Ticket: "LERP-3", Status: "Planning", Relevance: loop.StatusFinished},
+			{Ticket: "LERP-4", Status: "Plan Review", Relevance: loop.StatusFinished},
+			{Ticket: "LERP-5", Status: "Implementing", Relevance: loop.StatusFinished},
+			{Ticket: "LERP-6", Status: "In Review", Relevance: loop.StatusFinished},
+			{Ticket: "LERP-7", Status: "Needs Attention", Relevance: loop.StatusFailed},
+		},
+	}})
+
+	// Active tab: all (index 0) at narrow width
+	line := ansi.Strip(m.sliceTabLine(25))
+	if !strings.HasPrefix(line, "all") || !strings.HasSuffix(line, "…") {
+		t.Fatalf("expected all tab visible with trailing ellipsis on narrow width, got %q", line)
 	}
 
-	g := m.geometry()
-	if g.bodyH != m.height-2 {
-		t.Fatalf("bodyH = %d, want %d (height-2)", g.bodyH, m.height-2)
-	}
-	if got := g.attnH + g.workH; got != g.bodyH {
-		t.Fatalf("attnH (%d) + workH (%d) = %d, want bodyH (%d)", g.attnH, g.workH, got, g.bodyH)
+	// Active tab: Plan Review (in the middle) at narrow width
+	m.slice = "Plan Review"
+	line = ansi.Strip(m.sliceTabLine(30))
+	if !strings.Contains(line, "Plan Review") || !strings.HasPrefix(line, "…") || !strings.HasSuffix(line, "…") {
+		t.Fatalf("expected Plan Review visible with leading and trailing ellipses, got %q", line)
 	}
 
-	lines := strings.Split(m.View(), "\n")
-	if len(lines) != m.height {
-		t.Fatalf("View() has %d lines, want %d", len(lines), m.height)
-	}
-	if !strings.Contains(lines[0], "·") {
-		t.Fatalf("first line is not the strip: %q", lines[0])
+	// Active tab: Needs Attention (last tab) at narrow width
+	m.slice = "Needs Attention"
+	line = ansi.Strip(m.sliceTabLine(25))
+	if !strings.Contains(line, "Needs Attention") || !strings.HasPrefix(line, "…") {
+		t.Fatalf("expected Needs Attention visible with leading ellipsis, got %q", line)
 	}
 }
 
-func TestStripDropsOnNarrowWindowsAndShortOnes(t *testing.T) {
-	m, _, _ := newTestModel(t, 3)
+func TestTabRowHeightDiscipline(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
 	m = pastTheSplash(t, m)
-	m = fillBoard(t, m, 10)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: board()})
 
-	// Under narrowWidth (e.g. 99)
-	m = resize(t, m, 99, 30)
-	if m.showStrip() {
-		t.Fatal("showStrip should be false when width < narrowWidth")
+	// At sufficient height (14 rows), both tab row and header appear:
+	panel := m.attentionPanel(96, 14)
+	if !strings.Contains(panel, "all 3 ·") {
+		t.Fatalf("expected tab row at h=14:\n%s", panel)
 	}
-	g := m.geometry()
-	if g.bodyH != m.height-1 {
-		t.Fatalf("narrow width: bodyH = %d, want %d (height-1)", g.bodyH, m.height-1)
-	}
-	lines := strings.Split(m.View(), "\n")
-	if !strings.HasPrefix(lines[0], "┏") {
-		t.Fatalf("expected inbox border on line 0 when width < narrowWidth, got %q", lines[0])
+	if !strings.Contains(panel, "ticket") || !strings.Contains(panel, "frees") {
+		t.Fatalf("expected column header at h=14:\n%s", panel)
 	}
 
-	// At exactly minHeight
-	minH := m.minHeight(m.mainOpen())
-	m = resize(t, m, 120, minH)
-	if m.showStrip() {
-		t.Fatal("showStrip should be false when height == minHeight")
+	// At tight height where ih=3 (h=5), with multiple rows, tabs are dropped before header:
+	panel = m.attentionPanel(96, 5)
+	if strings.Contains(panel, "all 3 ·") {
+		t.Fatalf("tab row should be dropped at h=5:\n%s", panel)
 	}
-	g = m.geometry()
-	if g.bodyH != m.height-1 {
-		t.Fatalf("minHeight: bodyH = %d, want %d (height-1)", g.bodyH, m.height-1)
-	}
-	lines = strings.Split(m.View(), "\n")
-	if !strings.HasPrefix(lines[0], "┏") {
-		t.Fatalf("expected inbox border on line 0 at minHeight, got %q", lines[0])
+	if !strings.Contains(panel, "ticket") {
+		t.Fatalf("column header should be kept at h=5:\n%s", panel)
 	}
 
-	// Below minHeight: too-small guard
-	m = resize(t, m, 120, minH-1)
-	view := m.View()
-	if view != "lerp — window too small\n" {
-		t.Fatalf("below minHeight: got %q, want too-small guard", view)
+	// At h=4 (ih=2), both tab row and header are dropped, rows and cursor remain:
+	panel = m.attentionPanel(96, 4)
+	if strings.Contains(panel, "all 3 ·") || strings.Contains(panel, "ticket") {
+		t.Fatalf("tab row and header should both be dropped at h=4:\n%s", panel)
+	}
+	if !strings.Contains(panel, "▸ ") {
+		t.Fatalf("selection cursor missing at h=4:\n%s", panel)
 	}
 }
 
-func TestStripIsAbsentBeforeTheFirstPass(t *testing.T) {
-	m, _, _ := newTestModel(t, 3)
-	m = resize(t, m, 120, 30)
-	// Before the first pass events: splashing is true
-	if !m.splashing() {
-		t.Fatal("expected splashing before first pass")
-	}
-	if m.showStrip() {
-		t.Fatal("strip should not show while splashing")
-	}
-	view := m.View()
-	if view != m.splash() {
-		t.Fatalf("splash screen was altered:\n%s", view)
-	}
-}
-
-// Done-when: the strip is chrome, in the same class as the status bar — a
-// modal floats over the board, not the frame, so opening one leaves the
-// strip's row byte-for-byte where it was.
-func TestStripSurvivesAnOpenModal(t *testing.T) {
-	m, _, _ := newTestModel(t, 3)
-	m = resize(t, m, 120, 30)
+func TestAttentionTitleClutterRemovedAndSortAppearsOnNonDefault(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
 	m = pastTheSplash(t, m)
-	m = fillBoard(t, m, 10)
+	m = update(t, m, keyMsg("1"))
+	m = update(t, m, eventMsg{ev: board()})
 
-	if !m.showStrip() {
-		t.Fatal("strip should be showing on 120x30 with populated board")
+	// Freshly opened board: title is strictly "[1] on you" with no count, sort, or slice:
+	panel := m.attentionPanel(96, 14)
+	topLine := strings.Split(ansi.Strip(panel), "\n")[0]
+	if strings.Contains(topLine, "●") || strings.Contains(topLine, "by status") || strings.Contains(topLine, "Backlog") {
+		t.Fatalf("title contains clutter on fresh board: %q", topLine)
 	}
-	before := strings.Split(m.View(), "\n")[0]
+	if !strings.Contains(topLine, "[1] on you") {
+		t.Fatalf("title missing [1] on you: %q", topLine)
+	}
 
-	m = update(t, m, keyMsg("?"))
-	if !m.helpOn {
-		t.Fatal("? did not open the help modal")
-	}
-	after := strings.Split(m.View(), "\n")[0]
-	if after != before {
-		t.Fatalf("help modal disturbed the strip row:\nbefore: %q\nafter:  %q", before, after)
+	// Pressing 's' once changes sort to non-default, so "· by <sort>" appears:
+	m = update(t, m, keyMsg("s"))
+	panel = m.attentionPanel(96, 14)
+	topLine = strings.Split(ansi.Strip(panel), "\n")[0]
+	if !strings.Contains(topLine, "· by ") {
+		t.Fatalf("expected '· by <sort>' in title after pressing s: %q", topLine)
 	}
 }
 
@@ -8627,36 +8541,36 @@ func TestStatusSliceTitleAndCount(t *testing.T) {
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: board()})
 
-	// All-slice title:
+	// All-slice tab row: active tab is "all 3"
 	panel := m.attentionPanel(96, 14)
-	if !strings.Contains(panel, "● 3") || strings.Contains(panel, "· Backlog") {
-		t.Fatalf("all-slice title unexpected:\n%s", panel)
+	if !strings.Contains(panel, "all 3") {
+		t.Fatalf("all-slice tab row unexpected:\n%s", panel)
 	}
 
-	// Backlog slice:
+	// Backlog slice: active tab is "Backlog 3"
 	m = browseBacklog(t, m)
 	panel = m.attentionPanel(96, 14)
-	if !strings.Contains(panel, "● 3") || !strings.Contains(panel, "· Backlog") {
-		t.Fatalf("backlog slice title unexpected:\n%s", panel)
+	if !strings.Contains(panel, "Backlog 3") {
+		t.Fatalf("backlog slice tab row unexpected:\n%s", panel)
 	}
 
-	// Project filter on Backlog slice:
+	// Project filter on Backlog slice: active tab becomes "Backlog 2/3", title gets project filter
 	m = update(t, m, keyMsg("P"))
 	m = update(t, m, keyMsg("down"))
 	m = update(t, m, keyMsg("enter"))
 	panel = m.attentionPanel(96, 14)
-	if !strings.Contains(panel, "● 2/3") || !strings.Contains(panel, "· project Open-source readiness") || !strings.Contains(panel, "· Backlog") {
-		t.Fatalf("project-filtered slice title unexpected:\n%s", panel)
+	if !strings.Contains(panel, "Backlog 2/3") || !strings.Contains(panel, "· project Open-source readiness") {
+		t.Fatalf("project-filtered slice title/tab unexpected:\n%s", panel)
 	}
 
-	// Search on Backlog slice:
+	// Search on Backlog slice: active tab becomes "Backlog 1/3", title gets /curl
 	m = update(t, m, keyMsg("P")) // reopens on the active project
 	m = update(t, m, keyMsg("up"))
 	m = update(t, m, keyMsg("enter")) // "all project" clears it
 	m = typeSearch(t, update(t, m, keyMsg("/")), "curl")
 	panel = m.attentionPanel(96, 14)
-	if !strings.Contains(panel, "● 1/3") || !strings.Contains(panel, "· /curl") || !strings.Contains(panel, "· Backlog") {
-		t.Fatalf("searched slice title unexpected:\n%s", panel)
+	if !strings.Contains(panel, "Backlog 1/3") || !strings.Contains(panel, "· /curl") {
+		t.Fatalf("searched slice title/tab unexpected:\n%s", panel)
 	}
 }
 

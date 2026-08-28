@@ -11,7 +11,6 @@ Type "lerp"
 Sleep 800ms
 Enter
 
-Wait+Screen /Backlog \d+ · /
 Wait+Screen /waiting to enter the pipeline/
 Sleep 2s
 

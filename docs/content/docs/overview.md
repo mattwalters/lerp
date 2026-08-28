@@ -16,7 +16,7 @@ There is no server, no scheduler, and no store of lerp's own.
 The board plus four commands. Bare `lerp` opens the TUI, and the
 reconciling loop runs while it is open — N lanes, adopting live runs,
 reaping dead ones, repairing drift. The board's only two write actions are
-the inbox's [promote](promoting.md) and the work panel's
+the On you panel's [promote](promoting.md) and the work panel's
 [force-start](starting-past-the-limit.md). `lerp login`, `lerp logout`,
 `lerp init` and `lerp version` complete [the command line](cli.md).
 

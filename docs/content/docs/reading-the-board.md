@@ -13,7 +13,7 @@ lerp
 `lerp` opens the TUI, and the TUI is the engine: the loop runs while it is
 open, and there is no daemon.
 
-Two panels share the screen, and lerp opens focused on the **Inbox**: the
+Two panels share the screen, and lerp opens focused on **On you**: the
 loop runs the board on its own, so the first look belongs to what needs
 *you*. Both panels start with their pane closed and their table at full
 width.
@@ -22,7 +22,7 @@ width.
 row. `?` opens the full key list at any time, and `q` quits.
 
 {{< cast webm="casts/board.webm" mp4="casts/board.mp4"
-         title="The board opening on the inbox, switching to the work panel, and opening a lane's log"
+         title="The board opening on the On you panel, switching to the work panel, and opening a lane's log"
          keys="[1] · [2] · [tab] · [enter] · [esc]" >}}
 
 ## The Work panel
@@ -60,11 +60,18 @@ Ordering is not a keystroke. To change what runs *next*, move tickets in
 Linear; to run one now regardless, see
 [starting past the limit](starting-past-the-limit.md).
 
-## The Inbox panel
+## The On you panel
 
-The Inbox lists what waits on a human: unclaimed tickets, and the
-operator's own claimed tickets, sitting in a status no queue serves. One
-row per ticket, under a header naming the columns — identifier, leverage,
+The On you panel lists what waits on a human: unclaimed tickets, and the
+operator's own claimed tickets, sitting in a status no queue serves.
+
+Above the column header sits the pinned slice tab row: `all` followed by
+each Linear status present on the board, each with its ticket count. The
+active tab is highlighted with the focus accent, while inactive tabs remain
+faint. Slicing with `]` or `[` moves the focus across tabs to show only that
+status; `all` returns to showing all active tickets (with the backlog folded).
+
+Under the tab row sits the header naming the columns — identifier, leverage,
 the real Linear status, project, priority, and the title, which takes
 whatever width is left. The vocabulary is Linear's own, never a category
 invented by lerp.

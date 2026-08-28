@@ -56,7 +56,7 @@ type keymap struct {
 
 func newKeymap() keymap {
 	return keymap{
-		Attention: key.NewBinding(key.WithKeys("1"), key.WithHelp("1", "inbox")),
+		Attention: key.NewBinding(key.WithKeys("1"), key.WithHelp("1", "on you")),
 		Work:      key.NewBinding(key.WithKeys("2"), key.WithHelp("2", "work")),
 		// "cycle", not "next panel": tab reaches the open main pane too, and
 		// it is the pane that most wants saying — the panels have 1 and 2
@@ -98,12 +98,12 @@ func newKeymap() keymap {
 		// detail pane's and the search's own keys cost this one three
 		// characters back.
 		ForceStart:  key.NewBinding(key.WithKeys("S"), key.WithHelp("S", "start past the limit")),
-		Sort:        key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort inbox")),
-		Filter:      key.NewBinding(key.WithKeys("F"), key.WithHelp("F", "filter inbox")),
+		Sort:        key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort")),
+		Filter:      key.NewBinding(key.WithKeys("F"), key.WithHelp("F", "filter")),
 		Project:     key.NewBinding(key.WithKeys("P"), key.WithHelp("P", "project (shortcut)")),
 		Slice:       key.NewBinding(key.WithKeys("]"), key.WithHelp("]", "next slice")),
 		SliceBack:   key.NewBinding(key.WithKeys("["), key.WithHelp("[", "previous slice")),
-		Search:      key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "search inbox")),
+		Search:      key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "search")),
 		ClearSearch: key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "clear search")),
 		Open:        key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "open in Linear")),
 		Update:      key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "upgrade")),
