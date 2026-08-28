@@ -509,7 +509,7 @@ func TestSearchWithNoMatchesSaysSo(t *testing.T) {
 	if !strings.Contains(panel, "esc clear search") {
 		t.Fatalf("the panel does not offer the key that puts the rows back:\n%s", panel)
 	}
-	if strings.Contains(panel, "the inbox is empty") {
+	if strings.Contains(panel, "nothing is on you") {
 		t.Fatalf("a filtered list claims the goal state:\n%s", panel)
 	}
 	if view := m.View(); !strings.Contains(view, "(esc clears the search)") {
@@ -519,7 +519,7 @@ func TestSearchWithNoMatchesSaysSo(t *testing.T) {
 
 // Done-when: an inbox with nothing in it does not open a prompt. There are
 // no rows to narrow, the title carries no query while the list is empty,
-// and a box over "the inbox is empty" would take the keyboard to no end.
+// and a box over "nothing is on you" would take the keyboard to no end.
 func TestSearchDoesNotOpenOverAnEmptyInbox(t *testing.T) {
 	m, _, _ := newTestModel(t, 1)
 	m = update(t, m, keyMsg("1"))
@@ -529,7 +529,7 @@ func TestSearchDoesNotOpenOverAnEmptyInbox(t *testing.T) {
 	if m.searching {
 		t.Fatal("/ opened a prompt over an empty inbox")
 	}
-	if view := m.View(); strings.Contains(view, "filter the inbox") {
+	if view := m.View(); strings.Contains(view, "filter the list") {
 		t.Fatalf("the prompt is on screen over an empty inbox:\n%s", view)
 	}
 }
@@ -575,7 +575,7 @@ func TestSearchIsOnTheKeyLineAndTakesIt(t *testing.T) {
 	if strings.Contains(panel, "/ search") || strings.Contains(panel, "p promote") {
 		t.Fatalf("the key line is still there with the prompt open:\n%s", panel)
 	}
-	if !strings.Contains(panel, "filter the inbox") {
+	if !strings.Contains(panel, "filter the list") {
 		t.Fatalf("the prompt is not on the panel:\n%s", panel)
 	}
 	if !strings.Contains(m.View(), "enter accept · esc cancel") {
@@ -607,7 +607,7 @@ func TestTheOpenPromptBuysItsOwnLine(t *testing.T) {
 	m = fillBoard(t, m, 15)
 
 	view := update(t, m, keyMsg("/")).View()
-	if !strings.Contains(view, "filter the inbox") {
+	if !strings.Contains(view, "filter the list") {
 		t.Fatalf("the prompt is not on the panel:\n%s", view)
 	}
 	// LERP-9 is the last row in this list's order: one line short and the

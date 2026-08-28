@@ -225,14 +225,7 @@ ticket, and a run's log is something you open to read that run — the work
 row already says whether the run is alive without it. That is a display
 default, not a rule about process.
 
-Above them sits a summary strip: each status the pass already read with
-its ticket count, in board order. It is chrome, in the same class as the
-status bar — a passive line over the list that was already fetched, not a
-panel: it has no focus, no keys and no selection, and it drops off a window
-that has no row to spare for it. Wanting it to answer to a key is a new
-conversation, not an extension of this one.
-
-1. **Inbox** — what waits on a human: unclaimed tickets, and the
+1. **On you** — what waits on a human: unclaimed tickets, and the
    operator's own claimed tickets, sitting in a status no queue serves —
    reviews to read, questions agents have raised, failed runs to retriage.
    It reads as a table, one row per ticket, and the Linear status is a

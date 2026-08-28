@@ -2571,107 +2571,135 @@ const (
 	minWidth = 24
 )
 
-// statusCount holds the ticket count for one workflow status on the summary strip.
-type statusCount struct {
+// sliceTab holds one entry in the status tab row.
+type sliceTab struct {
 	status string
 	n      int
 }
 
-// statusCounts builds the per-status ticket counts for the summary strip
-// from what the model already holds: every queue's status (even when empty,
-// so the strip does not reshuffle as a queue drains), plus every status
-// present in attention, deduplicated by ticket ID across both sources and
-// ordered by Linear board position.
-func (m *model) statusCounts() []statusCount {
-	if len(m.queues) == 0 && len(m.attention) == 0 {
+// sliceTabs builds the list of status tabs: "all" first with the count of
+// non-folded items, followed by each status present in attention in Linear
+// board order, each with its base count (unaffected by the filter slot and
+// search).
+func (m *model) sliceTabs() []sliceTab {
+	if len(m.attention) == 0 {
 		return nil
 	}
-	counts := make(map[string]int)
-	var statuses []string
-	seenStatus := make(map[string]bool)
-
-	// Queues first: register all queue statuses so even empty queues appear (at 0).
-	for _, q := range m.queues {
-		if q.Status != "" && !seenStatus[q.Status] {
-			seenStatus[q.Status] = true
-			statuses = append(statuses, q.Status)
-		}
+	statuses := m.sliceStatuses()
+	tabs := make([]sliceTab, 1+len(statuses))
+	tabs[0] = sliceTab{
+		status: "",
+		n:      len(filterAttention(m.attention, filterFieldNone, "", "", "")),
 	}
-
-	seenTickets := make(map[string]bool)
-
-	for _, q := range m.queues {
-		for _, tk := range q.Tickets {
-			id := tk.ID
-			if id == "" {
-				id = tk.Identifier
-			}
-			if id != "" {
-				if seenTickets[id] {
-					continue
-				}
-				seenTickets[id] = true
-			}
-			if q.Status != "" {
-				counts[q.Status]++
-			}
-		}
-	}
-
-	for _, it := range m.attention {
-		if it.Status == "" {
-			continue
-		}
-		if !seenStatus[it.Status] {
-			seenStatus[it.Status] = true
-			statuses = append(statuses, it.Status)
-		}
-		id := it.TicketID
-		if id == "" {
-			id = it.Ticket
-		}
-		if id != "" {
-			if seenTickets[id] {
-				continue
-			}
-			seenTickets[id] = true
-		}
-		counts[it.Status]++
-	}
-
-	slices.SortFunc(statuses, func(a, b string) int {
-		return compareStatusPosition(a, b, m.statusIndex)
-	})
-
-	out := make([]statusCount, len(statuses))
 	for i, s := range statuses {
-		out[i] = statusCount{status: s, n: counts[s]}
+		tabs[1+i] = sliceTab{
+			status: s,
+			n:      len(filterAttention(m.attention, filterFieldNone, "", "", s)),
+		}
 	}
-	return out
+	return tabs
 }
 
-// stripLine renders the summary strip: "Name n" segments joined by " · ",
-// styled faint, and truncated to the window width.
-func (m *model) stripLine(width int) string {
-	counts := m.statusCounts()
-	if len(counts) == 0 {
+// sliceTabLine renders the pinned status tab row: "all n · Status 2 · …".
+// The active tab is styled with styleFocus, inactive tabs with styleFaint.
+// On the active tab only, the count becomes n/m (len(m.shown)/len(m.sliced()))
+// when a filter or search is active. On narrow widths, the active tab is kept
+// visible by windowing tabs around it and marking dropped ends with "…".
+func (m *model) sliceTabLine(width int) string {
+	tabs := m.sliceTabs()
+	if len(tabs) == 0 || width <= 0 {
 		return ""
 	}
-	parts := make([]string, len(counts))
-	for i, sc := range counts {
-		parts[i] = fmt.Sprintf("%s %d", sc.status, sc.n)
-	}
-	line := strings.Join(parts, " · ")
-	return ansi.Truncate(styleFaint.Render(line), max(0, width), "…")
-}
 
-// showStrip reports whether the summary strip is rendered and given a row
-// in geometry: only when there are counts to display, the window is wide
-// enough to spare a line, and the height is strictly above minHeight.
-func (m *model) showStrip() bool {
-	return len(m.statusCounts()) > 0 &&
-		m.width >= narrowWidth &&
-		m.height > m.minHeight(m.mainOpen())
+	activeIdx := 0
+	if m.slice != "" {
+		statuses := m.sliceStatuses()
+		if i := slices.Index(statuses, m.slice); i >= 0 {
+			activeIdx = 1 + i
+		}
+	}
+
+	styled := make([]string, len(tabs))
+	tabWidths := make([]int, len(tabs))
+	for i, t := range tabs {
+		name := t.status
+		if name == "" {
+			name = "all"
+		}
+		if i == activeIdx {
+			count := fmt.Sprintf("%d", t.n)
+			if m.filterField != filterFieldNone || m.search != "" {
+				count = fmt.Sprintf("%d/%d", len(m.shown), len(m.sliced()))
+			}
+			label := fmt.Sprintf("%s %s", name, count)
+			styled[i] = styleFocus.Render(label)
+			tabWidths[i] = lipgloss.Width(styled[i])
+		} else {
+			label := fmt.Sprintf("%s %d", name, t.n)
+			styled[i] = styleFaint.Render(label)
+			tabWidths[i] = lipgloss.Width(styled[i])
+		}
+	}
+
+	sep := styleFaint.Render(" · ")
+	ellipsis := styleFaint.Render("…")
+	sepW := 3
+	ellipsisW := 1
+
+	windowWidth := func(l, r int) int {
+		nParts := r - l + 1
+		w := 0
+		for i := l; i <= r; i++ {
+			w += tabWidths[i]
+		}
+		if l > 0 {
+			nParts++
+			w += ellipsisW
+		}
+		if r < len(tabs)-1 {
+			nParts++
+			w += ellipsisW
+		}
+		if nParts > 1 {
+			w += sepW * (nParts - 1)
+		}
+		return w
+	}
+
+	l, r := 0, len(tabs)-1
+	if windowWidth(0, len(tabs)-1) > width {
+		l, r = activeIdx, activeIdx
+		for {
+			expanded := false
+			if r+1 < len(tabs) && windowWidth(l, r+1) <= width {
+				r++
+				expanded = true
+			}
+			if l-1 >= 0 && windowWidth(l-1, r) <= width {
+				l--
+				expanded = true
+			}
+			if !expanded {
+				break
+			}
+		}
+	}
+
+	var parts []string
+	if l > 0 {
+		parts = append(parts, ellipsis)
+	}
+	for i := l; i <= r; i++ {
+		parts = append(parts, styled[i])
+	}
+	if r < len(tabs)-1 {
+		parts = append(parts, ellipsis)
+	}
+	line := strings.Join(parts, sep)
+	if lipgloss.Width(line) > width {
+		line = ansi.Truncate(line, max(0, width), "…")
+	}
+	return line
 }
 
 // minHeight is the shortest window View will draw: both panels' floors and
@@ -2688,11 +2716,7 @@ func (m *model) minHeight(withMain bool) int {
 }
 
 func (m *model) geometry() geometry {
-	stripRows := 0
-	if m.showStrip() {
-		stripRows = 1
-	}
-	g := geometry{bodyH: max(4, m.height-1-stripRows)}
+	g := geometry{bodyH: max(4, m.height-1)}
 	g.wide = m.width >= narrowWidth
 	// Widths first: the row builders lay their rows out to the panel width,
 	// and work's want is counted from those very rows.
@@ -2715,9 +2739,12 @@ func (m *model) geometry() geometry {
 	// counts can never drift from what lands on screen.
 	workRows, _ := m.workListRows(padList.inner(g.sideW))
 	attnRows, _ := m.attentionRows(padList.inner(g.sideW))
-	// The pinned header is a line the panel draws and so a line it asks
-	// for, the same as any row.
+	// The pinned header and the pinned tab row are lines the panel draws
+	// and so lines it asks for, the same as any row.
 	attnLines := len(attnRows)
+	if m.sliceTabLine(padList.inner(g.sideW)) != "" {
+		attnLines++
+	}
 	if m.attentionHeader(padList.inner(g.sideW)) != "" {
 		attnLines++
 	}
@@ -2915,12 +2942,6 @@ func (m model) View() string {
 		}
 	}
 	body = m.composeModal(body)
-	// The strip joins after the modal composite for the same reason the
-	// status bar does: chrome frames the board, and a modal floats over
-	// the board, not the frame.
-	if m.showStrip() {
-		body = lipgloss.JoinVertical(lipgloss.Left, m.stripLine(m.width), body)
-	}
 	return body + "\n" + m.statusBar()
 }
 
@@ -3305,7 +3326,7 @@ func (m *model) attentionEmptyLine() string {
 	case attentionLoading:
 		return styleFaint.Render("reading the board…")
 	case attentionEmpty:
-		return styleFaint.Render("the inbox is empty")
+		return styleFaint.Render("nothing is on you")
 	case attentionFiltered:
 		return styleFaint.Render(m.emptyNote())
 	default:
@@ -3573,59 +3594,55 @@ func (m model) attentionPanel(w, h int) string {
 	// surface the keys are talking to, which is what the border says.
 	keys := focused && !m.mainFocused()
 	extra := ""
-	// The title counts what this panel can show under the current slice, not
-	// what the pass found: the fraction under a filter is over that same
-	// base, so the title and the rows beneath it always agree. It differs
-	// from the status bar's number on purpose while a slice is active —
-	// the bar answers "should I look up", the title "what is in this panel".
-	base := m.sliced()
 	if len(m.attention) > 0 {
-		// The sort mode, the filter slot and the slice live in the title
-		// because they are the only things about this panel a key changed,
-		// and a table sorted or sliced differently than the operator
-		// remembers is worse than one that says how it is. They are not
-		// gated on the count below: a board worked down to nothing but
-		// backlog has no count to show and still answers to `s`, and a sort
-		// that changed without the title moving is a silent one.
-		if len(base) > 0 {
-			count := fmt.Sprintf(" ● %d", len(base))
-			if m.filterField != filterFieldNone || m.search != "" {
-				count = fmt.Sprintf(" ● %d/%d", len(m.shown), len(base))
-			}
-			extra = styleAttention.Render(count)
-		}
-		// The query sits next to the fraction, ahead of the two controls
-		// that were already here: they are the one fact that explains the
-		// other, and a title truncated by a narrow panel loses them last.
+		// The query sits ahead of the sort and filter controls: it is the
+		// one fact that explains a narrowed list, and a title truncated by
+		// a narrow panel loses it last.
 		if m.search != "" {
 			extra += styleFocus.Render(" · /" + m.search)
 		}
-		extra += styleFaint.Render(" · by " + m.sortMode.String())
+		if m.sortMode != defaultSort {
+			extra += styleFaint.Render(" · by " + m.sortMode.String())
+		}
 		if m.filterField != filterFieldNone {
 			extra += styleFaint.Render(" · " + m.filterField.String() + " " + m.filterDisplayValue())
-		}
-		// The active status slice: the rows below are not the panel's
-		// default, and the title is where this panel says so.
-		if m.slice != "" {
-			extra += styleFaint.Render(" · " + m.slice)
 		}
 	}
 	inner := padList.inner(w)
 	rows, cur := m.attentionRows(inner)
-	// The header is pinned rather than listed: windowing a header is how a
-	// header scrolls away. It costs the rows a line, and — by the same rule
-	// panelBody holds the key hint to — only when what is left can still
-	// show the rows: either two lines remain, the least windowRows needs to
-	// keep the selection visible, or the rows all fit in one line anyway.
-	// The rule reads the height and not the focus, so tabbing between
-	// panels can never be what makes a column header appear.
+	// The pinned tab row and column header are pinned rather than listed:
+	// windowing them is how they would scroll away. Both obey the same ih
+	// discipline: they cost lines only when what is left can still show the
+	// rows. Both must fit or the tabs go first — the header names the columns
+	// the rows are drawn in, so it is the one that earns the last line.
 	ih := h - 2
+	tabs := ""
 	header := ""
-	if ih >= 3 || len(rows) <= ih-1 {
-		if header = m.attentionHeader(inner); header != "" {
+
+	rawTabs := m.sliceTabLine(inner)
+	rawHeader := m.attentionHeader(inner)
+
+	if rawTabs != "" && rawHeader != "" {
+		if ih >= 4 || len(rows) <= ih-2 {
+			tabs = rawTabs
+			header = rawHeader
+			ih -= 2
+		} else if ih >= 3 || len(rows) <= ih-1 {
+			header = rawHeader
+			ih--
+		}
+	} else if rawHeader != "" {
+		if ih >= 3 || len(rows) <= ih-1 {
+			header = rawHeader
+			ih--
+		}
+	} else if rawTabs != "" {
+		if ih >= 3 || len(rows) <= ih-1 {
+			tabs = rawTabs
 			ih--
 		}
 	}
+
 	// The wordmark, appended after whatever the panel already drew rather
 	// than replacing it: inboxEmpty's rows are just the one empty-state line
 	// (attentionEmptyLine, plus backlogSummary when folded). That line stays
@@ -3645,7 +3662,10 @@ func (m model) attentionPanel(w, h int) string {
 	if header != "" {
 		rows = append([]string{header}, rows...)
 	}
-	return panelBox(panelTitle(1, "inbox", keys, extra), keys, w, h, rows, padList, nil)
+	if tabs != "" {
+		rows = append([]string{tabs}, rows...)
+	}
+	return panelBox(panelTitle(1, "on you", keys, extra), keys, w, h, rows, padList, nil)
 }
 
 // liveLanes counts every lane hosting a live run, including the ones above
@@ -4111,7 +4131,7 @@ func (m model) updateLegend() []string {
 // it, so the legend is read by matching shapes and not by trusting a
 // description of one.
 func inboxLegend() []string {
-	rows := []string{"", styleFaint.Render("inbox marks")}
+	rows := []string{"", styleFaint.Render("row marks")}
 	for _, l := range []struct{ glyph, says string }{
 		{styleTicket.Render("↓n"), "routing this frees n other tickets"},
 		{styleAttention.Render("⊘"), "something unfinished still blocks it"},
@@ -4216,7 +4236,7 @@ func (m model) mainTitle() string {
 		if it := m.selectedAttention(); it != nil {
 			return it.Ticket
 		}
-		return "inbox"
+		return "on you"
 	}
 	r := m.selectedWork()
 	switch {
@@ -4258,7 +4278,7 @@ func (m model) attentionDetail(width int) (string, []int, int) {
 	case attentionLoading:
 		return styleFaint.Render("reading the board…"), nil, 0
 	case attentionEmpty:
-		text := styleFaint.Render("the inbox is empty — that is the goal state") + "\n" +
+		text := styleFaint.Render("nothing is on you — that is the goal state") + "\n" +
 			styleFaint.Render("(shows "+loop.AttentionDefinition+")")
 		return text, nil, 0
 	case attentionFiltered:
@@ -4616,7 +4636,7 @@ func (m model) statusBar() string {
 	// "things that should make you look up" — and it does not move when a
 	// slice expands into the panel.
 	if n := m.blockedOnYou(); n > 0 {
-		left += "  " + styleAttention.Render(fmt.Sprintf("● %d in the inbox", n))
+		left += "  " + styleAttention.Render(fmt.Sprintf("● %d on you", n))
 	}
 	globals := "? help · q quit"
 	hint := globals

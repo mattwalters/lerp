@@ -6,7 +6,7 @@ install: brew install mattwalters/tap/lerp
 
 {{< cast webm="casts/demo.webm" mp4="casts/demo.mp4"
          poster="posters/demo.png"
-         title="The lerp board: an inbox of tickets waiting on a human, a work panel of queues and three lanes running coding agents beneath it, and a main pane that opens beside them to read a ticket or tail a lane's log"
+         title="The lerp board: tickets waiting on a human in the On you panel, a work panel of queues and three lanes running coding agents beneath it, and a main pane that opens beside them to read a ticket or tail a lane's log"
          autoplay=true >}}
 
 <p class="epigraph"><a href="https://en.wikipedia.org/wiki/Linear_interpolation" class="headword">lerp</a> <span class="pron">/lərp/</span> <em>v.</em> To interpolate linearly; to move smoothly between two points.</p>

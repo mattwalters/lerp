@@ -128,8 +128,8 @@ func TestFilterByStatus(t *testing.T) {
 	}
 
 	panel := m.attentionPanel(96, 14)
-	if !strings.Contains(panel, "● 1") || !strings.Contains(panel, "Needs Attention") {
-		t.Fatalf("title missing status slice indicator:\n%s", panel)
+	if !strings.Contains(panel, "Needs Attention 1") {
+		t.Fatalf("panel missing status slice tab indicator:\n%s", panel)
 	}
 
 	// The Backlog rows the all-slice folds away are still on the status list

@@ -6,14 +6,14 @@ weight: 70
 
 # Finding tickets
 
-Four controls on the [Inbox panel](reading-the-board.md#the-inbox-panel)
+Four controls on the [On you panel](reading-the-board.md#the-on-you-panel)
 decide what it shows and in what order: `F` filters by field and value,
 `s` sorts, `/` searches, and `]`/`[` slice to a status. All four are
 session-only — no saved views, no filter syntax — and none of them changes
 which tickets are fetched.
 
 {{< cast webm="casts/finding.webm" mp4="casts/finding.mp4"
-         title="Narrowing the inbox: sorting, filtering by project, searching, and cycling status slices"
+         title="Narrowing the list: sorting, filtering by project, searching, and cycling status slices"
          keys="[F] · [P] · [s] · [/] · []] · [esc]" >}}
 
 ## Order
@@ -45,7 +45,7 @@ once. Project and priority compose on top of whichever slice is showing.
 
 ## Search
 
-`/` opens a prompt and narrows the panel as you type — a case-insensitive
+`/` opens a prompt (`filter the list`) and narrows the panel as you type — a case-insensitive
 substring over the identifier, title, status and project already on the
 row, with matches marked.
 
@@ -58,17 +58,19 @@ is open it has the keyboard — a `p` or a `q` typed into it is text — and
 ## Status slices
 
 `]` and `[` cycle the panel through Linear status slices in board order —
-all, then each status present, and back. Slices are display over the
-fetched list, so only unstarted and active statuses present appear.
+all, then each status present, and back. The active tab is highlighted in
+the slice tab row. Slices are display over the fetched list, so only
+unstarted and active statuses present appear.
 
 `F` → status is the same control with the options on screen: every status
 with its row count, so picking one is a choice rather than a guess at
 where the cycle stops.
 
-## What the title says
+## What the title and tabs say
 
-The panel title carries all of it — `● 4/17 · /goreleaser · by status ·
-Backlog` — so a narrowed list is never mistaken for an empty board. Its
-count is what this panel can show under the current slice; the status
-bar's `● n in the inbox` is the other question — what is blocked on you —
-and does not move when a slice is active.
+The slice tab row and panel title carry all of it: the active tab shows a
+fraction (`4/17`, for example) when narrowed by search or project filter,
+and the title shows any active search (`· /goreleaser`), non-default sort
+(`· by priority`), or project filter. The status bar's `● n on you` is the
+other question — what is blocked on you — and does not move when a slice
+is active.
