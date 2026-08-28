@@ -1,0 +1,19 @@
+{{- /* A call-to-action link to a site page, styled by .cta. Takes the
+     page path as its one argument and the label as inner content:
+
+       {{< cta "/docs/quickstart" >}}$ lerp init →{{< /cta >}}
+
+     The href gets the same treatment render-link.html gives .md links:
+     on the unversioned root the manual is pruned before deploy, so a
+     link to a manual page reaches into /latest/ where it is actually
+     served, and relativeURLs then makes the result page-relative. */ -}}
+{{- $target := .Get 0 -}}
+{{- $page := site.GetPage $target -}}
+{{- if not $page -}}
+  {{- errorf "cta: %s resolves to no page — %q" .Position $target -}}
+{{- end -}}
+{{- $href := $page.RelPermalink -}}
+{{- if and (eq site.Params.version "") (and (not $page.IsHome) (not $page.Params.splash)) -}}
+  {{- $href = printf "/latest%s" $page.RelPermalink -}}
+{{- end -}}
+<p class="cta"><a href="{{ $href }}">{{ .Inner }}</a></p>

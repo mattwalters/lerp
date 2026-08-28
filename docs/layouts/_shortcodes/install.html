@@ -1,0 +1,43 @@
+{{- /* The install box: the one command, written once in the page's
+     `install` front matter, with a copy button where the clipboard API
+     exists. The button stays hidden otherwise, so nothing dangles on a
+     browser that cannot serve it. */ -}}
+{{- $cmd := .Page.Params.install -}}
+{{- if not $cmd -}}
+  {{- errorf "install shortcode: page %q has no install param" .Page.Path -}}
+{{- end -}}
+<div class="hero-install">
+  <pre><code>{{ $cmd }}</code></pre>
+  <button type="button" class="copy-button" aria-label="Copy install command" hidden>Copy</button>
+</div>
+<script>
+  (function () {
+    if (!navigator.clipboard || typeof navigator.clipboard.writeText !== "function") {
+      return;
+    }
+    var btn = document.querySelector(".hero-install .copy-button");
+    var code = document.querySelector(".hero-install code");
+    if (!btn || !code) {
+      return;
+    }
+    btn.hidden = false;
+    var timer = null;
+    btn.addEventListener("click", function () {
+      var text = code.textContent.trim();
+      navigator.clipboard.writeText(text).then(function () {
+        btn.textContent = "Copied";
+        btn.classList.add("copied");
+        btn.setAttribute("aria-label", "Copied to clipboard");
+        if (timer) {
+          clearTimeout(timer);
+        }
+        timer = setTimeout(function () {
+          btn.textContent = "Copy";
+          btn.classList.remove("copied");
+          btn.setAttribute("aria-label", "Copy install command");
+          timer = null;
+        }, 2000);
+      }).catch(function () {});
+    });
+  })();
+</script>

@@ -1,69 +1,129 @@
 ---
 title: lerp
-tagline: A small CLI that runs coding agents over your Linear board.
+tagline: A TUI that runs coding agents over your Linear board.
 install: brew install mattwalters/tap/lerp
 ---
-
-You put tickets on the board; lerp moves them across it.
 
 {{< cast webm="casts/demo.webm" mp4="casts/demo.mp4"
          poster="posters/demo.png"
          title="The lerp board: an inbox of tickets waiting on a human, a work panel of queues and three lanes running coding agents beneath it, and a main pane that opens beside them to read a ticket or tail a lane's log"
          autoplay=true >}}
 
-One binary and one screen. Lerp opens on the Linear board you already have,
-fills a few lanes with coding agents, and answers the two questions an
-operator actually has: what is waiting on me, and what is the machine doing
-right now.
+<p class="epigraph"><a href="https://en.wikipedia.org/wiki/Linear_interpolation" class="headword">lerp</a> <span class="pron">/lərp/</span> <em>v.</em> To interpolate linearly; to move smoothly between two points.</p>
 
-## Where it runs
+Lerp answers the two questions an operator actually has.
 
-On this machine, and nowhere else. No server, no daemon, no webhook, no
-account with anybody but Linear. Lerp authenticates as you and runs agents
-as ordinary local processes — close the laptop and the work stops; open
-lerp again and the loop picks the same board back up.
+1. What's blocked on me?
+2. Are the agents still working?
 
-## What you need
+The model is small. Any Linear status can be a queue, and a queue's
+consumer is a coding agent pointed at the ticket. The agent runs to
+exit, and a clean exit moves the ticket to the next status. The ticket
+is the message, never consumed, only moved. Chain a few queues and your
+board is the pipeline.
 
-Two things. A Linear workspace, because the board is the whole model — if
-you don't use Linear, lerp is not your tool. And a coding-agent CLI on this
-machine: Claude Code, Codex, and Antigravity have adapters out of the box,
-and anything else works if it takes a prompt and a working directory and
-exits non-zero when it fails.
+<figure class="pipeline">
+<svg viewBox="0 0 776 304" role="img" aria-label="Your Linear board with lerp overlaid. Tickets flow from Backlog into Planning, where a claude consumer runs and lerp moves the ticket on to Plan Review. You promote it to In Progress, where an antigravity consumer runs and lerp moves it to In Review. You take it to Done. The consumers and the moves lerp makes are highlighted; every other move is yours.">
+  <defs>
+    <marker id="arr" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L8 4 L0 8 z" class="pl-arrowhead"/>
+    </marker>
+    <marker id="arrA" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L8 4 L0 8 z" class="pl-arrowhead-lerp"/>
+    </marker>
+  </defs>
+  <g class="pl-stub">
+    <rect class="pl-col" x="1" y="6" width="120" height="96" rx="8"/>
+    <circle class="pl-dot-backlog" cx="15" cy="24" r="4"/>
+    <text class="pl-name" x="25" y="28.5">Backlog</text>
+    <rect class="pl-card" x="9" y="38" width="104" height="24" rx="5"/>
+    <rect class="pl-bar" x="18" y="48" width="48" height="4" rx="2"/>
+    <rect class="pl-card" x="9" y="68" width="104" height="24" rx="5"/>
+    <rect class="pl-bar" x="18" y="78" width="62" height="4" rx="2"/>
+  </g>
+  <g class="pl-stub">
+    <rect class="pl-col" x="655" y="6" width="120" height="96" rx="8"/>
+    <circle class="pl-dot-done" cx="669" cy="24" r="4.5"/>
+    <text class="pl-name" x="679" y="28.5">Done</text>
+    <rect class="pl-card" x="663" y="38" width="104" height="24" rx="5"/>
+    <rect class="pl-bar" x="672" y="48" width="56" height="4" rx="2"/>
+    <rect class="pl-card" x="663" y="68" width="104" height="24" rx="5"/>
+    <rect class="pl-bar" x="672" y="78" width="42" height="4" rx="2"/>
+  </g>
+  <path class="pl-move-you" d="M 61 106 C 61 128, 91 122, 91 144" fill="none" marker-end="url(#arr)"/>
+  <text class="pl-move-label-you" x="106" y="130">you</text>
+  <path class="pl-move-you" d="M 685 146 C 685 124, 715 130, 715 108" fill="none" marker-end="url(#arr)"/>
+  <text class="pl-move-label-you" x="670" y="130" text-anchor="end">you</text>
+  <rect class="pl-col" x="12" y="150" width="158" height="110" rx="8"/>
+  <circle class="pl-dot" cx="27" cy="168" r="4.5"/>
+  <text class="pl-name" x="38" y="172.5">Planning</text>
+  <rect class="pl-card pl-card-active" x="20" y="182" width="142" height="30" rx="5"/>
+  <rect class="pl-bar" x="30" y="195" width="76" height="4.5" rx="2.25"/>
+  <rect class="pl-card" x="20" y="218" width="142" height="30" rx="5"/>
+  <rect class="pl-bar" x="30" y="231" width="52" height="4.5" rx="2.25"/>
+  <line class="pl-tether" x1="91" y1="260" x2="91" y2="274"/>
+  <rect class="pl-chip" x="51" y="274" width="80" height="24" rx="12"/>
+  <text class="pl-chip-text" x="91" y="289.5">claude</text>
+  <line class="pl-move-lerp" x1="174" y1="205" x2="204" y2="205" marker-end="url(#arrA)"/>
+  <text class="pl-move-label-lerp" x="189" y="196">lerp</text>
+  <rect class="pl-col" x="210" y="150" width="158" height="110" rx="8"/>
+  <circle class="pl-dot" cx="225" cy="168" r="4.5"/>
+  <text class="pl-name" x="236" y="172.5">Plan Review</text>
+  <rect class="pl-card" x="218" y="182" width="142" height="30" rx="5"/>
+  <rect class="pl-bar" x="228" y="195" width="84" height="4.5" rx="2.25"/>
+  <rect class="pl-card" x="218" y="218" width="142" height="30" rx="5"/>
+  <rect class="pl-bar" x="228" y="231" width="48" height="4.5" rx="2.25"/>
+  <line class="pl-move-you" x1="372" y1="205" x2="402" y2="205" marker-end="url(#arr)"/>
+  <text class="pl-move-label-you" x="387" y="196">you</text>
+  <rect class="pl-col" x="408" y="150" width="158" height="110" rx="8"/>
+  <circle class="pl-dot" cx="423" cy="168" r="4.5"/>
+  <text class="pl-name" x="434" y="172.5">In Progress</text>
+  <rect class="pl-card pl-card-active" x="416" y="182" width="142" height="30" rx="5"/>
+  <rect class="pl-bar" x="426" y="195" width="68" height="4.5" rx="2.25"/>
+  <rect class="pl-card" x="416" y="218" width="142" height="30" rx="5"/>
+  <rect class="pl-bar" x="426" y="231" width="82" height="4.5" rx="2.25"/>
+  <line class="pl-tether" x1="487" y1="260" x2="487" y2="274"/>
+  <rect class="pl-chip" x="439" y="274" width="96" height="24" rx="12"/>
+  <text class="pl-chip-text" x="487" y="289.5">antigravity</text>
+  <line class="pl-move-lerp" x1="570" y1="205" x2="600" y2="205" marker-end="url(#arrA)"/>
+  <text class="pl-move-label-lerp" x="585" y="196">lerp</text>
+  <rect class="pl-col" x="606" y="150" width="158" height="110" rx="8"/>
+  <circle class="pl-dot" cx="621" cy="168" r="4.5"/>
+  <text class="pl-name" x="632" y="172.5">In Review</text>
+  <rect class="pl-card" x="614" y="182" width="142" height="30" rx="5"/>
+  <rect class="pl-bar" x="624" y="195" width="60" height="4.5" rx="2.25"/>
+  <rect class="pl-card" x="614" y="218" width="142" height="30" rx="5"/>
+  <rect class="pl-bar" x="624" y="231" width="44" height="4.5" rx="2.25"/>
+</svg>
+</figure>
 
-## The mental model
+Lerp is a reconciler, in the Kubernetes sense. On every pass it compares
+the board with the agent processes on your machine, starts what is
+missing, reaps what has finished, and adopts anything a previous lerp
+left running.
 
-**Linear is the database**: all durable state — what work exists, what stage
-it is in, who has claimed it, what was decided — lives in Linear, and lerp
-keeps no store of its own. **The board is the workflow**: a queue is a Linear
-status with a prompt, a runner, and a status to move to on success. **Lerp is
-a reconciler**: desired state is the board, actual state is the agent
-processes running on this machine, and the loop starts, adopts, or reaps
-agents until the two match.
+The config for the board above is one file, checked into the repo.
 
-## Where next
+![lerp.toml for the board above. Two runners, claude and antigravity; a plan queue on Planning running claude into Plan Review; an implement queue on In Progress running antigravity into In Review; git worktree provision and dispose commands, with lerp setting LERP_WORKSPACE per lane.](config.svg)
 
-**Still deciding?** [Why lerp](why.md) — what it deliberately is not, and
-how that differs from the other ways to put agents on a backlog.
+Everything runs on your machine. There is no server and no daemon, and
+the only account involved is your Linear account. **Linear is the
+database.** Every plan, decision, and status change lands there, and
+lerp keeps nothing of its own but ephemeral local logs.
 
-**Ready to try it?** [Quickstart](docs/quickstart.md) — `lerp init`, a
-first run, and a first promoted ticket, following only the manual.
+Lerp works with [Linear](https://linear.app) and nothing else. The agent
+side is pluggable.
 
-**Adopting it?** [The manual](docs/_index.md) — the board, the interface,
-and the reference, versioned by release.
+1. Claude Code
+2. Codex
+3. Antigravity
 
-And beside the manual sits [SCOPE.md](SCOPE.md): the written list of things
-lerp will refuse to become, kept in the repository so every change is
-checked against it.
+## Install
 
----
+{{< install >}}
 
-```
-brew install mattwalters/tap/lerp
-```
+Check out the [docs](docs/install.md) for other install methods.
 
-<sub>*lerp* (v.) — to interpolate linearly; to move smoothly between two
-points.</sub>
+The thinking behind it is in [Why lerp](why.md).
 
-This page isn't versioned — the manual is. Open Docs and the picker in its
-header moves between releases.
+{{< cta "/docs/quickstart" >}}$ lerp init →{{< /cta >}}

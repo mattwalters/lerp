@@ -49,4 +49,5 @@
   {{- with $u.RawQuery }}{{ $href = printf "%s?%s" $href . }}{{ end -}}
   {{- with $u.Fragment }}{{ $href = printf "%s#%s" $href . }}{{ end -}}
 {{- end -}}
-<a href="{{ $href }}"{{ with .Title }} title="{{ . }}"{{ end }}>{{ .Text | safeHTML }}</a>
+<a href="{{ $href }}"{{ with .Title }} title="{{ . }}"{{ end }}>{{ .Text | safeHTML }}</a>{{- /* The template's own trailing newline would render as a space
+  between the link and whatever punctuation follows it. */ -}}
