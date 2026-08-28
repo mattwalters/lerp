@@ -7,7 +7,7 @@ weight: 80
 # Promoting
 
 Routing is done by placing a ticket, and promoting is that act from the
-board: select a row in the [Inbox](reading-the-board.md#the-inbox-panel) and
+board: select a row in the [Inbox](reading-the-board.md#the-inbox-panel),
 press `p`, pick a target from the configured queue statuses or a pipeline
 exit, and lerp moves it there.
 
@@ -18,40 +18,41 @@ exit, and lerp moves it there.
 ## What promoting is for
 
 A run that finishes in a status no queue serves has come to rest at [a
-gate](the-board.md#where-a-run-comes-to-rest), and the stock pipeline has
-two: "Plan Review", where you read the plan, and "In Review", where you merge
-the pull request. Promoting is how a ticket leaves one. So is moving it in
-Linear; either way the next pass carries it on.
+gate](the-board.md#where-a-run-comes-to-rest). The stock pipeline has two:
+"Plan Review", where you read the plan, and "In Review", where you merge
+the pull request. Promoting is how a ticket leaves one — so is moving it
+in Linear; either way the next pass carries it on.
 
-Which is the whole of the routing decision, and it is a human's: lerp never
-invents work items of its own, and it never promotes a ticket for you.
+That is the whole routing decision, and it is a human's: lerp never
+invents work items and never promotes a ticket for you.
 
 ## What it writes
 
 The move and nothing else. That MoveIssue and
 [force-start](starting-past-the-limit.md)'s claim are the only writes any
-view makes; everything else about a ticket still happens in Linear, and `o`
+view makes; everything else about a ticket happens in Linear, and `o`
 opens the selected ticket there.
 
-`p` drops out of the key line where there is no status to promote into. Inside
-the picker, `↑`/`↓` pick a target, `enter` takes it, and `esc` — or `q` — backs
-out without writing anything.
+`p` drops out of the key line where there is no status to promote into.
+Inside the picker, `↑`/`↓` pick a target, `enter` takes it, and `esc` — or
+`q` — backs out without writing anything.
 
 ## Several at once
 
-Press `v` on a row to start a visual-mode range, the way lazygit does; the
-movement keys extend it. `esc` drops it, and so does sorting (`s`), scoping
-to a project (`P`), slicing to a status (`]`/`[`) or searching (`/`) — anything
-that reorders or narrows the rows the range is drawn over. `p` opens the
-same picker once, for one target — confirm, and every selected ticket goes
-through the promote above, one at a time. One failing (a race with another
-lerp claiming it, say) never stops the rest: the note says how many of the
-batch made it, and the row that did not carries a `✗` until it promotes
+`v` on a row starts a visual-mode range, the way lazygit does; the
+movement keys extend it. `esc` drops it, and so does anything that
+reorders or narrows the rows the range is drawn over — sorting (`s`),
+scoping to a project (`P`), slicing (`]`/`[`), searching (`/`). `p` opens
+the same picker once, for one target — confirm, and every selected ticket
+goes through the promote above, one at a time. One failing (a race with
+another lerp claiming it, say) never stops the rest: the note says how
+many made it, and the row that did not carries a `✗` until it promotes
 cleanly or leaves the board.
 
 ## After the promote
 
-A promoted ticket is [eligible](the-board.md#the-claim) the moment it is
-sitting in a queue's status unassigned and unblocked, so the next pass picks
-it up on its own. If it does not, [troubleshooting](troubleshooting.md#why-isnt-my-ticket-being-picked-up)
+A promoted ticket is [eligible](the-board.md#the-claim) the moment it sits
+in a queue's status unassigned and unblocked, so the next pass picks it up
+on its own. If it does not,
+[troubleshooting](troubleshooting.md#why-isnt-my-ticket-being-picked-up)
 walks the three conditions.
