@@ -1,7 +1,7 @@
 ---
 title: lerp
 tagline: A small CLI that runs coding agents over your Linear board.
-install: curl -fsSL https://raw.githubusercontent.com/mattwalters/lerp/main/install.sh | sh
+install: brew install mattwalters/tap/lerp
 ---
 
 You put tickets on the board; lerp moves them across it.
@@ -59,7 +59,7 @@ checked against it.
 ---
 
 ```
-curl -fsSL https://raw.githubusercontent.com/mattwalters/lerp/main/install.sh | sh
+brew install mattwalters/tap/lerp
 ```
 
 <sub>*lerp* (v.) — to interpolate linearly; to move smoothly between two
