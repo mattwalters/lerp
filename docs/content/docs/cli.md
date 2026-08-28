@@ -110,6 +110,8 @@ version for a `go install pkg@version` build, or a pseudo-version for a plain
 Only a build with no VCS info at all — `go build -buildvcs=false`, or a
 source archive with no `.git` — reports the literal `dev`.
 
+When the local update cache knows a newer release tag, `lerp version` prints a second line pointing to `brew upgrade lerp`. `lerp version` is read-only and never makes network requests on its own; it reads only what a previous board session cached.
+
 ## Authentication
 
 Every lerp command needs a Linear credential. Lerp resolves credentials in
@@ -138,6 +140,7 @@ tokens to child processes (`provision`, `dispose`, or runners), and drops
 | --- | --- |
 | `LINEAR_API_KEY` | the Linear personal API key. Supported as a fallback for headless servers and CI runners. When set, it takes precedence over the token `lerp login` stores. A personal API key defaults to your full workspace access unless restricted at creation. Lerp drops it from its own environment after reading it, and never passes it to a provision, dispose or runner command. |
 | `LERP_BACKGROUND` | `light` or `dark`, saying which half of the palette to draw. Read once at startup; any other value is an error rather than a shrug. |
+| `LERP_NO_UPDATE_CHECK` | set to any non-empty value, disables the daily anonymous GitHub releases check for newer versions. |
 | `LERP_OPEN` | `desktop` to rewrite ticket URLs to Linear's `linear://` deep-link scheme on `o`, opening directly in Linear's desktop app instead of bouncing through the browser. Unset or any other value keeps the default `https://` behavior. |
 | `NO_COLOR` | set to any value, turns colour off entirely. |
 | `XDG_STATE_HOME` | overrides where local [telemetry](telemetry.md) is written (`$XDG_STATE_HOME/lerp/runs.jsonl`, defaulting to `~/.local/state/lerp/runs.jsonl`). |

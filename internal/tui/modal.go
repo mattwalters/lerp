@@ -5,7 +5,10 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	overlay "github.com/rmhubbert/bubbletea-overlay"
+
+	"github.com/mattwalters/lerp/internal/version"
 )
 
 // modalSize calculates outer dimensions for a modal box holding content of
@@ -52,7 +55,8 @@ func (m model) helpContentSize() (w, h int) {
 }
 
 // modalContent dispatches to the active modal renderer in priority order
-// (helpOn, promoting, filtering, ejection, ejecting), returning the rendered box or "".
+// (helpOn, promoting, filtering, ejection, ejecting, upgradeOn), returning the
+// rendered box or "".
 func (m model) modalContent() string {
 	switch {
 	case m.helpOn:
@@ -71,9 +75,41 @@ func (m model) modalContent() string {
 	case m.ejecting:
 		w, h := m.modalSize(76, 7)
 		return m.ejectConfirm(m.ejectRow, w, h)
+	case m.upgradeOn:
+		w, h := m.modalSize(76, 17)
+		return m.upgradeModal(w, h)
 	default:
 		return ""
 	}
+}
+
+// upgradeModal renders the upgrade instructions modal.
+func (m model) upgradeModal(w, h int) string {
+	width := padMain.inner(w)
+	current := version.Version
+	latest := clean(m.updateNotice.Latest)
+	url := clean(m.updateNotice.URL)
+	if url == "" && latest != "" {
+		url = "https://github.com/mattwalters/lerp/releases/tag/" + latest
+	}
+	rows := []string{
+		fmt.Sprintf("current %s · latest %s", clean(current), latest),
+		"",
+		styleFaint.Render("homebrew"),
+		styleTicket.Render("brew upgrade lerp"),
+		"",
+		styleFaint.Render("go install"),
+		styleTicket.Render(ansi.Wrap("go install github.com/mattwalters/lerp/cmd/lerp@latest", max(8, width), " ")),
+		"",
+		styleFaint.Render("install script"),
+		styleTicket.Render(ansi.Wrap("curl -fsSL https://raw.githubusercontent.com/mattwalters/lerp/main/install.sh | sh", max(8, width), " ")),
+	}
+	if url != "" {
+		rows = append(rows, "", styleFaint.Render("release notes"), styleTicket.Render(ansi.Wrap(url, max(8, width), " ")))
+	}
+	rows = append(rows, "", styleFaint.Render("esc dismisses this panel"))
+	rows = strings.Split(strings.Join(rows, "\n"), "\n")
+	return panelBox(styleTitleFocus.Render("upgrade"), true, w, h, rows, padMain, nil)
 }
 
 // composeModal composites the active modal box over the rendered body,

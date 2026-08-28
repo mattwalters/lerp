@@ -20,6 +20,7 @@ import (
 	"github.com/mattwalters/lerp/internal/browser"
 	"github.com/mattwalters/lerp/internal/linear"
 	"github.com/mattwalters/lerp/internal/loop"
+	updatepkg "github.com/mattwalters/lerp/internal/update"
 )
 
 // Ticker is the loop as the TUI drives it. The TUI is the engine — it owns
@@ -103,6 +104,9 @@ type Options struct {
 	// percentage" case — the same posture a runner that reports no reading
 	// at all already has.
 	Windows map[string]int
+
+	// CheckUpdate optionally checks for a newer version of lerp. Nil means no check.
+	CheckUpdate func(context.Context) updatepkg.Notice
 }
 
 // Validate returns an error naming the first option Run needs and does not
@@ -248,6 +252,7 @@ type (
 	eventMsg   struct{ ev loop.Event }
 	pollMsg    struct{}
 	openErrMsg struct{ err error }
+	updateMsg  struct{ notice updatepkg.Notice }
 	// promotedMsg reports the outcome of a promote action: MoveIssue on every
 	// captured target, run off the render loop like every other write. A
 	// single promote is a batch of one, so there is one message shape.
@@ -551,6 +556,9 @@ type model struct {
 	ejectRow workRow
 	ejection *loop.Ejection
 
+	updateNotice updatepkg.Notice
+	upgradeOn    bool
+
 	vp     viewport.Model
 	tail   tail
 	follow bool
@@ -661,7 +669,17 @@ func newModel(ctx context.Context, o Options) model {
 }
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(m.runTick(), m.waitEvent(), poll())
+	cmds := []tea.Cmd{m.runTick(), m.waitEvent(), poll()}
+	if m.o.CheckUpdate != nil {
+		cmds = append(cmds, m.runCheckUpdate())
+	}
+	return tea.Batch(cmds...)
+}
+
+func (m model) runCheckUpdate() tea.Cmd {
+	return func() tea.Msg {
+		return updateMsg{notice: m.o.CheckUpdate(m.ctx)}
+	}
 }
 
 // runTick runs one reconciliation pass off the render loop. The context is
@@ -707,7 +725,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// so it waits for the window to come back rather than being thrown
 		// away here.
 		if m.screenTooSmall() {
-			m.promoting, m.helpOn, m.ejecting = false, false, false
+			m.promoting, m.helpOn, m.ejecting, m.upgradeOn = false, false, false, false
 		}
 		m.layout()
 		m.refreshMain()
@@ -809,6 +827,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.note("force-started "+msg.ticket, false)
 		}
 		return m, nil
+	case updateMsg:
+		if msg.notice.Latest != "" {
+			m.updateNotice = msg.notice
+			if msg.notice.Announce {
+				m.note(fmt.Sprintf("lerp %s is available · u to upgrade", clean(msg.notice.Latest)), false)
+			}
+		}
+		return m, nil
 	default:
 		// The search prompt's own messages land here: the cases above are
 		// this model's, and a clipboard read on ctrl+v is the widget's.
@@ -879,9 +905,23 @@ func (m model) handleHelpKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m model) handleUpgradeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case key.Matches(msg, m.keys.Quit):
+		return m, tea.Quit
+	case key.Matches(msg, m.keys.Close):
+		m.upgradeOn = false
+		return m, nil
+	}
+	return m, nil
+}
+
 func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.helpOn {
 		return m.handleHelpKey(msg)
+	}
+	if m.upgradeOn {
+		return m.handleUpgradeKey(msg)
 	}
 	if m.promoting {
 		return m.handlePromoteKey(msg)
@@ -1116,6 +1156,10 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.refreshMain()
 	case key.Matches(msg, m.keys.Open):
 		return m, openURL(m.selectedURL())
+	case key.Matches(msg, m.keys.Update):
+		if m.updateNotice.Latest != "" && !m.modal() && !m.splashing() {
+			m.upgradeOn = true
+		}
 	}
 	cmd := m.wantDetail()
 	m.layout()
@@ -2988,6 +3032,7 @@ func (m model) liveRowKeys() rowKeys {
 	return rowKeys{
 		hasLog:     m.logOnScreen(),
 		hasURL:     browser.Openable(m.selectedURL()),
+		hasUpdate:  m.updateNotice.Latest != "",
 		filtered:   m.search != "",
 		projects:   m.hasProjects(),
 		canPromote: canPromote,
@@ -3006,6 +3051,7 @@ func (m model) liveRowKeys() rowKeys {
 		promoting:  m.promoting,
 		ejecting:   m.ejecting,
 		ejection:   m.ejection != nil,
+		upgrade:    m.upgradeOn,
 	}
 }
 
@@ -3047,7 +3093,7 @@ func (m *model) keyHints(p panel) bool {
 // is a row of the inbox panel instead, but it takes every keystroke the same
 // way, which is what the key line is answering.
 func (m *model) modal() bool {
-	return m.promoting || m.filtering || m.searching || m.ejecting || m.ejection != nil
+	return m.promoting || m.filtering || m.searching || m.ejecting || m.ejection != nil || m.upgradeOn
 }
 
 // marker renders the selection arrow for one row of a focused panel.
@@ -4031,13 +4077,28 @@ func (m model) helpText() string {
 	h.Width = 0
 	lines := strings.Split(h.FullHelpView(groups), "\n")
 	switch {
-	case live.promoting, live.ejecting, live.ejection:
+	case live.promoting, live.ejecting, live.ejection, live.upgrade:
 	case m.focus == panelWork:
 		lines = append(lines, workLegend()...)
 	default:
 		lines = append(lines, inboxLegend()...)
 	}
+	if m.updateNotice.Latest != "" {
+		lines = append(lines, m.updateLegend()...)
+	}
 	return strings.Join(lines, "\n")
+}
+
+func (m model) updateLegend() []string {
+	if m.updateNotice.Latest == "" {
+		return nil
+	}
+	return []string{
+		"",
+		styleFaint.Render("update"),
+		"  " + padTo(styleTicket.Render("u"), 2) + "  " +
+			styleFaint.Render(fmt.Sprintf("lerp %s is available (u to upgrade)", clean(m.updateNotice.Latest))),
+	}
 }
 
 // inboxLegend spells out the three marks the inbox table draws inside its

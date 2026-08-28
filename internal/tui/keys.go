@@ -42,6 +42,7 @@ type keymap struct {
 	Search      key.Binding
 	ClearSearch key.Binding
 	Open        key.Binding
+	Update      key.Binding
 	Raw         key.Binding
 	// Fold collapses or reopens the section under the cursor; FoldAll swaps
 	// the whole document between its outline (every section closed) and the
@@ -105,6 +106,7 @@ func newKeymap() keymap {
 		Search:      key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "search inbox")),
 		ClearSearch: key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "clear search")),
 		Open:        key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "open in Linear")),
+		Update:      key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "upgrade")),
 		Raw:         key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "raw log")),
 		// vim's z family is the mental model (see fold.go), but a Binding
 		// matches one keystroke, not a chord — there is nowhere in this
@@ -130,7 +132,7 @@ func (k keymap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Attention, k.Work, k.NextPanel, k.PrevPanel,
 			k.Up, k.Down, k.PageUp, k.PageDown, k.Top, k.Bottom},
-		{k.Detail, k.Close, k.Promote, k.Visual, k.VisualAll, k.Eject, k.ForceStart, k.Open, k.Help, k.Quit},
+		{k.Detail, k.Close, k.Promote, k.Visual, k.VisualAll, k.Eject, k.ForceStart, k.Open, k.Update, k.Help, k.Quit},
 		{k.Sort, k.Filter, k.Project, k.Slice, k.SliceBack, k.Search, k.ClearSearch, k.Raw, k.Fold, k.FoldAll},
 	}
 }
@@ -174,6 +176,13 @@ func (k keymap) contextHelp(p panel, live rowKeys) [][]key.Binding {
 			k.Quit,
 		}
 
+	case live.upgrade:
+		act = []key.Binding{
+			short(k.Close, "dismiss"),
+			k.Help,
+			k.Quit,
+		}
+
 	case live.searching:
 		act = []key.Binding{
 			short(k.Detail, "accept search"),
@@ -203,6 +212,9 @@ func (k keymap) contextHelp(p panel, live rowKeys) [][]key.Binding {
 		}
 		if live.hasURL {
 			act = append(act, k.Open)
+		}
+		if live.hasUpdate {
+			act = append(act, k.Update)
 		}
 		if p == panelAttention && live.canPromote {
 			act = append(act, k.Promote)
@@ -242,6 +254,9 @@ func (k keymap) contextHelp(p panel, live rowKeys) [][]key.Binding {
 		if live.hasURL {
 			act = append(act, k.Open)
 		}
+		if live.hasUpdate {
+			act = append(act, k.Update)
+		}
 		act = append(act, k.Help, k.Quit)
 
 		disp = append(disp, k.Sort, k.Filter)
@@ -280,6 +295,9 @@ func (k keymap) contextHelp(p panel, live rowKeys) [][]key.Binding {
 		if live.hasURL {
 			act = append(act, k.Open)
 		}
+		if live.hasUpdate {
+			act = append(act, k.Update)
+		}
 		act = append(act, k.Help, k.Quit)
 
 		if live.hasLog {
@@ -310,6 +328,7 @@ func (k keymap) contextHelp(p panel, live rowKeys) [][]key.Binding {
 type rowKeys struct {
 	hasLog     bool
 	hasURL     bool
+	hasUpdate  bool
 	filtered   bool
 	projects   bool
 	canPromote bool
@@ -330,6 +349,7 @@ type rowKeys struct {
 	promoting  bool
 	ejecting   bool
 	ejection   bool
+	upgrade    bool
 }
 
 // panelHelp is the line a focused panel carries: the keys that act on the

@@ -23,6 +23,7 @@ import (
 	"github.com/mattwalters/lerp/internal/linear"
 	"github.com/mattwalters/lerp/internal/loop"
 	"github.com/mattwalters/lerp/internal/tui"
+	"github.com/mattwalters/lerp/internal/update"
 	"github.com/mattwalters/lerp/internal/version"
 )
 
@@ -75,7 +76,7 @@ func main() {
 	}
 	switch args[0] {
 	case "version":
-		fmt.Printf("lerp %s\n", version.Version)
+		printVersion(os.Stdout)
 	case "login":
 		// No flags, so an unrecognised one — --port, --help, a typo — must
 		// not fall through silently into opening a browser and binding a
@@ -102,6 +103,13 @@ func main() {
 		// success: `lerp int --team LERP` would print a version and exit 0.
 		fmt.Fprintf(os.Stderr, "lerp: unknown command %q\n\n%s", args[0], usage)
 		os.Exit(2)
+	}
+}
+
+func printVersion(w io.Writer) {
+	fmt.Fprintf(w, "lerp %s\n", version.Version)
+	if latest, err := update.CachedLatest(version.Version); err == nil && latest != "" {
+		fmt.Fprintf(w, "latest %s — brew upgrade lerp\n", latest)
 	}
 }
 
@@ -216,6 +224,13 @@ func openTUI(ctx context.Context, lanes int) error {
 		Interval:       loop.DefaultInterval,
 		Lanes:          lanes,
 		Events:         events,
+		CheckUpdate: func(ctx context.Context) update.Notice {
+			notice, err := update.Check(ctx, nil, time.Now(), version.Version)
+			if err != nil {
+				fmt.Fprintf(loopLog, "update check: %v\n", err)
+			}
+			return notice
+		},
 	})
 }
 
