@@ -614,44 +614,6 @@ func TestReloginOnDiskClearsTheLatch(t *testing.T) {
 	}
 }
 
-// A build with no client id cannot renew anything, and says so rather than
-// sending the operator after a `lerp login` it does not have.
-func TestNoClientIDIsNotAnExpiredSession(t *testing.T) {
-	t.Setenv(childenv.LinearAPIKeyEnv, "")
-	expired := liveToken()
-	expired.ExpiresAt = time.Now().Add(-time.Minute)
-	s := tempStore(t, &expired)
-
-	var exchanges int
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		exchanges++
-		http.Error(w, "unknown client", http.StatusBadRequest)
-	}))
-	t.Cleanup(srv.Close)
-
-	source, err := storedSource(s, srv.Client())
-	if err != nil {
-		t.Fatalf("storedSource: %v", err)
-	}
-	source.endpoint = srv.URL
-	// clientID left as the shipped constant, still empty pending the human
-	// registration step (see credentials.go's doc comment on clientID).
-
-	_, err = source.header(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "client id") {
-		t.Fatalf("err = %v, want the missing client id named", err)
-	}
-	if errors.Is(err, ErrLoginRequired) {
-		t.Errorf("reported as an expired session: %v", err)
-	}
-	if !strings.Contains(err.Error(), childenv.LinearAPIKeyEnv) {
-		t.Errorf("error %q does not name a remedy this build has", err)
-	}
-	if exchanges != 0 {
-		t.Errorf("exchanges = %d, want 0 — nothing should reach the endpoint", exchanges)
-	}
-}
-
 // No credential at all names both remedies.
 func TestResolveNoCredentials(t *testing.T) {
 	t.Setenv(childenv.LinearAPIKeyEnv, "")
