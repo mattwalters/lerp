@@ -39,11 +39,11 @@ dispose = 'git worktree remove --force "$LERP_WORKSPACE"'
 # Planning and merging run on the claude adapter, below. Implementing runs
 # on the antigravity adapter (the agy CLI) instead — a live canary for that
 # vendor, so a regression in its harness shows up on this board before it
-# shows up in anyone else's repo. The codex
-# adapter (LERP-137) sits out of this file for now, undogfooded; when it
-# earns a slot here it is a queue where a vendor regression is cheap and
-# visible, never the merge queue below, whose refusal clause is the part of
-# this pipeline worth protecting most.
+# shows up in anyone else's repo. The codex adapter exists but sits out of
+# this file for now, undogfooded; when it earns a slot here it is a queue
+# where a vendor regression is cheap and visible, never the merge queue
+# below, whose refusal clause is the part of this pipeline worth
+# protecting most.
 #
 # PERMISSIONS: no adapter lerp ships ever adds a permission-skipping flag on
 # its own — that grant reaches a command only by being written into a

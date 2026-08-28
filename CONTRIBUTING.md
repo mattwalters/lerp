@@ -106,8 +106,8 @@ The same rules the agents work under (see `AGENTS.md`):
   [hugo](https://gohugo.io); `make hugo-version` prints the version CI
   builds and deploys with, which is also what a local build warns about
   not being.
-- PRs go against `main`. Lerp is pre-1.0 with no tagged releases;
-  `main` is what `go install ...@latest` gets.
+- PRs go against `main`. Releases are tagged; the latest release is what
+  is supported, and fixes land on `main` first.
 - One change per PR, and say in the description what it does and why.
   If an issue argued the scope case, link it.
 - PR titles here often start with a `LERP-NN:` identifier. That is the
