@@ -108,18 +108,24 @@
 <div class="prose">
   <figure class="cast">
   
-  <video controls autoplay muted loop playsinline preload="metadata" width="1200" height="640" poster="/posters/demo.png" aria-label="The lerp board: tickets waiting on a human in the On you panel, a work panel of queues and three lanes running coding agents beneath it, and a main pane that opens beside them to read a ticket or tail a lane&#39;s log">
+  <video class="cast-dark" controls autoplay muted loop playsinline preload="metadata" width="1200" height="640" poster="/posters/demo.png" aria-label="The lerp board: tickets waiting on a human in the On you panel, a work panel of queues and three lanes running coding agents beneath it, and a main pane that opens beside them to read a ticket or tail a lane&#39;s log">
     <source src="./casts/demo.webm" type="video/webm">
     <source src="./casts/demo.mp4" type="video/mp4">
+  </video>
+  <video class="cast-light" controls autoplay muted loop playsinline preload="metadata" width="1200" height="640" poster="/posters/demo-light.png" aria-label="The lerp board: tickets waiting on a human in the On you panel, a work panel of queues and three lanes running coding agents beneath it, and a main pane that opens beside them to read a ticket or tail a lane&#39;s log">
+    <source src="./casts/demo-light.webm" type="video/webm">
+    <source src="./casts/demo-light.mp4" type="video/mp4">
   </video>
   <script>
     
     
     (function () {
       if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) { return; }
-      var video = document.currentScript.parentElement.querySelector("video");
-      video.removeAttribute("autoplay");
-      video.pause();
+      var videos = document.currentScript.parentElement.querySelectorAll("video");
+      videos.forEach(function (video) {
+        video.removeAttribute("autoplay");
+        video.pause();
+      });
     })();
   </script>
 </figure>
@@ -214,8 +220,9 @@ the board with the agent processes on your machine, starts what is
 missing, reaps what has finished, and adopts anything a previous lerp
 left running.</p>
 <p>The config for the board above is one file, checked into the repo.</p>
-<p><img src="./config.svg" alt="lerp.toml for the board above. Two runners, claude and antigravity; a plan queue on Planning running claude into Plan Review; an implement queue on In Progress running antigravity into In Review; git worktree provision and dispose commands, with lerp setting LERP_WORKSPACE per lane." loading="lazy">
-</p>
+<img class="shot-dark" src="./config.svg" alt="lerp.toml for the board above. Two runners, claude and antigravity; a plan queue on Planning running claude into Plan Review; an implement queue on In Progress running antigravity into In Review; git worktree provision and dispose commands, with lerp setting LERP_WORKSPACE per lane." loading="lazy">
+<img class="shot-light" src="./config-light.svg" alt="lerp.toml for the board above. Two runners, claude and antigravity; a plan queue on Planning running claude into Plan Review; an implement queue on In Progress running antigravity into In Review; git worktree provision and dispose commands, with lerp setting LERP_WORKSPACE per lane." loading="lazy">
+
 <p>Everything runs on your machine. There is no server and no daemon, and
 the only account involved is your Linear account. <strong>Linear is the
 database.</strong> Every plan, decision, and status change lands there, and
