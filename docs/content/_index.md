@@ -1,7 +1,7 @@
 ---
 title: lerp
 tagline: A small, reliable CLI that orchestrates software work through Linear.
-install: go install github.com/mattwalters/lerp/cmd/lerp@latest
+install: curl -fsSL https://raw.githubusercontent.com/mattwalters/lerp/main/install.sh | sh
 ---
 
 You put tickets on a board; lerp runs coding agents to move them across it.
