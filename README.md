@@ -7,13 +7,17 @@
 <sub>Recorded from [`docs/tapes/demo.tape`](docs/tapes/demo.tape) against a fake
 board and a stub agent; `make demo` regenerates it.</sub>
 
-Lerp is a small, reliable CLI, written in Go, that orchestrates
-software work through Linear. You put tickets on a board; lerp runs
-coding agents to move them across it.
+Lerp is a small TUI, written in Go, that orchestrates software work
+through Linear. You put tickets on a board; lerp runs coding agents to
+move them across it.
 
 Linear is the database, the board is the workflow, and lerp is the
-reconciler between them —
-[the model at length](https://lerp.sh/latest/docs/the-board/).
+reconciler between them
+([the model at length](https://lerp.sh/latest/docs/the-board/)).
+
+**[lerp.sh](https://lerp.sh/)** is the site, and
+**[the docs](https://lerp.sh/latest/docs/)** take you from install to a
+first promoted ticket.
 
 ## Install
 
@@ -38,7 +42,7 @@ published checksum, and installs it to `$HOME/.local/bin`:
 curl -fsSL https://raw.githubusercontent.com/mattwalters/lerp/main/install.sh | sh
 ```
 
-Prebuilt binaries — macOS and Linux, amd64 and arm64 — are on the
+Prebuilt binaries (macOS and Linux, amd64 and arm64) are on the
 [releases page](https://github.com/mattwalters/lerp/releases), and
 `make install` builds one from a clone.
 
@@ -78,7 +82,7 @@ install is removed by deleting `lerp` from
 `$HOME/.local/bin` (or the `--bin-dir` you chose). Run `lerp logout` (or
 delete the stored token file) to revoke and remove local credentials. To
 clean up local state,
-`rm -rf .lerp/` once all agents have stopped — run evidence in
+`rm -rf .lerp/` once all agents have stopped. Run evidence in
 `.lerp/runs/` is how the next `lerp` adopts or reaps live agents, and
 workspaces under `.lerp/workspaces/` are git worktrees whose registrations
 the stock `dispose` command normally unwinds (`git worktree prune` handles
@@ -102,7 +106,7 @@ Three files stay here in the repository, where they are edited alongside
 the code they describe. SCOPE.md is a page of the manual too, mounted into
 the site rather than copied:
 
-- [SCOPE.md](SCOPE.md) is the fence around the project — five concepts,
+- [SCOPE.md](SCOPE.md) is the fence around the project: five concepts,
   nine invariants, and the litmus tests every change runs through. Read
   it before proposing anything.
 - [CONTRIBUTING.md](CONTRIBUTING.md) is how a proposal gets made, and
