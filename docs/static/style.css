@@ -275,8 +275,30 @@ main {
   text-align: center;
 }
 
+/* The homepage masthead: the TUI's five-line ASCII figure (internal/tui/mark.go),
+   centred as a block and left-aligned inside so its characters stay aligned.
+   Rendered in monospace at full foreground brightness rather than dimmed
+   like the TUI's watermark. Scales with viewport width on narrow screens,
+   and falls back to the plain title word when the mark no longer fits
+   whole — the web twin of wordmarkFits. */
 .hero .wordmark {
   margin: 0;
+  color: var(--fg);
+}
+
+.hero .wordmark pre {
+  display: inline-block;
+  margin: 0;
+  padding: 0;
+  background: none;
+  border: none;
+  font: 700 clamp(0.75rem, 3vw, 1.4rem)/1.15 var(--mono);
+  color: inherit;
+  text-align: left;
+}
+
+.hero .wordmark .fallback {
+  display: none;
   font: 700 2.6rem/1 var(--mono);
   letter-spacing: -0.02em;
 }
@@ -654,7 +676,7 @@ figure.cast figcaption {
     display: inline-block;
     margin-right: 1.1rem;
   }
-  .hero .wordmark { font-size: 2.1rem; }
+  .hero .wordmark .fallback { font-size: 2.1rem; }
   /* The README's pipeline table is three columns of prose. It is set tighter
      here to leave the widest column room, and deliberately left as a table:
      making it scroll sideways costs more than it buys — auto layout already
@@ -665,4 +687,12 @@ figure.cast figcaption {
     padding: 0.3rem 0.4rem;
     font-size: 0.92rem;
   }
+}
+
+@media (max-width: 22rem) {
+  /* On a screen too narrow for the ASCII mark to fit whole without clipping
+     or shrinking below legibility, fall back to the plain word — the web
+     twin of wordmarkFits. */
+  .hero .wordmark pre { display: none; }
+  .hero .wordmark .fallback { display: block; }
 }

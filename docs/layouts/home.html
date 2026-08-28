@@ -27,7 +27,15 @@
      command included — waits until the reader has seen the thing work.
      The install box lives in the content's close as the call to action. */}}
 <section class="hero">
-  <h1 class="wordmark">{{ .Title }}</h1>
+  <h1 class="wordmark" aria-label="lerp">
+    {{ "<!-- Source of truth: internal/tui/mark.go -->" | safeHTML }}
+    <pre aria-hidden="true"> _
+| | ___  _ _  _ __
+| |/ -_)| '_|| '_ \
+|_|\___||_|  | .__/
+             |_|</pre>
+    <span class="fallback" aria-hidden="true">{{ .Title }}</span>
+  </h1>
   <p class="tagline">{{ .Params.tagline }}</p>
 </section>
 <div class="prose">
