@@ -3,8 +3,47 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+  <script>
+    
+    
+    
+    (function () {
+      try {
+        var t = localStorage.getItem("lerp-theme");
+        if (t === "light" || t === "dark") {
+          document.documentElement.dataset.theme = t;
+        }
+      } catch (e) {}
+    })();
+  </script>
+  
+  
+  
+  
   <title>SCOPE · lerp</title>
-  <meta name="description" content="A small, reliable CLI that orchestrates software work through Linear.">
+  
+  
+  
+  
+  
+  <meta name="description" content="The fence around the project: five concepts, nine invariants, and the litmus tests every change runs through.">
+  
+  <link rel="canonical" href="https://lerp.sh/latest/scope/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="lerp">
+  <meta property="og:title" content="SCOPE · lerp">
+  <meta property="og:description" content="The fence around the project: five concepts, nine invariants, and the litmus tests every change runs through.">
+  <meta property="og:url" content="https://lerp.sh/latest/scope/">
+  <meta property="og:image" content="https://lerp.sh/og.png">
+  <meta property="og:image:alt" content="The lerp board: tickets waiting on a human in the On you panel, a work panel of queues and three lanes running coding agents">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="640">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="SCOPE · lerp">
+  <meta name="twitter:description" content="The fence around the project: five concepts, nine invariants, and the litmus tests every change runs through.">
+  <meta name="twitter:image" content="https://lerp.sh/og.png">
+  <meta name="twitter:image:alt" content="The lerp board: tickets waiting on a human in the On you panel, a work panel of queues and three lanes running coding agents">
   <link rel="stylesheet" href="../style.css">
 </head>
 <body>
@@ -16,13 +55,17 @@
   
   
   <header>
-    <a class="brand" href="../">lerp</a>
+    
+    <a class="brand" href="../"><img class="brand-mark" src="../favicon.svg" alt="">lerp</a>
+    <span class="spacer"></span>
     
     <a class="nav here" href="../docs/">Docs</a>
     
     <a class="nav" href="../why/">Why lerp</a>
-    <span class="spacer"></span>
-    <a class="nav" href="https://github.com/mattwalters/lerp">GitHub</a>
+    
+    
+    <button type="button" id="theme-picker" class="theme" aria-label="Theme">◐ system</button>
+    <a class="nav github" href="https://github.com/mattwalters/lerp" target="_blank" rel="noopener" aria-label="GitHub"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg></a>
     
     
     <span class="version">
@@ -166,6 +209,16 @@
       
       
       
+      <a href="../docs/telemetry/">Telemetry</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
       <a href="../docs/cli/">The command line</a>
       
       
@@ -188,6 +241,8 @@
       
       <a href="../scope/" class="active" aria-current="page">SCOPE</a>
       
+      
+      <img class="sidenav-mark" src="../favicon.svg" alt="">
     </nav>
     
     <main>
@@ -293,15 +348,17 @@ five. If that trade is unappealing, the feature is out of scope.</p>
 <ol>
 <li>
 <p><strong>Linear is the only durable store.</strong> Local disk holds config,
-the operator&rsquo;s credentials, evidence of running processes, and run
-telemetry, nothing else. Losing all local state may cost compute;
-it may never cost correctness. <code>rm -rf .lerp/runs</code> under live
-agents means orphaned processes and re-run stages — never lost or
-corrupted tickets. Telemetry is the deliberate fourth resident: an
-append-only file of finished-run measurements — tokens, cost,
-duration, outcome — written once at run exit and read by nothing in
-the loop. It is history, not state: losing it costs a chart, never
-a ticket.</p>
+the operator&rsquo;s credentials, evidence of running processes, run
+telemetry, and the update check cache, nothing else. Losing all
+local state may cost compute; it may never cost correctness.
+<code>rm -rf .lerp/runs</code> under live agents means orphaned processes and
+re-run stages — never lost or corrupted tickets. Telemetry is the
+deliberate fourth resident: an append-only file of finished-run
+measurements — tokens, cost, duration, outcome — written once at
+run exit and read by nothing in the loop. It is history, not state:
+losing it costs a chart, never a ticket. The update cache is the
+fifth: it is a cache, not state. Losing it costs one HTTP request
+and possibly one repeated notice, never a ticket.</p>
 </li>
 <li>
 <p><strong>Team → repo is a function</strong> (many-to-one allowed, not a
@@ -376,6 +433,12 @@ stage-boundary artifact like any other — created by an agent with
 by the next stage&rsquo;s prompt. Lerp never calls a code host and never
 inspects a branch. The engine that has never heard of PRs is the
 engine that works for people who don&rsquo;t make PRs.</p>
+<p>The one carve-out is an unauthenticated GET of GitHub&rsquo;s releases API
+at startup, to learn a version number and nothing else. Lerp still
+never reads a branch, a commit, a pull request or any other
+repository fact from a code host; the engine that has never heard of
+PRs still hasn&rsquo;t. The check happens at startup, not during work, and
+no queue run, claim, or move depends on it.</p>
 </li>
 <li>
 <p><strong>Workspaces are provisioned by config, not by lerp.</strong> A lane&rsquo;s
@@ -406,14 +469,8 @@ ticket&rsquo;s detail is something you open once you have decided to read that
 ticket, and a run&rsquo;s log is something you open to read that run — the work
 row already says whether the run is alive without it. That is a display
 default, not a rule about process.</p>
-<p>Above them sits a summary strip: each status the pass already read with
-its ticket count, in board order. It is chrome, in the same class as the
-status bar — a passive line over the list that was already fetched, not a
-panel: it has no focus, no keys and no selection, and it drops off a window
-that has no row to spare for it. Wanting it to answer to a key is a new
-conversation, not an extension of this one.</p>
 <ol>
-<li><strong>Inbox</strong> — what waits on a human: unclaimed tickets, and the
+<li><strong>On you</strong> — what waits on a human: unclaimed tickets, and the
 operator&rsquo;s own claimed tickets, sitting in a status no queue serves —
 reviews to read, questions agents have raised, failed runs to retriage.
 It reads as a table, one row per ticket, and the Linear status is a
@@ -496,6 +553,10 @@ comments — lerp&rsquo;s own stage-boundary artifacts — read-only, never
 composing or replying, never navigating on to another ticket.
 Everything else — create, edit, comment, assign outside the claim
 protocol — stays in Linear.</li>
+<li>Not a self-updater. Lerp launches agents with <code>bypassPermissions</code>
+and the operator&rsquo;s full account; the binary holding that grant
+changes only by deliberate human action, and a package manager&rsquo;s
+bookkeeping stays right.</li>
 <li>Not infrastructure for any other product to depend on. It is a
 standalone tool.</li>
 </ul>
@@ -553,6 +614,43 @@ for now; <code>jq</code> is the dashboard. Wait until it hurts.</li>
     </nav>
     
   </div>
+  <script>
+    
+    
+    
+    
+    (function () {
+      var modes = ["system", "light", "dark"];
+      var glyphs = { system: "◐", light: "○", dark: "●" };
+      var picker = document.getElementById("theme-picker");
+      var current = "system";
+      try {
+        var stored = localStorage.getItem("lerp-theme");
+        if (stored === "light" || stored === "dark") { current = stored; }
+      } catch (e) {}
+      function paint() {
+        picker.textContent = glyphs[current] + " " + current;
+        picker.setAttribute("aria-label", "Theme: " + current);
+        if (current === "system") {
+          delete document.documentElement.dataset.theme;
+        } else {
+          document.documentElement.dataset.theme = current;
+        }
+      }
+      paint();
+      picker.addEventListener("click", function () {
+        current = modes[(modes.indexOf(current) + 1) % modes.length];
+        try {
+          if (current === "system") {
+            localStorage.removeItem("lerp-theme");
+          } else {
+            localStorage.setItem("lerp-theme", current);
+          }
+        } catch (e) {}
+        paint();
+      });
+    })();
+  </script>
   
   <script>
     

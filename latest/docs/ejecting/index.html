@@ -3,8 +3,47 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+  <script>
+    
+    
+    
+    (function () {
+      try {
+        var t = localStorage.getItem("lerp-theme");
+        if (t === "light" || t === "dark") {
+          document.documentElement.dataset.theme = t;
+        }
+      } catch (e) {}
+    })();
+  </script>
+  
+  
+  
+  
   <title>Ejecting · lerp</title>
-  <meta name="description" content="A small, reliable CLI that orchestrates software work through Linear.">
+  
+  
+  
+  
+  
+  <meta name="description" content="Taking a headless run over as your own interactive session.">
+  
+  <link rel="canonical" href="https://lerp.sh/latest/docs/ejecting/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="lerp">
+  <meta property="og:title" content="Ejecting · lerp">
+  <meta property="og:description" content="Taking a headless run over as your own interactive session.">
+  <meta property="og:url" content="https://lerp.sh/latest/docs/ejecting/">
+  <meta property="og:image" content="https://lerp.sh/og.png">
+  <meta property="og:image:alt" content="The lerp board: tickets waiting on a human in the On you panel, a work panel of queues and three lanes running coding agents">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="640">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Ejecting · lerp">
+  <meta name="twitter:description" content="Taking a headless run over as your own interactive session.">
+  <meta name="twitter:image" content="https://lerp.sh/og.png">
+  <meta name="twitter:image:alt" content="The lerp board: tickets waiting on a human in the On you panel, a work panel of queues and three lanes running coding agents">
   <link rel="stylesheet" href="../../style.css">
 </head>
 <body>
@@ -16,13 +55,17 @@
   
   
   <header>
-    <a class="brand" href="../../">lerp</a>
+    
+    <a class="brand" href="../../"><img class="brand-mark" src="../../favicon.svg" alt="">lerp</a>
+    <span class="spacer"></span>
     
     <a class="nav here" href="../../docs/">Docs</a>
     
     <a class="nav" href="../../why/">Why lerp</a>
-    <span class="spacer"></span>
-    <a class="nav" href="https://github.com/mattwalters/lerp">GitHub</a>
+    
+    
+    <button type="button" id="theme-picker" class="theme" aria-label="Theme">◐ system</button>
+    <a class="nav github" href="https://github.com/mattwalters/lerp" target="_blank" rel="noopener" aria-label="GitHub"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg></a>
     
     
     <span class="version">
@@ -166,6 +209,16 @@
       
       
       
+      <a href="../../docs/telemetry/">Telemetry</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
       <a href="../../docs/cli/">The command line</a>
       
       
@@ -188,6 +241,8 @@
       
       <a href="../../scope/">SCOPE</a>
       
+      
+      <img class="sidenav-mark" src="../../favicon.svg" alt="">
     </nav>
     
     <main>
@@ -195,36 +250,44 @@
 
 <div class="prose">
   <h1 id="ejecting">Ejecting</h1>
-<p><code>e</code> on a running row in the <a href="../../docs/reading-the-board/#the-work-panel">Work panel</a>
+<p><code>e</code> on a running row in the
+<a href="../../docs/reading-the-board/#the-work-panel">Work panel</a> stops that agent, frees
+the lane, and hands back the runner&rsquo;s own <code>resume</code> command — the headless
+run becomes your interactive session, in the workspace lerp leaves
+standing.</p>
+<figure class="cast">
+  
+  <video class="cast-dark" controls muted loop playsinline preload="metadata" width="1200" height="640" aria-label="Ejecting a running agent, showing the resume command and freeing the lane">
+    <source src="../../casts/eject.webm" type="video/webm">
+    <source src="../../casts/eject.mp4" type="video/mp4">
+  </video>
+  <video class="cast-light" controls muted loop playsinline preload="metadata" width="1200" height="640" aria-label="Ejecting a running agent, showing the resume command and freeing the lane">
+    <source src="../../casts/eject-light.webm" type="video/webm">
+    <source src="../../casts/eject-light.mp4" type="video/mp4">
+  </video>
+  <figcaption class="keys"><kbd>e</kbd> <span class="sep" aria-hidden="true">·</span> <span>the resume command</span> <span class="sep" aria-hidden="true">·</span> <kbd>esc</kbd></figcaption>
+</figure>
 
-stops that agent, frees the lane, and hands back the runner&rsquo;s own <code>resume</code>
-command — so the headless run becomes your interactive session, in the
-workspace lerp leaves standing.</p>
-<!-- Cast slot (LERP-70): a run that has gone quiet, ejected; the resume
-     command shown, the lane freed, the ticket untouched.
-     keys: [e] · the resume command · [esc] -->
 <h2 id="what-ejecting-does-not-do">What ejecting does not do</h2>
-<p>Nothing is written to Linear. The ticket keeps its claim and its status,
-because ejecting is taking the work over rather than abandoning it — and a
-claim that stayed put is what keeps the next pass from starting the stage
-again underneath you.</p>
-<p>Nothing is disposed either, so the workspace, its git worktree included, is
-now yours to finish in and yours to remove.</p>
+<p>Nothing is written to Linear. The ticket keeps its claim and its status:
+ejecting is taking the work over, not abandoning it, and the standing
+claim is what keeps the next pass from starting the stage again underneath
+you.</p>
+<p>Nothing is disposed either. The workspace, git worktree included, is yours
+to finish in and yours to remove.</p>
 <h2 id="the-resume-command">The resume command</h2>
 <p>The command is shown until you dismiss it, and it also lands in
 <code>.lerp/loop.log</code>, so it survives the dismissal and the session.</p>
-<p>It comes from the runner&rsquo;s <code>resume</code> line in
-<a href="../../docs/lerp-toml/"><code>lerp.toml</code></a>
-, built from the session ID lerp generated before
-the run started and the workspace it provisioned. A runner with no <code>resume</code>
-in its config cannot be ejected, so <code>e</code> is not offered on its runs at all
-rather than failing when pressed.</p>
+<p>It comes from the runner&rsquo;s <code>resume</code> line in <a href="../../docs/lerp-toml/"><code>lerp.toml</code></a>,
+built from the session ID lerp generated before the run started and the
+workspace it provisioned. A runner with no <code>resume</code> cannot be ejected, so
+<code>e</code> is not offered on its runs rather than failing when pressed.</p>
 <h2 id="when-to-reach-for-it">When to reach for it</h2>
-<p>Ejecting is the operator&rsquo;s call and nothing else&rsquo;s. A run&rsquo;s activity line and
-sparkline say whether an agent is still working (see <a href="../../docs/watching-a-run/">watching a
-run</a>
-), but lerp sets no threshold on them and never acts
-on one: there is no timeout that ejects a stalled run for you.</p>
+<p>Ejecting is the operator&rsquo;s call and nothing else&rsquo;s. A run&rsquo;s activity line
+and sparkline say whether an agent is still working (see
+<a href="../../docs/watching-a-run/">watching a run</a>), but lerp sets no threshold on them
+and never acts on one: there is no timeout that ejects a stalled run for
+you.</p>
 
 </div>
 
@@ -244,6 +307,43 @@ on one: there is no timeout that ejects a stalled run for you.</p>
     </nav>
     
   </div>
+  <script>
+    
+    
+    
+    
+    (function () {
+      var modes = ["system", "light", "dark"];
+      var glyphs = { system: "◐", light: "○", dark: "●" };
+      var picker = document.getElementById("theme-picker");
+      var current = "system";
+      try {
+        var stored = localStorage.getItem("lerp-theme");
+        if (stored === "light" || stored === "dark") { current = stored; }
+      } catch (e) {}
+      function paint() {
+        picker.textContent = glyphs[current] + " " + current;
+        picker.setAttribute("aria-label", "Theme: " + current);
+        if (current === "system") {
+          delete document.documentElement.dataset.theme;
+        } else {
+          document.documentElement.dataset.theme = current;
+        }
+      }
+      paint();
+      picker.addEventListener("click", function () {
+        current = modes[(modes.indexOf(current) + 1) % modes.length];
+        try {
+          if (current === "system") {
+            localStorage.removeItem("lerp-theme");
+          } else {
+            localStorage.setItem("lerp-theme", current);
+          }
+        } catch (e) {}
+        paint();
+      });
+    })();
+  </script>
   
   <script>
     

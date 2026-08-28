@@ -3,8 +3,47 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+  <script>
+    
+    
+    
+    (function () {
+      try {
+        var t = localStorage.getItem("lerp-theme");
+        if (t === "light" || t === "dark") {
+          document.documentElement.dataset.theme = t;
+        }
+      } catch (e) {}
+    })();
+  </script>
+  
+  
+  
+  
   <title>Starting past the limit · lerp</title>
-  <meta name="description" content="A small, reliable CLI that orchestrates software work through Linear.">
+  
+  
+  
+  
+  
+  <meta name="description" content="`S` runs a queued ticket now, overriding the lane count and nothing else.">
+  
+  <link rel="canonical" href="https://lerp.sh/latest/docs/starting-past-the-limit/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="lerp">
+  <meta property="og:title" content="Starting past the limit · lerp">
+  <meta property="og:description" content="`S` runs a queued ticket now, overriding the lane count and nothing else.">
+  <meta property="og:url" content="https://lerp.sh/latest/docs/starting-past-the-limit/">
+  <meta property="og:image" content="https://lerp.sh/og.png">
+  <meta property="og:image:alt" content="The lerp board: tickets waiting on a human in the On you panel, a work panel of queues and three lanes running coding agents">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="640">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Starting past the limit · lerp">
+  <meta name="twitter:description" content="`S` runs a queued ticket now, overriding the lane count and nothing else.">
+  <meta name="twitter:image" content="https://lerp.sh/og.png">
+  <meta name="twitter:image:alt" content="The lerp board: tickets waiting on a human in the On you panel, a work panel of queues and three lanes running coding agents">
   <link rel="stylesheet" href="../../style.css">
 </head>
 <body>
@@ -16,13 +55,17 @@
   
   
   <header>
-    <a class="brand" href="../../">lerp</a>
+    
+    <a class="brand" href="../../"><img class="brand-mark" src="../../favicon.svg" alt="">lerp</a>
+    <span class="spacer"></span>
     
     <a class="nav here" href="../../docs/">Docs</a>
     
     <a class="nav" href="../../why/">Why lerp</a>
-    <span class="spacer"></span>
-    <a class="nav" href="https://github.com/mattwalters/lerp">GitHub</a>
+    
+    
+    <button type="button" id="theme-picker" class="theme" aria-label="Theme">◐ system</button>
+    <a class="nav github" href="https://github.com/mattwalters/lerp" target="_blank" rel="noopener" aria-label="GitHub"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg></a>
     
     
     <span class="version">
@@ -166,6 +209,16 @@
       
       
       
+      <a href="../../docs/telemetry/">Telemetry</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
       <a href="../../docs/cli/">The command line</a>
       
       
@@ -188,6 +241,8 @@
       
       <a href="../../scope/">SCOPE</a>
       
+      
+      <img class="sidenav-mark" src="../../favicon.svg" alt="">
     </nav>
     
     <main>
@@ -195,31 +250,40 @@
 
 <div class="prose">
   <h1 id="starting-past-the-limit">Starting past the limit</h1>
-<p>Select a queued ticket in the <a href="../../docs/reading-the-board/#the-work-panel">Work panel</a>
+<p>Select a queued ticket in the
+<a href="../../docs/reading-the-board/#the-work-panel">Work panel</a> and press <code>S</code>: it starts
+now, past the lane limit.</p>
+<figure class="cast">
+  
+  <video class="cast-dark" controls muted loop playsinline preload="metadata" width="1200" height="640" aria-label="Force-starting a queued ticket past the lane limit with S">
+    <source src="../../casts/force-start.webm" type="video/webm">
+    <source src="../../casts/force-start.mp4" type="video/mp4">
+  </video>
+  <video class="cast-light" controls muted loop playsinline preload="metadata" width="1200" height="640" aria-label="Force-starting a queued ticket past the lane limit with S">
+    <source src="../../casts/force-start-light.webm" type="video/webm">
+    <source src="../../casts/force-start-light.mp4" type="video/mp4">
+  </video>
+  <figcaption class="keys"><kbd>S</kbd></figcaption>
+</figure>
 
-and press <code>S</code>: it starts now, past the lane limit.</p>
-<!-- Cast slot (LERP-70): a ticket left claimed by a run nothing reaped,
-     force-started from the work panel and taken back over.
-     keys: [S] -->
 <h2 id="what-it-overrides-and-what-it-does-not">What it overrides, and what it does not</h2>
 <p>Force-start overrides the lane count and nothing else. The claim protocol
-still runs, so a blocked ticket, or one somebody else has claimed, is refused
-with the reason — <code>S</code> is not a way around
-<a href="../../docs/the-board/#the-claim">eligibility</a>
-, only around capacity.</p>
+still runs, so a blocked ticket, or one somebody else has claimed, is
+refused with the reason — <code>S</code> is not a way around
+<a href="../../docs/the-board/#the-claim">eligibility</a>, only around capacity.</p>
 <p>Your own claim is the exception it takes over. That is how a ticket left
-claimed by a run nothing was left to reap gets run again, and it is the fix
-for both of the ways a claim outlives its run: a human who assigned the
-ticket, and a run that died where no lerp was watching. It is also how to
-re-run a failed stage whose queue has no <code>on_failure</code> route, since such a run
-keeps its claim and waits on you.</p>
-<p>Every live run counts against the capacity in the panel title, whichever lane
-it landed on, so a force-start shows up there as <code>· +1 over</code> until one
-finishes.</p>
+claimed by a run nothing was left to reap gets run again — the fix for
+both ways a claim outlives its run: a human who assigned the ticket, and a
+run that died where no lerp was watching. It is also how to re-run a
+failed stage whose queue has no <code>on_failure</code> route, since such a run keeps
+its claim and waits on you.</p>
+<p>Every live run counts against the capacity in the panel title, whichever
+lane it landed on, so a force-start shows up there as <code>· +1 over</code> until
+one finishes.</p>
 <h2 id="not-an-ordering-key">Not an ordering key</h2>
 <p><code>S</code> runs <em>this</em> ticket now; it does not reorder the queue. To change what
 runs next, move tickets in Linear — pickup order is the board&rsquo;s, and lerp
-does not keep a queue of its own to shuffle.</p>
+keeps no queue of its own to shuffle.</p>
 
 </div>
 
@@ -238,6 +302,43 @@ does not keep a queue of its own to shuffle.</p>
     </nav>
     
   </div>
+  <script>
+    
+    
+    
+    
+    (function () {
+      var modes = ["system", "light", "dark"];
+      var glyphs = { system: "◐", light: "○", dark: "●" };
+      var picker = document.getElementById("theme-picker");
+      var current = "system";
+      try {
+        var stored = localStorage.getItem("lerp-theme");
+        if (stored === "light" || stored === "dark") { current = stored; }
+      } catch (e) {}
+      function paint() {
+        picker.textContent = glyphs[current] + " " + current;
+        picker.setAttribute("aria-label", "Theme: " + current);
+        if (current === "system") {
+          delete document.documentElement.dataset.theme;
+        } else {
+          document.documentElement.dataset.theme = current;
+        }
+      }
+      paint();
+      picker.addEventListener("click", function () {
+        current = modes[(modes.indexOf(current) + 1) % modes.length];
+        try {
+          if (current === "system") {
+            localStorage.removeItem("lerp-theme");
+          } else {
+            localStorage.setItem("lerp-theme", current);
+          }
+        } catch (e) {}
+        paint();
+      });
+    })();
+  </script>
   
   <script>
     

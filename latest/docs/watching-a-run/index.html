@@ -3,8 +3,47 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+  <script>
+    
+    
+    
+    (function () {
+      try {
+        var t = localStorage.getItem("lerp-theme");
+        if (t === "light" || t === "dark") {
+          document.documentElement.dataset.theme = t;
+        }
+      } catch (e) {}
+    })();
+  </script>
+  
+  
+  
+  
   <title>Watching a run · lerp</title>
-  <meta name="description" content="A small, reliable CLI that orchestrates software work through Linear.">
+  
+  
+  
+  
+  
+  <meta name="description" content="The activity line, the live log tail, the raw view, and following.">
+  
+  <link rel="canonical" href="https://lerp.sh/latest/docs/watching-a-run/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="lerp">
+  <meta property="og:title" content="Watching a run · lerp">
+  <meta property="og:description" content="The activity line, the live log tail, the raw view, and following.">
+  <meta property="og:url" content="https://lerp.sh/latest/docs/watching-a-run/">
+  <meta property="og:image" content="https://lerp.sh/og.png">
+  <meta property="og:image:alt" content="The lerp board: tickets waiting on a human in the On you panel, a work panel of queues and three lanes running coding agents">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="640">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Watching a run · lerp">
+  <meta name="twitter:description" content="The activity line, the live log tail, the raw view, and following.">
+  <meta name="twitter:image" content="https://lerp.sh/og.png">
+  <meta name="twitter:image:alt" content="The lerp board: tickets waiting on a human in the On you panel, a work panel of queues and three lanes running coding agents">
   <link rel="stylesheet" href="../../style.css">
 </head>
 <body>
@@ -16,13 +55,17 @@
   
   
   <header>
-    <a class="brand" href="../../">lerp</a>
+    
+    <a class="brand" href="../../"><img class="brand-mark" src="../../favicon.svg" alt="">lerp</a>
+    <span class="spacer"></span>
     
     <a class="nav here" href="../../docs/">Docs</a>
     
     <a class="nav" href="../../why/">Why lerp</a>
-    <span class="spacer"></span>
-    <a class="nav" href="https://github.com/mattwalters/lerp">GitHub</a>
+    
+    
+    <button type="button" id="theme-picker" class="theme" aria-label="Theme">◐ system</button>
+    <a class="nav github" href="https://github.com/mattwalters/lerp" target="_blank" rel="noopener" aria-label="GitHub"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg></a>
     
     
     <span class="version">
@@ -166,6 +209,16 @@
       
       
       
+      <a href="../../docs/telemetry/">Telemetry</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
       <a href="../../docs/cli/">The command line</a>
       
       
@@ -188,6 +241,8 @@
       
       <a href="../../scope/">SCOPE</a>
       
+      
+      <img class="sidenav-mark" src="../../favicon.svg" alt="">
     </nav>
     
     <main>
@@ -195,45 +250,52 @@
 
 <div class="prose">
   <h1 id="watching-a-run">Watching a run</h1>
-<p>A run says how it is going twice: once on its row, in a line you get without
-asking, and once in full when you open its log.</p>
-<!-- Cast slot (LERP-70): a lane's log tailing live — tool calls landing one
-     line each, pgup into the scrollback, r for the raw output, end back to
-     following.
-     keys: [enter] · [pgup] · [r] · [end] · [esc] -->
+<p>A run says how it is going twice: once on its row, in a line you get
+without asking, and once in full when you open its log.</p>
+<figure class="cast">
+  
+  <video class="cast-dark" controls muted loop playsinline preload="metadata" width="1200" height="640" aria-label="A live log tail in the main pane: scrollback, raw output, and following">
+    <source src="../../casts/watching.webm" type="video/webm">
+    <source src="../../casts/watching.mp4" type="video/mp4">
+  </video>
+  <video class="cast-light" controls muted loop playsinline preload="metadata" width="1200" height="640" aria-label="A live log tail in the main pane: scrollback, raw output, and following">
+    <source src="../../casts/watching-light.webm" type="video/webm">
+    <source src="../../casts/watching-light.mp4" type="video/mp4">
+  </video>
+  <figcaption class="keys"><kbd>enter</kbd> <span class="sep" aria-hidden="true">·</span> <kbd>pgup</kbd> <span class="sep" aria-hidden="true">·</span> <kbd>r</kbd> <span class="sep" aria-hidden="true">·</span> <kbd>end</kbd> <span class="sep" aria-hidden="true">·</span> <kbd>esc</kbd></figcaption>
+</figure>
+
 <h2 id="the-activity-line">The activity line</h2>
-<p>Under a running row, once the run has a log, a second line reads how that run
-is going: the last call the agent made — a shell command as <code>$ go test ./...</code>, anything else by tool and target — and a sparkline of its recent
+<p>Under a running row, once the run has a log, a second line reads how the
+run is going: the last call the agent made — a shell command as <code>$ go test ./...</code>, anything else by tool and target — and a sparkline of recent
 activity, so a run that has fallen quiet reads as a flat line.</p>
-<p>A run adopted from a previous <code>lerp</code> gets the same line rather than a fresh
-one: its log&rsquo;s own timestamps are read back into the history, so a run that
-went quiet twenty minutes ago draws the long flat line it earned. A log that
-dates nothing has no times to place, and draws the short line of a fresh run.</p>
-<p>The line takes the width the row is given: on a wide terminal&rsquo;s full-width
-list it draws back about a quarter of an hour, and beside an open main pane
-it shows the recent end of that same history. A cell is fifteen seconds
+<p>A run adopted from a previous <code>lerp</code> gets the same line, not a fresh one:
+its log&rsquo;s timestamps are read back into the history, so a run that went
+quiet twenty minutes ago draws the long flat line it earned. A log that
+dates nothing draws the short line of a fresh run.</p>
+<p>The line takes the width the row is given: a wide terminal&rsquo;s full-width
+list draws back about a quarter of an hour; beside an open main pane it
+shows the recent end of the same history. A cell is fifteen seconds
 wherever it is drawn, so a narrow row reaches less far back rather than
 reading more coarsely.</p>
-<p>Those are numbers to read, not a timeout. Lerp sets no threshold on them and
-never acts on one; <a href="../../docs/ejecting/">ejecting</a>
- a run that has stopped making
+<p>These are numbers to read, not a timeout. Lerp sets no threshold and never
+acts on one; <a href="../../docs/ejecting/">ejecting</a> a run that has stopped making
 progress stays the operator&rsquo;s call.</p>
 <h2 id="the-log">The log</h2>
 <p><code>enter</code> on a running ticket opens a live tail of its log in the main pane,
-with scrollback that survives the run&rsquo;s exit, and <code>esc</code> gives the screen
-back.</p>
-<p>The tail reads as agent activity rather than as bytes: tool calls one line
-each, prose as prose, and thinking collapsed to a single line with its token
-count. A runner whose output lerp does not recognize is shown exactly as it
-was written, with no configuration.</p>
-<p><code>pgup</code>/<code>pgdn</code> scroll it, <code>end</code> resumes following, and <code>r</code> toggles the pane to
+with scrollback that survives the run&rsquo;s exit; <code>esc</code> gives the screen back.</p>
+<p>The tail reads as agent activity rather than bytes: tool calls one line
+each, prose as prose, thinking collapsed to a single line with its token
+count. A runner whose output lerp does not recognize is shown exactly as
+written, with no configuration.</p>
+<p><code>pgup</code>/<code>pgdn</code> scroll, <code>end</code> resumes following, and <code>r</code> toggles the pane to
 the runner&rsquo;s raw output and back. The log on disk is untouched either way —
 the raw view is the same file, undecorated.</p>
 <h2 id="what-the-loop-itself-is-doing">What the loop itself is doing</h2>
 <p>Agent output goes to each run&rsquo;s own log, which is what the pane tails. The
-loop&rsquo;s own diagnostics — provision, dispose, adopt, reap — go somewhere else:
-<code>.lerp/loop.log</code>, appended to across sessions. That is where to look when a
-run never started rather than when a run is going badly.</p>
+loop&rsquo;s diagnostics — provision, dispose, adopt, reap — go to
+<code>.lerp/loop.log</code>, appended to across sessions. Look there when a run never
+started, rather than when a run is going badly.</p>
 
 </div>
 
@@ -253,6 +315,43 @@ run never started rather than when a run is going badly.</p>
     </nav>
     
   </div>
+  <script>
+    
+    
+    
+    
+    (function () {
+      var modes = ["system", "light", "dark"];
+      var glyphs = { system: "◐", light: "○", dark: "●" };
+      var picker = document.getElementById("theme-picker");
+      var current = "system";
+      try {
+        var stored = localStorage.getItem("lerp-theme");
+        if (stored === "light" || stored === "dark") { current = stored; }
+      } catch (e) {}
+      function paint() {
+        picker.textContent = glyphs[current] + " " + current;
+        picker.setAttribute("aria-label", "Theme: " + current);
+        if (current === "system") {
+          delete document.documentElement.dataset.theme;
+        } else {
+          document.documentElement.dataset.theme = current;
+        }
+      }
+      paint();
+      picker.addEventListener("click", function () {
+        current = modes[(modes.indexOf(current) + 1) % modes.length];
+        try {
+          if (current === "system") {
+            localStorage.removeItem("lerp-theme");
+          } else {
+            localStorage.setItem("lerp-theme", current);
+          }
+        } catch (e) {}
+        paint();
+      });
+    })();
+  </script>
   
   <script>
     
