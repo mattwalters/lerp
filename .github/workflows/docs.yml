@@ -184,17 +184,18 @@ jobs:
       # SCOPE) while the root does not, so a keep-list of what's small and
       # fixed stays correct where a prune-list of what's open-ended would
       # silently fall behind and let the next addition onto the manual leak
-      # onto the unversioned root instead. public/posters is kept alongside
-      # the two root pages so the splash page can paint its hero poster
-      # without waiting for a release tag.
+      # onto the unversioned root instead. Product imagery — posters, og.png,
+      # and the config shots — is staged by the tag path below alongside
+      # casts, so depictions of the product always describe a released
+      # binary.
       - name: Stage only the root from the root build
         if: github.ref == 'refs/heads/main'
         run: |
           mkdir /tmp/root
-          mv public/index.html public/why public/style.css public/sitemap.xml public/robots.txt public/og.png public/posters public/config.svg public/config-light.svg /tmp/root/
+          mv public/index.html public/why public/style.css public/sitemap.xml public/robots.txt /tmp/root/
           rm -rf public
           mkdir public
-          mv /tmp/root/index.html /tmp/root/why /tmp/root/style.css /tmp/root/sitemap.xml /tmp/root/robots.txt /tmp/root/og.png /tmp/root/posters /tmp/root/config.svg /tmp/root/config-light.svg public/
+          mv /tmp/root/index.html /tmp/root/why /tmp/root/style.css /tmp/root/sitemap.xml /tmp/root/robots.txt public/
 
       # Casts are rendered from the tag's own tree, same as the manual below,
       # so a recording always shows the released binary rather than whatever
@@ -222,15 +223,25 @@ jobs:
       # root directly — a plain copy, not a build — so the splash page plays
       # them too. keep_files preserves it between tags: a push to main stages
       # nothing at public/casts (main renders no casts of its own), so it
-      # goes on serving whatever the last tag put here. Before the first tag
-      # this step has not run yet and the root has no casts at all: the
-      # splash page paints its poster (staged by the root build above) and
-      # plays nothing until the first release cuts casts/.
+      # goes on serving whatever the last tag put here.
       - name: Stage this release's casts at the site root
         if: github.event_name == 'push' && github.ref_type == 'tag'
         run: |
           mkdir -p public/casts
           cp -r docs/static/casts/. public/casts/
+
+      # Product imagery — posters, og card, and the config shots — belongs to
+      # the release layer alongside the casts it must match: a main push
+      # updates prose and chrome without touching depictions of the product,
+      # so the poster, card, shot and video always describe one release,
+      # atomically. keep_files preserves them between tags the same way it
+      # preserves public/casts.
+      - name: Stage this release's product imagery at the site root
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        run: |
+          mkdir -p public/posters
+          cp -r docs/static/posters/. public/posters/
+          cp docs/static/og.png docs/static/config.svg docs/static/config-light.svg public/
 
       # The manual publishes only from a tag, from that tag's own tree —
       # never from main, which is what keeps a manual that ships with an
@@ -308,14 +319,15 @@ jobs:
           cat public/versions.json
 
       # keep_files is the point: a deploy adds or overwrites only what it
-      # staged — the (pruned) root on a main push, or /latest/, /vX.Y.Z/ and
-      # versions.json on a tag push — while everything else already on
-      # gh-pages, including every previously released version's directory,
-      # stays exactly where it was. The same property in the other
-      # direction: nothing published this way ever sheds a page on its own —
-      # the root, and /latest/ no less than a frozen /vX.Y.Z/ — so a deleted
-      # or renamed content file goes on being served from its subtree's last
-      # build until someone removes it from the branch by hand.
+      # staged — the (pruned) root prose on a main push, or /latest/, /vX.Y.Z/,
+      # casts, product imagery and versions.json on a tag push — while
+      # everything else already on gh-pages, including every previously
+      # released version's directory, stays exactly where it was. The same
+      # property in the other direction: nothing published this way ever sheds
+      # a page on its own — the root, and /latest/ no less than a frozen
+      # /vX.Y.Z/ — so a deleted or renamed content file goes on being served
+      # from its subtree's last build until someone removes it from the branch
+      # by hand.
       #
       # Nothing staged means nothing to publish: a run whose builds all
       # skipped — a dispatch pointed at neither main nor a tag push — stops
