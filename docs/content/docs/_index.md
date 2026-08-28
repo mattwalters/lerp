@@ -7,6 +7,6 @@ description: Lerp's manual — install to a first promoted ticket, the concepts,
 
 Lerp's manual. **Start** is install to a first promoted ticket;
 **Concepts** is the model the board is a picture of; **The interface** is one
-page per motion through the screen; **Reference** is the config file, the
-command line, and what to do when something looks stuck. SCOPE.md is
-published beside them, as it is written rather than rewritten.
+page per motion through the screen; **Reference** is the config file,
+telemetry, the command line, and what to do when something looks stuck.
+SCOPE.md is published beside them, as it is written rather than rewritten.

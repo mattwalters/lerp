@@ -92,6 +92,7 @@ source archive with no `.git` — reports the literal `dev`.
 | `LERP_BACKGROUND` | `light` or `dark`, saying which half of the palette to draw. Read once at startup; any other value is an error rather than a shrug. |
 | `LERP_OPEN` | `desktop` to rewrite ticket URLs to Linear's `linear://` deep-link scheme on `o`, opening directly in Linear's desktop app instead of bouncing through the browser. Unset or any other value keeps the default `https://` behavior. |
 | `NO_COLOR` | set to any value, turns colour off entirely. |
+| `XDG_STATE_HOME` | overrides where local [telemetry](telemetry.md) is written (`$XDG_STATE_HOME/lerp/runs.jsonl`, defaulting to `~/.local/state/lerp/runs.jsonl`). |
 
 Which half of the palette you get is otherwise decided by asking the terminal
 for its background colour, and a terminal that does not answer — tmux and
@@ -117,7 +118,7 @@ this one.
 Walking away from lerp cleanly takes two steps:
 
 1. **Remove the binary:** `make uninstall` from a clone, or delete the binary from `$HOME/.local/bin` or your `GOBIN`.
-2. **Remove local state:** `rm -rf .lerp/` once all agents have stopped. `.lerp/` holds run records, logs, and lane workspaces. Agents are separate process groups and outlive lerp, and run evidence is how the next `lerp` adopts or reaps them — so only delete `.lerp/` when no agents are live. Workspaces under `.lerp/workspaces/` are git worktrees whose registrations the stock `dispose` unwinds on exit; run `git worktree prune` to clean up any stray registrations.
+2. **Remove local state:** `rm -rf .lerp/` once all agents have stopped. `.lerp/` holds run records, logs, and lane workspaces. Agents are separate process groups and outlive lerp, and run evidence is how the next `lerp` adopts or reaps them — so only delete `.lerp/` when no agents are live. Workspaces under `.lerp/workspaces/` are git worktrees whose registrations the stock `dispose` unwinds on exit; run `git worktree prune` to clean up any stray registrations. To clear run metrics too, remove `$XDG_STATE_HOME/lerp/runs.jsonl` (or `~/.local/state/lerp/runs.jsonl`).
 
 Linear workflow statuses created by `lerp init` remain on your team until deleted or archived in Linear's settings.
 
