@@ -3,6 +3,7 @@ package credentials
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -35,6 +36,7 @@ func baseLoginFlow(t *testing.T, srv *httptest.Server, open func(string) error) 
 		authorizeURL:  "https://linear.app/oauth/authorize",
 		tokenEndpoint: srv.URL,
 		clientID:      testClientID,
+		ports:         []int{0},
 		store:         store{dir: t.TempDir()},
 		hc:            srv.Client(),
 		open:          open,
@@ -97,6 +99,45 @@ func TestLoginRefusesWithNoClientID(t *testing.T) {
 	}
 	if opened {
 		t.Error("a browser was opened despite no client id being configured")
+	}
+}
+
+// A busy first port is the next port's problem, not the operator's: the
+// flow falls through to the next in the list.
+func TestLoginFallsToNextPortWhenBusy(t *testing.T) {
+	busy, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("occupy a port: %v", err)
+	}
+	t.Cleanup(func() { busy.Close() })
+	busyPort := busy.Addr().(*net.TCPAddr).Port
+
+	got, err := listenLoopback([]int{busyPort, 0})
+	if err != nil {
+		t.Fatalf("listenLoopback: %v", err)
+	}
+	t.Cleanup(func() { got.Close() })
+	if p := got.Addr().(*net.TCPAddr).Port; p == busyPort {
+		t.Errorf("bound the busy port %d", p)
+	}
+}
+
+// Every port busy is a refusal that names the ports, not a hang or a
+// mystery bind error.
+func TestLoginRefusesWhenEveryPortIsBusy(t *testing.T) {
+	busy, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("occupy a port: %v", err)
+	}
+	t.Cleanup(func() { busy.Close() })
+	busyPort := busy.Addr().(*net.TCPAddr).Port
+
+	_, err = listenLoopback([]int{busyPort})
+	if err == nil {
+		t.Fatal("listenLoopback bound a busy port")
+	}
+	if !strings.Contains(err.Error(), fmt.Sprint(busyPort)) {
+		t.Errorf("error %q does not name the port", err)
 	}
 }
 
