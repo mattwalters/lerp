@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240">
+  <!-- lerp mark: linear interpolation. The axes draw an L. -->
+  <!-- thin solid traces from each point back to both axes -->
+  <g fill="none" stroke="#5c5b56" stroke-width="3">
+    <path d="M70 170V212"/>
+    <path d="M70 170H28"/>
+    <path d="M133 107V212"/>
+    <path d="M133 107H28"/>
+    <path d="M196 44V212"/>
+    <path d="M196 44H28"/>
+  </g>
+  <!-- axes -->
+  <path d="M28 16V212H224" fill="none" stroke="#5c5b56" stroke-width="8"/>
+  <!-- the interpolant -->
+  <path d="M70 170L196 44" fill="none" stroke="#d9823f" stroke-width="9" stroke-linecap="round"/>
+  <circle cx="70" cy="170" r="10" fill="#d9823f"/>
+  <circle cx="133" cy="107" r="10" fill="#d9823f"/>
+  <circle cx="196" cy="44" r="10" fill="#d9823f"/>
+</svg>
