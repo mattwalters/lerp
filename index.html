@@ -36,7 +36,41 @@
   <h1 class="wordmark">lerp</h1>
   <p class="tagline">A small, reliable CLI that orchestrates software work through Linear.</p>
   
-  <pre class="hero-install"><code>go install github.com/mattwalters/lerp/cmd/lerp@latest</code></pre>
+  <div class="hero-install">
+    <pre><code>curl -fsSL https://raw.githubusercontent.com/mattwalters/lerp/main/install.sh | sh</code></pre>
+    <button type="button" class="copy-button" aria-label="Copy install command" hidden>Copy</button>
+  </div>
+  <script>
+    (function () {
+      if (!navigator.clipboard || typeof navigator.clipboard.writeText !== "function") {
+        return;
+      }
+      var btn = document.querySelector(".hero-install .copy-button");
+      var code = document.querySelector(".hero-install code");
+      if (!btn || !code) {
+        return;
+      }
+      btn.hidden = false;
+      var timer = null;
+      btn.addEventListener("click", function () {
+        var text = code.textContent.trim();
+        navigator.clipboard.writeText(text).then(function () {
+          btn.textContent = "Copied";
+          btn.classList.add("copied");
+          btn.setAttribute("aria-label", "Copied to clipboard");
+          if (timer) {
+            clearTimeout(timer);
+          }
+          timer = setTimeout(function () {
+            btn.textContent = "Copy";
+            btn.classList.remove("copied");
+            btn.setAttribute("aria-label", "Copy install command");
+            timer = null;
+          }, 2000);
+        }).catch(function () {});
+      });
+    })();
+  </script>
   
 </section>
 <div class="prose">
