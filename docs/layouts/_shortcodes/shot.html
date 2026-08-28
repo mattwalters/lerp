@@ -1,0 +1,20 @@
+{{- /* A terminal shot: a pair of images rendered by freeze, dark and light.
+       CSS shows the one matching the active theme.
+
+       Called from markdown:
+
+         {{< shot src="config.svg" alt="..." >}}
+
+       Derives config-light.svg from config.svg. Missing alt is an error: an
+       image with no text alternative is a blank frame to a screen reader. */ -}}
+{{- $src := .Get "src" -}}
+{{- $alt := .Get "alt" -}}
+{{- if not $src -}}
+  {{- errorf "shot: %s has no src" .Position -}}
+{{- end -}}
+{{- if not $alt -}}
+  {{- errorf "shot: %s has no alt text describing what the shot shows" .Position -}}
+{{- end -}}
+{{- $srcLight := replaceRE `\.([^.]+)$` "-light.$1" $src -}}
+<img class="shot-dark" src="{{ $src | relURL }}" alt="{{ $alt }}" loading="lazy">
+<img class="shot-light" src="{{ $srcLight | relURL }}" alt="{{ $alt }}" loading="lazy">

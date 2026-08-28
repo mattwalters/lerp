@@ -191,10 +191,10 @@ jobs:
         if: github.ref == 'refs/heads/main'
         run: |
           mkdir /tmp/root
-          mv public/index.html public/why public/style.css public/sitemap.xml public/robots.txt public/og.png public/posters /tmp/root/
+          mv public/index.html public/why public/style.css public/sitemap.xml public/robots.txt public/og.png public/posters public/config.svg public/config-light.svg /tmp/root/
           rm -rf public
           mkdir public
-          mv /tmp/root/index.html /tmp/root/why /tmp/root/style.css /tmp/root/sitemap.xml /tmp/root/robots.txt /tmp/root/og.png /tmp/root/posters public/
+          mv /tmp/root/index.html /tmp/root/why /tmp/root/style.css /tmp/root/sitemap.xml /tmp/root/robots.txt /tmp/root/og.png /tmp/root/posters /tmp/root/config.svg /tmp/root/config-light.svg public/
 
       # Casts are rendered from the tag's own tree, same as the manual below,
       # so a recording always shows the released binary rather than whatever
