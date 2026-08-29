@@ -3,7 +3,6 @@
 package loop
 
 import (
-	"bufio"
 	"bytes"
 	"io"
 	"os"
@@ -106,12 +105,23 @@ func readOutcome(path, vendor string, exitCode int) (derivedCode int, cost float
 		return derivedCode, cost, reason
 	}
 
-	// Signal 2: Vendor abort line in log.
+	// Signal 2: Vendor abort line in log. A byte slice scan rather than a
+	// bufio.Scanner, since an agent log can put a large tool result on one
+	// line, well past Scanner's default token size (64 KiB).
 	if adapter, ok := vendors.Lookup(vendor); ok {
 		if reporter, ok := adapter.(vendors.AbortReporter); ok {
-			scanner := bufio.NewScanner(bytes.NewReader(b))
-			for scanner.Scan() {
-				if msg, ok := reporter.Aborted(scanner.Text()); ok {
+			rem := b
+			for len(rem) > 0 {
+				i := bytes.IndexByte(rem, '\n')
+				var line []byte
+				if i < 0 {
+					line = rem
+					rem = nil
+				} else {
+					line = rem[:i]
+					rem = rem[i+1:]
+				}
+				if msg, ok := reporter.Aborted(string(line)); ok {
 					derivedCode = 1
 					reason = msg
 					return derivedCode, cost, reason

@@ -64,6 +64,23 @@ func TestReadOutcomeSignal2VendorAbortLine(t *testing.T) {
 			t.Errorf("readOutcome reason = %q, want remedy in note", reason)
 		}
 	})
+
+	t.Run("scans past lines larger than 64 KiB without failing", func(t *testing.T) {
+		largeLine := strings.Repeat("x", 128*1024)
+		log := `{"event":"init","conversation_id":"ffd2f49a-85bf-45ab-bfad-80aed96a9b98"}` + "\n" +
+			`{"event":"step_update","step_update":{"state":"DONE","step_type":"tool","tool_name":"view_file","tool_info":{"output":"` + largeLine + `"}}}` + "\n" +
+			`jetski: no output produced — a tool required the "command" permission that` + "\n" +
+			`headless mode cannot prompt for, so it was auto-denied.` + "\n" +
+			`{"event":"result","result":{"status":"SUCCESS","response":"","num_turns":1}}` + "\n"
+		p := writeLog(t, log)
+		code, _, reason := readOutcome(p, "antigravity", 0)
+		if code != 1 {
+			t.Errorf("readOutcome code = %d, want 1", code)
+		}
+		if !strings.Contains(reason, "--dangerously-skip-permissions") {
+			t.Errorf("readOutcome reason = %q, want remedy in note", reason)
+		}
+	})
 }
 
 func TestReadOutcomeSignal3EmptyStream(t *testing.T) {
