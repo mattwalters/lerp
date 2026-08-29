@@ -10,12 +10,10 @@ import (
 	"io"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/mattwalters/lerp/internal/childenv"
 	"github.com/mattwalters/lerp/internal/config"
 	"github.com/mattwalters/lerp/internal/credentials"
 	"github.com/mattwalters/lerp/internal/evidence"
@@ -142,7 +140,7 @@ func openTUI(ctx context.Context, lanes int) error {
 	if err := tui.UseBackground(); err != nil {
 		return err
 	}
-	repoDir, err := gitRoot()
+	repoDir, err := anchorDir()
 	if err != nil {
 		return err
 	}
@@ -269,9 +267,9 @@ func initCommand(args []string) {
 	if err != nil {
 		fatal(fmt.Errorf("lerp init: %w", err))
 	}
-	repoRoot, err := gitRoot()
+	repoRoot, err := initAnchorDir()
 	if err != nil {
-		fatal(err)
+		fatal(fmt.Errorf("lerp init: %w", err))
 	}
 	// The init conversation needs a terminal on both ends; a piped init takes
 	// the stock answers, exactly as --yes does.
@@ -351,14 +349,56 @@ func isTerminal(f *os.File) bool {
 	return info.Mode()&os.ModeCharDevice != 0
 }
 
-func gitRoot() (string, error) {
-	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
-	cmd.Env = childenv.Inherited()
-	out, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("find repository root (lerp runs inside a Git repository): %w", err)
+const initHint = `run "lerp init --team KEY"`
+
+// anchorFrom walks up from start looking for a repo config file, returning
+// the first directory containing one. A match must be a regular file, so a
+// directory named lerp.toml (or another config name) is ignored.
+func anchorFrom(start string) (string, error) {
+	dir := start
+	for {
+		_, err := config.FindRepoConfig(dir)
+		if err == nil {
+			if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+				return resolved, nil
+			}
+			return dir, nil
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			return "", err
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", fmt.Errorf("no repo config in %s or any parent directory: %s", start, initHint)
+		}
+		dir = parent
 	}
-	return filepath.Clean(strings.TrimSpace(string(out))), nil
+}
+
+func anchorDir() (string, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	return anchorFrom(cwd)
+}
+
+func initAnchorFrom(start string) string {
+	if anchor, err := anchorFrom(start); err == nil {
+		return anchor
+	}
+	if resolved, err := filepath.EvalSymlinks(start); err == nil {
+		return resolved
+	}
+	return start
+}
+
+func initAnchorDir() (string, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	return initAnchorFrom(cwd), nil
 }
 
 // loadRepo reads and validates the repository configuration. When no repo
@@ -367,7 +407,7 @@ func loadRepo(repoDir string) (*config.RepoConfig, error) {
 	path, err := config.FindRepoConfig(repoDir)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return nil, errors.New(`no repo config: run "lerp init --team KEY"`)
+			return nil, fmt.Errorf("no repo config: %s", initHint)
 		}
 		return nil, err
 	}

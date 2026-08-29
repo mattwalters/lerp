@@ -19,8 +19,8 @@ That is the whole surface. `lerp -h` prints it, subcommands included.
 
 ## `lerp`
 
-Bare `lerp` opens [the board](reading-the-board.md). Run it from inside
-the Git repository whose `lerp.toml` it should read.
+Bare `lerp` opens [the board](reading-the-board.md). Run it from the
+directory holding `lerp.toml`, or anywhere below it.
 
 `-concurrency N` caps how many agents run at once. The default is 10, and
 a value below 1 is refused. Each lane is a whole workspace, so lower it

@@ -17,8 +17,9 @@ lerp login
 lerp init --team LERP --team-name "Lerp"
 ```
 
-Run it from inside your Git repository. `--team` is the Linear team key,
-the LERP in LERP-42. Check it, because init creates the team when no
+Run it from the directory you want to be the root of lerp's work,
+which is where init writes `lerp.toml`. `--team` is the Linear team
+key, the LERP in LERP-42. Check it, because init creates the team when no
 team has that key.
 
 Init asks a few questions to fit the [stock

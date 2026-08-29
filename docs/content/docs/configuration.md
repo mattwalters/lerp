@@ -9,10 +9,11 @@ weight: 120
 
 # Configuration
 
-Lerp reads one file at the repo root, **checked in**. It
-declares which Linear teams the repo serves, how to build a workspace,
-and the pipeline itself, runners and queues with their prompts. It holds
-no durable state, because [Linear is the
+Lerp reads one config file at the root of your project, **checked in**.
+The root is the directory holding that file, found by walking up from
+wherever lerp was run. It declares which Linear teams the repo serves,
+how to build a workspace, and the pipeline itself, runners and queues
+with their prompts. It holds no durable state, because [Linear is the
 database](how-lerp-works.md#ticket). Parsing is strict, and an unknown
 key is an error.
 

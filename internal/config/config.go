@@ -306,9 +306,9 @@ func FindRepoConfig(root string) (string, error) {
 	var found []string
 	for _, name := range RepoConfigNames {
 		p := filepath.Join(root, name)
-		if _, err := os.Stat(p); err == nil {
+		if info, err := os.Stat(p); err == nil && info.Mode().IsRegular() {
 			found = append(found, name)
-		} else if !errors.Is(err, fs.ErrNotExist) {
+		} else if err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return "", fmt.Errorf("check %s: %w", p, err)
 		}
 	}

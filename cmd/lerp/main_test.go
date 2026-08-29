@@ -2,7 +2,12 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -370,4 +375,234 @@ func TestPrintVersion(t *testing.T) {
 			t.Errorf("line = %q, want %q", lines[0], "lerp v0.1.0")
 		}
 	})
+}
+
+func TestAnchorFrom(t *testing.T) {
+	t.Run("finds lerp.toml in start directory", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, config.RepoConfigFile), []byte(config.ExampleRepoConfig()), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		resolvedDir, err := filepath.EvalSymlinks(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := anchorFrom(dir)
+		if err != nil {
+			t.Fatalf("anchorFrom error: %v", err)
+		}
+		if got != resolvedDir {
+			t.Errorf("anchorFrom(%q) = %q, want %q", dir, got, resolvedDir)
+		}
+	})
+
+	t.Run("finds config several levels up", func(t *testing.T) {
+		root := t.TempDir()
+		deep := filepath.Join(root, "a", "b", "c", "d")
+		if err := os.MkdirAll(deep, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, config.RepoConfigFile), []byte(config.ExampleRepoConfig()), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		resolvedRoot, err := filepath.EvalSymlinks(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := anchorFrom(deep)
+		if err != nil {
+			t.Fatalf("anchorFrom(%q) error: %v", deep, err)
+		}
+		if got != resolvedRoot {
+			t.Errorf("anchorFrom(%q) = %q, want %q", deep, got, resolvedRoot)
+		}
+	})
+
+	t.Run("finds yaml config several levels up", func(t *testing.T) {
+		root := t.TempDir()
+		deep := filepath.Join(root, "sub", "pkg")
+		if err := os.MkdirAll(deep, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "lerp.yaml"), []byte("teams:\n  - LERP\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		resolvedRoot, err := filepath.EvalSymlinks(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := anchorFrom(deep)
+		if err != nil {
+			t.Fatalf("anchorFrom(%q) error: %v", deep, err)
+		}
+		if got != resolvedRoot {
+			t.Errorf("anchorFrom(%q) = %q, want %q", deep, got, resolvedRoot)
+		}
+	})
+}
+
+func TestAnchorFromNearestAncestorWins(t *testing.T) {
+	root := t.TempDir()
+	child := filepath.Join(root, "subproject")
+	deep := filepath.Join(child, "src", "pkg")
+	if err := os.MkdirAll(deep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, config.RepoConfigFile), []byte("# root"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(child, config.RepoConfigFile), []byte("# child"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	resolvedChild, err := filepath.EvalSymlinks(child)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := anchorFrom(deep)
+	if err != nil {
+		t.Fatalf("anchorFrom(%q) error: %v", deep, err)
+	}
+	if got != resolvedChild {
+		t.Errorf("anchorFrom(%q) = %q, want %q", deep, got, resolvedChild)
+	}
+}
+
+func TestAnchorFromDirectoryNamedConfigIsNotAnchor(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, config.RepoConfigFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, err := anchorFrom(dir)
+	if err == nil {
+		t.Fatal("anchorFrom succeeded on a directory named lerp.toml, want error")
+	}
+	if !strings.Contains(err.Error(), "no repo config") {
+		t.Errorf("error %q does not mention missing repo config", err.Error())
+	}
+}
+
+func TestAnchorFromMissPointsAtInit(t *testing.T) {
+	dir := t.TempDir()
+	_, err := anchorFrom(dir)
+	if err == nil {
+		t.Fatal("want error on missing config, got nil")
+	}
+	want := fmt.Sprintf("no repo config in %s or any parent directory: run %q", dir, "lerp init --team KEY")
+	if err.Error() != want {
+		t.Errorf("error = %q, want %q", err.Error(), want)
+	}
+	if strings.Contains(strings.ToLower(err.Error()), "git") {
+		t.Errorf("error %q mentions Git", err.Error())
+	}
+}
+
+func TestAnchorFromMultipleConfigsRefuses(t *testing.T) {
+	root := t.TempDir()
+	deep := filepath.Join(root, "a", "b")
+	if err := os.MkdirAll(deep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "lerp.toml"), []byte("teams = ['LERP']\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "lerp.yaml"), []byte("teams:\n  - LERP\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := anchorFrom(deep)
+	if err == nil {
+		t.Fatal("want error on multiple configs, got nil")
+	}
+	for _, want := range []string{"lerp.toml", "lerp.yaml"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not name %s", err.Error(), want)
+		}
+	}
+}
+
+func TestInitAnchorFrom(t *testing.T) {
+	t.Run("returns ancestor holding config", func(t *testing.T) {
+		root := t.TempDir()
+		deep := filepath.Join(root, "a", "b")
+		if err := os.MkdirAll(deep, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, config.RepoConfigFile), []byte(config.ExampleRepoConfig()), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		resolvedRoot, err := filepath.EvalSymlinks(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := initAnchorFrom(deep)
+		if got != resolvedRoot {
+			t.Errorf("initAnchorFrom(%q) = %q, want %q", deep, got, resolvedRoot)
+		}
+	})
+
+	t.Run("returns start directory when none found", func(t *testing.T) {
+		dir := t.TempDir()
+		resolvedDir, err := filepath.EvalSymlinks(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := initAnchorFrom(dir)
+		if got != resolvedDir {
+			t.Errorf("initAnchorFrom(%q) = %q, want %q", dir, got, resolvedDir)
+		}
+	})
+}
+
+func TestNoGoSourceSpawnsGit(t *testing.T) {
+	root := filepath.Join("..", "..")
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			name := d.Name()
+			if strings.HasPrefix(name, ".") || name == "vendor" || name == "node_modules" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		fset := token.NewFileSet()
+		node, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			return err
+		}
+		ast.Inspect(node, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			sel, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			pkg, ok := sel.X.(*ast.Ident)
+			if !ok || pkg.Name != "exec" {
+				return true
+			}
+			if sel.Sel.Name == "Command" && len(call.Args) > 0 {
+				if lit, ok := call.Args[0].(*ast.BasicLit); ok && lit.Value == `"git"` {
+					t.Errorf("%s: spawns git via exec.Command(%s)", path, lit.Value)
+				}
+			}
+			if sel.Sel.Name == "CommandContext" && len(call.Args) > 1 {
+				if lit, ok := call.Args[1].(*ast.BasicLit); ok && lit.Value == `"git"` {
+					t.Errorf("%s: spawns git via exec.CommandContext(..., %s)", path, lit.Value)
+				}
+			}
+			return true
+		})
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking repo: %v", err)
+	}
 }

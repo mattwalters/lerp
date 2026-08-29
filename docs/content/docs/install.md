@@ -48,7 +48,6 @@ Whichever route you took, `lerp version` prints what you got.
 
 ## What else you need
 
-- Make sure Git is installed.
 - Linear credentials. Either from `lerp login` or a `LINEAR_API_KEY`.
 - Coding agents. One or more of Claude Code CLI, Codex CLI, or
   Antigravity CLI. Each one needs its own Linear access, set up below.
