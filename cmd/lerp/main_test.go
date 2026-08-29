@@ -177,7 +177,7 @@ func TestLoadRepoMissingConfigPointsAtInit(t *testing.T) {
 	if err == nil {
 		t.Fatal("want error, got nil")
 	}
-	if want := `no repo config: run "lerp init --team KEY"`; err.Error() != want {
+	if want := `no repo config: run "lerp init"`; err.Error() != want {
 		t.Errorf("error = %q, want %q", err.Error(), want)
 	}
 }
@@ -491,12 +491,84 @@ func TestAnchorFromMissPointsAtInit(t *testing.T) {
 	if err == nil {
 		t.Fatal("want error on missing config, got nil")
 	}
-	want := fmt.Sprintf("no repo config in %s or any parent directory: run %q", dir, "lerp init --team KEY")
+	want := fmt.Sprintf("no repo config in %s or any parent directory: run %q", dir, "lerp init")
 	if err.Error() != want {
 		t.Errorf("error = %q, want %q", err.Error(), want)
 	}
+	var notSetUp notSetUpError
+	if !errors.As(err, &notSetUp) {
+		t.Errorf("error %v is not a notSetUpError", err)
+	} else if notSetUp.dir != dir {
+		t.Errorf("notSetUp.dir = %q, want %q", notSetUp.dir, dir)
+	}
 	if strings.Contains(strings.ToLower(err.Error()), "git") {
 		t.Errorf("error %q mentions Git", err.Error())
+	}
+}
+
+func TestGreeting(t *testing.T) {
+	origVersion := version.Version
+	version.Version = "v0.1.0"
+	defer func() { version.Version = origVersion }()
+
+	dir := "/Users/test/workspace"
+	var out strings.Builder
+	greeting(&out, dir)
+	text := out.String()
+
+	t.Run("carries all required elements", func(t *testing.T) {
+		wants := []string{
+			"lerp v0.1.0",
+			dir,
+			`Run "lerp init"`,
+			"https://lerp.sh/latest/docs/",
+		}
+		for _, want := range wants {
+			if !strings.Contains(text, want) {
+				t.Errorf("greeting missing %q:\n%s", want, text)
+			}
+		}
+	})
+
+	t.Run("never contains --team", func(t *testing.T) {
+		if strings.Contains(text, "--team") {
+			t.Errorf("greeting contains --team:\n%s", text)
+		}
+	})
+
+	t.Run("capped at ten lines", func(t *testing.T) {
+		lines := strings.Split(strings.TrimSuffix(text, "\n"), "\n")
+		if len(lines) > 10 {
+			t.Errorf("greeting has %d lines, want at most 10:\n%s", len(lines), text)
+		}
+	})
+}
+
+func TestOpenTUIOrdersConfigBeforeCredentials(t *testing.T) {
+	emptyDir := t.TempDir()
+	t.Chdir(emptyDir)
+
+	fakeHome := t.TempDir()
+	t.Setenv("HOME", fakeHome)
+	t.Setenv("XDG_CONFIG_HOME", fakeHome)
+	t.Setenv("LINEAR_API_KEY", "")
+
+	err := openTUI(context.Background(), defaultLanes)
+	if err == nil {
+		t.Fatal("openTUI succeeded in empty directory, want error")
+	}
+
+	var notSetUp notSetUpError
+	if !errors.As(err, &notSetUp) {
+		t.Fatalf("openTUI returned %v, want notSetUpError", err)
+	}
+
+	resolvedEmptyDir, err := filepath.EvalSymlinks(emptyDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if notSetUp.dir != emptyDir && notSetUp.dir != resolvedEmptyDir {
+		t.Errorf("notSetUp.dir = %q, want %q or %q", notSetUp.dir, emptyDir, resolvedEmptyDir)
 	}
 }
 

@@ -69,6 +69,11 @@ func main() {
 			os.Exit(2)
 		}
 		if err := openTUI(context.Background(), *lanes); err != nil {
+			var notSetUp notSetUpError
+			if errors.As(err, &notSetUp) {
+				greeting(os.Stderr, notSetUp.dir)
+				os.Exit(1)
+			}
 			fatal(fmt.Errorf("lerp: %w", err))
 		}
 		return
@@ -127,10 +132,21 @@ func normalizeArgs(args []string) []string {
 // engine: it drives the loop's ticks and subscribes to its events; nothing
 // runs when it is closed, and no daemon exists (SCOPE, "The interface").
 func openTUI(ctx context.Context, lanes int) error {
-	// First, before anything costs anything: an operator with no credential
-	// should not pay for a board check and a lock before being told so.
-	// Resolved once here and asked per request from then on — an API key
-	// answers with itself, a stored token renews itself underneath.
+	// First, before anything costs anything: looking for a config is a stat
+	// walk up the tree and costs less than resolving credentials, which may
+	// renew a token over the network.
+	repoDir, err := anchorDir()
+	if err != nil {
+		return err
+	}
+	repo, err := loadRepo(repoDir)
+	if err != nil {
+		return err
+	}
+	// Before a board check and a lock: an operator with no credential
+	// should not pay for those before being told so. Resolved once here and
+	// asked per request from then on — an API key answers with itself, a
+	// stored token renews itself underneath.
 	auth, err := credentials.Resolve(nil)
 	if err != nil {
 		return err
@@ -139,14 +155,6 @@ func openTUI(ctx context.Context, lanes int) error {
 	// this itself, but only once everything below has run, and an operator
 	// who misspelled it should not pay for a board check and a lock first.
 	if err := theme.UseBackground(); err != nil {
-		return err
-	}
-	repoDir, err := anchorDir()
-	if err != nil {
-		return err
-	}
-	repo, err := loadRepo(repoDir)
-	if err != nil {
 		return err
 	}
 
@@ -431,7 +439,25 @@ func isTerminal(f *os.File) bool {
 	return info.Mode()&os.ModeCharDevice != 0
 }
 
-const initHint = `run "lerp init --team KEY"`
+const initHint = `run "lerp init"`
+
+type notSetUpError struct {
+	dir string
+}
+
+func (e notSetUpError) Error() string {
+	return fmt.Sprintf("no repo config in %s or any parent directory: %s", e.dir, initHint)
+}
+
+func greeting(w io.Writer, dir string) {
+	fmt.Fprintf(w, "lerp %s\n", version.Version)
+	fmt.Fprintln(w, "Put tickets on a Linear board; lerp runs coding agents to move them across it.")
+	fmt.Fprintln(w)
+	fmt.Fprintf(w, "No %s in %s or any parent directory.\n", config.RepoConfigFile, dir)
+	fmt.Fprintln(w, `Run "lerp init" to pick a team and set this repo up.`)
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Docs: https://lerp.sh/latest/docs/quickstart/")
+}
 
 // anchorFrom walks up from start looking for a repo config file, returning
 // the first directory containing one. A match must be a regular file, so a
@@ -451,7 +477,7 @@ func anchorFrom(start string) (string, error) {
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			return "", fmt.Errorf("no repo config in %s or any parent directory: %s", start, initHint)
+			return "", notSetUpError{dir: start}
 		}
 		dir = parent
 	}
