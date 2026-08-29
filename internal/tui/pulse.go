@@ -3,9 +3,9 @@ package tui
 import (
 	"math"
 	"os"
-	"strings"
 	"time"
 
+	ntsparkline "github.com/NimbleMarkets/ntcharts/sparkline"
 	"github.com/mattwalters/lerp/internal/logfmt"
 )
 
@@ -37,10 +37,6 @@ const (
 	// that a monstrous log costs a few polls instead of one long stall.
 	catchupChunks = 32
 )
-
-// sparkBars is the ramp, lowest first. Index 0 is an empty bucket, so a
-// stretch with no activity in it reads as a flat line along the bottom.
-var sparkBars = []rune("▁▂▃▄▅▆▇█")
 
 // pulse is one lane's log read for what its work row says about the run in
 // progress: how much activity it has carried lately, what it has spent, and
@@ -254,32 +250,43 @@ func (p *pulse) window() []int {
 	return out
 }
 
-// sparkline draws counts as bars, the busiest bucket in the window at the top
-// of the ramp and the rest scaled under it. The scale is the row's own, not a
-// fixed rate, because the question is shape rather than magnitude — whether
-// the agent is doing something and whether it stopped — and because what
-// counts as busy differs by runner and by what the agent is doing. The cost
-// is that bar heights do not compare between one row and the next; the flat
-// line does, which is the reading the row is for.
+// sparkline draws counts as a braille line, the busiest bucket in the window
+// at the top of the canvas and the rest scaled under it. The scale is the
+// row's own, not a fixed rate, because the question is shape rather than
+// magnitude — whether the agent is doing something and whether it stopped —
+// and because what counts as busy differs by runner and by what the agent is
+// doing. The cost is that line heights do not compare between one row and the
+// next; the flat line does, which is the reading the row is for.
 //
-// An empty bucket is always the floor bar and any activity at all clears it,
-// so one event is visibly not none however busy the rest of the window is.
-// A long line makes that the ordinary reading rather than the rare one: a
-// burst at the start of a run holds the scale for as long as it stays in the
-// window, and steady work under it sits on the bar above the floor. Alive
-// rather than how alive is what the row is for, with the call beside it.
+// An empty bucket is always the floor and any activity at all clears it, so
+// one event is visibly not none however busy the rest of the window is. A
+// long line makes that the ordinary reading rather than the rare one: a burst
+// at the start of a run holds the scale for as long as it stays in the window,
+// and steady work under it sits above the floor. Alive rather than how alive
+// is what the row is for, with the call beside it.
 func sparkline(counts []int) string {
+	if len(counts) == 0 {
+		return ""
+	}
 	hi := 0
 	for _, c := range counts {
 		hi = max(hi, c)
 	}
-	var b strings.Builder
-	for _, c := range counts {
-		bar := 0
+	data := make([]float64, len(counts)+1)
+	for i, c := range counts {
 		if c > 0 {
-			bar = max(1, c*(len(sparkBars)-1)/hi)
+			data[i] = max(0.25, float64(c)/float64(hi))
 		}
-		b.WriteRune(sparkBars[bar])
 	}
-	return b.String()
+	data[len(counts)] = data[len(counts)-1]
+
+	s := ntsparkline.New(len(counts)+1, 1)
+	s.SetMax(1)
+	s.PushAll(data)
+	s.DrawBraille()
+	r := []rune(s.View())
+	if len(r) > len(counts) {
+		r = r[:len(counts)]
+	}
+	return string(r)
 }

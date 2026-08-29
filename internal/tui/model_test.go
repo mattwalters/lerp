@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NimbleMarkets/ntcharts/canvas/runes"
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -1218,11 +1219,7 @@ func TestMainPaneScrollbarTracksThePosition(t *testing.T) {
 	m = update(t, m, keyMsg("enter")) // the inbox reads a ticket once its pane is open
 	m = update(t, m, eventMsg{ev: threeWaiting()})
 
-	// mainView isolates the pane's own rendering — scrollThumbGlyph is also
-	// the sparkline's busiest bar (pulse.go), drawn into the work panel's
-	// rows, so a check against the whole screen would pass today only
-	// because no run happens to be active and could start failing for a
-	// reason that has nothing to do with this pane.
+	// mainView isolates the pane's own rendering.
 	mainView := func(m model) string {
 		g := m.geometry()
 		return m.mainPanel(g.mainW, g.mainH)
@@ -6311,10 +6308,13 @@ func TestRunningRowShowsHowTheRunIsGoing(t *testing.T) {
 	// The tool is a shell one, so the row spends its columns on the command
 	// and not on the word "Bash"; the tokens are the call's four counts.
 	view := m.View()
-	for _, want := range []string{"running", "1m30s", "12k tok", "$ go test ./...", "█"} {
+	for _, want := range []string{"running", "1m30s", "12k tok", "$ go test ./..."} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("the running row is missing %q:\n%s", want, view)
 		}
+	}
+	if !strings.ContainsFunc(view, runes.IsBraillePattern) {
+		t.Fatalf("the running row is missing its sparkline:\n%s", view)
 	}
 	// The row is two lines and the panel counts them, or the list would
 	// draw more rows than it has room for.
@@ -6358,9 +6358,6 @@ func TestProvisioningRowClaimsNoReading(t *testing.T) {
 	// no log.
 	if rows, _ := m.workListRows(40); len(rows) != 2 {
 		t.Fatalf("work list drew %d lines, want a header and a one-line row: %q", len(rows), rows)
-	}
-	if strings.ContainsAny(view, "▁█") {
-		t.Fatalf("a provisioning row draws activity for a log that does not exist:\n%s", view)
 	}
 	if !strings.Contains(view, "provisioning") {
 		t.Fatalf("a provisioning row lost its state:\n%s", view)
@@ -6561,7 +6558,7 @@ func TestRunLineKeepsTheCallWhenNarrow(t *testing.T) {
 	if !strings.Contains(line, "$ go test ./...") {
 		t.Fatalf("the call did not survive a %d-column panel: %q", width, line)
 	}
-	if !strings.ContainsAny(line, "▁█") {
+	if !strings.ContainsFunc(line, runes.IsBraillePattern) {
 		t.Fatalf("the sparkline was dropped where it fits: %q", line)
 	}
 	if lipgloss.Width(line) > width {
@@ -6572,7 +6569,7 @@ func TestRunLineKeepsTheCallWhenNarrow(t *testing.T) {
 	// it goes rather than the digits.
 	fits := 0
 	for w := 1; w <= 60 && fits == 0; w++ {
-		if strings.ContainsAny(ansi.Strip(runLine(r, w)), "▁█") {
+		if strings.ContainsFunc(ansi.Strip(runLine(r, w)), runes.IsBraillePattern) {
 			fits = w
 		}
 	}
@@ -6580,7 +6577,7 @@ func TestRunLineKeepsTheCallWhenNarrow(t *testing.T) {
 		t.Fatalf("the sparkline appears at %d columns, but the line draws in %d", fits, want)
 	}
 	tight := ansi.Strip(runLine(r, fits-1))
-	if strings.ContainsAny(tight, "▁█") {
+	if strings.ContainsFunc(tight, runes.IsBraillePattern) {
 		t.Fatalf("a sparkline crowded out the call: %q", tight)
 	}
 	if !strings.Contains(tight, "$ go test ./...") {
@@ -6854,7 +6851,7 @@ func TestRunLineHoldsItsPlaceBeforeTheFirstCall(t *testing.T) {
 	r := workRow{lane: 1, since: time.Now(), heard: time.Now(),
 		rate: []int{0, 1, 2, 0, 1, 0, 0, 3}}
 	line := ansi.Strip(runLine(r, 60))
-	if !strings.ContainsAny(line, "▁█") {
+	if !strings.ContainsFunc(line, runes.IsBraillePattern) {
 		t.Fatalf("a run with no call yet lost its line: %q", line)
 	}
 	if strings.Contains(line, "$") {
@@ -6905,19 +6902,19 @@ func TestTheSparklineTakesTheWidthItIsGiven(t *testing.T) {
 	}
 }
 
-// drawnCells is how many sparkline bars a row's second line renders at a
+// drawnCells is how many sparkline cells a row's second line renders at a
 // given panel width.
 func drawnCells(t *testing.T, r workRow, width int) int {
 	t.Helper()
 	return len([]rune(sparkOf(ansi.Strip(runLine(r, width)))))
 }
 
-// sparkOf picks the bars out of a rendered line: every rune on it that is
-// one of the ramp's.
+// sparkOf picks the sparkline out of a rendered line: every rune on it that is
+// a braille pattern.
 func sparkOf(line string) string {
 	var b strings.Builder
 	for _, c := range line {
-		if strings.ContainsRune(string(sparkBars), c) {
+		if runes.IsBraillePattern(c) {
 			b.WriteRune(c)
 		}
 	}

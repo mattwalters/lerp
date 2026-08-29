@@ -3944,7 +3944,7 @@ func runLine(r workRow, width int) string {
 	// open detail pane draws the recent end of that history. What a cell
 	// covers is the same either way — fifteen seconds, wherever the line is
 	// drawn — so a narrow row is a shorter reach, never a coarser one. The
-	// bar heights are the drawn window's own scale, as they always were:
+	// line heights are the drawn window's own scale, as they always were:
 	// narrowing the row rescales them to what is left in view, which is the
 	// same trade the row already makes against the run beside it.
 	right := ""

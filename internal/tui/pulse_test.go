@@ -122,13 +122,13 @@ func TestPulseQuietGoesFlat(t *testing.T) {
 	if got[0] == 0 {
 		t.Fatalf("the busy bucket did not slide back with the clock: %v", got)
 	}
-	if bars := sparkline(got); !strings.HasSuffix(bars, "▁▁") {
+	if bars := sparkline(got); !strings.HasSuffix(bars, "⣀⣀") {
 		t.Fatalf("a quiet stretch does not read flat: %q", bars)
 	}
 
 	// Quiet for longer than the whole window leaves nothing to draw.
 	p.read(start.Add(time.Hour))
-	if bars := sparkline(p.window()); bars != strings.Repeat("▁", sparkCells) {
+	if bars := sparkline(p.window()); bars != strings.Repeat("⣀", sparkCells) {
 		t.Fatalf("a long-dead run does not read flat: %q", bars)
 	}
 }
@@ -314,14 +314,15 @@ func TestSparkline(t *testing.T) {
 		counts []int
 		want   string
 	}{
-		{"nothing at all", []int{0, 0, 0}, "▁▁▁"},
-		{"the busiest bucket tops the ramp", []int{0, 4, 0}, "▁█▁"},
+		{"nothing at all", []int{0, 0, 0}, "⣀⣀⣀"},
+		{"one empty bucket", []int{0}, "⣀"},
+		{"the busiest bucket tops the ramp", []int{0, 4, 0}, "⡰⠱⣀"},
 		// The scale is the row's own busiest bucket, so a steady rate reads
 		// as a level line: the shape is the signal, and bar heights are not
 		// comparable between one row and the next.
-		{"a steady rate reads level", []int{4, 4, 4}, "███"},
-		{"the rest scale under the peak", []int{1, 5, 9}, "▂▄█"},
-		{"one event never reads as none", []int{1, 0, 20}, "▂▁█"},
+		{"a steady rate reads level", []int{4, 4, 4}, "⠉⠉⠉"},
+		{"the rest scale under the peak", []int{1, 5, 9}, "⠤⠒⠉"},
+		{"one event never reads as none", []int{1, 0, 20}, "⠤⡰⠉"},
 		{"no window, no line", nil, ""},
 	}
 	for _, tc := range tests {
