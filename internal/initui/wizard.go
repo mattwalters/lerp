@@ -351,6 +351,7 @@ func (m *Model) initMappingOptions() {
 	slots := PipelineSlots(&m.stock)
 	m.mappingOptions = make([][]string, len(slots))
 	m.mappingSelected = make([]int, len(slots))
+	defaults := defaultMapping(slots, m.existingStatuses)
 
 	for i, sl := range slots {
 		stockName := sl.Stock
@@ -370,25 +371,29 @@ func (m *Model) initMappingOptions() {
 			for _, s := range m.existingStatuses {
 				opts = append(opts, s.Name)
 			}
-			m.mappingSelected[i] = 0
 		} else {
 			for _, s := range m.existingStatuses {
 				opts = append(opts, s.Name)
 			}
-			m.mappingSelected[i] = stockIdx
 		}
 		m.mappingOptions[i] = opts
 
-		// Check if a choice was previously set
-		prev := sl.Get(&m.stock)
-		if prev != "" {
+		def := defaults[i]
+		if def != "" {
 			for idx, opt := range opts {
-				if opt == prev {
+				if opt == def {
 					m.mappingSelected[i] = idx
 					break
 				}
 			}
+		} else {
+			if !hasStock {
+				m.mappingSelected[i] = 0
+			} else {
+				m.mappingSelected[i] = stockIdx
+			}
 		}
+
 		m.applyMappingChoice(i)
 	}
 	m.mappingCursor = 0
@@ -411,6 +416,45 @@ func (m *Model) applyMappingChoice(slotIdx int) {
 	} else {
 		sl.Set(&m.stock, opt)
 	}
+}
+
+func (m Model) effectiveMapping() []string {
+	slots := PipelineSlots(&m.stock)
+	effective := make([]string, len(slots))
+	for i, sl := range slots {
+		if i < len(m.mappingOptions) && i < len(m.mappingSelected) {
+			sel := m.mappingSelected[i]
+			opts := m.mappingOptions[i]
+			if sel >= 0 && sel < len(opts) {
+				opt := opts[sel]
+				if strings.HasPrefix(opt, "create ") {
+					effective[i] = sl.Stock
+				} else {
+					effective[i] = opt
+				}
+				continue
+			}
+		}
+		effective[i] = sl.Stock
+	}
+	return effective
+}
+
+func (m Model) mappingConflicts() map[int]string {
+	effective := m.effectiveMapping()
+	counts := make(map[string]int, len(effective))
+	for _, name := range effective {
+		if name != "" {
+			counts[name]++
+		}
+	}
+	conflicts := make(map[int]string)
+	for i, name := range effective {
+		if counts[name] > 1 {
+			conflicts[i] = name
+		}
+	}
+	return conflicts
 }
 
 // Run executes the wizard Bubble Tea program.
