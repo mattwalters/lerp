@@ -37,6 +37,11 @@ func (antigravity) CLIName() string {
 	return "agy"
 }
 
+// BypassArgs returns the flag string that grants unattended execution.
+func (antigravity) BypassArgs() string {
+	return "--dangerously-skip-permissions"
+}
+
 // MCPRegisterHTTP returns the command to register Linear MCP directly via HTTP.
 func (antigravity) MCPRegisterHTTP() []string {
 	return []string{"agy", "mcp", "add", "linear", "https://mcp.linear.app/mcp"}
@@ -153,7 +158,9 @@ const printTimeout = "24h"
 //
 // No --dangerously-skip-permissions here or anywhere else in this adapter:
 // like every vendor lerp ships, that grant reaches a command only by being
-// written into a runner's checked-in, reviewed args.
+// written into a runner's checked-in, reviewed args. BypassArgs names a
+// spelling for init to write into that file; it does not put one on a
+// command line.
 func (antigravity) Command(o Options) string {
 	parts := []string{"agy -p {{prompt}} --output-format stream-json --add-dir {{workdir}} --print-timeout " + printTimeout}
 	if o.Model != "" {

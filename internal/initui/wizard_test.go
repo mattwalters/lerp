@@ -505,6 +505,7 @@ func TestMappingScreenConflictCheckWithPlanningDisabled(t *testing.T) {
 
 func TestRunnerAndPermissionsScreens(t *testing.T) {
 	opts := defaultOpts()
+	opts.CLIInstalled = map[string]bool{"claude": true, "codex": false, "antigravity": true}
 	m := New(context.Background(), opts)
 	m.existingStatuses = testLinearDefaults
 	m.screenIndex = 3 // Runner screen
@@ -512,8 +513,17 @@ func TestRunnerAndPermissionsScreens(t *testing.T) {
 	if m.CurrentScreen() != screenRunner {
 		t.Fatalf("expected screenRunner, got %v", m.CurrentScreen())
 	}
-	if !strings.Contains(m.View(), "Claude Code") {
-		t.Errorf("runner view missing Claude Code:\n%s", m.View())
+	view := m.View()
+	if !strings.Contains(view, "claude") || !strings.Contains(view, "codex") || !strings.Contains(view, "antigravity") {
+		t.Errorf("runner view missing vendors:\n%s", view)
+	}
+	if !strings.Contains(view, "installed") || !strings.Contains(view, "not found on PATH") {
+		t.Errorf("runner view missing installed/not-found status:\n%s", view)
+	}
+
+	// Initial runner is claude
+	if m.stock.Runner != "claude" {
+		t.Errorf("expected initial Runner = claude, got %q", m.stock.Runner)
 	}
 
 	// Advance to Permissions
@@ -521,6 +531,9 @@ func TestRunnerAndPermissionsScreens(t *testing.T) {
 	m = m2.(Model)
 	if m.CurrentScreen() != screenPermissions {
 		t.Fatalf("expected screenPermissions, got %v", m.CurrentScreen())
+	}
+	if !strings.Contains(m.View(), "--permission-mode bypassPermissions") {
+		t.Errorf("permissions view missing claude bypass flag:\n%s", m.View())
 	}
 
 	if m.stock.Bypass {
@@ -539,6 +552,70 @@ func TestRunnerAndPermissionsScreens(t *testing.T) {
 	m = m2.(Model)
 	if m.CurrentScreen() != screenConfirm {
 		t.Fatalf("expected screenConfirm, got %v", m.CurrentScreen())
+	}
+}
+
+func TestRunnerPickerSelectsVendorAndUpdatesPermissions(t *testing.T) {
+	opts := defaultOpts()
+	opts.CLIInstalled = map[string]bool{"claude": true, "codex": false, "antigravity": false}
+	opts.MCPConfigured = map[string]bool{"claude": true, "codex": false, "antigravity": false}
+	m := New(context.Background(), opts)
+	m.existingStatuses = testLinearDefaults
+	m.screenIndex = 3 // Runner screen
+
+	// Move up to antigravity (names: antigravity[0], claude[1], codex[2])
+	m2, _ := m.Update(keyPress("up"))
+	m = m2.(Model)
+	if m.stock.Runner != "antigravity" {
+		t.Errorf("expected Runner = antigravity after up, got %q", m.stock.Runner)
+	}
+
+	// Advance to Permissions
+	m2, _ = m.Update(keyPress("enter"))
+	m = m2.(Model)
+	if m.CurrentScreen() != screenPermissions {
+		t.Fatalf("expected screenPermissions, got %v", m.CurrentScreen())
+	}
+	if !strings.Contains(m.View(), "--dangerously-skip-permissions") || !strings.Contains(m.View(), "antigravity") {
+		t.Errorf("permissions view for antigravity unexpected:\n%s", m.View())
+	}
+
+	// Esc back to Runner
+	m2, _ = m.Update(keyPress("esc"))
+	m = m2.(Model)
+	if m.CurrentScreen() != screenRunner {
+		t.Fatalf("expected screenRunner after esc, got %v", m.CurrentScreen())
+	}
+
+	// Move down twice to codex (which is not found on PATH)
+	m2, _ = m.Update(keyPress("down"))
+	m = m2.(Model)
+	m2, _ = m.Update(keyPress("down"))
+	m = m2.(Model)
+	if m.stock.Runner != "codex" {
+		t.Errorf("expected Runner = codex after moving down, got %q", m.stock.Runner)
+	}
+
+	// Advance to Permissions — selecting not-found CLI must not be blocked
+	m2, _ = m.Update(keyPress("enter"))
+	m = m2.(Model)
+	if m.CurrentScreen() != screenPermissions {
+		t.Fatalf("expected screenPermissions, got %v", m.CurrentScreen())
+	}
+	if !strings.Contains(m.View(), "--dangerously-bypass-approvals-and-sandbox") || !strings.Contains(m.View(), "codex") {
+		t.Errorf("permissions view for codex unexpected:\n%s", m.View())
+	}
+
+	// Esc back to Runner, then esc back to Mapping
+	m2, _ = m.Update(keyPress("esc"))
+	m = m2.(Model)
+	if m.CurrentScreen() != screenRunner {
+		t.Fatalf("expected screenRunner, got %v", m.CurrentScreen())
+	}
+	m2, _ = m.Update(keyPress("esc"))
+	m = m2.(Model)
+	if m.CurrentScreen() != screenMapping {
+		t.Fatalf("expected screenMapping after esc from Runner, got %v", m.CurrentScreen())
 	}
 }
 

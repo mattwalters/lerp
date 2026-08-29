@@ -2037,6 +2037,110 @@ func TestInitRepeatInitMultipleConfiguredTeamsOneExistsAutoPicks(t *testing.T) {
 	}
 }
 
+func TestInitLookPathReachesWizardOptions(t *testing.T) {
+	dir := t.TempDir()
+	b := &fakeBoard{existing: linearDefaults}
+
+	var capturedOptions initui.Options
+	restoreLook := SetLookPath(func(file string) (string, error) {
+		if file == "codex" {
+			return "/bin/codex", nil
+		}
+		return "", errors.New("not found")
+	})
+	defer restoreLook()
+
+	restoreWiz := SetWizardRunner(func(ctx context.Context, opts initui.Options) (initui.Result, error) {
+		capturedOptions = opts
+		return initui.Result{
+			TeamKey:  "LERP",
+			TeamName: "Lerp",
+			Stock: config.Stock{
+				Teams:  []string{"LERP"},
+				Runner: "claude",
+				Plan:   true,
+				Review: true,
+			},
+		}, nil
+	})
+	defer restoreWiz()
+
+	answers := strings.NewReader("interactive")
+	if _, err := Init(context.Background(), b, io.Discard, answers, dir, "LERP", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	if !capturedOptions.CLIInstalled["codex"] {
+		t.Error("CLIInstalled[codex] = false, want true from stubbed LookPath")
+	}
+	if capturedOptions.CLIInstalled["claude"] {
+		t.Error("CLIInstalled[claude] = true, want false from stubbed LookPath")
+	}
+}
+
+func TestInitWithCodexRunnerWritesCodexConfigAndRegistersMCP(t *testing.T) {
+	dir := t.TempDir()
+	b := &fakeBoard{existing: linearDefaults}
+
+	stubWizardResult(t, initui.Result{
+		TeamKey:  "LERP",
+		TeamName: "Lerp",
+		Stock: config.Stock{
+			Teams:  []string{"LERP"},
+			Runner: "codex",
+			Plan:   true,
+			Review: true,
+			Bypass: true,
+		},
+		MCPIntent: initui.MCPIntentHTTP,
+	}, nil)
+
+	var runCmds [][]string
+	restoreCmd := SetCommandRunner(func(ctx context.Context, name string, args ...string) error {
+		runCmds = append(runCmds, append([]string{name}, args...))
+		return nil
+	})
+	defer restoreCmd()
+
+	var out bytes.Buffer
+	answers := strings.NewReader("interactive")
+	created, err := Init(context.Background(), b, &out, answers, dir, "LERP", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created {
+		t.Error("created = false, want true")
+	}
+
+	c, err := config.LoadRepoConfig(filepath.Join(dir, config.RepoConfigFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := c.Runners["codex"]; !ok {
+		t.Fatalf("expected codex in Runners, got %v", c.Runners)
+	}
+	if got := c.Runners["codex"].Vendor; got != "codex" {
+		t.Errorf("Runners[codex].Vendor = %q, want codex", got)
+	}
+	if !strings.Contains(c.Runners["codex"].Command, "--dangerously-bypass-approvals-and-sandbox") {
+		t.Errorf("codex command %q missing bypass flag", c.Runners["codex"].Command)
+	}
+	for qname, q := range c.Queues {
+		if q.Runner != "codex" {
+			t.Errorf("queue %q runner = %q, want codex", qname, q.Runner)
+		}
+	}
+
+	// Verify MCP command was driven at codex
+	if len(runCmds) != 1 {
+		t.Fatalf("expected 1 command run, got %d: %v", len(runCmds), runCmds)
+	}
+	wantCmd := []string{"codex", "mcp", "add", "linear", "--url", "https://mcp.linear.app/mcp"}
+	if !reflect.DeepEqual(runCmds[0], wantCmd) {
+		t.Errorf("command run = %v, want %v", runCmds[0], wantCmd)
+	}
+}
+
 func TestPackageImports(t *testing.T) {
 	for _, pkgDir := range []string{".", "../initui"} {
 		fset := token.NewFileSet()

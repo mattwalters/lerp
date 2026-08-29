@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/mattwalters/lerp/internal/vendors"
 )
 
 // writeFile writes contents to a temp file and returns its path.
@@ -823,7 +825,7 @@ func TestStockVariants(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			rendered := tc.stock.Render()
-			for _, leftover := range []string{"#{{", "_status}}", "{{teams}}"} {
+			for _, leftover := range []string{"#{{", "_status}}", "{{teams}}", "{{runner}}", "{{bypass_args}}"} {
 				if strings.Contains(rendered, leftover) {
 					t.Errorf("rendered config leaks template plumbing %q", leftover)
 				}
@@ -949,6 +951,74 @@ func firstDiff(got, want string) string {
 		lines, which, long[len(short)])
 }
 
+// Rendering each supported vendor produces a config that parses and validates,
+// whose runner table, vendor field and both queues' runner all name that vendor,
+// and whose prose is that vendor's and not another's.
+func TestStockVendors(t *testing.T) {
+	for _, vendorName := range vendors.Names() {
+		t.Run(vendorName, func(t *testing.T) {
+			s := Stock{
+				Teams:  []string{"LERP"},
+				Runner: vendorName,
+				Plan:   true,
+				Review: true,
+				Bypass: true,
+			}
+			rendered := s.Render()
+			for _, leftover := range []string{"#{{", "_status}}", "{{teams}}", "{{runner}}", "{{bypass_args}}"} {
+				if strings.Contains(rendered, leftover) {
+					t.Errorf("rendered config leaks template plumbing %q", leftover)
+				}
+			}
+
+			c, err := ParseRepoConfig(rendered, vendorName)
+			if err != nil {
+				t.Fatalf("ParseRepoConfig failed: %v\nrendered:\n%s", err, rendered)
+			}
+
+			// Runner table has exactly this runner
+			if _, ok := c.Runners[vendorName]; !ok {
+				t.Errorf("expected runner %q in Runners, got %v", vendorName, c.Runners)
+			}
+			if got := c.Runners[vendorName].Vendor; got != vendorName {
+				t.Errorf("runner %q vendor = %q, want %q", vendorName, got, vendorName)
+			}
+			if len(c.Runners) != 1 {
+				t.Errorf("expected 1 runner, got %d", len(c.Runners))
+			}
+
+			// Both queues use this runner
+			for qName, q := range c.Queues {
+				if q.Runner != vendorName {
+					t.Errorf("queue %q runner = %q, want %q", qName, q.Runner, vendorName)
+				}
+			}
+
+			// Command carries this vendor's bypass args
+			adapter, ok := vendors.Lookup(vendorName)
+			if !ok {
+				t.Fatalf("vendors.Lookup(%q) not found", vendorName)
+			}
+			if !strings.Contains(c.Runners[vendorName].Command, adapter.BypassArgs()) {
+				t.Errorf("runner command %q does not contain bypass flag %q", c.Runners[vendorName].Command, adapter.BypassArgs())
+			}
+
+			// Ensure prose does not contain other vendors' unique markers
+			for _, other := range vendors.Names() {
+				if other == vendorName {
+					continue
+				}
+				otherAdapter, _ := vendors.Lookup(other)
+				otherFlag := otherAdapter.BypassArgs()
+				// The other flag should not appear anywhere in the rendered file
+				if strings.Contains(rendered, otherFlag) {
+					t.Errorf("rendered config for %q leaked other vendor's bypass flag %q", vendorName, otherFlag)
+				}
+			}
+		})
+	}
+}
+
 // Declining the permission grant drops the whole #{{bypass}} section instead
 // of string-replacing the flag out of the rendered document — so the only
 // place the grant can appear as real config is inside that section, and
@@ -957,7 +1027,7 @@ func firstDiff(got, want string) string {
 // exempt: the PERMISSIONS paragraph is deliberately the one place the flag
 // survives declining, so an operator knows how to widen later.
 func TestBypassFlagAppearsOnlyInRunnerCommands(t *testing.T) {
-	const flag = "--permission-mode bypassPermissions"
+	const placeholder = "args = \"{{bypass_args}}\""
 	inBypass, found := false, false
 	for i, line := range strings.Split(stockRepo, "\n") {
 		switch strings.TrimSpace(line) {
@@ -972,29 +1042,73 @@ func TestBypassFlagAppearsOnlyInRunnerCommands(t *testing.T) {
 		if strings.HasPrefix(trimmed, "#") {
 			continue // prose and the commented-out escape-hatch example
 		}
-		if !strings.Contains(line, flag) {
+		if !strings.Contains(line, "{{bypass_args}}") {
 			continue
 		}
 		found = true
-		if !inBypass || !strings.HasPrefix(trimmed, "args = ") {
+		if !inBypass || trimmed != placeholder {
 			t.Errorf("stock.toml line %d has %q outside the #{{bypass}} section's args line, so declining the grant would not remove it:\n  %s",
-				i+1, flag, line)
+				i+1, placeholder, line)
 		}
 	}
 	if !found {
-		t.Error("stock.toml never sets the bypass grant")
+		t.Error("stock.toml never sets the bypass grant placeholder")
 	}
 
-	declined := Stock{Teams: []string{"LERP"}}.Render()
-	c, err := ParseRepoConfig(declined, "declined")
+	for _, vendorName := range vendors.Names() {
+		adapter, _ := vendors.Lookup(vendorName)
+		flag := adapter.BypassArgs()
+
+		declined := Stock{Teams: []string{"LERP"}, Runner: vendorName, Bypass: false}.Render()
+		c, err := ParseRepoConfig(declined, "declined")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(c.Runners[vendorName].Command, flag) {
+			t.Errorf("declining the grant for %q left %q in the resolved command %q", vendorName, flag, c.Runners[vendorName].Command)
+		}
+		if !strings.Contains(declined, "PERMISSIONS:") {
+			t.Errorf("declining the grant for %q lost the PERMISSIONS paragraph", vendorName)
+		}
+
+		accepted := Stock{Teams: []string{"LERP"}, Runner: vendorName, Bypass: true}.Render()
+		ca, err := ParseRepoConfig(accepted, "accepted")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(ca.Runners[vendorName].Command, flag) {
+			t.Errorf("accepting the grant for %q missing %q in resolved command %q", vendorName, flag, ca.Runners[vendorName].Command)
+		}
+	}
+}
+
+// Every vendor adapter must return a non-empty BypassArgs spelling.
+func TestAllVendorsSupplyBypassArgs(t *testing.T) {
+	for _, name := range vendors.Names() {
+		adapter, ok := vendors.Lookup(name)
+		if !ok {
+			t.Fatalf("Lookup(%q) = false", name)
+		}
+		if got := adapter.BypassArgs(); got == "" {
+			t.Errorf("vendor %q returned empty BypassArgs()", name)
+		}
+	}
+}
+
+// The BypassArgs spellings for all vendors must match what configuration.md publishes.
+func TestBypassArgsAgreesWithDocs(t *testing.T) {
+	docPath := filepath.Join("..", "..", "docs", "content", "docs", "configuration.md")
+	data, err := os.ReadFile(docPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(c.Runners["claude"].Command, flag) {
-		t.Errorf("declining the grant left %q in the resolved command %q", flag, c.Runners["claude"].Command)
-	}
-	if !strings.Contains(declined, "PERMISSIONS:") {
-		t.Error("declining the grant lost the PERMISSIONS paragraph")
+	doc := string(data)
+	for _, name := range vendors.Names() {
+		adapter, _ := vendors.Lookup(name)
+		flag := adapter.BypassArgs()
+		if !strings.Contains(doc, flag) {
+			t.Errorf("configuration.md does not document bypass flag %q for vendor %q", flag, name)
+		}
 	}
 }
 

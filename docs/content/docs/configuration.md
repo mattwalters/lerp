@@ -83,6 +83,7 @@ fails at the first restricted tool call. To permit unattended execution,
 write the grant explicitly into your runner's `args` (or `command`):
 
 - **Claude Code:** `args = "--permission-mode bypassPermissions"`
+- **Codex:** `args = "--dangerously-bypass-approvals-and-sandbox"`
 - **Antigravity:** `args = "--dangerously-skip-permissions"`
 
 Saying yes means the agent runs with your full user account. The worktree

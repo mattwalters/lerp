@@ -109,6 +109,9 @@ func TestAntigravityCLINameAndMCPCommands(t *testing.T) {
 	if got := a.CLIName(); got != "agy" {
 		t.Errorf("CLIName() = %q, want %q", got, "agy")
 	}
+	if got := a.BypassArgs(); got != "--dangerously-skip-permissions" {
+		t.Errorf("BypassArgs() = %q, want %q", got, "--dangerously-skip-permissions")
+	}
 	wantHTTP := "agy mcp add linear https://mcp.linear.app/mcp"
 	if got := strings.Join(a.MCPRegisterHTTP(), " "); got != wantHTTP {
 		t.Errorf("MCPRegisterHTTP() = %q, want %q", got, wantHTTP)

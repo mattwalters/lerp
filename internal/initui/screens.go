@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mattwalters/lerp/internal/config"
 	"github.com/mattwalters/lerp/internal/theme"
+	"github.com/mattwalters/lerp/internal/vendors"
 )
 
 // Update implements tea.Model.
@@ -246,8 +247,19 @@ func (m Model) updateMapping(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) updateRunner(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	names := vendors.Names()
 	switch {
+	case key.Matches(msg, m.keys.Up):
+		m.runnerCursor = max(0, m.runnerCursor-1)
+		m.stock.Runner = names[m.runnerCursor]
+		m.refreshScreens()
+	case key.Matches(msg, m.keys.Down):
+		m.runnerCursor = min(len(names)-1, m.runnerCursor+1)
+		m.stock.Runner = names[m.runnerCursor]
+		m.refreshScreens()
 	case key.Matches(msg, m.keys.Enter):
+		m.stock.Runner = names[m.runnerCursor]
+		m.refreshScreens()
 		return m.advance()
 	case key.Matches(msg, m.keys.Back):
 		return m.back()
@@ -380,7 +392,7 @@ func (m Model) screenHelp() string {
 	case screenMapping:
 		return renderHelp(m.keys.Up, m.keys.Down, m.keys.Left, m.keys.Right, m.keys.Enter, m.keys.Back, m.keys.Quit)
 	case screenRunner:
-		return renderHelp(m.keys.Enter, m.keys.Back, m.keys.Quit)
+		return renderHelp(m.keys.Up, m.keys.Down, m.keys.Enter, m.keys.Back, m.keys.Quit)
 	case screenPermissions:
 		return renderHelp(m.keys.Toggle, m.keys.Enter, m.keys.Back, m.keys.Quit)
 	case screenMCP:
@@ -647,9 +659,34 @@ func (m Model) viewMapping() string {
 func (m Model) viewRunner() string {
 	var b strings.Builder
 
-	b.WriteString("The stock pipeline uses " + theme.Ticket.Render("Claude Code (claude)") + ".\n\n")
-	b.WriteString("Unattended runs use Claude's print mode to execute steps and tool calls.\n\n")
-	b.WriteString(theme.Faint.Render("Choosing between agent CLIs (Claude Code, Antigravity, Codex, ...) will\narrive in a future update (LERP-221).\n"))
+	b.WriteString("Pick which coding-agent CLI runs the pipeline:\n\n")
+
+	names := vendors.Names()
+	for i, name := range names {
+		adapter, _ := vendors.Lookup(name)
+		cli := adapter.CLIName()
+		installed := m.opts.CLIInstalled != nil && m.opts.CLIInstalled[name]
+
+		status := "not found on PATH"
+		if installed {
+			status = "installed"
+		}
+
+		prefix := "    "
+		radio := "( )"
+		if i == m.runnerCursor {
+			prefix = "  " + theme.Focus.Render("▸ ")
+			radio = theme.Focus.Render("(•)")
+		}
+
+		label := fmt.Sprintf("%-14s (%s)", name, cli)
+		row := fmt.Sprintf("%s %s  ·  %s", radio, label, status)
+		if i == m.runnerCursor {
+			b.WriteString(prefix + theme.Ticket.Render(row) + "\n")
+		} else {
+			b.WriteString(prefix + theme.Faint.Render(row) + "\n")
+		}
+	}
 
 	return b.String()
 }
@@ -657,7 +694,17 @@ func (m Model) viewRunner() string {
 func (m Model) viewPermissions() string {
 	var b strings.Builder
 
-	b.WriteString("The stock Claude runner can include " + theme.Ticket.Render("--permission-mode bypassPermissions") + ",\n")
+	runner := m.stock.Runner
+	if runner == "" {
+		runner = config.StockRunner
+	}
+	adapter, _ := vendors.Lookup(runner)
+	flag := ""
+	if adapter != nil {
+		flag = adapter.BypassArgs()
+	}
+
+	b.WriteString("The stock " + runner + " runner can include " + theme.Ticket.Render(flag) + ",\n")
 	b.WriteString("letting agents edit files and run commands unattended with your full user\n")
 	b.WriteString("account. Declining writes a runner without the flag; unattended runs will\n")
 	b.WriteString("fail at the first tool they are not allowed to use until you widen it in\n")
@@ -667,7 +714,7 @@ func (m Model) viewPermissions() string {
 	if m.stock.Bypass {
 		chk = theme.Focus.Render("[x]")
 	}
-	b.WriteString("  " + theme.Focus.Render("▸ ") + chk + " " + theme.Ticket.Render("Include --permission-mode bypassPermissions") + "\n")
+	b.WriteString("  " + theme.Focus.Render("▸ ") + chk + " " + theme.Ticket.Render("Include "+flag) + "\n")
 
 	return b.String()
 }

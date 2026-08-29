@@ -54,6 +54,7 @@ type Options struct {
 	Fresh           bool
 	ExistingConfig  *config.RepoConfig
 	MCPConfigured   map[string]bool
+	CLIInstalled    map[string]bool
 	FetchStatuses   func(ctx context.Context, teamKey string) ([]linear.WorkflowState, error)
 	Preview         func(choices Choices) (string, error)
 }
@@ -127,6 +128,9 @@ type Model struct {
 	mappingOptions  [][]string
 	mappingSelected []int
 
+	// Runner
+	runnerCursor int
+
 	// MCP
 	mcpChoice int // 0: No, 1: HTTP, 2: Bridge
 }
@@ -135,14 +139,25 @@ type Model struct {
 func New(ctx context.Context, opts Options) Model {
 	km := newKeymap()
 
+	names := vendors.Names()
+	runnerCursor := 0
+	for i, n := range names {
+		if n == config.StockRunner {
+			runnerCursor = i
+			break
+		}
+	}
+
 	m := Model{
-		ctx:      ctx,
-		opts:     opts,
-		keys:     km,
-		teamKey:  opts.TeamKey,
-		teamName: opts.TeamName,
+		ctx:          ctx,
+		opts:         opts,
+		keys:         km,
+		teamKey:      opts.TeamKey,
+		teamName:     opts.TeamName,
+		runnerCursor: runnerCursor,
 		stock: config.Stock{
 			Teams:  []string{opts.TeamKey},
+			Runner: config.StockRunner,
 			Plan:   true,
 			Review: true,
 			Bypass: false,
@@ -162,7 +177,11 @@ func (m *Model) hasUnconfiguredMCP() bool {
 	}
 	var vendorsToCheck []string
 	if m.opts.Fresh {
-		vendorsToCheck = []string{"claude"}
+		runner := m.stock.Runner
+		if runner == "" {
+			runner = config.StockRunner
+		}
+		vendorsToCheck = []string{runner}
 	} else if m.opts.ExistingConfig != nil {
 		for _, r := range m.opts.ExistingConfig.Runners {
 			if r.Vendor != "" && !slices.Contains(vendorsToCheck, r.Vendor) {
@@ -178,6 +197,29 @@ func (m *Model) hasUnconfiguredMCP() bool {
 		}
 	}
 	return false
+}
+
+func (m *Model) refreshScreens() {
+	cur := m.CurrentScreen()
+	var screens []screen
+	if m.opts.AskTeam {
+		screens = append(screens, screenTeam)
+	}
+	screens = append(screens, screenBoard)
+	if m.opts.Fresh {
+		screens = append(screens, screenShape, screenMapping, screenRunner, screenPermissions)
+	}
+	if m.hasUnconfiguredMCP() {
+		screens = append(screens, screenMCP)
+	}
+	screens = append(screens, screenConfirm)
+	m.screens = screens
+	for i, s := range m.screens {
+		if s == cur {
+			m.screenIndex = i
+			return
+		}
+	}
 }
 
 func (m *Model) buildScreens() {

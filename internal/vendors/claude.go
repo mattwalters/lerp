@@ -19,6 +19,11 @@ func (claude) CLIName() string {
 	return "claude"
 }
 
+// BypassArgs returns the flag string that grants unattended execution.
+func (claude) BypassArgs() string {
+	return "--permission-mode bypassPermissions"
+}
+
 // MCPRegisterHTTP returns the command to register Linear MCP directly via HTTP.
 func (claude) MCPRegisterHTTP() []string {
 	return []string{"claude", "mcp", "add", "--transport", "http", "linear", "https://mcp.linear.app/mcp"}

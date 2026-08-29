@@ -85,6 +85,9 @@ func TestCodexCLINameAndMCPCommands(t *testing.T) {
 	if got := c.CLIName(); got != "codex" {
 		t.Errorf("CLIName() = %q, want %q", got, "codex")
 	}
+	if got := c.BypassArgs(); got != "--dangerously-bypass-approvals-and-sandbox" {
+		t.Errorf("BypassArgs() = %q, want %q", got, "--dangerously-bypass-approvals-and-sandbox")
+	}
 	wantHTTP := "codex mcp add linear --url https://mcp.linear.app/mcp"
 	if got := strings.Join(c.MCPRegisterHTTP(), " "); got != wantHTTP {
 		t.Errorf("MCPRegisterHTTP() = %q, want %q", got, wantHTTP)

@@ -24,6 +24,7 @@ type Adapter interface {
 	Command(Options) string
 	Resume(Options) string
 	CLIName() string
+	BypassArgs() string
 	HasLinearMCP(repoRoot string) bool
 	MCPRegisterHTTP() []string
 	MCPRegisterBridge() []string

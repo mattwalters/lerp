@@ -65,6 +65,9 @@ func TestClaudeCLINameAndMCPCommands(t *testing.T) {
 	if got := c.CLIName(); got != "claude" {
 		t.Errorf("CLIName() = %q, want %q", got, "claude")
 	}
+	if got := c.BypassArgs(); got != "--permission-mode bypassPermissions" {
+		t.Errorf("BypassArgs() = %q, want %q", got, "--permission-mode bypassPermissions")
+	}
 	wantHTTP := "claude mcp add --transport http linear https://mcp.linear.app/mcp"
 	if got := strings.Join(c.MCPRegisterHTTP(), " "); got != wantHTTP {
 		t.Errorf("MCPRegisterHTTP() = %q, want %q", got, wantHTTP)
