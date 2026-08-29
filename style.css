@@ -255,15 +255,6 @@ main {
   font-size: 0.86em;
 }
 
-/* The mark closing the rail: a colophon, spaced off the last group
-   rather than sitting in it. */
-.sidenav .sidenav-mark {
-  display: block;
-  width: 2.4rem;
-  height: 2.4rem;
-  margin-top: 2.2rem;
-}
-
 .toc {
   position: sticky;
   top: 2rem;
@@ -390,13 +381,12 @@ main {
    headword, pronunciation, italic part of speech, in a quiet box. */
 .epigraph {
   width: fit-content;
-  margin: 0 auto 2.2rem;
+  margin: 0 0 2.2rem;
   padding: 0.55rem 1.2rem;
   border: 1px solid var(--rule);
   border-radius: 6px;
   font-size: 0.9rem;
   color: var(--fg-soft);
-  text-align: center;
 }
 
 .epigraph .headword {
@@ -760,10 +750,6 @@ figure.cast figcaption {
   }
 
   .sidenav h5 { display: none; }
-
-  /* The colophon goes with the column too: under a stacked rail it closes
-     the list, under a row of links it is a stray glyph. */
-  .sidenav .sidenav-mark { display: none; }
 
   .sidenav a {
     display: inline-block;
