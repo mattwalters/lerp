@@ -210,7 +210,7 @@ func reportStatusOwnership(out io.Writer, teamKey string) {
 	fmt.Fprintf(out, "  pull request is open to No action; the one for a merged pull request is the\n")
 	fmt.Fprintf(out, "  keeper, unless your pipeline has a stage that runs after the merge. Every\n")
 	fmt.Fprintf(out, "  `lerp` start re-reads this team's automations and names the mid-stage ones\n")
-	fmt.Fprintf(out, "  that point somewhere %s does not.\n", config.RepoConfigFile)
+	fmt.Fprintf(out, "  that point somewhere %s does not.\n", "the repo config")
 }
 
 // gitignoreFile is the ignore list init appends to, at the repository root.
