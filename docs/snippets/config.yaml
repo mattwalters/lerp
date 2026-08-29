@@ -1,0 +1,24 @@
+teams:
+  - LERP
+
+# lerp sets $LERP_WORKSPACE per lane
+provision: git worktree add --detach "$LERP_WORKSPACE" HEAD
+dispose: git worktree remove --force "$LERP_WORKSPACE"
+
+runners:
+  claude:
+    vendor: claude
+  antigravity:
+    vendor: antigravity
+
+queues:
+  plan:
+    status: Planning
+    prompt: Read {{ticket}} and post a plan as a comment.
+    runner: claude
+    on_success: Plan Review
+  implement:
+    status: In Progress
+    prompt: Implement {{ticket}} per its plan comment. Open a PR.
+    runner: antigravity
+    on_success: In Review

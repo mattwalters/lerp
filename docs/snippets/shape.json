@@ -1,0 +1,26 @@
+{
+  "teams": ["LERP"],
+  "provision": "git worktree add --detach \"$LERP_WORKSPACE\" HEAD",
+  "dispose": "git worktree remove --force \"$LERP_WORKSPACE\"",
+  "runners": {
+    "claude": {
+      "vendor": "claude",
+      "args": "--permission-mode bypassPermissions"
+    }
+  },
+  "queues": {
+    "plan": {
+      "status": "Planning",
+      "prompt": "Read {{ticket}} and post a plan as a comment.",
+      "runner": "claude",
+      "on_success": "Implementing"
+    },
+    "implement": {
+      "status": "Implementing",
+      "prompt": "Implement {{ticket}} per its plan comment. Open a PR.",
+      "runner": "claude",
+      "on_success": "In Review",
+      "on_failure": "Needs Attention"
+    }
+  }
+}
