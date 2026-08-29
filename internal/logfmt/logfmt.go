@@ -90,6 +90,11 @@ type Event struct {
 	// a kind's, and it is what lets a reader that attached late put the
 	// events it is catching up on where they actually happened.
 	Time time.Time
+	// Agent names the subagent this line belongs to — the runner's own id for
+	// it, empty for the top-level agent and for every runner with no fan-out.
+	Agent string
+	// AgentName is what to call that agent on screen. Empty when Agent is.
+	AgentName string
 	// Model is the model name a runner's init line named, KindInit only.
 	// Empty for a runner that does not say.
 	Model string

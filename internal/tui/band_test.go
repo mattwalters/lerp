@@ -191,12 +191,16 @@ func TestLaneChartEmptyOrZeroWidth(t *testing.T) {
 		t.Fatalf("laneChart with empty chart returned %d lines, want 0", len(got))
 	}
 	now := time.Now()
-	r.chart = []timedBucket{{at: now, count: 1}}
+	r.chart = []chartSeries{{key: "", name: "main", buckets: []timedBucket{{at: now, count: 1}}}}
 	if got := laneChart(r, 0, 12); len(got) != 0 {
 		t.Fatalf("laneChart with width 0 returned %d lines, want 0", len(got))
 	}
 	if got := laneChart(r, 80, 0); len(got) != 0 {
 		t.Fatalf("laneChart with height 0 returned %d lines, want 0", len(got))
+	}
+	r.chart = []chartSeries{{key: "", name: "main", buckets: nil}}
+	if got := laneChart(r, 80, 12); len(got) != 0 {
+		t.Fatalf("laneChart with empty buckets returned %d lines, want 0", len(got))
 	}
 }
 
@@ -210,7 +214,7 @@ func TestLaneChartRendersBrailleLines(t *testing.T) {
 			count: (i % 5),
 		}
 	}
-	r := workRow{lane: 1, chart: chart}
+	r := workRow{lane: 1, chart: []chartSeries{{key: "", name: "main", buckets: chart}}}
 	width := 80
 	height := 12
 	lines := laneChart(r, width, height)
@@ -268,7 +272,7 @@ func TestLaneChartYoungRunShortHorizon(t *testing.T) {
 			count: i + 1,
 		}
 	}
-	r := workRow{lane: 1, chart: chart}
+	r := workRow{lane: 1, chart: []chartSeries{{key: "", name: "main", buckets: chart}}}
 	width := 60
 	height := 8
 	lines := laneChart(r, width, height)
@@ -301,7 +305,7 @@ func TestLaneChartAllZerosReadsFlat(t *testing.T) {
 			count: 0,
 		}
 	}
-	r := workRow{lane: 1, chart: chart}
+	r := workRow{lane: 1, chart: []chartSeries{{key: "", name: "main", buckets: chart}}}
 	width := 40
 	height := 6
 	lines := laneChart(r, width, height)
@@ -312,5 +316,122 @@ func TestLaneChartAllZerosReadsFlat(t *testing.T) {
 	chartArea := strings.Join(lines[:height], "\n")
 	if !strings.ContainsFunc(chartArea, runes.IsBraillePattern) {
 		t.Fatalf("all-zero chart has no braille runes:\n%s", chartArea)
+	}
+}
+
+// Four series draw four data sets and a one-row legend naming all four.
+func TestLaneChartMultiSeriesFourAgentsAndLegend(t *testing.T) {
+	now := time.Now()
+	makeBuckets := func(count int) []timedBucket {
+		b := make([]timedBucket, 10)
+		for i := range b {
+			b[i] = timedBucket{
+				at:    now.Add(-time.Duration(10-1-i) * pulseBucket),
+				count: count,
+			}
+		}
+		return b
+	}
+
+	r := workRow{
+		lane: 1,
+		chart: []chartSeries{
+			{key: "", name: "main", buckets: makeBuckets(2)},
+			{key: "toolu_sub1", name: "Explore", buckets: makeBuckets(4)},
+			{key: "toolu_sub2", name: "Plan", buckets: makeBuckets(1)},
+			{key: "toolu_sub3", name: "Review", buckets: makeBuckets(3)},
+		},
+	}
+
+	width := 100
+	height := 10
+	lines := laneChart(r, width, height)
+	if len(lines) != height+1 {
+		t.Fatalf("laneChart returned %d lines, want %d", len(lines), height+1)
+	}
+
+	legend := ansi.Strip(lines[height])
+	for _, want := range []string{"events/min", "main", "Explore", "Plan", "Review"} {
+		if !strings.Contains(legend, want) {
+			t.Errorf("legend row = %q, want it to contain %q", legend, want)
+		}
+	}
+}
+
+// Two series with the same name get an ordinal appended (Explore, Explore 2).
+func TestLaneChartSameNamedSeriesGetOrdinals(t *testing.T) {
+	now := time.Now()
+	makeBuckets := func() []timedBucket {
+		b := make([]timedBucket, 5)
+		for i := range b {
+			b[i] = timedBucket{
+				at:    now.Add(-time.Duration(5-1-i) * pulseBucket),
+				count: 2,
+			}
+		}
+		return b
+	}
+
+	r := workRow{
+		lane: 1,
+		chart: []chartSeries{
+			{key: "", name: "main", buckets: makeBuckets()},
+			{key: "toolu_sub1", name: "Explore", buckets: makeBuckets()},
+			{key: "toolu_sub2", name: "Explore", buckets: makeBuckets()},
+		},
+	}
+
+	width := 100
+	height := 8
+	lines := laneChart(r, width, height)
+	legend := ansi.Strip(lines[height])
+	if !strings.Contains(legend, "Explore") {
+		t.Errorf("legend row = %q, want Explore", legend)
+	}
+	if !strings.Contains(legend, "Explore 2") {
+		t.Errorf("legend row = %q, want Explore 2", legend)
+	}
+}
+
+// A legend too wide for the pane drops series from the right while keeping
+// events/min and main, and still fits width exactly.
+func TestLaneChartLegendTooWideDropsFromRight(t *testing.T) {
+	now := time.Now()
+	makeBuckets := func() []timedBucket {
+		b := make([]timedBucket, 5)
+		for i := range b {
+			b[i] = timedBucket{
+				at:    now.Add(-time.Duration(5-1-i) * pulseBucket),
+				count: 1,
+			}
+		}
+		return b
+	}
+
+	r := workRow{
+		lane: 1,
+		chart: []chartSeries{
+			{key: "", name: "main", buckets: makeBuckets()},
+			{key: "toolu_sub1", name: "ExploreLongNameHere", buckets: makeBuckets()},
+			{key: "toolu_sub2", name: "PlanAnotherLongName", buckets: makeBuckets()},
+			{key: "toolu_sub3", name: "ReviewThirdLongName", buckets: makeBuckets()},
+		},
+	}
+
+	// Squeeze width so all 4 don't fit, but 2 or 1 fit
+	width := 45
+	height := 8
+	lines := laneChart(r, width, height)
+	legend := lines[height]
+	stripped := ansi.Strip(legend)
+	if lipgloss.Width(stripped) != width {
+		t.Errorf("legend width = %d, want %d: %q", lipgloss.Width(stripped), width, stripped)
+	}
+	if !strings.Contains(stripped, "events/min") || !strings.Contains(stripped, "main") {
+		t.Errorf("legend = %q, must always keep events/min and main", stripped)
+	}
+	// The rightmost long name should have been dropped
+	if strings.Contains(stripped, "ReviewThirdLongName") {
+		t.Errorf("legend = %q still contains rightmost series ReviewThirdLongName", stripped)
 	}
 }

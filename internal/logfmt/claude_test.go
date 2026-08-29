@@ -531,4 +531,109 @@ func TestClaudeSubagentLifecycleFixture(t *testing.T) {
 			t.Fatalf("subagent %q remains in agents map after retirement", agentID)
 		}
 	}
+	for agentID := range dec.names {
+		if agentID != "" {
+			t.Fatalf("subagent %q remains in names map after retirement", agentID)
+		}
+	}
+
+	// Verify agent identity on events: top-level events carry empty identity,
+	// subagent events carry its toolu_ id and general-purpose name.
+	var sawSubagentEvent, sawTopLevelEvent bool
+	for _, ev := range events {
+		if ev.Agent == "toolu_000000000000000000000001" {
+			sawSubagentEvent = true
+			if ev.AgentName != "general-purpose" {
+				t.Fatalf("subagent event name = %q, want general-purpose", ev.AgentName)
+			}
+		} else if ev.Agent == "" {
+			sawTopLevelEvent = true
+			if ev.AgentName != "" {
+				t.Fatalf("top-level event name = %q, want empty", ev.AgentName)
+			}
+		}
+	}
+	if !sawSubagentEvent {
+		t.Fatal("expected to see subagent events decoded from fixture")
+	}
+	if !sawTopLevelEvent {
+		t.Fatal("expected to see top-level events decoded from fixture")
+	}
+}
+
+// An adopted run whose subagent start block scrolled past before the tail
+// attached receives an ordinal fallback ("agent 1", "agent 2") rather than hex.
+func TestClaudeSubagentOrdinalFallbackWhenToolUseNotSeen(t *testing.T) {
+	dec := &claude{}
+	ev1, ok := dec.Decode(claudeAgentLine("toolu_unseen_1", 500))
+	if !ok {
+		t.Fatal("line was not decoded")
+	}
+	if ev1.Agent != "toolu_unseen_1" {
+		t.Fatalf("ev1.Agent = %q, want toolu_unseen_1", ev1.Agent)
+	}
+	if ev1.AgentName != "agent 1" {
+		t.Fatalf("ev1.AgentName = %q, want agent 1", ev1.AgentName)
+	}
+
+	ev2, ok := dec.Decode(claudeAgentLine("toolu_unseen_2", 600))
+	if !ok {
+		t.Fatal("line was not decoded")
+	}
+	if ev2.Agent != "toolu_unseen_2" {
+		t.Fatalf("ev2.Agent = %q, want toolu_unseen_2", ev2.Agent)
+	}
+	if ev2.AgentName != "agent 2" {
+		t.Fatalf("ev2.AgentName = %q, want agent 2", ev2.AgentName)
+	}
+
+	// Repeated line for same agent keeps its ordinal name
+	ev1Again, ok := dec.Decode(claudeAgentLine("toolu_unseen_1", 700))
+	if !ok {
+		t.Fatal("line was not decoded")
+	}
+	if ev1Again.AgentName != "agent 1" {
+		t.Fatalf("repeated line ev1.AgentName = %q, want agent 1", ev1Again.AgentName)
+	}
+}
+
+// Two live subagents of the same type keep two distinct IDs and both decode their name.
+func TestClaudeParallelSameTypeSubagentsKeepDistinctIDs(t *testing.T) {
+	dec := &claude{}
+	// Top-level launches two subagents of type Explore
+	line1 := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_exp_1","name":"Agent","input":{"subagent_type":"Explore","description":"search 1"}}]}}`
+	line2 := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_exp_2","name":"Agent","input":{"subagent_type":"Explore","description":"search 2"}}]}}`
+	dec.Decode(line1)
+	dec.Decode(line2)
+
+	ev1, ok := dec.Decode(`{"type":"assistant","parent_tool_use_id":"toolu_exp_1","message":{"content":[{"type":"text","text":"searching 1"}]}}`)
+	if !ok {
+		t.Fatal("ev1 not decoded")
+	}
+	if ev1.Agent != "toolu_exp_1" || ev1.AgentName != "Explore" {
+		t.Fatalf("ev1: Agent=%q AgentName=%q, want toolu_exp_1 / Explore", ev1.Agent, ev1.AgentName)
+	}
+
+	ev2, ok := dec.Decode(`{"type":"assistant","parent_tool_use_id":"toolu_exp_2","message":{"content":[{"type":"text","text":"searching 2"}]}}`)
+	if !ok {
+		t.Fatal("ev2 not decoded")
+	}
+	if ev2.Agent != "toolu_exp_2" || ev2.AgentName != "Explore" {
+		t.Fatalf("ev2: Agent=%q AgentName=%q, want toolu_exp_2 / Explore", ev2.Agent, ev2.AgentName)
+	}
+}
+
+// Subagent name resolution falls back to description when subagent_type is absent.
+func TestClaudeSubagentNameFallsBackToDescription(t *testing.T) {
+	dec := &claude{}
+	line := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_desc_1","name":"Agent","input":{"subagent_type":"","description":"Search logs"}}]}}`
+	dec.Decode(line)
+
+	ev, ok := dec.Decode(`{"type":"assistant","parent_tool_use_id":"toolu_desc_1","message":{"content":[{"type":"text","text":"doing search"}]}}`)
+	if !ok {
+		t.Fatal("line not decoded")
+	}
+	if ev.Agent != "toolu_desc_1" || ev.AgentName != "Search logs" {
+		t.Fatalf("ev: Agent=%q AgentName=%q, want toolu_desc_1 / Search logs", ev.Agent, ev.AgentName)
+	}
 }

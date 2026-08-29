@@ -31,6 +31,8 @@ type claude struct {
 	// top-level agent's own entry out to make room for one of them.
 	agents     map[string]int
 	agentOrder []string
+	names      map[string]string
+	agentSeq   int
 }
 
 // trackedAgents bounds the agent map the same way countedMessages bounds the
@@ -106,6 +108,7 @@ func (u claudeUsage) inputSide() int {
 
 type claudeBlock struct {
 	Type     string                     `json:"type"`
+	ID       string                     `json:"id"`
 	Text     string                     `json:"text"`
 	Thinking string                     `json:"thinking"`
 	Name     string                     `json:"name"`
@@ -147,6 +150,11 @@ func (c *claude) Decode(line string) (Event, bool) {
 			// here even for a line that renders nothing keeps the reading
 			// current without waiting for one that does.
 			c.track(l.ParentToolUseID, l.Message.Usage.inputSide())
+			for _, b := range l.Message.Content {
+				if b.Type == "tool_use" && b.ID != "" {
+					c.recordAgent(b.ID, b.Input)
+				}
+			}
 		}
 		// The stream emits one content block per line; a line carrying
 		// several renders the first block it knows, which is the one the
@@ -160,6 +168,8 @@ func (c *claude) Decode(line string) (Event, bool) {
 				ev.Usage = c.usage(l.Message.ID, l.Message.Usage)
 				ev.Context = c.contextMax()
 				ev.Time = l.time()
+				ev.Agent = l.ParentToolUseID
+				ev.AgentName = c.name(l.ParentToolUseID)
 				return ev, true
 			}
 		}
@@ -217,6 +227,7 @@ func (c *claude) track(agent string, tokens int) {
 			oldest := c.agentOrder[0]
 			c.agentOrder = c.agentOrder[1:]
 			delete(c.agents, oldest)
+			delete(c.names, oldest)
 		}
 		c.agentOrder = append(c.agentOrder, agent)
 	}
@@ -229,6 +240,7 @@ func (c *claude) track(agent string, tokens int) {
 // slot could only ever be freed by outliving trackedAgents more distinct
 // agents, never by the completion that already said it was done.
 func (c *claude) retire(agent string) {
+	delete(c.names, agent)
 	if _, live := c.agents[agent]; !live {
 		return
 	}
@@ -239,6 +251,50 @@ func (c *claude) retire(agent string) {
 			break
 		}
 	}
+}
+
+// recordAgent records a subagent's name from a tool_use block whose input
+// contains a subagent_type key.
+func (c *claude) recordAgent(id string, input map[string]json.RawMessage) {
+	if id == "" || input == nil {
+		return
+	}
+	if _, ok := input["subagent_type"]; !ok {
+		return
+	}
+	if c.names == nil {
+		c.names = make(map[string]string, trackedAgents)
+	}
+	name, _ := inputString(input, "subagent_type")
+	if name == "" {
+		if desc, ok := inputString(input, "description"); ok {
+			name = short(desc, maxTarget)
+		}
+	}
+	if name == "" {
+		c.agentSeq++
+		name = fmt.Sprintf("agent %d", c.agentSeq)
+	}
+	c.names[id] = name
+}
+
+// name returns the human-readable name for the given subagent ID, assigning
+// an ordinal fallback ("agent 1", "agent 2", ...) if the starting block was
+// never seen.
+func (c *claude) name(id string) string {
+	if id == "" {
+		return ""
+	}
+	if name, ok := c.names[id]; ok && name != "" {
+		return name
+	}
+	if c.names == nil {
+		c.names = make(map[string]string, trackedAgents)
+	}
+	c.agentSeq++
+	name := fmt.Sprintf("agent %d", c.agentSeq)
+	c.names[id] = name
+	return name
 }
 
 // contextMax is the worst live agent's latest reading — a drowning subagent
