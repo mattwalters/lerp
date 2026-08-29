@@ -617,21 +617,6 @@ th, td {
   text-align: left;
 }
 
-/* Section indexes ---------------------------------------------------- */
-
-/* A section's children, each with the one line its summary front matter
-   gives it (see list.html). */
-.pagelist { margin: 1.6rem 0 0; }
-
-.pagelist dt { margin-top: 1.1rem; }
-
-.pagelist dt a { text-decoration: none; }
-
-.pagelist dd {
-  margin: 0.15rem 0 0;
-  color: var(--fg-soft);
-}
-
 /* Casts -------------------------------------------------------------- */
 
 /* A recording of the TUI, with the keys it presses named underneath — the
@@ -695,6 +680,23 @@ img.shot-light {
   border: 1px solid var(--rule);
   border-radius: 10px;
 }
+/* A hand-drawn inline-SVG diagram (see the loop-diagram shortcode). The
+   SVG inherits the page's variables, so one drawing follows the theme.
+   Unlike a shot, whose border is a window edge sitting flush on the
+   frame, a diagram draws on the page itself — so its border is a card,
+   padded so the drawing does not touch it. */
+figure.diagram {
+  margin: 0 0 1rem;
+  border: 2px solid var(--rule);
+  border-radius: 10px;
+  padding: 1.25rem 1rem;
+}
+figure.diagram svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
 figure.cast figcaption {
   margin-top: 0.55rem;
   font-size: 0.85rem;
