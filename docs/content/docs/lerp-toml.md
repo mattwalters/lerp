@@ -13,6 +13,11 @@ no durable state, because [Linear is the
 database](how-lerp-works.md#ticket). Parsing is strict, and an unknown
 key is an error.
 
+TOML is the default format and what `lerp init` writes. YAML (`lerp.yaml`
+or `lerp.yml`) and JSON (`lerp.json`) are accepted as well. Exactly one
+config file may exist at the repo root; having more than one is refused
+at startup.
+
 `lerp init --team KEY` writes it (see [Quickstart](quickstart.md)).
 [lerp.example.toml](lerp.example.toml) is the stock pipeline in full,
 with prompts you can read and argue with. Read it before you run it.

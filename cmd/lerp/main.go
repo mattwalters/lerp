@@ -361,17 +361,17 @@ func gitRoot() (string, error) {
 	return filepath.Clean(strings.TrimSpace(string(out))), nil
 }
 
-// loadRepo reads and validates the repository configuration. When the file is
-// missing, it points at init rather than surfacing the raw fs error.
+// loadRepo reads and validates the repository configuration. When no repo
+// config is found, it points at init rather than surfacing the raw fs error.
 func loadRepo(repoDir string) (*config.RepoConfig, error) {
-	repo, err := config.LoadRepoConfig(filepath.Join(repoDir, config.RepoConfigFile))
+	path, err := config.FindRepoConfig(repoDir)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return nil, errors.New(`no lerp.toml: run "lerp init --team KEY"`)
+			return nil, errors.New(`no repo config: run "lerp init --team KEY"`)
 		}
 		return nil, err
 	}
-	return repo, nil
+	return config.LoadRepoConfig(path)
 }
 
 func fatal(err error) {

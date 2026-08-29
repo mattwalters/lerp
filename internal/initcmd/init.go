@@ -6,8 +6,10 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"maps"
 	"os"
 	"os/exec"
@@ -52,7 +54,7 @@ func SetCommandRunner(runner CommandRunner) func() {
 // when it has none. Repeating it verifies the existing config rather than
 // replacing the operator's choices.
 //
-// When lerp.toml is absent, init is a short conversation on out/answers:
+// When no repo config is present, init is a short conversation on out/answers:
 // orient on the team's statuses, choose the optional stages, map the
 // pipeline onto the board, then decide the stock runner's bypassPermissions
 // grant. answers is where it reads — os.Stdin at a terminal, a scripted
@@ -92,17 +94,19 @@ func Init(ctx context.Context, board Board, out io.Writer, answers io.Reader, re
 	if out == nil {
 		out = io.Discard
 	}
-	path := filepath.Join(repoRoot, config.RepoConfigFile)
+	foundPath, findErr := config.FindRepoConfig(repoRoot)
 	var cfg *config.RepoConfig
 	fresh := false
-	if _, statErr := os.Stat(path); statErr == nil {
+	path := filepath.Join(repoRoot, config.RepoConfigFile)
+	if findErr == nil {
+		path = foundPath
 		if cfg, err = loadFor(path, teamKey); err != nil {
 			return false, err
 		}
-	} else if !os.IsNotExist(statErr) {
-		return false, fmt.Errorf("check repo config: %w", statErr)
-	} else {
+	} else if errors.Is(findErr, fs.ErrNotExist) {
 		fresh = true
+	} else {
+		return false, findErr
 	}
 	if err := board.EnsureTeam(ctx, teamKey, teamName); err != nil {
 		return false, fmt.Errorf("ensure team %q: %w", teamKey, err)

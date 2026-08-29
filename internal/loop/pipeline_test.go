@@ -249,11 +249,12 @@ func claimed(t *testing.T, fake *linear.Fake, issueID, status string) (linear.Is
 	return issue, viewerID
 }
 
-// statusFieldPage is the docs page carrying "Lerp needs the status field" —
+// statusFieldPage is the docs page carrying "Why did my ticket skip a stage?" —
 // the adopter-facing account of an automation eating a stage's hop, and the
 // only page that quotes the warning verbatim. It moved out of the README when
-// the docs were written (LERP-123); the two tests below follow it.
-const statusFieldPage = "docs/content/docs/install.md"
+// the docs were written (LERP-123) and into troubleshooting in LERP-205; the two
+// tests below follow it.
+const statusFieldPage = "docs/content/docs/troubleshooting.md"
 
 // The docs quote this note as what an adopter sees when an automation has
 // eaten a stage's hop — the string they will have in front of them, and the

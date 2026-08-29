@@ -2,18 +2,20 @@ package config
 
 import (
 	_ "embed"
+	"errors"
 	"fmt"
+	"io/fs"
 	"maps"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
-	"github.com/BurntSushi/toml"
 	"github.com/mattwalters/lerp/internal/vendors"
 )
 
-// RepoConfigFile is the name of the per-repo config file, found at the
-// repo root.
+// RepoConfigFile is the name of the per-repo config file written by lerp
+// init, found at the repo root.
 const RepoConfigFile = "lerp.toml"
 
 // stockRepo is the template for the first-run lerp.toml written by lerp
@@ -72,11 +74,11 @@ type Stock struct {
 // anywhere else either; for now the cross-repo half of the rule is the
 // operator's to keep.
 type RepoConfig struct {
-	Teams     []string          `toml:"teams"`
-	Provision string            `toml:"provision"`
-	Dispose   string            `toml:"dispose"`
-	Runners   map[string]Runner `toml:"runners"`
-	Queues    map[string]Queue  `toml:"queues"`
+	Teams     []string          `toml:"teams" yaml:"teams" json:"teams"`
+	Provision string            `toml:"provision" yaml:"provision" json:"provision"`
+	Dispose   string            `toml:"dispose" yaml:"dispose" json:"dispose"`
+	Runners   map[string]Runner `toml:"runners" yaml:"runners" json:"runners"`
+	Queues    map[string]Queue  `toml:"queues" yaml:"queues" json:"queues"`
 }
 
 // Runner is an adapter to a coding-agent CLI. Exactly one of Vendor or
@@ -93,12 +95,12 @@ type RepoConfig struct {
 // accepting one lerp mints (run.CapturesSession) — Command and Resume alone
 // do not say which.
 type Runner struct {
-	Vendor  string `toml:"vendor"`
-	Command string `toml:"command"`
-	Resume  string `toml:"resume"`
-	Model   string `toml:"model"`
-	Effort  string `toml:"effort"`
-	Args    string `toml:"args"`
+	Vendor  string `toml:"vendor" yaml:"vendor" json:"vendor"`
+	Command string `toml:"command" yaml:"command" json:"command"`
+	Resume  string `toml:"resume" yaml:"resume" json:"resume"`
+	Model   string `toml:"model" yaml:"model" json:"model"`
+	Effort  string `toml:"effort" yaml:"effort" json:"effort"`
+	Args    string `toml:"args" yaml:"args" json:"args"`
 	// Context is the model's context window, in tokens — a display
 	// denominator, nothing lerp acts on. Allowed on both a vendor and a
 	// command runner, since it says nothing about the CLI, only how full its
@@ -106,7 +108,7 @@ type Runner struct {
 	// unset: no configured window means no percentage anywhere on the
 	// board, never a built-in fallback — windows differ by model and by
 	// flags, and a wrong one reads as confidently right.
-	Context int `toml:"context"`
+	Context int `toml:"context" yaml:"context" json:"context"`
 }
 
 // vendorOnlyField reports the first of Model, Effort or Args set on a
@@ -133,11 +135,11 @@ func (r Runner) vendorOnlyField() (string, bool) {
 // once at startup, before the first reconciler pass (loop.Verify), not
 // here: loading config cannot see the board.
 type Queue struct {
-	Status    string `toml:"status"`
-	Prompt    string `toml:"prompt"`
-	Runner    string `toml:"runner"`
-	OnSuccess string `toml:"on_success"`
-	OnFailure string `toml:"on_failure"`
+	Status    string `toml:"status" yaml:"status" json:"status"`
+	Prompt    string `toml:"prompt" yaml:"prompt" json:"prompt"`
+	Runner    string `toml:"runner" yaml:"runner" json:"runner"`
+	OnSuccess string `toml:"on_success" yaml:"on_success" json:"on_success"`
+	OnFailure string `toml:"on_failure" yaml:"on_failure" json:"on_failure"`
 }
 
 // ExpandPrompt returns the queue's prompt with its placeholders filled in:
@@ -293,32 +295,40 @@ func (c *RepoConfig) ContextWindows() map[string]int {
 	return windows
 }
 
-// LoadRepoConfig reads and validates the per-repo config file at path
-// (conventionally RepoConfigFile at the repo root).
+// FindRepoConfig looks for a single repo config file at root among
+// RepoConfigNames (lerp.toml, lerp.yaml, lerp.yml, lerp.json).
+//
+// If none exists, it returns an error wrapping fs.ErrNotExist.
+// If more than one exists, it returns a refusal naming every file found,
+// in RepoConfigNames order.
+// If exactly one exists, it returns its path.
+func FindRepoConfig(root string) (string, error) {
+	var found []string
+	for _, name := range RepoConfigNames {
+		p := filepath.Join(root, name)
+		if _, err := os.Stat(p); err == nil {
+			found = append(found, name)
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			return "", fmt.Errorf("check %s: %w", p, err)
+		}
+	}
+	switch len(found) {
+	case 0:
+		return "", fmt.Errorf("no repo config in %s: %w", root, fs.ErrNotExist)
+	case 1:
+		return filepath.Join(root, found[0]), nil
+	default:
+		return "", fmt.Errorf("more than one repo config found: %s", strings.Join(found, ", "))
+	}
+}
+
+// LoadRepoConfig reads and validates the repo config file at path.
 func LoadRepoConfig(path string) (*RepoConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	return ParseRepoConfig(string(data), path)
-}
-
-// ParseRepoConfig decodes and validates repo config source; label names the
-// origin (a file path) in errors.
-func ParseRepoConfig(source, label string) (*RepoConfig, error) {
-	var c RepoConfig
-	md, err := toml.Decode(source, &c)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", label, err)
-	}
-	if keys := md.Undecoded(); len(keys) > 0 {
-		return nil, fmt.Errorf("%s: unknown key(s): %s", label, joinKeys(keys))
-	}
-	if err := c.validate(label); err != nil {
-		return nil, err
-	}
-	c.resolveVendors()
-	return &c, nil
 }
 
 // resolveVendors fills a vendor runner's Command and Resume from its
@@ -412,13 +422,4 @@ func (c *RepoConfig) validate(path string) error {
 		queueByStatus[q.Status] = name
 	}
 	return nil
-}
-
-func joinKeys(keys []toml.Key) string {
-	names := make([]string, len(keys))
-	for i, k := range keys {
-		names[i] = k.String()
-	}
-	slices.Sort(names)
-	return strings.Join(names, ", ")
 }

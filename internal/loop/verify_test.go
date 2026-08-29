@@ -35,14 +35,14 @@ func TestVerifyStatusesNamesEveryMiss(t *testing.T) {
 	msg := err.Error()
 	for _, want := range []string{
 		// The lead line counts the misses (plural).
-		"team LERP is missing 2 statuses referenced by lerp.toml:",
+		"team LERP is missing 2 statuses referenced by the repo config:",
 		// One line per missing status, naming the reference that points at it.
 		`"Done" (todo.on_success)`,
 		`"Needs Help" (todo.on_failure)`,
 		// The team's actual names, so the operator sees the near-miss.
 		"team LERP has: Backlog, Todo, Doen, Halp",
 		// The way out.
-		"edit lerp.toml or run `lerp init`",
+		"edit the repo config or run `lerp init`",
 	} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("error %q\nmissing %q", msg, want)
@@ -81,7 +81,7 @@ func TestVerifyStatusesReportsMissingQueueStatus(t *testing.T) {
 	}
 	for _, want := range []string{
 		// A single miss reads singular and still names its reference.
-		"team LERP is missing 1 status referenced by lerp.toml:",
+		"team LERP is missing 1 status referenced by the repo config:",
 		`"Todo" (todo.status)`,
 	} {
 		if !strings.Contains(err.Error(), want) {
@@ -169,7 +169,7 @@ func TestVerifyWarnsOnMidStageAutomation(t *testing.T) {
 	msg := strings.Join(warnings, "\n")
 	for _, want := range []string{
 		// Team, trigger and target, in the operator's own vocabulary.
-		`team LERP: "On PR open" moves tickets to "In Progress", which lerp.toml never names:`,
+		`team LERP: "On PR open" moves tickets to "In Progress", which the repo config never names:`,
 		// Every stage the move costs, and the hop it costs it.
 		`  a run in "Planning" that opens a pull request will be moved there mid-stage, losing its on_success hop to "Plan Review"`,
 		`  a run in "Todo" that opens a pull request will be moved there mid-stage, losing its on_success hop to "Done"`,
@@ -248,9 +248,9 @@ func TestVerifyWarnsOncePerMidStageEvent(t *testing.T) {
 	// Reported in the order the events fire, whatever order Linear lists
 	// them in, and merge is not among them.
 	want := []string{
-		`team LERP: "On draft PR open" moves tickets to "In Progress", which lerp.toml never names:`,
-		`team LERP: "On PR review request or activity" moves tickets to "In Progress", which lerp.toml never names:`,
-		`team LERP: "On PR ready for merge" moves tickets to "In Progress", which lerp.toml never names:`,
+		`team LERP: "On draft PR open" moves tickets to "In Progress", which the repo config never names:`,
+		`team LERP: "On PR review request or activity" moves tickets to "In Progress", which the repo config never names:`,
+		`team LERP: "On PR ready for merge" moves tickets to "In Progress", which the repo config never names:`,
 	}
 	if !slices.Equal(leads, want) {
 		t.Errorf("lead lines =\n%s\nwant\n%s", strings.Join(leads, "\n"), strings.Join(want, "\n"))
@@ -356,9 +356,9 @@ func TestVerifyOrdersTheBranchScopedRulesOfOneEvent(t *testing.T) {
 	// The team-wide rule first, then its overrides in branch order — a stable
 	// report whatever order the connection came back in.
 	want := []string{
-		`team LERP: "On PR open" moves tickets to "In Progress", which lerp.toml never names:`,
-		`team LERP: "On PR open" (target branch "main") moves tickets to "In Progress", which lerp.toml never names:`,
-		`team LERP: "On PR open" (target branch "release/*") moves tickets to "In Progress", which lerp.toml never names:`,
+		`team LERP: "On PR open" moves tickets to "In Progress", which the repo config never names:`,
+		`team LERP: "On PR open" (target branch "main") moves tickets to "In Progress", which the repo config never names:`,
+		`team LERP: "On PR open" (target branch "release/*") moves tickets to "In Progress", which the repo config never names:`,
 	}
 	if !slices.Equal(leads, want) {
 		t.Errorf("lead lines =\n%s\nwant\n%s", strings.Join(leads, "\n"), strings.Join(want, "\n"))
