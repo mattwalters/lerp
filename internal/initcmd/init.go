@@ -3,7 +3,6 @@
 package initcmd
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -15,15 +14,18 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/mattwalters/lerp/internal/childenv"
 	"github.com/mattwalters/lerp/internal/config"
 	"github.com/mattwalters/lerp/internal/gitauto"
+	"github.com/mattwalters/lerp/internal/initui"
 	"github.com/mattwalters/lerp/internal/linear"
 	"github.com/mattwalters/lerp/internal/vendors"
 )
+
+// ErrCanceled is returned when init is canceled by the operator.
+var ErrCanceled = initui.ErrCanceled
 
 // Board is the small setup-time Linear surface used by Init.
 // EnsureWorkflowStates reports the category of every state the team has
@@ -51,6 +53,19 @@ func SetCommandRunner(runner CommandRunner) func() {
 	prev := defaultCommandRunner
 	defaultCommandRunner = runner
 	return func() { defaultCommandRunner = prev }
+}
+
+// WizardRunner runs the Bubble Tea init wizard.
+type WizardRunner func(ctx context.Context, opts initui.Options) (initui.Result, error)
+
+var defaultWizardRunner WizardRunner = initui.Run
+
+// SetWizardRunner overrides the wizard runner used for interactive init,
+// returning a restore function. Used in tests to avoid running interactive TUI.
+func SetWizardRunner(runner WizardRunner) func() {
+	prev := defaultWizardRunner
+	defaultWizardRunner = runner
+	return func() { defaultWizardRunner = prev }
 }
 
 type readState struct {
@@ -108,19 +123,16 @@ type plan struct {
 // when it has none. Repeating it verifies the existing config rather than
 // replacing the operator's choices.
 //
-// When no repo config is present, init is a short conversation on out/answers:
+// When no repo config is present, init runs the Bubble Tea wizard on
+// answers (or defaults to stock answers if answers is nil):
 // orient on the team's statuses, choose the optional stages, map the
 // pipeline onto the board, then decide the stock runner's bypassPermissions
-// grant. answers is where it reads — os.Stdin at a terminal, a scripted
-// reader in tests, nil for the stock answer to everything (the full
-// pipeline, stock status names, bypass declined). Either way init reports
-// loudly which statuses it creates and which existing ones it uses; existing
-// statuses are never modified.
+// grant.
 //
 // Init runs in four phases:
 //  1. Read: inspects existing repo config, queries team statuses from Linear,
 //     checks .gitignore, and probes runner CLI MCP configuration.
-//  2. Decide: runs the conversation (or applies defaults), renders stock config,
+//  2. Decide: runs the wizard (or applies defaults), renders stock config,
 //     validates repo config, and collects MCP registration choices.
 //  3. Confirm: reports all planned writes (team creation, status creation/adoption,
 //     config path, .gitignore update, and MCP registrations).
@@ -219,16 +231,182 @@ func read(ctx context.Context, board Board, repoRoot, teamKey, teamName string) 
 	}, nil
 }
 
+func buildMCPInfos(cfg *config.RepoConfig, mcpConfigured map[string]bool, intent initui.MCPIntent) []mcpCLIInfo {
+	seen := make(map[string]bool)
+	var vendorNames []string
+	if cfg != nil {
+		for _, runner := range cfg.Runners {
+			if runner.Vendor != "" && !seen[runner.Vendor] {
+				seen[runner.Vendor] = true
+				vendorNames = append(vendorNames, runner.Vendor)
+			}
+		}
+	}
+	slices.Sort(vendorNames)
+
+	var infos []mcpCLIInfo
+	for _, vName := range vendorNames {
+		adapter, ok := vendors.Lookup(vName)
+		if !ok {
+			continue
+		}
+		info := mcpCLIInfo{vendorName: vName, adapter: adapter}
+		if mcpConfigured[vName] {
+			info.state = mcpStateConfigured
+		} else {
+			info.state = mcpStateDeclined
+			switch intent {
+			case initui.MCPIntentHTTP:
+				info.intent = mcpIntentHTTP
+			case initui.MCPIntentBridge:
+				info.intent = mcpIntentBridge
+			default:
+				info.intent = mcpIntentNone
+			}
+		}
+		infos = append(infos, info)
+	}
+	return infos
+}
+
 func decide(ctx context.Context, board Board, out io.Writer, answers io.Reader, r readState) (plan, error) {
-	var in *bufio.Reader
-	if answers != nil {
-		in = bufio.NewReader(answers)
+	if answers == nil {
+		// Non-interactive path (--yes, piped init)
+		teamKey, teamName, createTeam, ask, err := resolveTeamRules(r.workspaceTeams, r.existingCfg, r.configPath, r.teamKey, r.teamName, false)
+		if err != nil {
+			return plan{}, err
+		}
+		if ask {
+			return plan{}, errors.New("team key must not be empty (--team is required)")
+		}
+
+		if !r.fresh && r.existingCfg != nil {
+			if !slices.Contains(r.existingCfg.Teams, teamKey) {
+				return plan{}, fmt.Errorf("existing repo config %s does not serve team %q", r.configPath, teamKey)
+			}
+		}
+
+		var existing []linear.WorkflowState
+		var automations []linear.GitAutomation
+		var automationsErr error
+		if !createTeam {
+			states, err := board.TeamWorkflowStates(ctx, teamKey)
+			if err != nil {
+				if errors.Is(err, linear.ErrNotFound) {
+					createTeam = true
+					existing = nil
+				} else {
+					return plan{}, fmt.Errorf("read statuses of team %q: %w", teamKey, err)
+				}
+			} else {
+				existing = states
+				automations, automationsErr = board.TeamGitAutomations(ctx, teamKey)
+			}
+		}
+
+		var cfg *config.RepoConfig
+		stock := ""
+		if r.fresh {
+			choices := converse(out, teamKey, existing)
+			stock = choices.Render()
+			if cfg, err = config.ParseRepoConfig(stock, r.configPath); err != nil {
+				return plan{}, fmt.Errorf("assembled repo config: %w", err)
+			}
+		} else {
+			cfg = r.existingCfg
+		}
+
+		infos := buildMCPInfos(cfg, r.mcpConfigured, initui.MCPIntentNone)
+
+		return plan{
+			teamKey:          teamKey,
+			teamName:         teamName,
+			createTeam:       createTeam,
+			existingStatuses: existing,
+			automations:      automations,
+			automationsErr:   automationsErr,
+			repoRoot:         r.repoRoot,
+			configPath:       r.configPath,
+			writeConfig:      r.fresh,
+			stockText:        stock,
+			cfg:              cfg,
+			needsGitignore:   r.needsGitignore,
+			mcpInfos:         infos,
+		}, nil
 	}
 
-	teamKey, teamName, createTeam, err := resolveTeam(out, in, r.workspaceTeams, r.existingCfg, r.configPath, r.teamKey, r.teamName)
+	// Interactive path: Bubble Tea wizard
+	teamKey, teamName, createTeam, ask, err := resolveTeamRules(r.workspaceTeams, r.existingCfg, r.configPath, r.teamKey, r.teamName, true)
 	if err != nil {
 		return plan{}, err
 	}
+
+	preview := func(choices initui.Choices) (string, error) {
+		var cfg *config.RepoConfig
+		var stockText string
+		if r.fresh {
+			stockText = choices.Stock.Render()
+			var err error
+			cfg, err = config.ParseRepoConfig(stockText, r.configPath)
+			if err != nil {
+				return "", fmt.Errorf("assembled repo config: %w", err)
+			}
+		} else {
+			cfg = r.existingCfg
+		}
+
+		var existing []linear.WorkflowState
+		var automations []linear.GitAutomation
+		var automationsErr error
+		if !choices.CreateTeam {
+			existing, _ = board.TeamWorkflowStates(ctx, choices.TeamKey)
+			automations, automationsErr = board.TeamGitAutomations(ctx, choices.TeamKey)
+		}
+
+		infos := buildMCPInfos(cfg, r.mcpConfigured, choices.MCPIntent)
+
+		p := plan{
+			teamKey:          choices.TeamKey,
+			teamName:         choices.TeamName,
+			createTeam:       choices.CreateTeam,
+			existingStatuses: existing,
+			automations:      automations,
+			automationsErr:   automationsErr,
+			repoRoot:         r.repoRoot,
+			configPath:       r.configPath,
+			writeConfig:      r.fresh,
+			stockText:        stockText,
+			cfg:              cfg,
+			needsGitignore:   r.needsGitignore,
+			mcpInfos:         infos,
+		}
+
+		var buf bytes.Buffer
+		reportPlan(&buf, p)
+		return buf.String(), nil
+	}
+
+	opts := initui.Options{
+		WorkspaceTeams:  r.workspaceTeams,
+		TeamKey:         teamKey,
+		TeamName:        teamName,
+		AskTeam:         ask,
+		AllowCreateTeam: r.existingCfg == nil,
+		Fresh:           r.fresh,
+		ExistingConfig:  r.existingCfg,
+		MCPConfigured:   r.mcpConfigured,
+		FetchStatuses:   board.TeamWorkflowStates,
+		Preview:         preview,
+	}
+
+	res, err := defaultWizardRunner(ctx, opts)
+	if err != nil {
+		return plan{}, err
+	}
+
+	teamKey = res.TeamKey
+	teamName = res.TeamName
+	createTeam = res.CreateTeam
 
 	if !r.fresh && r.existingCfg != nil {
 		if !slices.Contains(r.existingCfg.Teams, teamKey) {
@@ -257,12 +435,7 @@ func decide(ctx context.Context, board Board, out io.Writer, answers io.Reader, 
 	var cfg *config.RepoConfig
 	stock := ""
 	if r.fresh {
-		choices := converse(out, in, teamKey, existing)
-		stock = choices.Render()
-		// Parsing what we are about to install catches a broken assembly here —
-		// a declined stage, a mapping that folds two queues onto one status —
-		// not on the operator's first run.
-		var err error
+		stock = res.Stock.Render()
 		if cfg, err = config.ParseRepoConfig(stock, r.configPath); err != nil {
 			return plan{}, fmt.Errorf("assembled repo config: %w", err)
 		}
@@ -270,71 +443,7 @@ func decide(ctx context.Context, board Board, out io.Writer, answers io.Reader, 
 		cfg = r.existingCfg
 	}
 
-	seen := make(map[string]bool)
-	var vendorNames []string
-	for _, runner := range cfg.Runners {
-		if runner.Vendor != "" && !seen[runner.Vendor] {
-			seen[runner.Vendor] = true
-			vendorNames = append(vendorNames, runner.Vendor)
-		}
-	}
-	slices.Sort(vendorNames)
-
-	var infos []mcpCLIInfo
-	var missingCount int
-	for _, vName := range vendorNames {
-		adapter, ok := vendors.Lookup(vName)
-		if !ok {
-			continue
-		}
-		info := mcpCLIInfo{vendorName: vName, adapter: adapter}
-		if r.mcpConfigured[vName] {
-			info.state = mcpStateConfigured
-		} else {
-			info.state = mcpStateDeclined
-			missingCount++
-		}
-		infos = append(infos, info)
-	}
-
-	if missingCount > 0 && in != nil {
-		fmt.Fprintln(out)
-		fmt.Fprintln(out, "Each runner CLI needs its own Linear MCP server to read tickets and post stage artifacts.")
-		fmt.Fprintln(out, "Registration writes into each CLI's configuration; interactive OAuth authentication")
-		fmt.Fprintln(out, "remains to be done once in each CLI afterward.")
-		fmt.Fprintln(out)
-		fmt.Fprintln(out, "Alternative single-auth bridge:")
-		fmt.Fprintln(out, "  Registering the stdio bridge (`<cli> mcp add linear -- npx -y mcp-remote https://mcp.linear.app/mcp`)")
-		fmt.Fprintln(out, "  shares one OAuth token across all CLIs via ~/.mcp-auth.")
-		fmt.Fprintln(out, "  Caveats: requires Node/npx in agent PATH and caches a single Linear account across all CLIs.")
-		fmt.Fprintln(out)
-		fmt.Fprint(out, "Register Linear MCP for unconfigured CLIs? [y]es (HTTP) / [b]ridge (shared OAuth) / [N]o ")
-		answer, _ := readAnswer(out, in)
-
-		var registerBridge bool
-		var shouldRegister bool
-		switch answer {
-		case "y", "yes":
-			shouldRegister = true
-			registerBridge = false
-		case "b", "bridge":
-			shouldRegister = true
-			registerBridge = true
-		}
-
-		if shouldRegister {
-			for i := range infos {
-				if infos[i].state == mcpStateConfigured {
-					continue
-				}
-				if registerBridge {
-					infos[i].intent = mcpIntentBridge
-				} else {
-					infos[i].intent = mcpIntentHTTP
-				}
-			}
-		}
-	}
+	infos := buildMCPInfos(cfg, r.mcpConfigured, res.MCPIntent)
 
 	return plan{
 		teamKey:          teamKey,
@@ -589,12 +698,9 @@ func ignoresStateDir(gitignore []byte) bool {
 	return false
 }
 
-// converse runs the short init conversation and returns the choices it
-// collected. A nil in reader — a piped init, or --yes — takes the stock
-// answer to everything: every stage included, stock status names, bypass
-// declined. EOF mid-conversation answers the remaining questions the same
-// way each question's default would.
-func converse(out io.Writer, in *bufio.Reader, teamKey string, existing []linear.WorkflowState) config.Stock {
+// converse prints the existing board statuses (if any) and returns the stock answers
+// for non-interactive / piped / --yes init.
+func converse(out io.Writer, teamKey string, existing []linear.WorkflowState) config.Stock {
 	s := config.Stock{Teams: []string{teamKey}, Plan: true, Review: true}
 	if len(existing) == 0 {
 		fmt.Fprintf(out, "team %s has no statuses yet\n", teamKey)
@@ -623,174 +729,7 @@ func converse(out io.Writer, in *bufio.Reader, teamKey string, existing []linear
 			fmt.Fprintf(out, "  %-9s  %s\n", g.category, strings.Join(g.names, ", "))
 		}
 	}
-	if in == nil {
-		return s
-	}
-	s.Plan = askYesNo(out, in, "Include a planning stage?", true)
-	s.Review = askYesNo(out, in, "Review each change before it exits?", true)
-	mapStatuses(out, in, teamKey, existing, &s)
-	s.Bypass = askBypass(out, in)
 	return s
-}
-
-// slot is one status the chosen pipeline references: where a queue runs, or
-// where it exits. Each maps onto an existing status or creates its stock
-// name.
-type slot struct {
-	label string  // "implement runs in"
-	stock string  // the stock status name, created when no existing one is chosen
-	dest  *string // the config.Stock field this slot fills
-}
-
-// pipelineSlots lists the statuses s's stages reference, in pipeline order.
-// The review pass has no slot: it runs inside the implement queue and names
-// no status of its own.
-func pipelineSlots(s *config.Stock) []slot {
-	slots := []slot{}
-	if s.Plan {
-		slots = append(slots,
-			slot{"plan runs in", config.StockPlanStatus, &s.PlanStatus},
-			slot{"plans wait for approval in", config.StockPlanReviewStatus, &s.PlanReviewStatus},
-		)
-	}
-	slots = append(slots, slot{"implement runs in", config.StockImplementStatus, &s.ImplementStatus})
-	return append(slots,
-		slot{"finished work exits to", config.StockExitStatus, &s.ExitStatus},
-		slot{"failures exit to", config.StockAttentionStatus, &s.AttentionStatus},
-	)
-}
-
-// mapStatuses maps the chosen pipeline onto the board: the fast path accepts
-// the stock names in one answer, customize picks per referenced status.
-func mapStatuses(out io.Writer, in *bufio.Reader, teamKey string, existing []linear.WorkflowState, s *config.Stock) {
-	slots := pipelineSlots(s)
-	has := map[string]bool{}
-	for _, state := range existing {
-		has[state.Name] = true
-	}
-	names := make([]string, len(slots))
-	missing := 0
-	for i, sl := range slots {
-		names[i] = sl.stock
-		if has[sl.stock] {
-			names[i] += " (exists)"
-		} else {
-			missing++
-		}
-	}
-	fmt.Fprintf(out, "the pipeline references: %s\n", strings.Join(names, ", "))
-	var question string
-	switch {
-	case missing == len(slots):
-		question = fmt.Sprintf("Create these %d statuses on team %s?", missing, teamKey)
-	case missing == 1:
-		question = fmt.Sprintf("Create the missing status on team %s?", teamKey)
-	case missing > 1:
-		question = fmt.Sprintf("Create the %d missing statuses on team %s?", missing, teamKey)
-	default:
-		question = fmt.Sprintf("Use these existing statuses on team %s?", teamKey)
-	}
-	for {
-		fmt.Fprintf(out, "%s [Y]es / [c]ustomize ", question)
-		answer, eof := readAnswer(out, in)
-		switch answer {
-		case "", "y", "yes":
-			return // the stock names; Render fills them in
-		case "c", "customize":
-			for _, sl := range slots {
-				*sl.dest = pickStatus(out, in, sl, existing)
-			}
-			return
-		}
-		if eof {
-			return
-		}
-	}
-}
-
-// pickStatus asks where one referenced status lands: a numbered existing
-// status, or create the stock name. When the stock name already exists on
-// the board it is the default pick, and there is nothing to create.
-func pickStatus(out io.Writer, in *bufio.Reader, sl slot, existing []linear.WorkflowState) string {
-	var menu strings.Builder
-	fmt.Fprintf(&menu, "%s: ", sl.label)
-	def := "c"
-	for i, state := range existing {
-		fmt.Fprintf(&menu, " %d) %s (%s) ", i+1, state.Name, state.Category)
-		if state.Name == sl.stock {
-			def = strconv.Itoa(i + 1)
-		}
-	}
-	if def == "c" {
-		fmt.Fprintf(&menu, " c) create %q ", sl.stock)
-	}
-	fmt.Fprintf(&menu, " [%s] ", def)
-	for {
-		fmt.Fprint(out, menu.String())
-		answer, eof := readAnswer(out, in)
-		if answer == "" {
-			answer = def
-		}
-		if answer == "c" && def == "c" {
-			return sl.stock
-		}
-		if n, err := strconv.Atoi(answer); err == nil && n >= 1 && n <= len(existing) {
-			return existing[n-1].Name
-		}
-		if eof {
-			return sl.stock
-		}
-	}
-}
-
-// askYesNo asks a yes/no question whose empty answer (or EOF) means def.
-func askYesNo(out io.Writer, in *bufio.Reader, question string, def bool) bool {
-	hint := "[Y/n]"
-	if !def {
-		hint = "[y/N]"
-	}
-	for {
-		fmt.Fprintf(out, "%s %s ", question, hint)
-		answer, eof := readAnswer(out, in)
-		switch answer {
-		case "y", "yes":
-			return true
-		case "n", "no":
-			return false
-		case "":
-			return def
-		}
-		if eof {
-			return def
-		}
-	}
-}
-
-// askBypass asks whether the stock runner keeps its bypassPermissions grant,
-// now that the operator has heard what init will do to the board. Anything
-// but an explicit yes — including EOF — declines.
-func askBypass(out io.Writer, in *bufio.Reader) bool {
-	fmt.Fprintln(out, "The stock Claude runner can include --permission-mode bypassPermissions,")
-	fmt.Fprintln(out, "letting agents edit files and run commands unattended with your full user")
-	fmt.Fprintln(out, "account. Declining writes a runner without the flag; unattended runs will")
-	fmt.Fprintln(out, "fail at the first tool they are not allowed to use until you widen it in")
-	fmt.Fprintln(out, config.RepoConfigFile+", in review, deliberately.")
-	fmt.Fprint(out, "Include --permission-mode bypassPermissions? [y/N] ")
-	answer, _ := readAnswer(out, in)
-	return answer == "y" || answer == "yes"
-}
-
-// readAnswer reads one lowercased answer line. EOF is reported so callers
-// stop re-asking; it also ends the prompt's line on out, since no echoed
-// Enter will.
-func readAnswer(out io.Writer, in *bufio.Reader) (answer string, eof bool) {
-	line, err := in.ReadString('\n')
-	answer = strings.ToLower(strings.TrimSpace(line))
-	if err != nil {
-		fmt.Fprintln(out)
-		return answer, true
-	}
-	return answer, false
 }
 
 // reportStatuses says what init is about to do to the board — created vs
@@ -855,16 +794,6 @@ func statusRoles(cfg *config.RepoConfig) map[string][]string {
 // the same rule. Grow Queue another status-valued field and the pair still
 // cannot drift apart — reporting a status init never creates, or creating
 // one it never reported and failing loop.Verify on the first run.
-//
-// "started" is deliberate, not a default: whether a status ends work is a
-// fact about the operator's process that queue topology cannot reveal. An
-// on_success target no queue watches is just as often a human column
-// ("Ready to Merge") as a terminal one, and creating a human column as
-// completed silently stops its tickets from blocking their dependents
-// (see linear.StateSpec) — work becomes eligible before it is done.
-// Created as "started", the failure mode is at least loud: a finished
-// blocker that still blocks is something a human notices. reportExits
-// turns that residual risk into an explicit instruction.
 func stateSpecs(cfg *config.RepoConfig) []linear.StateSpec {
 	names := slices.Sorted(maps.Keys(statusRoles(cfg)))
 	specs := make([]linear.StateSpec, 0, len(names))
@@ -940,9 +869,9 @@ func reportMCPSummary(out io.Writer, infos []mcpCLIInfo) {
 	}
 }
 
-// resolveTeam resolves the team to use for init, prompting at a terminal
-// when --team is absent or missing from the workspace.
-func resolveTeam(out io.Writer, in *bufio.Reader, teams []linear.TeamRef, cfg *config.RepoConfig, configPath, teamKey, teamName string) (resolvedKey string, resolvedName string, shouldCreate bool, err error) {
+// resolveTeamRules resolves the team to use for init, reporting whether user
+// interaction (ask) is needed.
+func resolveTeamRules(teams []linear.TeamRef, cfg *config.RepoConfig, configPath, teamKey, teamName string, interactive bool) (resolvedKey string, resolvedName string, shouldCreate bool, ask bool, err error) {
 	teamKey = strings.ToUpper(strings.TrimSpace(teamKey))
 	teamName = strings.TrimSpace(teamName)
 
@@ -954,10 +883,10 @@ func resolveTeam(out io.Writer, in *bufio.Reader, teams []linear.TeamRef, cfg *c
 					if name == "" {
 						name = t.Name
 					}
-					return teamKey, name, false, nil
+					return teamKey, name, false, false, nil
 				}
 			}
-			return "", "", false, fmt.Errorf("team %q configured in %s does not exist in workspace", teamKey, configPath)
+			return "", "", false, false, fmt.Errorf("team %q configured in %s does not exist in workspace", teamKey, configPath)
 		}
 
 		var filtered []linear.TeamRef
@@ -967,16 +896,19 @@ func resolveTeam(out io.Writer, in *bufio.Reader, teams []linear.TeamRef, cfg *c
 			}
 		}
 		if len(filtered) == 0 {
-			return "", "", false, fmt.Errorf("none of the teams configured in %s (%s) exist in workspace", configPath, strings.Join(cfg.Teams, ", "))
+			return "", "", false, false, fmt.Errorf("none of the teams configured in %s (%s) exist in workspace", configPath, strings.Join(cfg.Teams, ", "))
 		}
 		if len(filtered) == 1 {
-			return filtered[0].Key, filtered[0].Name, false, nil
+			return filtered[0].Key, filtered[0].Name, false, false, nil
 		}
-		teams = filtered
+		if !interactive {
+			return "", "", false, false, errors.New("team key must not be empty (--team is required)")
+		}
+		return "", "", false, true, nil
 	}
 
-	if teamKey == "" && in == nil {
-		return "", "", false, errors.New("team key must not be empty (--team is required)")
+	if teamKey == "" && !interactive {
+		return "", "", false, false, errors.New("team key must not be empty (--team is required)")
 	}
 
 	if teamKey != "" {
@@ -986,118 +918,21 @@ func resolveTeam(out io.Writer, in *bufio.Reader, teams []linear.TeamRef, cfg *c
 				if name == "" {
 					name = t.Name
 				}
-				return teamKey, name, false, nil
+				return teamKey, name, false, false, nil
 			}
 		}
 		if teamName == "" {
 			teamName = teamKey
 		}
-		if in == nil {
-			return teamKey, teamName, true, nil
+		if !interactive {
+			return teamKey, teamName, true, false, nil
 		}
-		if len(teams) == 0 {
-			fmt.Fprintf(out, "workspace has no team %q\n", teamKey)
-		} else {
-			keys := make([]string, len(teams))
-			for i, t := range teams {
-				keys[i] = t.Key
-			}
-			fmt.Fprintf(out, "workspace has no team %q; workspace has: %s\n", teamKey, strings.Join(keys, ", "))
-		}
-		if !askYesNo(out, in, fmt.Sprintf("Create team %s?", teamKey), false) {
-			return "", "", false, fmt.Errorf("team %q not created", teamKey)
-		}
-		return teamKey, teamName, true, nil
+		return teamKey, teamName, true, true, nil
 	}
 
 	if len(teams) == 0 {
-		key, name, err := promptCreateTeam(out, in, teamName)
-		if err != nil {
-			return "", "", false, err
-		}
-		return key, name, true, nil
+		return "", "", true, true, nil
 	}
 
-	return pickTeam(out, in, teams, teamName, cfg == nil)
-}
-
-func pickTeam(out io.Writer, in *bufio.Reader, teams []linear.TeamRef, defaultName string, allowCreate bool) (key, name string, shouldCreate bool, err error) {
-	for i, t := range teams {
-		fmt.Fprintf(out, "  %d) %s  %s\n", i+1, t.Key, t.Name)
-	}
-	if allowCreate {
-		fmt.Fprintf(out, "  %d) create a new team\n", len(teams)+1)
-	}
-
-	for {
-		fmt.Fprintf(out, "Pick a team [1]: ")
-		answer, eof := readAnswer(out, in)
-		if eof {
-			return "", "", false, errors.New("no team chosen")
-		}
-		if answer == "" {
-			answer = "1"
-		}
-		if n, err := strconv.Atoi(answer); err == nil {
-			if n >= 1 && n <= len(teams) {
-				return teams[n-1].Key, teams[n-1].Name, false, nil
-			}
-			if allowCreate && n == len(teams)+1 {
-				k, n, err := promptCreateTeam(out, in, defaultName)
-				if err != nil {
-					return "", "", false, err
-				}
-				return k, n, true, nil
-			}
-		}
-		for _, t := range teams {
-			if strings.EqualFold(answer, t.Key) {
-				return t.Key, t.Name, false, nil
-			}
-		}
-		if allowCreate && (answer == "c" || answer == "create") {
-			k, n, err := promptCreateTeam(out, in, defaultName)
-			if err != nil {
-				return "", "", false, err
-			}
-			return k, n, true, nil
-		}
-	}
-}
-
-func promptCreateTeam(out io.Writer, in *bufio.Reader, defaultName string) (key, name string, err error) {
-	for {
-		fmt.Fprint(out, "Team key: ")
-		k, eof := readLine(out, in)
-		if eof {
-			return "", "", errors.New("no team key entered")
-		}
-		k = strings.ToUpper(strings.TrimSpace(k))
-		if k != "" {
-			key = k
-			break
-		}
-	}
-	def := strings.TrimSpace(defaultName)
-	if def == "" {
-		def = key
-	}
-	fmt.Fprintf(out, "Team name [%s]: ", def)
-	n, eof := readLine(out, in)
-	if eof || n == "" {
-		name = def
-	} else {
-		name = strings.TrimSpace(n)
-	}
-	return key, name, nil
-}
-
-func readLine(out io.Writer, in *bufio.Reader) (line string, eof bool) {
-	s, err := in.ReadString('\n')
-	line = strings.TrimSpace(s)
-	if err != nil {
-		fmt.Fprintln(out)
-		return line, true
-	}
-	return line, false
+	return "", "", false, true, nil
 }

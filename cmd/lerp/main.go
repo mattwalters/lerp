@@ -20,6 +20,7 @@ import (
 	"github.com/mattwalters/lerp/internal/initcmd"
 	"github.com/mattwalters/lerp/internal/linear"
 	"github.com/mattwalters/lerp/internal/loop"
+	"github.com/mattwalters/lerp/internal/theme"
 	"github.com/mattwalters/lerp/internal/tui"
 	"github.com/mattwalters/lerp/internal/update"
 	"github.com/mattwalters/lerp/internal/version"
@@ -137,7 +138,7 @@ func openTUI(ctx context.Context, lanes int) error {
 	// Up here with the refusal above, for the same reason: the TUI applies
 	// this itself, but only once everything below has run, and an operator
 	// who misspelled it should not pay for a board check and a lock first.
-	if err := tui.UseBackground(); err != nil {
+	if err := theme.UseBackground(); err != nil {
 		return err
 	}
 	repoDir, err := anchorDir()
@@ -282,6 +283,10 @@ func initCommand(args []string) {
 	}
 	created, err := initcmd.Init(context.Background(), linear.New(auth, nil), os.Stdout, answers, filepath.Clean(repoRoot), *team, *name)
 	if err != nil {
+		if errors.Is(err, initcmd.ErrCanceled) {
+			fmt.Println("nothing was written")
+			return
+		}
 		fatal(fmt.Errorf("lerp init: %w", err))
 	}
 	if created {
