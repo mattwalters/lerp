@@ -122,13 +122,14 @@ section = "Start"
 # One page, because the concepts are one thing: the board is what queues,
 # lanes, the loop and the claim are all descriptions of, and splitting them
 # into five pages would mean five pages that each begin by rebuilding the
-# other four.
+# other four. It sits in Start rather than a group of its own: a one-entry
+# group named for its only page is a heading that says nothing twice.
 [[menus.main]]
-name = "The board"
-pageRef = "/docs/the-board"
+name = "How lerp works"
+pageRef = "/docs/how-lerp-works"
 weight = 50
 [menus.main.params]
-section = "Concepts"
+section = "Start"
 
 # One page per motion through the screen, in the order an operator meets
 # them: what the board shows, how to find a ticket in it, the run under way

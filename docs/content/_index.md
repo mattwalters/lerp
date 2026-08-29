@@ -9,8 +9,6 @@ install: brew install mattwalters/tap/lerp
          title="The lerp board: tickets waiting on a human in the On you panel, a work panel of queues and three lanes running coding agents beneath it, and a main pane that opens beside them to read a ticket or tail a lane's log"
          autoplay=true >}}
 
-<p class="epigraph"><a href="https://en.wikipedia.org/wiki/Linear_interpolation" class="headword">lerp</a> <span class="pron">/lərp/</span> <em>v.</em> To interpolate linearly; to move smoothly between two points.</p>
-
 Lerp answers the two questions an operator actually has.
 
 1. What's blocked on me?
@@ -126,6 +124,6 @@ Check out the [docs](docs/install.md) for other install methods.
 
 The thinking behind it is in [Why lerp](why.md).
 
-{{< cta "/docs/quickstart" >}}$ lerp init →{{< /cta >}}
+<p class="epigraph"><a href="https://en.wikipedia.org/wiki/Linear_interpolation" class="headword">lerp</a> <span class="pron">/lərp/</span> <em>v.</em> To interpolate linearly; to move smoothly between two points.</p>
 
-<img class="mark-signoff" src="mark.svg" alt="" width="120" height="120">
+{{< cta "/docs/quickstart" >}}$ lerp init →{{< /cta >}}

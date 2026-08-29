@@ -173,13 +173,14 @@
       {{ if $current }}{{ $classes = $classes | append "active" }}{{ end }}
       <a href="{{ .URL | relURL }}"{{ with $classes }} class="{{ delimit . " " }}"{{ end }}{{ if $current }} aria-current="page"{{ end }}>{{ .Name }}</a>
       {{ end }}
-      {{/* The mark as the sidebar's colophon: decoration, so empty alt,
-           and dimmed by CSS so the entries above it stay the point. */}}
-      <img class="sidenav-mark" src="{{ "favicon.svg" | relURL }}" alt="">
     </nav>
     {{ end }}
     <main>
       {{ block "main" . }}{{ end }}
+      {{/* The full mark signs off every page. In the layout rather than in
+           content so the src resolves from any depth, and so a new page
+           gets it without remembering to. */}}
+      <img class="mark-signoff" src="{{ "mark.svg" | relURL }}" alt="" width="120" height="120">
     </main>
     {{/* plainify strips the empty <nav> Hugo emits for a page with no
          headings, so the rail appears only when it has somewhere to point:
