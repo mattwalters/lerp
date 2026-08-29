@@ -195,18 +195,23 @@ func laneChart(r workRow, width, height int) []string {
 		return nil
 	}
 
-	n := len(r.chart)
-	right := r.chart[n-1].at
+	n := len(r.chart[0].buckets)
+	if n == 0 {
+		return nil
+	}
+	right := r.chart[0].buckets[n-1].at
 	left := right.Add(-time.Duration(n-1) * pulseBucket)
 	if left.Equal(right) {
 		left = right.Add(-pulseBucket)
 	}
 
 	maxVal := 0.0
-	for _, b := range r.chart {
-		v := float64(b.count) * 60.0 / pulseBucket.Seconds()
-		if v > maxVal {
-			maxVal = v
+	for _, s := range r.chart {
+		for _, b := range s.buckets {
+			v := float64(b.count) * 60.0 / pulseBucket.Seconds()
+			if v > maxVal {
+				maxVal = v
+			}
 		}
 	}
 	hi := yCeiling(maxVal)
@@ -217,25 +222,37 @@ func laneChart(r workRow, width, height int) []string {
 		return strconv.Itoa(int(math.Round(v)))
 	}
 
-	chart := timeserieslinechart.New(
-		width,
-		height,
+	seriesStyles := []lipgloss.Style{
+		styleRunning,
+		styleFocus,
+		styleProvisioning,
+		styleAttention,
+	}
+
+	opts := []timeserieslinechart.Option{
 		timeserieslinechart.WithTimeRange(left, right),
 		timeserieslinechart.WithYRange(0, hi),
 		timeserieslinechart.WithXYSteps(1, 2),
 		timeserieslinechart.WithXLabelFormatter(xFormatter),
 		timeserieslinechart.WithYLabelFormatter(yFormatter),
 		timeserieslinechart.WithAxesStyles(styleFaint, styleFaint),
-		timeserieslinechart.WithDataSetStyle("main", styleRunning),
-	)
+	}
+	for i, s := range r.chart {
+		st := seriesStyles[i%len(seriesStyles)]
+		opts = append(opts, timeserieslinechart.WithDataSetStyle(s.key, st))
+	}
+
+	chart := timeserieslinechart.New(width, height, opts...)
 	chart.SetViewTimeAndYRange(left, right, 0, hi)
 
-	for _, b := range r.chart {
-		val := float64(b.count) * 60.0 / pulseBucket.Seconds()
-		chart.PushDataSet("main", timeserieslinechart.TimePoint{
-			Time:  b.at,
-			Value: val,
-		})
+	for _, s := range r.chart {
+		for _, b := range s.buckets {
+			val := float64(b.count) * 60.0 / pulseBucket.Seconds()
+			chart.PushDataSet(s.key, timeserieslinechart.TimePoint{
+				Time:  b.at,
+				Value: val,
+			})
+		}
 	}
 
 	chart.DrawBrailleAll()
@@ -245,19 +262,48 @@ func laneChart(r workRow, width, height int) []string {
 		lines = lines[:height]
 	}
 
-	// Legend row: events/min · ▇ main
-	series := []struct {
-		name  string
-		style lipgloss.Style
-	}{
-		{"main", styleRunning},
+	// Legend row: events/min · ▇ main [· ▇ subagent ...]
+	nameCounts := make(map[string]int, len(r.chart))
+	for _, s := range r.chart {
+		nameCounts[s.name]++
 	}
-	var legendParts []string
-	legendParts = append(legendParts, styleFaint.Render("events/min"))
-	for _, s := range series {
-		legendParts = append(legendParts, s.style.Render("▇")+" "+styleFaint.Render(s.name))
+	nameSeen := make(map[string]int, len(r.chart))
+	displayNames := make([]string, len(r.chart))
+	for i, s := range r.chart {
+		nameSeen[s.name]++
+		if nameCounts[s.name] > 1 && nameSeen[s.name] > 1 {
+			displayNames[i] = fmt.Sprintf("%s %d", s.name, nameSeen[s.name])
+		} else {
+			displayNames[i] = s.name
+		}
 	}
-	legend := strings.Join(legendParts, styleFaint.Render(" · "))
+
+	type legendItem struct {
+		rendered string
+	}
+	items := make([]legendItem, len(r.chart))
+	for i := range r.chart {
+		st := seriesStyles[i%len(seriesStyles)]
+		items[i] = legendItem{
+			rendered: st.Render("▇") + " " + styleFaint.Render(displayNames[i]),
+		}
+	}
+
+	var legend string
+	sep := styleFaint.Render(" · ")
+	prefix := styleFaint.Render("events/min")
+	for k := len(items); k >= 1; k-- {
+		parts := make([]string, 1+k)
+		parts[0] = prefix
+		for i := 0; i < k; i++ {
+			parts[1+i] = items[i].rendered
+		}
+		cand := strings.Join(parts, sep)
+		if lipgloss.Width(cand) <= width || k == 1 {
+			legend = cand
+			break
+		}
+	}
 
 	lines = append(lines, padTo(legend, width))
 	return lines

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -570,8 +571,8 @@ func TestDownsample(t *testing.T) {
 	}
 }
 
-// timedWindow dates each bucket relative to p.at.
-func TestPulseTimedWindowDatesBuckets(t *testing.T) {
+// timedSeries dates each bucket relative to p.at.
+func TestPulseTimedSeriesDatesBuckets(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "run.log")
 	appendLog(t, path, "started\n")
 	start := time.Now().Truncate(time.Second)
@@ -579,9 +580,13 @@ func TestPulseTimedWindowDatesBuckets(t *testing.T) {
 	p.read(start)
 
 	p.read(start.Add(4 * pulseBucket))
-	tb := p.timedWindow()
+	ts := p.timedSeries()
+	if len(ts) != 1 {
+		t.Fatalf("timedSeries len = %d, want 1", len(ts))
+	}
+	tb := ts[0].buckets
 	if len(tb) != 5 {
-		t.Fatalf("timedWindow len = %d, want 5", len(tb))
+		t.Fatalf("timedSeries buckets len = %d, want 5", len(tb))
 	}
 	for i, b := range tb {
 		wantTime := p.at.Add(-time.Duration(len(tb)-1-i) * pulseBucket)
@@ -591,5 +596,175 @@ func TestPulseTimedWindowDatesBuckets(t *testing.T) {
 	}
 	if !tb[len(tb)-1].at.Equal(p.at) {
 		t.Errorf("newest bucket at = %v, want %v", tb[len(tb)-1].at, p.at)
+	}
+}
+
+// A fan-out log yields three series with the top-level agent first, and the
+// sum of the per-agent counts equals window() bucket for bucket.
+func TestPulseFanOutYieldsSeriesWithTopLevelFirstAndPerAgentSumMatchesWindow(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.log")
+	now := time.Now()
+	appendLog(t, path,
+		`{"type":"system","subtype":"init","model":"claude-opus-5","session_id":"abc"}`+"\n"+
+			datedCall(now.Add(-6*pulseBucket), "msg_01", "/a/main.go", 100)+
+			`{"type":"assistant","timestamp":"`+now.Add(-5*pulseBucket).UTC().Format(time.RFC3339Nano)+`",`+
+			`"message":{"id":"msg_02","content":[{"type":"tool_use","id":"toolu_sub1","name":"Agent","input":{"subagent_type":"Explore"}}]}}`+"\n"+
+			`{"type":"assistant","timestamp":"`+now.Add(-4*pulseBucket).UTC().Format(time.RFC3339Nano)+`","parent_tool_use_id":"toolu_sub1",`+
+			`"message":{"id":"msg_03","content":[{"type":"tool_use","name":"Read","input":{"file_path":"/a/sub1.go"}}]}}`+"\n"+
+			`{"type":"assistant","timestamp":"`+now.Add(-3*pulseBucket).UTC().Format(time.RFC3339Nano)+`",`+
+			`"message":{"id":"msg_04","content":[{"type":"tool_use","id":"toolu_sub2","name":"Agent","input":{"subagent_type":"Plan"}}]}}`+"\n"+
+			`{"type":"assistant","timestamp":"`+now.Add(-2*pulseBucket).UTC().Format(time.RFC3339Nano)+`","parent_tool_use_id":"toolu_sub2",`+
+			`"message":{"id":"msg_05","content":[{"type":"tool_use","name":"Read","input":{"file_path":"/a/sub2.go"}}]}}`+"\n"+
+			datedCall(now, "msg_06", "/a/main2.go", 200),
+	)
+
+	p := newPulse(path)
+	p.read(now)
+
+	series := p.timedSeries()
+	if len(series) != 3 {
+		t.Fatalf("timedSeries len = %d, want 3", len(series))
+	}
+	if series[0].key != "" || series[0].name != "main" {
+		t.Fatalf("series[0] = %+v, want key:\"\", name:\"main\"", series[0])
+	}
+	if series[1].key != "toolu_sub1" || series[1].name != "Explore" {
+		t.Fatalf("series[1] = %+v, want toolu_sub1 / Explore", series[1])
+	}
+	if series[2].key != "toolu_sub2" || series[2].name != "Plan" {
+		t.Fatalf("series[2] = %+v, want toolu_sub2 / Plan", series[2])
+	}
+
+	// Verify sum across all series equals window() bucket for bucket
+	w := p.window()
+	if len(w) == 0 {
+		t.Fatal("window is empty")
+	}
+	if len(series[0].buckets) != len(w) {
+		t.Fatalf("main series buckets len = %d, want %d", len(series[0].buckets), len(w))
+	}
+
+	for i, total := range w {
+		bucketTime := series[0].buckets[i].at
+		sum := series[0].buckets[i].count
+		for _, s := range series[1:] {
+			for _, b := range s.buckets {
+				if b.at.Equal(bucketTime) {
+					sum += b.count
+				}
+			}
+		}
+		if sum != total {
+			t.Errorf("bucket %d at %v: sum of agents = %d, want total %d", i, bucketTime, sum, total)
+		}
+	}
+}
+
+// A subagent's series stops at its last event rather than flatlining to the
+// right edge, while the top-level agent's series spans the whole window.
+func TestPulseSubagentSeriesStopsAtLastEventWhileMainRunsToRightEdge(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.log")
+	now := time.Now()
+	appendLog(t, path,
+		`{"type":"system","subtype":"init","model":"claude-opus-5","session_id":"abc"}`+"\n"+
+			datedCall(now.Add(-6*pulseBucket), "msg_01", "/a/main.go", 100)+
+			`{"type":"assistant","timestamp":"`+now.Add(-5*pulseBucket).UTC().Format(time.RFC3339Nano)+`",`+
+			`"message":{"id":"msg_02","content":[{"type":"tool_use","id":"toolu_sub1","name":"Agent","input":{"subagent_type":"Explore"}}]}}`+"\n"+
+			`{"type":"assistant","timestamp":"`+now.Add(-4*pulseBucket).UTC().Format(time.RFC3339Nano)+`","parent_tool_use_id":"toolu_sub1",`+
+			`"message":{"id":"msg_03","content":[{"type":"tool_use","name":"Read","input":{"file_path":"/a/sub1.go"}}]}}`+"\n"+
+			datedCall(now, "msg_04", "/a/main_latest.go", 200),
+	)
+
+	p := newPulse(path)
+	p.read(now)
+
+	series := p.timedSeries()
+	if len(series) != 2 {
+		t.Fatalf("timedSeries len = %d, want 2", len(series))
+	}
+	mainSeries := series[0]
+	subSeries := series[1]
+
+	if len(mainSeries.buckets) != p.seen {
+		t.Fatalf("main series has %d buckets, want full window %d", len(mainSeries.buckets), p.seen)
+	}
+	if !mainSeries.buckets[len(mainSeries.buckets)-1].at.Equal(p.at) {
+		t.Fatalf("main series last bucket at %v, want p.at %v", mainSeries.buckets[len(mainSeries.buckets)-1].at, p.at)
+	}
+
+	// Subagent's last event was at now - 4*pulseBucket. It must not run to p.at.
+	subLastBucket := subSeries.buckets[len(subSeries.buckets)-1]
+	if subLastBucket.at.Equal(p.at) {
+		t.Fatalf("subagent series incorrectly ran to right edge p.at %v", p.at)
+	}
+	expectedSubLast := p.at.Add(-4 * pulseBucket)
+	if !subLastBucket.at.Equal(expectedSubLast) {
+		t.Fatalf("subagent last bucket at %v, want %v", subLastBucket.at, expectedSubLast)
+	}
+}
+
+// A fifth live subagent evicts the stalest subagent and never the top-level agent.
+func TestPulseFifthLiveSubagentEvictsStalestAndNeverTopLevel(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.log")
+	now := time.Now()
+
+	// 5 sequential/overlapping subagents
+	var b strings.Builder
+	b.WriteString(`{"type":"system","subtype":"init","model":"claude-opus-5","session_id":"abc"}` + "\n")
+	b.WriteString(datedCall(now.Add(-10*pulseBucket), "msg_main", "/a/main.go", 100))
+	for i := 1; i <= 5; i++ {
+		subID := fmt.Sprintf("toolu_sub_%d", i)
+		subType := fmt.Sprintf("Subagent%d", i)
+		b.WriteString(fmt.Sprintf(`{"type":"assistant","timestamp":%q,"message":{"id":%q,"content":[{"type":"tool_use","id":%q,"name":"Agent","input":{"subagent_type":%q}}]}}`+"\n",
+			now.Add(-time.Duration(10-i)*pulseBucket).UTC().Format(time.RFC3339Nano), fmt.Sprintf("msg_start_%d", i), subID, subType))
+		b.WriteString(fmt.Sprintf(`{"type":"assistant","timestamp":%q,"parent_tool_use_id":%q,"message":{"id":%q,"content":[{"type":"text","text":"working"}]}}`+"\n",
+			now.Add(-time.Duration(10-i)*pulseBucket).UTC().Format(time.RFC3339Nano), subID, fmt.Sprintf("msg_work_%d", i)))
+	}
+
+	appendLog(t, path, b.String())
+	p := newPulse(path)
+	p.read(now)
+
+	// pulseAgents is 4: top-level "" + 3 newest subagents (sub_3, sub_4, sub_5) or (sub_2, sub_3, sub_4, sub_5)
+	// Top-level "" must never be evicted!
+	if _, ok := p.agents[""]; !ok {
+		t.Fatal("top-level agent was evicted from pulse agents")
+	}
+	if len(p.agents) > pulseAgents {
+		t.Fatalf("len(p.agents) = %d > pulseAgents %d", len(p.agents), pulseAgents)
+	}
+
+	// sub_1 (oldest lastAt) should have been evicted
+	if _, ok := p.agents["toolu_sub_1"]; ok {
+		t.Fatal("stalest subagent toolu_sub_1 was not evicted")
+	}
+	// sub_5 (newest) must be present
+	if _, ok := p.agents["toolu_sub_5"]; !ok {
+		t.Fatal("newest subagent toolu_sub_5 is missing from pulse agents")
+	}
+}
+
+// A rewritten log clears the agent map and order slice.
+func TestPulseRewrittenLogClearsAgentMap(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.log")
+	now := time.Now()
+	appendLog(t, path,
+		`{"type":"system","subtype":"init","model":"claude-opus-5","session_id":"abc"}`+"\n"+
+			`{"type":"assistant","timestamp":"`+now.UTC().Format(time.RFC3339Nano)+`","parent_tool_use_id":"toolu_sub1",`+
+			`"message":{"id":"msg_01","content":[{"type":"text","text":"sub work"}]}}`+"\n",
+	)
+	p := newPulse(path)
+	p.read(now)
+	if _, ok := p.agents["toolu_sub1"]; !ok {
+		t.Fatal("expected subagent toolu_sub1 to be populated before rewrite")
+	}
+
+	writeLog(t, path, []byte("a wholly new log\n"))
+	p.read(now.Add(pulseBucket))
+	if _, ok := p.agents["toolu_sub1"]; ok {
+		t.Fatal("subagent toolu_sub1 was not cleared after log rewrite")
+	}
+	if len(p.agentOrder) != 0 {
+		t.Fatalf("after rewrite: len(agentOrder)=%d, want 0", len(p.agentOrder))
 	}
 }

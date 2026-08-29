@@ -40,7 +40,21 @@ const (
 	// work, so adoption usually catches up in one poll, and small enough
 	// that a monstrous log costs a few polls instead of one long stall.
 	catchupChunks = 32
+
+	// pulseAgents is how many agents the chart draws at once: the top-level
+	// agent and three subagents. Not trackedAgents (32) — that bounds a token
+	// reading, and this bounds a legend that has to stay one row and a palette
+	// that has four accents in it.
+	pulseAgents = 4
 )
+
+// agentRing is one agent's own counts, its name, and when it was last
+// heard from.
+type agentRing struct {
+	name   string
+	cells  [pulseBuckets]int
+	lastAt time.Time
+}
 
 // pulse is one lane's log read for what its work row says about the run in
 // progress: how much activity it has carried lately, what it has spent, and
@@ -70,6 +84,9 @@ type pulse struct {
 	head  int
 	at    time.Time
 	seen  int
+	// agents holds per-agent activity rings for up to pulseAgents live agents.
+	agents     map[string]*agentRing
+	agentOrder []string
 	// hist is how much of the log predates this pulse, and consumed how much
 	// it has read; together they say whether a chunk is history being caught
 	// up on or the live stream. The two are read differently: a live event
@@ -142,6 +159,7 @@ func (p *pulse) read(now time.Time) {
 			p.stream, p.cells, p.head, p.seen = logfmt.Stream{}, [pulseBuckets]int{}, 0, 0
 			p.at, p.lastT = time.Time{}, time.Time{}
 			p.hist, p.consumed = 0, 0
+			p.agents, p.agentOrder = nil, nil
 			// The totals and the last call went with the file: all are
 			// readings of a log that no longer exists, and the one still on
 			// screen would be a command from a run nobody can look at any
@@ -174,6 +192,54 @@ func (p *pulse) read(now time.Time) {
 	}
 }
 
+// agent returns the ring for the given agent key, evicting the stalest subagent
+// if the capacity of pulseAgents is reached. The top-level agent ("") is never evicted.
+func (p *pulse) agent(key, name string) *agentRing {
+	if p.agents == nil {
+		p.agents = make(map[string]*agentRing, pulseAgents)
+	}
+	if ring, ok := p.agents[key]; ok {
+		if name != "" && ring.name != name {
+			ring.name = name
+		}
+		return ring
+	}
+	if len(p.agents) >= pulseAgents {
+		var oldestKey string
+		var oldestTime time.Time
+		first := true
+		for k, r := range p.agents {
+			if k == "" {
+				continue
+			}
+			if first || r.lastAt.Before(oldestTime) {
+				oldestKey = k
+				oldestTime = r.lastAt
+				first = false
+			}
+		}
+		if oldestKey != "" {
+			delete(p.agents, oldestKey)
+			for i, k := range p.agentOrder {
+				if k == oldestKey {
+					p.agentOrder = append(p.agentOrder[:i], p.agentOrder[i+1:]...)
+					break
+				}
+			}
+		}
+	}
+	displayName := name
+	if key == "" {
+		displayName = "main"
+	}
+	ring := &agentRing{name: displayName}
+	p.agents[key] = ring
+	if key != "" {
+		p.agentOrder = append(p.agentOrder, key)
+	}
+	return ring
+}
+
 // place counts one event into the ring. A live event happened just now, in
 // the bucket now filling. A historical one happened when its line says — an
 // undated line between dated ones is read at the last dated time, which it
@@ -186,8 +252,13 @@ func (p *pulse) read(now time.Time) {
 // quiet twenty minutes ago must draw the long flat line of a run that has
 // been quiet, not the short line of one that just started.
 func (p *pulse) place(ev logfmt.Event, history bool) {
+	ring := p.agent(ev.Agent, ev.AgentName)
 	if !history {
 		p.cells[p.head]++
+		if ring != nil {
+			ring.cells[p.head]++
+			ring.lastAt = p.at
+		}
 		return
 	}
 	t := ev.Time
@@ -207,7 +278,14 @@ func (p *pulse) place(ev logfmt.Event, history bool) {
 	if back >= pulseBuckets {
 		return
 	}
-	p.cells[((p.head-back)%pulseBuckets+pulseBuckets)%pulseBuckets]++
+	idx := ((p.head-back)%pulseBuckets + pulseBuckets) % pulseBuckets
+	p.cells[idx]++
+	if ring != nil {
+		ring.cells[idx]++
+		if t.After(ring.lastAt) {
+			ring.lastAt = t
+		}
+	}
 }
 
 // roll advances the ring to the bucket now falls in, zeroing the ones that
@@ -225,11 +303,17 @@ func (p *pulse) roll(now time.Time) {
 	p.seen = min(p.seen+steps, pulseBuckets)
 	if steps >= pulseBuckets {
 		p.cells, p.head, p.at = [pulseBuckets]int{}, 0, now
+		for _, ring := range p.agents {
+			ring.cells = [pulseBuckets]int{}
+		}
 		return
 	}
 	for i := 0; i < steps; i++ {
 		p.head = (p.head + 1) % pulseBuckets
 		p.cells[p.head] = 0
+		for _, ring := range p.agents {
+			ring.cells[p.head] = 0
+		}
 	}
 	p.at = p.at.Add(time.Duration(steps) * pulseBucket)
 }
@@ -240,19 +324,66 @@ type timedBucket struct {
 	count int
 }
 
-// timedWindow is window() with each bucket dated: bucket i of a window of n
-// closed at p.at - (n-1-i)*pulseBucket.
-func (p *pulse) timedWindow() []timedBucket {
-	w := p.window()
-	if len(w) == 0 {
+// chartSeries is one agent's dated buckets, its key and its label.
+type chartSeries struct {
+	key, name string
+	buckets   []timedBucket
+}
+
+// timedSeries is the window read out per agent, top-level agent first and
+// the subagents in the order they appeared.
+func (p *pulse) timedSeries() []chartSeries {
+	if p.heard.IsZero() {
 		return nil
 	}
-	out := make([]timedBucket, len(w))
-	for i, c := range w {
-		t := p.at.Add(-time.Duration(len(w)-1-i) * pulseBucket)
-		out[i] = timedBucket{at: t, count: c}
+	mainBuckets := make([]timedBucket, p.seen)
+	mainRing := p.agents[""]
+	for i := 0; i < p.seen; i++ {
+		t := p.at.Add(-time.Duration(p.seen-1-i) * pulseBucket)
+		c := 0
+		if mainRing != nil {
+			c = mainRing.cells[(p.head+1+pulseBuckets-p.seen+i)%pulseBuckets]
+		}
+		mainBuckets[i] = timedBucket{at: t, count: c}
 	}
-	return out
+	res := []chartSeries{
+		{key: "", name: "main", buckets: mainBuckets},
+	}
+	for _, key := range p.agentOrder {
+		if key == "" {
+			continue
+		}
+		ring, ok := p.agents[key]
+		if !ok {
+			continue
+		}
+		counts := make([]int, p.seen)
+		first := -1
+		last := -1
+		for i := 0; i < p.seen; i++ {
+			c := ring.cells[(p.head+1+pulseBuckets-p.seen+i)%pulseBuckets]
+			counts[i] = c
+			if c > 0 {
+				if first == -1 {
+					first = i
+				}
+				last = i
+			}
+		}
+		if first != -1 {
+			buckets := make([]timedBucket, last-first+1)
+			for i := first; i <= last; i++ {
+				t := p.at.Add(-time.Duration(p.seen-1-i) * pulseBucket)
+				buckets[i-first] = timedBucket{at: t, count: counts[i]}
+			}
+			res = append(res, chartSeries{
+				key:     key,
+				name:    ring.name,
+				buckets: buckets,
+			})
+		}
+	}
+	return res
 }
 
 // window is the counts of the buckets the reading covers, oldest first, which

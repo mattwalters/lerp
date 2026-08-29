@@ -353,7 +353,7 @@ type workRow struct {
 	// buckets for the lane pane activity chart.
 	heard time.Time
 	rate  []int
-	chart []timedBucket
+	chart []chartSeries
 	// tool and target are the last tool call the log carried, empty until it
 	// carries one; tokens is what the run has spent, summed over the whole
 	// log — history included, so an adopted run reports the run's total.
@@ -2154,7 +2154,7 @@ func (m *model) workGroups() []workGroup {
 		row := workRow{ticketID: ln.ticketID, ticket: ln.name(), queue: ln.queue,
 			lane: n, state: ln.state, since: ln.since}
 		if ln.pulse != nil {
-			row.heard, row.rate, row.chart = ln.pulse.heard, ln.pulse.window(), ln.pulse.timedWindow()
+			row.heard, row.rate, row.chart = ln.pulse.heard, ln.pulse.window(), ln.pulse.timedSeries()
 			row.tool, row.target = ln.pulse.tool, ln.pulse.target
 			row.tokens = ln.pulse.tokens
 			row.cost = ln.pulse.cost
