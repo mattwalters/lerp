@@ -28,6 +28,7 @@ var stockRepo string
 // Stock status names: what the pipeline maps onto when the operator does
 // not choose otherwise.
 const (
+	StockRunner           = "claude"
 	StockPlanStatus       = "Planning"
 	StockPlanReviewStatus = "Plan Review"
 	StockImplementStatus  = "Implementing"
@@ -49,6 +50,7 @@ const (
 // context — and declining it drops those paragraphs, nothing else.
 type Stock struct {
 	Teams  []string
+	Runner string
 	Bypass bool
 	Plan   bool // include the plan queue
 	Review bool // include the review pass in the implement prompt
@@ -186,9 +188,22 @@ func (s Stock) Render() string {
 	for i, team := range s.Teams {
 		quoted[i] = fmt.Sprintf("%q", team)
 	}
-	rendered := renderSections(stockRepo, map[string]bool{"plan": s.Plan, "review": s.Review, "bypass": s.Bypass})
+	runner := orStock(s.Runner, StockRunner)
+	var bypassArgs string
+	if adapter, ok := vendors.Lookup(runner); ok {
+		bypassArgs = adapter.BypassArgs()
+	}
+	include := map[string]bool{
+		"plan":   s.Plan,
+		"review": s.Review,
+		"bypass": s.Bypass,
+		runner:   true,
+	}
+	rendered := renderSections(stockRepo, include)
 	rendered = strings.NewReplacer(
 		"{{teams}}", strings.Join(quoted, ", "),
+		"{{runner}}", runner,
+		"{{bypass_args}}", bypassArgs,
 		"{{plan_status}}", orStock(s.PlanStatus, StockPlanStatus),
 		"{{plan_review_status}}", orStock(s.PlanReviewStatus, StockPlanReviewStatus),
 		"{{implement_status}}", orStock(s.ImplementStatus, StockImplementStatus),

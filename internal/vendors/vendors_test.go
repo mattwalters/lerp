@@ -24,3 +24,16 @@ func TestNamesAgreesWithLookup(t *testing.T) {
 		}
 	}
 }
+
+// Every vendor must supply a non-empty BypassArgs spelling for unattended runs.
+func TestBypassArgsNonEmpty(t *testing.T) {
+	for _, name := range Names() {
+		adapter, ok := Lookup(name)
+		if !ok {
+			t.Fatalf("Lookup(%q) = false", name)
+		}
+		if got := adapter.BypassArgs(); got == "" {
+			t.Errorf("adapter %q returned empty BypassArgs()", name)
+		}
+	}
+}

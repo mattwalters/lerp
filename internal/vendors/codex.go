@@ -24,6 +24,11 @@ func (codex) CLIName() string {
 	return "codex"
 }
 
+// BypassArgs returns the flag string that grants unattended execution.
+func (codex) BypassArgs() string {
+	return "--dangerously-bypass-approvals-and-sandbox"
+}
+
 // MCPRegisterHTTP returns the command to register Linear MCP directly via HTTP.
 func (codex) MCPRegisterHTTP() []string {
 	return []string{"codex", "mcp", "add", "linear", "--url", "https://mcp.linear.app/mcp"}

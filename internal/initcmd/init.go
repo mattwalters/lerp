@@ -55,6 +55,19 @@ func SetCommandRunner(runner CommandRunner) func() {
 	return func() { defaultCommandRunner = prev }
 }
 
+// LookPath wraps exec.LookPath to find executables on PATH.
+type LookPath func(file string) (string, error)
+
+var defaultLookPath LookPath = exec.LookPath
+
+// SetLookPath overrides the lookPath function used to probe installed CLIs,
+// returning a restore function. Used in tests.
+func SetLookPath(lp LookPath) func() {
+	prev := defaultLookPath
+	defaultLookPath = lp
+	return func() { defaultLookPath = prev }
+}
+
 // WizardRunner runs the Bubble Tea init wizard.
 type WizardRunner func(ctx context.Context, opts initui.Options) (initui.Result, error)
 
@@ -78,6 +91,7 @@ type readState struct {
 	existingCfg    *config.RepoConfig
 	needsGitignore bool
 	mcpConfigured  map[string]bool
+	cliInstalled   map[string]bool
 }
 
 type mcpIntent int
@@ -218,6 +232,14 @@ func read(ctx context.Context, board Board, repoRoot, teamKey, teamName string) 
 		}
 	}
 
+	cliInstalled := make(map[string]bool)
+	for _, name := range vendors.Names() {
+		if adapter, ok := vendors.Lookup(name); ok {
+			_, err := defaultLookPath(adapter.CLIName())
+			cliInstalled[name] = (err == nil)
+		}
+	}
+
 	return readState{
 		teamKey:        normKey,
 		teamName:       teamName,
@@ -228,6 +250,7 @@ func read(ctx context.Context, board Board, repoRoot, teamKey, teamName string) 
 		existingCfg:    cfg,
 		needsGitignore: needsGitignore,
 		mcpConfigured:  mcpConfigured,
+		cliInstalled:   cliInstalled,
 	}, nil
 }
 
@@ -395,6 +418,7 @@ func decide(ctx context.Context, board Board, out io.Writer, answers io.Reader, 
 		Fresh:           r.fresh,
 		ExistingConfig:  r.existingCfg,
 		MCPConfigured:   r.mcpConfigured,
+		CLIInstalled:    r.cliInstalled,
 		FetchStatuses:   board.TeamWorkflowStates,
 		Preview:         preview,
 	}
