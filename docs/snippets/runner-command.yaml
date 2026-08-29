@@ -1,0 +1,4 @@
+runners:
+  custom:
+    command: my-agent --prompt {{prompt}} --dir {{workdir}} --session {{session}}
+    resume: cd {{workdir}} && my-agent --resume {{session}}

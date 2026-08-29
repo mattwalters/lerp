@@ -102,7 +102,7 @@ left running.
 
 The config for the board above is one file, checked into the repo.
 
-{{< shot src="config.svg" alt="lerp.toml for the board above. Two runners, claude and antigravity; a plan queue on Planning running claude into Plan Review; an implement queue on In Progress running antigravity into In Review; git worktree provision and dispose commands, with lerp setting LERP_WORKSPACE per lane." >}}
+{{< config-snippet "config" >}}
 
 Everything runs on your machine. There is no server and no daemon, and
 the only account involved is your Linear account. **Linear is the

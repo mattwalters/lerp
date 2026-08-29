@@ -77,11 +77,10 @@ The same rules the agents work under (see `AGENTS.md`):
   tape never asks anything of re-records nothing if it touches none of
   the paths above — so if your change dates a cast, run `make demo`
   and `make casts`, and commit `docs/demo.gif` and the posters with it.
-- `make shots` re-renders every config snippet under `docs/shots/` —
-  the homepage's `config.toml` and the docs' lerp.toml shots — into
-  dark and light SVG pairs in `docs/static/`. It needs
-  [freeze](https://github.com/charmbracelet/freeze) and renders both
-  variants with pinned geometry flags and theme pairs.
+- Config snippets on the docs site live under `docs/snippets/` with
+  TOML, YAML, and JSON variants for the format picker. `make check`
+  asserts that all three variants exist for every snippet and decode to
+  identical configuration values.
 - The third is `release-config`: `goreleaser check` and then `make
   snapshot`, which cross-builds the release binaries for macOS and
   Linux without publishing anything. It exists because `.goreleaser.yaml`
