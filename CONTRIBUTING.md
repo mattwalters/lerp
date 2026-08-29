@@ -104,8 +104,18 @@ The same rules the agents work under (see `AGENTS.md`):
   [hugo](https://gohugo.io); `make hugo-version` prints the version CI
   builds and deploys with, which is also what a local build warns about
   not being.
-- PRs go against `main`. Releases are tagged; the latest release is what
-  is supported, and fixes land on `main` first.
+- PRs go against `main`. Releases are tagged from `main` after their
+  changelog section has landed:
+  1. Write the new version's section in `CHANGELOG.md` on a branch
+     (see the file header for the binary-not-website filter).
+  2. Commit, PR, and merge it, so the version number and notes go
+     through review like any other change.
+  3. `git checkout main && git pull`
+  4. `make release VERSION=v0.2.0`
+  By the time `make release` runs, it is not choosing a version: it is
+  confirming that the string on the command line matches one already
+  merged into `CHANGELOG.md`. The latest release is what is supported,
+  and fixes land on `main` first.
 - One change per PR, and say in the description what it does and why.
   If an issue argued the scope case, link it.
 - PR titles here often start with a `LERP-NN:` identifier. That is the
