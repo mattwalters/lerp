@@ -34,31 +34,18 @@ moves it to one it does not, and lerp names those automations at startup.
 
 The usual culprit is Linear's GitHub integration, whose automations sit
 per team in workflow settings as pull request triggers. On the teams lerp
-serves:
+serves, set the four open-PR triggers (On draft PR open, On PR open, On PR
+review request or activity, On PR ready for merge) to No action, since a run
+that opens a pull request trips them mid-stage. Leave On PR merge on, because
+it fires after the stock pipeline is done with the ticket. The startup check
+cannot see that one, so the settings screen is worth a look.
 
-- **On draft PR open**, **On PR open**, **On PR review request or
-  activity** and **On PR ready for merge** all fire while a pull request
-  is open — mid-stage, for a ticket a queue is running. Set all four to
-  **No action**: the stock implement prompt opens its PR as a draft and
-  flips it to ready at the end, so a single run can trip any of them.
-- **On PR merge** fires after the stock pipeline is done with the
-  ticket. Moving a merged ticket to Done is the benign automation — it is
-  what carries "In Review" to the end — so leave it on. If your pipeline
-  has a stage that runs after the merge, this trigger is mid-stage for
-  you too: set it to No action, or point that stage's `on_success` at the
-  status the automation moves to (below).
-
-**Keeping an automation instead.** Point the pipeline at what it does:
-give the queue whose runs open the pull request an `on_success` of the
-status the integration moves tickets to, and the automation becomes the
-trigger for the next stage instead of the thief of the last one's hop.
-This is the configuration the startup check stays quiet about. It costs
-three things: your pipeline is coupled to integration behaviour you do
-not control; a setting changed in Linear breaks the chain with no diff to
-read; and the queue's `on_failure` route is dead, since the automation
-has already moved the ticket by the time a failing run ends — the failed
-run rests at the success gate with only a status-bar line to say so, and
-a queue watching that status runs the next stage on the failed work.
+If your pipeline has a stage that runs after the merge, the merge trigger
+is mid-stage for you too. Either set it to No action, or point the
+previous stage's `on_success` at the status the automation moves to,
+which makes the automation the next stage's trigger. That setup kills the
+queue's `on_failure` route, since the ticket has already moved by the
+time a failing run ends.
 
 ## What happens on crash or kill?
 
