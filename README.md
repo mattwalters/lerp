@@ -13,7 +13,7 @@ move them across it.
 
 Linear is the database, the board is the workflow, and lerp is the
 reconciler between them
-([the model at length](https://lerp.sh/latest/docs/the-board/)).
+([the model at length](https://lerp.sh/latest/docs/how-lerp-works/)).
 
 **[lerp.sh](https://lerp.sh/)** is the site, and
 **[the docs](https://lerp.sh/latest/docs/)** take you from install to a
@@ -95,7 +95,7 @@ archive them in Linear's settings.
 **[The docs](https://lerp.sh/latest/docs/)** are the site:
 [install](https://lerp.sh/latest/docs/install/) and the
 [quickstart](https://lerp.sh/latest/docs/quickstart/), the
-[model the board is a picture of](https://lerp.sh/latest/docs/the-board/),
+[model the board is a picture of](https://lerp.sh/latest/docs/how-lerp-works/),
 a page per motion through the interface, and the reference for
 `lerp.toml`, the command line and
 [troubleshooting](https://lerp.sh/latest/docs/troubleshooting/).

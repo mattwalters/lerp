@@ -1,31 +1,19 @@
 ---
 title: Telemetry
-summary: One append-only JSONL line per finished run — where it lives, the schema, and querying with jq.
+summary: One append-only JSONL line per finished run, where it lives, the schema, and querying with jq.
 weight: 125
 ---
 
 # Telemetry
 
-At run exit, lerp appends one JSON line to a local telemetry file — a
-structured record of the finished run's duration, token usage, cost, and
-outcome.
+At run exit, lerp appends one JSON line to a local file, a record of the
+finished run's duration, token usage, cost and outcome.
 
-## Design stance
-
-Telemetry is history, not state ([SCOPE.md](SCOPE.md) invariant 1). Four
-principles:
-
-- **Written once at run exit by deterministic code.** The settling lane's
-  goroutine totals token usage from the stream log, notes exit timing and
-  exit code, and appends the line before freeing the lane.
-- **Read by nothing in lerp.** The loop and the TUI do not query, parse,
-  or depend on it. Losing the file costs a chart, never a ticket.
-- **Never posted to Linear.** Linear receives stage-boundary decisions —
-  plans, pull requests, verdicts. Process measurements belong to local
-  history (SCOPE.md invariant 7), never on a ticket.
-- **Never trusts agent prose.** Measurements come from config, the loop's
-  own evidence records, and deterministic decoders of the stream logs —
-  never from agents reporting their own spend.
+Telemetry is history, not state. The settling lane writes it once, from
+the run's stream log and the loop's own evidence, never from an agent's
+account of its own spend. Nothing in lerp reads it back, and none of it
+reaches Linear, which gets decisions rather than measurements. Losing the
+file costs a chart, never a ticket.
 
 ## Where the file lives
 
@@ -37,19 +25,16 @@ With `XDG_STATE_HOME` unset, `~/.local/state/lerp/runs.jsonl`, on both
 macOS and Linux.
 
 The file and its parent directories are created on the first finished
-run. Writes are serialized across lanes with a process mutex and use
-append mode (`O_APPEND`), so multiple `lerp` processes on different
-repositories can append concurrently without tearing lines.
+run. Writes are serialized across lanes and use append mode, so several
+`lerp` processes can append at once without tearing lines.
 
 ## The line format
 
-The format is a stable interface: changes are additive only, and keys are
-never renamed or repurposed.
-
-Fields a runner or settlement path could not supply are omitted
-(`omitempty`) rather than zero-faked: a command-template runner naming no
-vendor omits `vendor`, and a killed run with no exit file omits
-`exit_code` and `duration_ms`.
+The format is a stable interface. Changes are additive only, and keys are
+never renamed or repurposed. A field the run could not supply is omitted
+rather than zero-faked, so a command-template runner omits `vendor`, and
+a run killed before it recorded an exit file omits `exit_code` and
+`duration_ms`.
 
 | Field | Type | Description |
 | --- | --- | --- |
@@ -96,17 +81,6 @@ jq --arg since "$(date -u -v-7d +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '7
   queue: .[0].queue,
   total_tokens: (map(.tokens // 0) | add),
   total_cost_usd: (map(.cost_usd // 0) | add | (.*100 | round)/100),
-  runs: length
-}' ~/.local/state/lerp/runs.jsonl
-```
-
-### Spend and runs by model
-
-```sh
-jq -s 'group_by(.model // "unspecified")[] | {
-  model: .[0].model // "unspecified",
-  total_cost_usd: (map(.cost_usd // 0) | add | (.*100 | round)/100),
-  total_tokens: (map(.tokens // 0) | add),
   runs: length
 }' ~/.local/state/lerp/runs.jsonl
 ```
