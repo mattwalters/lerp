@@ -14,6 +14,12 @@ load-bearing sections are Changed and Removed.
 
 - `lerp init` automatically sets colliding mid-stage pull-request automations to No action when creating a new Linear team.
 
+### Changed
+
+- Work row sparkline is drawn as a braille line via `ntcharts/sparkline` rather than block runes.
+
+## [0.1.0] — 2026-08-29
+
 ### Added
 
 - Initial release of lerp, a small TUI orchestrating software work through Linear.
