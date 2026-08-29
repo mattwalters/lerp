@@ -12,10 +12,12 @@ load-bearing sections are Changed and Removed.
 
 ### Added
 
+- Lane pane activity chart: a fixed braille line chart above the live log tail showing recent event activity across the pane's width via `ntcharts`.
 - `lerp init` automatically sets colliding mid-stage pull-request automations to No action when creating a new Linear team.
 
 ### Changed
 
+- `pulse` event ring records at 3-second bucket resolution across 300 buckets (15 minutes), downsampling to 15-second cells for the work row sparkline.
 - Work row sparkline is drawn as a braille line via `ntcharts/sparkline` rather than block runes.
 
 ## [0.1.0] — 2026-08-29

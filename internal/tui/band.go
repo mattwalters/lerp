@@ -5,7 +5,15 @@ import (
 	"strconv"
 	"strings"
 
+	ntsparkline "github.com/NimbleMarkets/ntcharts/sparkline"
 	"github.com/charmbracelet/lipgloss"
+)
+
+const (
+	// laneChartHeight is the fixed height of the lane pane activity chart:
+	// three rows of braille give twelve distinct vertical levels of resolution
+	// for peaks and quiet stretches without eating into the log below it.
+	laneChartHeight = 3
 )
 
 // laneBand renders the pinned header band over a running ticket's log:
@@ -102,4 +110,59 @@ func laneBand(r workRow, width int) []string {
 	}
 
 	return []string{splitRow(left, clock, width)}
+}
+
+// laneChart renders a fixed-height braille line chart of recent activity
+// across the lane pane's width, oldest first, using ntcharts. It is drawn from
+// the same bucketed event counts the work row sparkline uses (r.rate).
+//
+// The horizon is the pane's width (one bucket per column). When the run is
+// younger than the pane, the line draws the history it has, padded on the left
+// with spaces so "now" is the right edge.
+func laneChart(r workRow, width int) []string {
+	if width <= 0 || len(r.rate) == 0 {
+		return nil
+	}
+
+	n := min(width, len(r.rate))
+	counts := r.rate[len(r.rate)-n:]
+
+	hi := 0
+	for _, c := range counts {
+		hi = max(hi, c)
+	}
+
+	data := make([]float64, len(counts)+1)
+	for i, c := range counts {
+		if c > 0 {
+			data[i] = max(0.25/float64(laneChartHeight), float64(c)/float64(hi))
+		}
+	}
+	data[len(counts)] = data[len(counts)-1]
+
+	s := ntsparkline.New(len(counts)+1, laneChartHeight)
+	s.SetMax(1)
+	s.PushAll(data)
+	s.DrawBraille()
+
+	rawLines := strings.Split(s.View(), "\n")
+	if len(rawLines) > laneChartHeight {
+		rawLines = rawLines[:laneChartHeight]
+	}
+
+	pad := ""
+	if width > len(counts) {
+		pad = strings.Repeat(" ", width-len(counts))
+	}
+
+	out := make([]string, 0, len(rawLines))
+	for _, l := range rawLines {
+		runes := []rune(l)
+		if len(runes) > len(counts) {
+			runes = runes[:len(counts)]
+		}
+		line := pad + string(runes)
+		out = append(out, styleFaint.Render(line))
+	}
+	return out
 }

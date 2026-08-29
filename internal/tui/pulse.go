@@ -10,21 +10,25 @@ import (
 )
 
 const (
-	// sparkBucket is how long one bucket covers and sparkCells how many the
-	// ring holds: fifteen seconds each, in cells narrow enough that a run
-	// falling quiet shows within a bucket or two, and fifteen minutes of
-	// them — about what a wide terminal's full-width row has the columns
-	// for, and further back than the question ("has it been sitting there
-	// for four minutes") is ever asked over.
+	// pulseBucket is how long one fine bucket covers: three seconds, fine
+	// enough for braille resolution across the lane pane to show bursts and
+	// pauses without stepping on pollEvery (250ms), and an exact divisor of
+	// the row's 15-second cell.
 	//
-	// A row draws the tail of the ring that fits the width it is given (see
-	// runLine), so the ring is one number for every layout rather than one
-	// per panel, and a row narrower than the ring reaches less far back
-	// rather than covering the same span more coarsely. sparkMinCells is
-	// where a line stops being worth its columns — a row with less room
-	// than that for history it has keeps its numbers and drops the line. A
-	// run too young to fill it still draws what it has, the way window's
-	// own short line does.
+	// pulseBuckets is how many buckets the ring holds: 300 buckets (15
+	// minutes), matching the quarter-hour span the row reaches back over
+	// and covering up to a 300-column pane with no allocation.
+	pulseBucket  = 3 * time.Second
+	pulseBuckets = 300
+
+	// sparkBucket is how long one bucket covers in the work row and sparkCells
+	// how many the row holds: fifteen seconds each, in cells narrow enough
+	// that a run falling quiet shows within a bucket or two, and fifteen
+	// minutes of them (60 cells).
+	//
+	// sparkMinCells is where a line stops being worth its columns — a row
+	// with less room than that for history it has keeps its numbers and
+	// drops the line.
 	sparkBucket   = 15 * time.Second
 	sparkCells    = 60
 	sparkMinCells = 8
@@ -62,7 +66,7 @@ type pulse struct {
 	// now filling, at is when it opened, and seen is how many buckets the
 	// reading covers — a young run draws a short line rather than a long
 	// empty one, which would be the picture of a run that had died.
-	cells [sparkCells]int
+	cells [pulseBuckets]int
 	head  int
 	at    time.Time
 	seen  int
@@ -135,7 +139,7 @@ func (p *pulse) read(now time.Time) {
 			// The file was rewritten under us, so the counts are a picture
 			// of a log that is gone. Start the reading over with the file —
 			// all of which is new, none of it history.
-			p.stream, p.cells, p.head, p.seen = logfmt.Stream{}, [sparkCells]int{}, 0, 0
+			p.stream, p.cells, p.head, p.seen = logfmt.Stream{}, [pulseBuckets]int{}, 0, 0
 			p.at, p.lastT = time.Time{}, time.Time{}
 			p.hist, p.consumed = 0, 0
 			// The totals and the last call went with the file: all are
@@ -197,13 +201,13 @@ func (p *pulse) place(ev logfmt.Event, history bool) {
 	}
 	back := 0
 	if d := p.at.Sub(t); d > 0 {
-		back = 1 + int((d-time.Nanosecond)/sparkBucket)
+		back = 1 + int((d-time.Nanosecond)/pulseBucket)
 	}
-	p.seen = max(p.seen, min(back, sparkCells-1)+1)
-	if back >= sparkCells {
+	p.seen = max(p.seen, min(back, pulseBuckets-1)+1)
+	if back >= pulseBuckets {
 		return
 	}
-	p.cells[((p.head-back)%sparkCells+sparkCells)%sparkCells]++
+	p.cells[((p.head-back)%pulseBuckets+pulseBuckets)%pulseBuckets]++
 }
 
 // roll advances the ring to the bucket now falls in, zeroing the ones that
@@ -214,20 +218,20 @@ func (p *pulse) roll(now time.Time) {
 		p.at, p.seen = now, 1
 		return
 	}
-	steps := int(now.Sub(p.at) / sparkBucket)
+	steps := int(now.Sub(p.at) / pulseBucket)
 	if steps <= 0 {
 		return
 	}
-	p.seen = min(p.seen+steps, sparkCells)
-	if steps >= sparkCells {
-		p.cells, p.head, p.at = [sparkCells]int{}, 0, now
+	p.seen = min(p.seen+steps, pulseBuckets)
+	if steps >= pulseBuckets {
+		p.cells, p.head, p.at = [pulseBuckets]int{}, 0, now
 		return
 	}
 	for i := 0; i < steps; i++ {
-		p.head = (p.head + 1) % sparkCells
+		p.head = (p.head + 1) % pulseBuckets
 		p.cells[p.head] = 0
 	}
-	p.at = p.at.Add(time.Duration(steps) * sparkBucket)
+	p.at = p.at.Add(time.Duration(steps) * pulseBucket)
 }
 
 // window is the counts of the buckets the reading covers, oldest first, which
@@ -244,8 +248,8 @@ func (p *pulse) window() []int {
 		return nil
 	}
 	out := make([]int, 0, p.seen)
-	for i := sparkCells - p.seen; i < sparkCells; i++ {
-		out = append(out, p.cells[(p.head+1+i)%sparkCells])
+	for i := pulseBuckets - p.seen; i < pulseBuckets; i++ {
+		out = append(out, p.cells[(p.head+1+i)%pulseBuckets])
 	}
 	return out
 }
@@ -289,4 +293,29 @@ func sparkline(counts []int) string {
 		r = r[:len(counts)]
 	}
 	return string(r)
+}
+
+// downsample aggregates fine pulse buckets into 15-second sparkline cells.
+// The most recent fine buckets form the rightmost spark cell, so the recent
+// edge is always whole.
+func downsample(counts []int) []int {
+	if len(counts) == 0 {
+		return nil
+	}
+	ratio := int(sparkBucket / pulseBucket)
+	if ratio <= 1 {
+		return counts
+	}
+	cells := (len(counts) + ratio - 1) / ratio
+	out := make([]int, cells)
+	for i := 0; i < cells; i++ {
+		end := len(counts) - (cells-1-i)*ratio
+		start := max(0, end-ratio)
+		sum := 0
+		for _, c := range counts[start:end] {
+			sum += c
+		}
+		out[i] = sum
+	}
+	return out
 }
