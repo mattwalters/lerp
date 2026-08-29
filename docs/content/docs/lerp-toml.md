@@ -186,9 +186,9 @@ was done — so it cannot read the same whether the review happened or
 not — and [the board reads a ticket's
 comments](reading-the-board.md#the-main-pane) into the main pane. The
 comment goes on before the PR flips to ready, which is what keeps the run
-safe on a team that has not yet done what
-[Lerp needs the status field](install.md#lerp-needs-the-status-field)
-asks — there, the flip is exactly what frees an automation to move the
+safe on a team that still has
+[a mid-stage PR automation](troubleshooting.md#why-did-my-ticket-skip-a-stage)
+on, since the flip is exactly what frees that automation to move the
 ticket.
 
 What reaches Needs Attention is only what three rounds could not settle,
