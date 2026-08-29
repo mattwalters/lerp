@@ -208,3 +208,14 @@ func (antigravity) Session(line string) (string, bool) {
 	}
 	return l.ConversationID, true
 }
+
+// Aborted reads one line of an antigravity run's log for the abort notice agy
+// writes to standard error when a headless run is auto-denied a tool requiring
+// permission. It returns the reason naming the missing grant, or false when the
+// line is not an abort notice.
+func (antigravity) Aborted(line string) (string, bool) {
+	if strings.Contains(line, "no output produced — a tool required the \"command\" permission") {
+		return "no output produced — a tool required permission (re-run with --dangerously-skip-permissions)", true
+	}
+	return "", false
+}

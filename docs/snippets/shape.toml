@@ -11,7 +11,8 @@ dispose = 'git worktree remove --force "$LERP_WORKSPACE"'
 
 # A runner is an adapter to a coding-agent CLI (or a raw command template).
 # The contract is the lowest common denominator: takes a prompt and a
-# working directory, runs to exit, exit code means done or failed.
+# working directory, runs to exit, exit code means done or failed (unless the
+# stream reports failure or no output).
 [runners.claude]
 vendor = "claude"
 # model = "opus"

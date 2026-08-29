@@ -20,7 +20,7 @@ of its own. Local disk holds config, credentials, run evidence and
 
 A Linear status with instructions attached. A ticket sitting in `status`
 runs through `runner` with `prompt`, then moves to `on_success`, or to
-`on_failure` when the agent exits non-zero.
+`on_failure` when the agent exits non-zero (or its stream reports failure or no output).
 [Configuration](configuration.md) has the fields.
 
 Those four fields are the whole workflow language. No conditionals, no
@@ -31,7 +31,8 @@ branching is a person or an agent moving a ticket.
 
 An adapter to a coding-agent CLI, one of Claude Code, Codex, Antigravity,
 or a [raw command](configuration.md#runners). It takes a prompt and a working
-directory, runs to exit, and its exit code means done or failed.
+directory, runs to exit, and its exit code means done or failed (unless its
+stream reports that the run produced nothing).
 
 ## Lane
 

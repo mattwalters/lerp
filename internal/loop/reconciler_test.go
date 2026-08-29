@@ -644,6 +644,147 @@ func TestRunFailureRoutesToOnFailure(t *testing.T) {
 	}
 }
 
+func TestRunAntigravityDenialRoutesToOnFailureWithRemedyNote(t *testing.T) {
+	h := newHarness(t, 1, func(_ context.Context, inv run.Invocation) (run.Result, error) {
+		log := `{"event":"init","conversation_id":"ffd2f49a-85bf-45ab-bfad-80aed96a9b98"}` + "\n" +
+			`{"event":"step_update","step_update":{"state":"ERROR","step_type":"tool","tool_name":"run_command","tool_info":{"error":{"type":"TOOL_ERROR","message":"denied"}}}}` + "\n" +
+			`jetski: no output produced — a tool required the "command" permission that` + "\n" +
+			`headless mode cannot prompt for, so it was auto-denied.` + "\n" +
+			`{"event":"result","result":{"status":"SUCCESS","response":"","num_turns":1}}` + "\n"
+		if err := os.WriteFile(inv.LogPath, []byte(log), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return run.Result{ExitCode: 0}, nil
+	})
+	h.rec.o.Repo.Runners["agent"] = config.Runner{Command: "agent", Vendor: "antigravity"}
+	h.fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Todo"})
+
+	h.rec.Tick(context.Background())
+	exited := h.waitEvents(t, EventExited, 1)
+	if exited[0].ExitCode != 0 {
+		t.Errorf("exit code = %d, want 0 (the process exit code measurement)", exited[0].ExitCode)
+	}
+	if !strings.Contains(exited[0].Note, "--dangerously-skip-permissions") {
+		t.Errorf("exit note = %q, want remedy in note", exited[0].Note)
+	}
+	if got := h.issue(t, "one"); got.Status != "Needs Help" {
+		t.Errorf("denied run status = %q, want Needs Help (on_failure)", got.Status)
+	}
+	if got := h.issue(t, "one"); got.AssigneeID != "" {
+		t.Errorf("denied run assignee = %q, want claim released", got.AssigneeID)
+	}
+}
+
+func TestRunNormalStreamRoutesToOnSuccess(t *testing.T) {
+	h := newHarness(t, 1, func(_ context.Context, inv run.Invocation) (run.Result, error) {
+		log := `{"event":"init","conversation_id":"ffd2f49a-85bf-45ab-bfad-80aed96a9b98"}` + "\n" +
+			`{"event":"step_update","step_update":{"state":"DONE","step_type":"agent_response","text_delta":"Done."}}` + "\n" +
+			`{"event":"result","result":{"status":"SUCCESS","response":"Done.","num_turns":1}}` + "\n"
+		if err := os.WriteFile(inv.LogPath, []byte(log), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return run.Result{ExitCode: 0}, nil
+	})
+	h.rec.o.Repo.Runners["agent"] = config.Runner{Command: "agent", Vendor: "antigravity"}
+	h.fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Todo"})
+
+	h.rec.Tick(context.Background())
+	exited := h.waitEvents(t, EventExited, 1)
+	if exited[0].ExitCode != 0 {
+		t.Errorf("exit code = %d, want 0", exited[0].ExitCode)
+	}
+	if got := h.issue(t, "one"); got.Status != "Done" {
+		t.Errorf("normal run status = %q, want Done (on_success)", got.Status)
+	}
+	if got := h.issue(t, "one"); got.AssigneeID != "" {
+		t.Errorf("normal run assignee = %q, want claim released", got.AssigneeID)
+	}
+}
+
+func TestRunRawUndecodableLogRoutesToOnSuccess(t *testing.T) {
+	h := newHarness(t, 1, func(_ context.Context, inv run.Invocation) (run.Result, error) {
+		log := "Plain raw script output\nDone!\n"
+		if err := os.WriteFile(inv.LogPath, []byte(log), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return run.Result{ExitCode: 0}, nil
+	})
+	h.fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Todo"})
+
+	h.rec.Tick(context.Background())
+	exited := h.waitEvents(t, EventExited, 1)
+	if exited[0].ExitCode != 0 {
+		t.Errorf("exit code = %d, want 0", exited[0].ExitCode)
+	}
+	if got := h.issue(t, "one"); got.Status != "Done" {
+		t.Errorf("raw log status = %q, want Done (on_success)", got.Status)
+	}
+}
+
+func TestRunCodexTurnFailedRoutesToOnFailure(t *testing.T) {
+	h := newHarness(t, 1, func(_ context.Context, inv run.Invocation) (run.Result, error) {
+		log := `{"type":"thread.started","thread_id":"t1"}` + "\n" +
+			`{"type":"turn.failed","error":{"message":"build broke"}}` + "\n"
+		if err := os.WriteFile(inv.LogPath, []byte(log), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return run.Result{ExitCode: 0}, nil
+	})
+	h.rec.o.Repo.Runners["agent"] = config.Runner{Command: "agent", Vendor: "codex"}
+	h.fake.AddIssue("LERP", linear.Issue{ID: "one", Identifier: "LERP-1", Status: "Todo"})
+
+	h.rec.Tick(context.Background())
+	exited := h.waitEvents(t, EventExited, 1)
+	if exited[0].ExitCode != 0 {
+		t.Errorf("exit code = %d, want 0 (measurement)", exited[0].ExitCode)
+	}
+	if !strings.Contains(exited[0].Note, "build broke") {
+		t.Errorf("exit note = %q, want error in note", exited[0].Note)
+	}
+	if got := h.issue(t, "one"); got.Status != "Needs Help" {
+		t.Errorf("failed turn status = %q, want Needs Help (on_failure)", got.Status)
+	}
+}
+
+func TestReapAntigravityDenialRoutesToOnFailureWithRemedyNote(t *testing.T) {
+	h := newHarness(t, 1, nil)
+	h.rec.o.Repo.Runners["agent"] = config.Runner{Command: "agent", Vendor: "antigravity"}
+	record, err := h.evidence.Create(evidence.Record{
+		Lane: 1, TicketID: "orphan", Queue: "todo", StartingStatus: "Todo", Runner: "agent", Vendor: "antigravity",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	log := `{"event":"init","conversation_id":"ffd2f49a-85bf-45ab-bfad-80aed96a9b98"}` + "\n" +
+		`jetski: no output produced — a tool required the "command" permission that` + "\n" +
+		`headless mode cannot prompt for, so it was auto-denied.` + "\n" +
+		`{"event":"result","result":{"status":"SUCCESS","response":"","num_turns":1}}` + "\n"
+	if err := os.WriteFile(record.LogPath, []byte(log), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(record.ExitPath, []byte("0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h.fake.AddIssue("LERP", linear.Issue{
+		ID: "orphan", Identifier: "LERP-1", Status: "Todo", AssigneeID: "fake-viewer",
+	})
+
+	h.rec.Tick(context.Background())
+	exited := h.waitEvents(t, EventExited, 1)
+	if exited[0].ExitCode != 0 {
+		t.Errorf("reap exit code = %d, want 0 (measurement)", exited[0].ExitCode)
+	}
+	if !strings.Contains(exited[0].Note, "--dangerously-skip-permissions") {
+		t.Errorf("reap note = %q, want remedy in note", exited[0].Note)
+	}
+	if got := h.issue(t, "orphan"); got.Status != "Needs Help" {
+		t.Errorf("reaped denial run status = %q, want Needs Help (on_failure)", got.Status)
+	}
+	if got := h.issue(t, "orphan"); got.AssigneeID != "" {
+		t.Errorf("reaped denial run assignee = %q, want claim released", got.AssigneeID)
+	}
+}
+
 // Claude states a run's cost on the same result line that ends its log, at
 // the exact moment the record naming that log is about to be discarded
 // (Evidence.Remove, right after this event's Event is built but before a

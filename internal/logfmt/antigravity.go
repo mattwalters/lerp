@@ -68,6 +68,7 @@ type antigravityUsage struct {
 
 type antigravityResult struct {
 	Status          string  `json:"status"`
+	Response        *string `json:"response"`
 	NumTurns        int     `json:"num_turns"`
 	DurationSeconds float64 `json:"duration_seconds"`
 }
@@ -83,7 +84,13 @@ func (a *antigravity) Decode(line string) (Event, bool) {
 	case "step_update":
 		return a.stepUpdate(l.StepUpdate)
 	case "result":
-		return Event{Kind: KindResult, Text: antigravityResultLine(l.Result), IsError: l.Result.Status != "SUCCESS"}, true
+		noOutput := l.Result.Status == "SUCCESS" && l.Result.Response != nil && strings.TrimSpace(*l.Result.Response) == ""
+		return Event{
+			Kind:     KindResult,
+			Text:     antigravityResultLine(l.Result),
+			IsError:  l.Result.Status != "SUCCESS",
+			NoOutput: noOutput,
+		}, true
 	}
 	return Event{}, false
 }
