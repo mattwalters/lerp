@@ -234,6 +234,27 @@ func (p *pulse) roll(now time.Time) {
 	p.at = p.at.Add(time.Duration(steps) * pulseBucket)
 }
 
+// timedBucket is one window bucket with the time it covers.
+type timedBucket struct {
+	at    time.Time
+	count int
+}
+
+// timedWindow is window() with each bucket dated: bucket i of a window of n
+// closed at p.at - (n-1-i)*pulseBucket.
+func (p *pulse) timedWindow() []timedBucket {
+	w := p.window()
+	if len(w) == 0 {
+		return nil
+	}
+	out := make([]timedBucket, len(w))
+	for i, c := range w {
+		t := p.at.Add(-time.Duration(len(w)-1-i) * pulseBucket)
+		out[i] = timedBucket{at: t, count: c}
+	}
+	return out
+}
+
 // window is the counts of the buckets the reading covers, oldest first, which
 // is the order a sparkline draws. It is the whole history the ring holds; a
 // row too narrow for all of it draws the tail, which is the recent end. It is

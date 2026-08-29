@@ -569,3 +569,27 @@ func TestDownsample(t *testing.T) {
 		})
 	}
 }
+
+// timedWindow dates each bucket relative to p.at.
+func TestPulseTimedWindowDatesBuckets(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.log")
+	appendLog(t, path, "started\n")
+	start := time.Now().Truncate(time.Second)
+	p := newPulse(path)
+	p.read(start)
+
+	p.read(start.Add(4 * pulseBucket))
+	tb := p.timedWindow()
+	if len(tb) != 5 {
+		t.Fatalf("timedWindow len = %d, want 5", len(tb))
+	}
+	for i, b := range tb {
+		wantTime := p.at.Add(-time.Duration(len(tb)-1-i) * pulseBucket)
+		if !b.at.Equal(wantTime) {
+			t.Errorf("bucket %d at = %v, want %v", i, b.at, wantTime)
+		}
+	}
+	if !tb[len(tb)-1].at.Equal(p.at) {
+		t.Errorf("newest bucket at = %v, want %v", tb[len(tb)-1].at, p.at)
+	}
+}

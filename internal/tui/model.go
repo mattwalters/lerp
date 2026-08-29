@@ -349,9 +349,11 @@ type workRow struct {
 	since time.Time
 	// heard is when that run's log last grew, zero while it has none; rate
 	// is its recent activity per bucket, oldest first, for the sparkline —
-	// history the log dates included (see pulse.window).
+	// history the log dates included (see pulse.window). chart is the dated
+	// buckets for the lane pane activity chart.
 	heard time.Time
 	rate  []int
+	chart []timedBucket
 	// tool and target are the last tool call the log carried, empty until it
 	// carries one; tokens is what the run has spent, summed over the whole
 	// log — history included, so an adopted run reports the run's total.
@@ -2152,7 +2154,7 @@ func (m *model) workGroups() []workGroup {
 		row := workRow{ticketID: ln.ticketID, ticket: ln.name(), queue: ln.queue,
 			lane: n, state: ln.state, since: ln.since}
 		if ln.pulse != nil {
-			row.heard, row.rate = ln.pulse.heard, ln.pulse.window()
+			row.heard, row.rate, row.chart = ln.pulse.heard, ln.pulse.window(), ln.pulse.timedWindow()
 			row.tool, row.target = ln.pulse.tool, ln.pulse.target
 			row.tokens = ln.pulse.tokens
 			row.cost = ln.pulse.cost
@@ -4076,9 +4078,10 @@ func contextLoad(context, window int) (string, bool) {
 // identity and activity are not decoded from the log.
 //
 // The header band, the chart band and the log stack in that order, and the log
-// is the one that grows. A pane too short for the chart drops it and keeps the
-// log, and a pane too short for both drops the header too; the log is the last
-// thing standing, requiring at least two rows (ih >= 2).
+// is the one that grows. A pane too short for the full chart shrinks it down to
+// laneChartMinHeight (6), and drops the chart and legend together when the log
+// would have less than laneLogMinHeight (8); the header stands alone while the
+// log has at least two rows (ih >= len(header)+2), and drops below that.
 func (m model) mainBand(w, h int) []string {
 	if !m.logOnScreen() {
 		return nil
@@ -4089,12 +4092,17 @@ func (m model) mainBand(w, h int) []string {
 	}
 	innerW := padMain.inner(w)
 	header := laneBand(*r, innerW)
-	chart := laneChart(*r, innerW)
-	ih := h - 2
-	if len(header) > 0 && len(chart) > 0 && ih >= len(header)+len(chart)+2 {
-		return append(header, chart...)
+	if len(header) == 0 {
+		return nil
 	}
-	if len(header) > 0 && ih >= len(header)+2 {
+	ih := h - 2
+	chartH := min(laneChartHeight, ih-len(header)-1-laneLogMinHeight)
+	if chartH >= laneChartMinHeight {
+		if chart := laneChart(*r, innerW, chartH); len(chart) > 0 {
+			return append(header, chart...)
+		}
+	}
+	if ih >= len(header)+2 {
 		return header
 	}
 	return nil
