@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -15,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/mattwalters/lerp/internal/config"
+	"github.com/mattwalters/lerp/internal/credentials"
 	"github.com/mattwalters/lerp/internal/linear"
 	"github.com/mattwalters/lerp/internal/update"
 	"github.com/mattwalters/lerp/internal/version"
@@ -604,5 +606,355 @@ func TestNoGoSourceSpawnsGit(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("walking repo: %v", err)
+	}
+}
+
+func TestResolveWithLogin(t *testing.T) {
+	fakeAuth := func(ctx context.Context) (string, error) {
+		return "Bearer test-token", nil
+	}
+	expiredAuth := func(ctx context.Context) (string, error) {
+		return "", credentials.ErrLoginRequired
+	}
+	wrappedExpiredAuth := func(ctx context.Context) (string, error) {
+		return "", fmt.Errorf("%w (revoked)", credentials.ErrLoginRequired)
+	}
+	networkErrAuth := func(ctx context.Context) (string, error) {
+		return "", fmt.Errorf("connection refused")
+	}
+
+	t.Run("ErrNoCredentials interactive yes runs login and returns second resolve", func(t *testing.T) {
+		resolveCalls := 0
+		resolve := func() (func(context.Context) (string, error), error) {
+			resolveCalls++
+			if resolveCalls == 1 {
+				return nil, credentials.ErrNoCredentials
+			}
+			return fakeAuth, nil
+		}
+		loginRan := false
+		login := func(ctx context.Context, w io.Writer) error {
+			loginRan = true
+			return nil
+		}
+
+		var out strings.Builder
+		in := strings.NewReader("y\n")
+		auth, err := resolveWithLogin(context.Background(), &out, in, true, resolve, login)
+		if err != nil {
+			t.Fatalf("resolveWithLogin failed: %v", err)
+		}
+		if !loginRan {
+			t.Error("login did not run")
+		}
+		if resolveCalls != 2 {
+			t.Errorf("resolve called %d times, want 2", resolveCalls)
+		}
+		token, err := auth(context.Background())
+		if err != nil || token != "Bearer test-token" {
+			t.Errorf("auth() = (%q, %v), want (Bearer test-token, nil)", token, err)
+		}
+		if !strings.Contains(out.String(), "Sign in to Linear now? [Y/n]") {
+			t.Errorf("output %q missing prompt", out.String())
+		}
+	})
+
+	t.Run("ErrNoCredentials interactive default yes on empty newline", func(t *testing.T) {
+		resolveCalls := 0
+		resolve := func() (func(context.Context) (string, error), error) {
+			resolveCalls++
+			if resolveCalls == 1 {
+				return nil, credentials.ErrNoCredentials
+			}
+			return fakeAuth, nil
+		}
+		loginRan := false
+		login := func(ctx context.Context, w io.Writer) error {
+			loginRan = true
+			return nil
+		}
+
+		var out strings.Builder
+		in := strings.NewReader("\n")
+		auth, err := resolveWithLogin(context.Background(), &out, in, true, resolve, login)
+		if err != nil {
+			t.Fatalf("resolveWithLogin failed: %v", err)
+		}
+		if !loginRan {
+			t.Error("login did not run")
+		}
+		if resolveCalls != 2 {
+			t.Errorf("resolve called %d times, want 2", resolveCalls)
+		}
+		token, err := auth(context.Background())
+		if err != nil || token != "Bearer test-token" {
+			t.Errorf("auth() = (%q, %v), want (Bearer test-token, nil)", token, err)
+		}
+	})
+
+	t.Run("ErrNoCredentials interactive n returns original error and skips login", func(t *testing.T) {
+		resolve := func() (func(context.Context) (string, error), error) {
+			return nil, credentials.ErrNoCredentials
+		}
+		loginRan := false
+		login := func(ctx context.Context, w io.Writer) error {
+			loginRan = true
+			return nil
+		}
+
+		var out strings.Builder
+		in := strings.NewReader("n\n")
+		_, err := resolveWithLogin(context.Background(), &out, in, true, resolve, login)
+		if !errors.Is(err, credentials.ErrNoCredentials) || err != credentials.ErrNoCredentials {
+			t.Errorf("err = %v, want ErrNoCredentials byte-for-byte", err)
+		}
+		if loginRan {
+			t.Error("login ran on 'n'")
+		}
+		if !strings.Contains(out.String(), "Sign in to Linear now? [Y/n]") {
+			t.Errorf("output %q missing prompt", out.String())
+		}
+	})
+
+	t.Run("ErrNoCredentials non-interactive returns original error and writes nothing", func(t *testing.T) {
+		resolve := func() (func(context.Context) (string, error), error) {
+			return nil, credentials.ErrNoCredentials
+		}
+		loginRan := false
+		login := func(ctx context.Context, w io.Writer) error {
+			loginRan = true
+			return nil
+		}
+
+		var out strings.Builder
+		in := strings.NewReader("y\n")
+		_, err := resolveWithLogin(context.Background(), &out, in, false, resolve, login)
+		if err != credentials.ErrNoCredentials {
+			t.Errorf("err = %v, want ErrNoCredentials", err)
+		}
+		if loginRan {
+			t.Error("login ran in non-interactive mode")
+		}
+		if out.String() != "" {
+			t.Errorf("output = %q, want empty", out.String())
+		}
+	})
+
+	t.Run("wrapped file error returned verbatim without prompt", func(t *testing.T) {
+		wrappedErr := fmt.Errorf("%w: permission denied", credentials.ErrNoCredentials)
+		resolve := func() (func(context.Context) (string, error), error) {
+			return nil, wrappedErr
+		}
+		loginRan := false
+		login := func(ctx context.Context, w io.Writer) error {
+			loginRan = true
+			return nil
+		}
+
+		var out strings.Builder
+		in := strings.NewReader("y\n")
+		_, err := resolveWithLogin(context.Background(), &out, in, true, resolve, login)
+		if err != wrappedErr {
+			t.Errorf("err = %v, want %v", err, wrappedErr)
+		}
+		if loginRan {
+			t.Error("login ran on wrapped file error")
+		}
+		if out.String() != "" {
+			t.Errorf("output = %q, want empty", out.String())
+		}
+	})
+
+	t.Run("resolve error that is plain network error returned verbatim", func(t *testing.T) {
+		netErr := fmt.Errorf("dial tcp: lookup failed")
+		resolve := func() (func(context.Context) (string, error), error) {
+			return nil, netErr
+		}
+		loginRan := false
+		login := func(ctx context.Context, w io.Writer) error {
+			loginRan = true
+			return nil
+		}
+
+		var out strings.Builder
+		in := strings.NewReader("y\n")
+		_, err := resolveWithLogin(context.Background(), &out, in, true, resolve, login)
+		if err != netErr {
+			t.Errorf("err = %v, want %v", err, netErr)
+		}
+		if loginRan {
+			t.Error("login ran on network error")
+		}
+		if out.String() != "" {
+			t.Errorf("output = %q, want empty", out.String())
+		}
+	})
+
+	t.Run("probe returning ErrLoginRequired offers login", func(t *testing.T) {
+		resolveCalls := 0
+		resolve := func() (func(context.Context) (string, error), error) {
+			resolveCalls++
+			if resolveCalls == 1 {
+				return expiredAuth, nil
+			}
+			return fakeAuth, nil
+		}
+		loginRan := false
+		login := func(ctx context.Context, w io.Writer) error {
+			loginRan = true
+			return nil
+		}
+
+		var out strings.Builder
+		in := strings.NewReader("y\n")
+		auth, err := resolveWithLogin(context.Background(), &out, in, true, resolve, login)
+		if err != nil {
+			t.Fatalf("resolveWithLogin failed: %v", err)
+		}
+		if !loginRan {
+			t.Error("login did not run")
+		}
+		if resolveCalls != 2 {
+			t.Errorf("resolve called %d times, want 2", resolveCalls)
+		}
+		if !strings.Contains(out.String(), "Linear session expired") {
+			t.Errorf("output %q missing expired session explanation", out.String())
+		}
+		token, err := auth(context.Background())
+		if err != nil || token != "Bearer test-token" {
+			t.Errorf("auth() = (%q, %v), want (Bearer test-token, nil)", token, err)
+		}
+	})
+
+	t.Run("probe returning wrapped ErrLoginRequired offers login", func(t *testing.T) {
+		resolveCalls := 0
+		resolve := func() (func(context.Context) (string, error), error) {
+			resolveCalls++
+			if resolveCalls == 1 {
+				return wrappedExpiredAuth, nil
+			}
+			return fakeAuth, nil
+		}
+		loginRan := false
+		login := func(ctx context.Context, w io.Writer) error {
+			loginRan = true
+			return nil
+		}
+
+		var out strings.Builder
+		in := strings.NewReader("y\n")
+		auth, err := resolveWithLogin(context.Background(), &out, in, true, resolve, login)
+		if err != nil {
+			t.Fatalf("resolveWithLogin failed: %v", err)
+		}
+		if !loginRan {
+			t.Error("login did not run")
+		}
+		token, err := auth(context.Background())
+		if err != nil || token != "Bearer test-token" {
+			t.Errorf("auth() = (%q, %v), want (Bearer test-token, nil)", token, err)
+		}
+	})
+
+	t.Run("probe returning other error returns original auth unchanged without prompt", func(t *testing.T) {
+		resolve := func() (func(context.Context) (string, error), error) {
+			return networkErrAuth, nil
+		}
+		loginRan := false
+		login := func(ctx context.Context, w io.Writer) error {
+			loginRan = true
+			return nil
+		}
+
+		var out strings.Builder
+		in := strings.NewReader("y\n")
+		auth, err := resolveWithLogin(context.Background(), &out, in, true, resolve, login)
+		if err != nil {
+			t.Fatalf("resolveWithLogin failed: %v", err)
+		}
+		if loginRan {
+			t.Error("login ran on probe non-login error")
+		}
+		if out.String() != "" {
+			t.Errorf("output = %q, want empty", out.String())
+		}
+		// Calling auth returns the probe error
+		_, probeErr := auth(context.Background())
+		if probeErr == nil || !strings.Contains(probeErr.Error(), "connection refused") {
+			t.Errorf("probeErr = %v, want connection refused", probeErr)
+		}
+	})
+
+	t.Run("login failure surfaces error", func(t *testing.T) {
+		resolve := func() (func(context.Context) (string, error), error) {
+			return nil, credentials.ErrNoCredentials
+		}
+		loginErr := fmt.Errorf("browser timed out")
+		login := func(ctx context.Context, w io.Writer) error {
+			return loginErr
+		}
+
+		var out strings.Builder
+		in := strings.NewReader("y\n")
+		_, err := resolveWithLogin(context.Background(), &out, in, true, resolve, login)
+		if !errors.Is(err, loginErr) {
+			t.Errorf("err = %v, want %v", err, loginErr)
+		}
+	})
+
+	t.Run("byte-at-a-time read leaves remaining input unbuffered", func(t *testing.T) {
+		resolveCalls := 0
+		resolve := func() (func(context.Context) (string, error), error) {
+			resolveCalls++
+			if resolveCalls == 1 {
+				return nil, credentials.ErrNoCredentials
+			}
+			return fakeAuth, nil
+		}
+		login := func(ctx context.Context, w io.Writer) error {
+			return nil
+		}
+
+		var out strings.Builder
+		in := strings.NewReader("y\nfoo\n")
+		_, err := resolveWithLogin(context.Background(), &out, in, true, resolve, login)
+		if err != nil {
+			t.Fatalf("resolveWithLogin failed: %v", err)
+		}
+		rest, err := io.ReadAll(in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(rest) != "foo\n" {
+			t.Errorf("remaining input = %q, want %q", string(rest), "foo\n")
+		}
+	})
+}
+
+func TestResolveWithLoginEnvKeyNeverPrompts(t *testing.T) {
+	t.Setenv("LINEAR_API_KEY", "lin_api_key_test_123")
+	var out strings.Builder
+	in := strings.NewReader("y\n")
+	loginRan := false
+	login := func(ctx context.Context, w io.Writer) error {
+		loginRan = true
+		return nil
+	}
+
+	auth, err := resolveWithLogin(context.Background(), &out, in, true, func() (func(context.Context) (string, error), error) {
+		return credentials.Resolve(nil)
+	}, login)
+	if err != nil {
+		t.Fatalf("resolveWithLogin: %v", err)
+	}
+	if loginRan {
+		t.Error("login ran when LINEAR_API_KEY was set")
+	}
+	if out.String() != "" {
+		t.Errorf("output = %q, want empty", out.String())
+	}
+	token, err := auth(context.Background())
+	if err != nil || token != "lin_api_key_test_123" {
+		t.Errorf("token = (%q, %v), want (lin_api_key_test_123, nil)", token, err)
 	}
 }

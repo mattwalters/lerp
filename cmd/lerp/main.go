@@ -263,7 +263,10 @@ func initCommand(args []string) {
 		fmt.Fprintln(os.Stderr, "lerp init: --team is required")
 		os.Exit(2)
 	}
-	auth, err := credentials.Resolve(nil)
+	interactive := !*yes && isTerminal(os.Stdin) && isTerminal(os.Stdout)
+	auth, err := resolveWithLogin(context.Background(), os.Stdout, os.Stdin, interactive, func() (func(context.Context) (string, error), error) {
+		return credentials.Resolve(nil)
+	}, credentials.Login)
 	if err != nil {
 		fatal(fmt.Errorf("lerp init: %w", err))
 	}
@@ -274,7 +277,7 @@ func initCommand(args []string) {
 	// The init conversation needs a terminal on both ends; a piped init takes
 	// the stock answers, exactly as --yes does.
 	var answers io.Reader
-	if !*yes && isTerminal(os.Stdin) && isTerminal(os.Stdout) {
+	if interactive {
 		answers = os.Stdin
 	}
 	created, err := initcmd.Init(context.Background(), linear.New(auth, nil), os.Stdout, answers, filepath.Clean(repoRoot), *team, *name)
@@ -285,6 +288,81 @@ func initCommand(args []string) {
 		fmt.Printf("wrote %s with Lerp's stock pipeline — review it and check it in\n", config.RepoConfigFile)
 	}
 	fmt.Printf("initialized %s for Linear team %s\n", repoRoot, *team)
+}
+
+// resolveWithLogin resolves Linear credentials, offering to run the OAuth
+// login flow inline when running interactively and no credentials are found
+// or the session has expired.
+func resolveWithLogin(
+	ctx context.Context,
+	out io.Writer,
+	in io.Reader,
+	interactive bool,
+	resolve func() (func(context.Context) (string, error), error),
+	login func(context.Context, io.Writer) error,
+) (func(context.Context) (string, error), error) {
+	auth, err := resolve()
+	var origErr error
+	if err != nil {
+		if err == credentials.ErrNoCredentials || errors.Is(err, credentials.ErrLoginRequired) {
+			origErr = err
+		} else {
+			return nil, err
+		}
+	} else {
+		_, probeErr := auth(ctx)
+		if probeErr != nil && errors.Is(probeErr, credentials.ErrLoginRequired) {
+			origErr = probeErr
+		} else {
+			return auth, nil
+		}
+	}
+
+	if !interactive {
+		return nil, origErr
+	}
+
+	if errors.Is(origErr, credentials.ErrLoginRequired) {
+		fmt.Fprintln(out, "Linear session expired.")
+	} else {
+		fmt.Fprintln(out, "No Linear credentials found.")
+	}
+	fmt.Fprint(out, "Sign in to Linear now? [Y/n] ")
+
+	ans, readErr := readByteAnswer(in)
+	if readErr != nil || (ans != "" && ans != "y" && ans != "yes") {
+		return nil, origErr
+	}
+
+	if err := login(ctx, out); err != nil {
+		return nil, err
+	}
+	return resolve()
+}
+
+// readByteAnswer reads a line from r byte-at-a-time, returning the trimmed
+// lowercase answer. It avoids buffering ahead so subsequent readers on r
+// (such as init's own conversation) do not lose unread input.
+func readByteAnswer(r io.Reader) (string, error) {
+	var buf []byte
+	var b [1]byte
+	for {
+		n, err := r.Read(b[:])
+		if err != nil {
+			if len(buf) > 0 && errors.Is(err, io.EOF) {
+				return strings.ToLower(strings.TrimSpace(string(buf))), nil
+			}
+			return "", err
+		}
+		if n == 0 {
+			continue
+		}
+		if b[0] == '\n' || b[0] == '\r' {
+			break
+		}
+		buf = append(buf, b[0])
+	}
+	return strings.ToLower(strings.TrimSpace(string(buf))), nil
 }
 
 // announce shows the startup warnings and waits for the operator to
