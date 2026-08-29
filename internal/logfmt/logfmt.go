@@ -81,6 +81,10 @@ type Event struct {
 	// input-side figure at all, or any line before the first one that does.
 	Context int
 	IsError bool
+	// NoOutput is true when the runner's own terminal event says the run
+	// produced no final output (KindResult only). False both for a run that
+	// produced some and for a decoder that cannot tell.
+	NoOutput bool
 	// Time is when the runner says the line was written, zero for a runner
 	// that does not date its lines. Like Usage it is the line's rather than
 	// a kind's, and it is what lets a reader that attached late put the
@@ -292,7 +296,7 @@ func detect(line string) (Decoder, bool) {
 	switch probe.Type {
 	case "system", "assistant", "user", "result":
 		return &claude{}, true
-	case "thread.started", "turn.started", "turn.completed", "item.started", "item.completed":
+	case "thread.started", "turn.started", "turn.completed", "turn.failed", "item.started", "item.completed", "error":
 		return codex{}, true
 	}
 	switch event {

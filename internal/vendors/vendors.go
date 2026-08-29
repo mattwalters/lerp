@@ -39,6 +39,16 @@ type SessionNamer interface {
 	Session(line string) (string, bool)
 }
 
+// AbortReporter is implemented by an adapter whose CLI writes a plain-text
+// abort notice to standard error (landing in the run's log) on a failure path
+// that exits 0 anyway. Aborted reads a line for that notice and returns the
+// reason to report to the operator. It exists so internal/loop can check for
+// vendor abort signals without carrying vendor names or vendor-specific string
+// matching in reconciler logic.
+type AbortReporter interface {
+	Aborted(line string) (string, bool)
+}
+
 // adapters is the whole set of vendors lerp ships. Adding one is one file
 // plus one entry here — logfmt's detect carries the same comment on the
 // decoding side. A map rather than a switch is what keeps Names from

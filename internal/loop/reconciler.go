@@ -18,7 +18,6 @@ import (
 	"github.com/mattwalters/lerp/internal/credentials"
 	"github.com/mattwalters/lerp/internal/evidence"
 	"github.com/mattwalters/lerp/internal/linear"
-	"github.com/mattwalters/lerp/internal/logfmt"
 	"github.com/mattwalters/lerp/internal/run"
 	"github.com/mattwalters/lerp/internal/telemetry"
 	"github.com/mattwalters/lerp/internal/workspace"
@@ -262,9 +261,10 @@ type Event struct {
 	// from the run's own exit file for an adopted one. EventExited only.
 	ExitCode int
 	// Note is a remark about how a run settled, for the operator to read:
-	// today, the on_success or on_failure hop conclude did not make because
-	// the ticket left the queue's status mid-run. Empty when there is
-	// nothing to say, which is the happy path. EventExited only.
+	// a reason the run's clean exit was overturned by its log (a denial,
+	// abort, or empty stream), or the on_success or on_failure hop conclude
+	// did not make because the ticket left the queue's status mid-run. Empty
+	// when there is nothing to say, which is the happy path. EventExited only.
 	Note string
 	// Cost is what the run's own log states it cost, in dollars — read here,
 	// before the record (and the log with it) is discarded, rather than by a
@@ -1561,7 +1561,26 @@ func (r *Reconciler) settleDead(ctx context.Context, record evidence.Record) (Ev
 		r.fail(fmt.Errorf("reap run %s: read viewer: %w", record.RunID, err))
 		return Event{}, nil, false
 	}
-	note, final, moveErr := conclude(ctx, r.o.Client, issue, queue, r.o.Repo, code, viewerID, r.o.Log)
+	vendor := record.Vendor
+	if vendor == "" {
+		if q, ok := r.o.Repo.Queues[record.Queue]; ok {
+			if runner, ok := r.o.Repo.Runners[q.Runner]; ok {
+				vendor = runner.Vendor
+			}
+		}
+	}
+	derivedCode, cost, reason := readOutcome(record.LogPath, vendor, code)
+	if reason != "" && r.o.Log != nil {
+		fmt.Fprintln(r.o.Log, reason)
+	}
+	note, final, moveErr := conclude(ctx, r.o.Client, issue, queue, r.o.Repo, derivedCode, viewerID, r.o.Log)
+	if reason != "" {
+		if note != "" {
+			note = reason + " — " + note
+		} else {
+			note = reason
+		}
+	}
 	if moveErr != nil {
 		r.fail(fmt.Errorf("reap run %s: %w", record.RunID, moveErr))
 		return Event{}, nil, false
@@ -1569,7 +1588,7 @@ func (r *Reconciler) settleDead(ctx context.Context, record evidence.Record) (Ev
 	tel := buildTelemetryRun(r.o.Repo, r.o.RepoDir, record, issue.Identifier, record.Queue, at, durationMS, exitCode, final)
 	return Event{Type: EventExited, RunID: record.RunID, Lane: record.Lane,
 		TicketID: record.TicketID, Ticket: issue.Identifier, Queue: record.Queue,
-		LogPath: record.LogPath, ExitCode: code, Note: note, Cost: runCost(record.LogPath)}, &tel, true
+		LogPath: record.LogPath, ExitCode: code, Note: note, Cost: cost}, &tel, true
 }
 
 // releaseDead releases the claim of a dead run that never said how it ended,
@@ -1762,51 +1781,6 @@ func (r *Reconciler) executeLane(ctx context.Context, lr *laneRun, c candidate) 
 	return ev, ok
 }
 
-// runCostCap bounds how much of a finished run's log runCost reads. Every
-// vendor's stream that states a cost at all states it on one line near the
-// end of an ordinary run's log — a few kilobytes to a few megabytes — so this
-// reaches it with room to spare, the way pulse's own catchupChunks reaches an
-// ordinary run's history in one poll. It exists for the run this is not: a
-// multi-day agent whose log runs to hundreds of megabytes would otherwise
-// have this reconcile's tick goroutine read the whole thing and JSON-decode
-// every line of it, unbounded, on the same call reapDisposeTimeout exists to
-// keep bounded. A run that pathological reports no cost rather than stalling
-// the loop over one — the same trade pulse already makes against a log too
-// long to catch up on in a poll.
-const runCostCap = 8 << 20 // 8 MiB
-
-// runCost reads a finished run's log for the dollar figure its runner's
-// stream reported, decoding it exactly as the TUI's pulse does and summing
-// every event's Cost. It must run before the record is discarded — a
-// subscriber reacting to EventExited is already too late, since
-// Evidence.Remove may have deleted the file by the time the event arrives —
-// and after the runner has exited, so the log is complete rather than a
-// moving target. Zero for a runner whose stream never states a cost, and for
-// a log this cannot read: neither is worth failing a run over.
-func runCost(path string) float64 {
-	f, err := os.Open(path)
-	if err != nil {
-		return 0
-	}
-	defer f.Close()
-	b, err := io.ReadAll(io.LimitReader(f, runCostCap))
-	if err != nil {
-		return 0
-	}
-	if len(b) > 0 && b[len(b)-1] != '\n' {
-		// Feed only decodes complete lines; the log is done being written
-		// (the runner has already exited), so a missing trailing newline is
-		// the file's own quirk, not a line still arriving.
-		b = append(b, '\n')
-	}
-	var s logfmt.Stream
-	var cost float64
-	for _, ev := range s.Feed(b) {
-		cost += ev.Cost
-	}
-	return cost
-}
-
 // provisionAndRun is the part of a run that owns a workspace. The deferred
 // dispose runs when this function returns, before the caller discards the run
 // record, so a settled run never leaves a workspace behind without the record
@@ -1925,12 +1899,29 @@ func (r *Reconciler) provisionAndRun(ctx context.Context, lr *laneRun, c candida
 	// on the exit event; the ticket stays claimed for a human to settle. A
 	// move that was skipped because the ticket left mid-run rides along too,
 	// as a note: the run log alone is not somewhere anyone is looking.
-	note, final, moveErr := conclude(ctx, r.o.Client, issue, c.queue, r.o.Repo, result.ExitCode, viewerID, r.o.Log)
+	vendor := record.Vendor
+	if vendor == "" {
+		if runner, ok := r.o.Repo.Runners[c.queue.Runner]; ok {
+			vendor = runner.Vendor
+		}
+	}
+	derivedCode, cost, reason := readOutcome(record.LogPath, vendor, result.ExitCode)
+	if reason != "" && r.o.Log != nil {
+		fmt.Fprintln(r.o.Log, reason)
+	}
+	note, final, moveErr := conclude(ctx, r.o.Client, issue, c.queue, r.o.Repo, derivedCode, viewerID, r.o.Log)
+	if reason != "" {
+		if note != "" {
+			note = reason + " — " + note
+		} else {
+			note = reason
+		}
+	}
 	exitCode := result.ExitCode
 	settled := buildTelemetryRun(r.o.Repo, r.o.RepoDir, record, issue.Identifier, c.name, time.Now().UTC(), result.Duration.Milliseconds(), &exitCode, final)
 	return Event{Type: EventExited, RunID: record.RunID, Lane: lr.lane, TicketID: issue.ID,
 		Ticket: issue.Identifier, Queue: c.name, LogPath: record.LogPath,
-		ExitCode: result.ExitCode, Note: note, Err: moveErr, Cost: runCost(record.LogPath)}, false, &settled, true
+		ExitCode: result.ExitCode, Note: note, Err: moveErr, Cost: cost}, false, &settled, true
 }
 
 // freeLanes returns the lane numbers new runs may start in: lanes 1..N not in

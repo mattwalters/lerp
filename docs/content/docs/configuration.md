@@ -121,8 +121,8 @@ A queue connects a Linear status to a runner and a prompt.
 | `status` | string | The Linear status this queue watches. Must match a status on the team's board. Each status may drive at most one queue. |
 | `prompt` | string | Instructions passed to the runner. Plain text. |
 | `runner` | string | Name of a runner defined under `[runners]`. |
-| `on_success` | string | Linear status to move the ticket to on a clean exit (exit code 0), unless the agent already moved the ticket itself. |
-| `on_failure` | string | Optional. Linear status to move the ticket to when the agent exits non-zero. |
+| `on_success` | string | Linear status to move the ticket to on a clean exit (exit code 0), unless the agent already moved the ticket itself or the run's stream reports that it produced nothing. |
+| `on_failure` | string | Optional. Linear status to move the ticket to when the agent exits non-zero or its stream reports failure or no output. |
 
 ### Prompt placeholders
 

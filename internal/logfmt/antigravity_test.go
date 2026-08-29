@@ -18,8 +18,9 @@ const (
 	// The second half of the c50b4e3f conversation antigravityThinkOnly and
 	// antigravityToolStart/Done open: step 3's DONE line and the result that
 	// follows it, from the same captured run.
-	antigravityProseDone2  = `{"event":"step_update","step_update":{"conversation_id":"c50b4e3f-6b7d-4521-8821-5558448eda5e","step_index":3,"state":"DONE","step_type":"agent_response","text_delta":"The contents of note.txt are shown above.","duration_seconds":1.409779,"usage":{"input_tokens":14125,"output_tokens":94,"thinking_tokens":62,"cache_read_tokens":0,"total_tokens":14219}}}`
-	antigravityResultLine2 = `{"event":"result","result":{"conversation_id":"c50b4e3f-6b7d-4521-8821-5558448eda5e","status":"SUCCESS","num_turns":1,"duration_seconds":2.707681,"usage":{"input_tokens":27948,"output_tokens":206,"thinking_tokens":129,"cache_read_tokens":0,"total_tokens":28154}}}`
+	antigravityProseDone2   = `{"event":"step_update","step_update":{"conversation_id":"c50b4e3f-6b7d-4521-8821-5558448eda5e","step_index":3,"state":"DONE","step_type":"agent_response","text_delta":"The contents of note.txt are shown above.","duration_seconds":1.409779,"usage":{"input_tokens":14125,"output_tokens":94,"thinking_tokens":62,"cache_read_tokens":0,"total_tokens":14219}}}`
+	antigravityResultLine2  = `{"event":"result","result":{"conversation_id":"c50b4e3f-6b7d-4521-8821-5558448eda5e","status":"SUCCESS","num_turns":1,"duration_seconds":2.707681,"usage":{"input_tokens":27948,"output_tokens":206,"thinking_tokens":129,"cache_read_tokens":0,"total_tokens":28154}}}`
+	antigravityDenialResult = `{"event":"result","result":{"status":"SUCCESS","response":"","num_turns":1}}`
 )
 
 func TestAntigravityDecodesTheStream(t *testing.T) {
@@ -80,7 +81,23 @@ func TestAntigravityDecodesTheStream(t *testing.T) {
 
 	t.Run("the result line carries the run's own status, not usage", func(t *testing.T) {
 		got, ok := newAntigravity().Decode(antigravityResultLine1)
-		want := Event{Kind: KindResult, Text: "success · 1 turns · 3.6s"}
+		want := Event{Kind: KindResult, Text: "success · 1 turns · 3.6s", NoOutput: false}
+		if !ok || got != want {
+			t.Fatalf("decoded %+v, ok=%v, want %+v", got, ok, want)
+		}
+	})
+
+	t.Run("a result line with no response field reports NoOutput false", func(t *testing.T) {
+		got, ok := newAntigravity().Decode(antigravityResultLine2)
+		want := Event{Kind: KindResult, Text: "success · 1 turns · 2.7s", NoOutput: false}
+		if !ok || got != want {
+			t.Fatalf("decoded %+v, ok=%v, want %+v", got, ok, want)
+		}
+	})
+
+	t.Run("a result line with empty response reports NoOutput true", func(t *testing.T) {
+		got, ok := newAntigravity().Decode(antigravityDenialResult)
+		want := Event{Kind: KindResult, Text: "success · 1 turns", NoOutput: true}
 		if !ok || got != want {
 			t.Fatalf("decoded %+v, ok=%v, want %+v", got, ok, want)
 		}

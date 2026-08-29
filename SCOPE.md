@@ -81,10 +81,11 @@ sentence.
    concurrent work.
 3. **Runner** — an adapter to a coding-agent CLI (Claude Code, Codex,
    Antigravity, …). The contract: takes a prompt and a working
-   directory, runs to exit, exit code means done or failed. The
-   contract is the lowest common denominator — a capability every
-   runner can't offer is a capability lerp doesn't have. The adapters
-   for the CLIs lerp knows ship built in — one file per vendor, holding
+   directory, runs to exit, exit code means done or failed — though a
+   run's own stream may overturn a clean exit when it reports that the
+   run produced nothing. The contract is the lowest common denominator
+   — a capability every runner can't offer is a capability lerp doesn't
+   have. The adapters for the CLIs lerp knows ship built in — one file
    the flag spellings and the session bookkeeping a command template
    cannot express — and config names one and overrides its defaults.
    The command runner remains for everything else: any line of shell

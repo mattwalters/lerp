@@ -94,6 +94,24 @@ func TestAntigravityImplementsSessionNamer(t *testing.T) {
 	var _ SessionNamer = antigravity{}
 }
 
+func TestAntigravityImplementsAbortReporter(t *testing.T) {
+	var _ AbortReporter = antigravity{}
+}
+
+func TestAntigravityAborted(t *testing.T) {
+	a := antigravity{}
+	line := `jetski: no output produced — a tool required the "command" permission that`
+	got, ok := a.Aborted(line)
+	if !ok || !strings.Contains(got, "--dangerously-skip-permissions") {
+		t.Fatalf("Aborted(%q) = (%q, %v), want true and remedy in note", line, got, ok)
+	}
+
+	reworded := `jetski: failed to run tool because permission was not granted`
+	if got, ok := a.Aborted(reworded); ok {
+		t.Fatalf("Aborted(%q) = (%q, true), want false for reworded line", reworded, got)
+	}
+}
+
 func TestAntigravityRegisteredByName(t *testing.T) {
 	a, ok := Lookup("antigravity")
 	if !ok {
@@ -101,6 +119,9 @@ func TestAntigravityRegisteredByName(t *testing.T) {
 	}
 	if _, ok := a.(SessionNamer); !ok {
 		t.Error("the registered antigravity adapter does not implement SessionNamer")
+	}
+	if _, ok := a.(AbortReporter); !ok {
+		t.Error("the registered antigravity adapter does not implement AbortReporter")
 	}
 }
 
