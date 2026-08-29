@@ -18,6 +18,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/mattwalters/lerp/internal/browser"
+	"github.com/mattwalters/lerp/internal/config"
 	"github.com/mattwalters/lerp/internal/linear"
 	"github.com/mattwalters/lerp/internal/loop"
 	updatepkg "github.com/mattwalters/lerp/internal/update"
@@ -104,6 +105,10 @@ type Options struct {
 	// percentage" case — the same posture a runner that reports no reading
 	// at all already has.
 	Windows map[string]int
+	// Runners maps a queue name to its runner's identity (name, vendor,
+	// model, effort), from RepoConfig.QueueRunners. A queue absent from the
+	// map has no configured runner identity.
+	Runners map[string]config.RunnerIdentity
 
 	// CheckUpdate optionally checks for a newer version of lerp. Nil means no check.
 	CheckUpdate func(context.Context) updatepkg.Notice
@@ -351,10 +356,13 @@ type workRow struct {
 	// carries one; tokens is what the run has spent, summed over the whole
 	// log — history included, so an adopted run reports the run's total.
 	// cost is the same sum in dollars, zero for a runner whose stream never
-	// states one.
+	// states one. model is the model decoded off the log's init line.
 	tool, target string
 	tokens       int
 	cost         float64
+	model        string
+	// runner is the queue's configured runner identity from Options.Runners.
+	runner config.RunnerIdentity
 	// context is the worst live agent's latest context reading, in
 	// input-side tokens, zero until the log reports one; window is that
 	// queue's configured context window from Options.Windows, zero when
@@ -2149,6 +2157,7 @@ func (m *model) workGroups() []workGroup {
 			row.tokens = ln.pulse.tokens
 			row.cost = ln.pulse.cost
 			row.context = ln.pulse.context
+			row.model = ln.pulse.model
 		}
 		// A running ticket normally still sits in its queue's listing,
 		// claimed and ineligible: that listing is the group, and it carries
@@ -2179,6 +2188,7 @@ func (m *model) workGroups() []workGroup {
 		// another runner's window, a wrong denominator rather than no
 		// percentage at all.
 		row.window = m.o.Windows[ln.queue]
+		row.runner = m.o.Runners[ln.queue]
 		groups[gi].rows = append(groups[gi].rows, row)
 		if ln.ticketID != "" {
 			running[ln.ticketID] = true
@@ -2820,7 +2830,8 @@ func (m *model) layout() {
 	}
 	g := m.geometry()
 	m.vp.Width = max(0, padMain.inner(g.mainW))
-	m.vp.Height = max(1, g.mainH-2)
+	band := m.mainBand(g.mainW, g.mainH)
+	m.vp.Height = max(1, g.mainH-2-len(band))
 	hw, hh := m.modalSize(m.helpContentSize())
 	m.helpVp.Width = max(0, padMain.inner(hw))
 	m.helpVp.Height = max(1, hh-2)
@@ -4056,9 +4067,36 @@ func contextLoad(context, window int) (string, bool) {
 	return styleFaint.Render(label), true
 }
 
+// mainBand is the single spelling of both what the band says and whether there
+// is room for it over the log. It is nil unless a live run's log is on screen
+// (m.logOnScreen() and r.lane > 0) — the ticket lens, the inbox lens and a
+// finished run's "last log" row have no lane, no clock and no live figures to
+// state. It ignores m.rawLog: raw is a statement about decoding the log, and
+// identity is not decoded from the log.
+//
+// The band costs its lines only while the interior has room for the band and
+// at least two log rows (h-2 >= len(band)+2, mirroring panelBody's ih >= 3
+// test for the footer). Below that the log keeps the pane.
+func (m model) mainBand(w, h int) []string {
+	if !m.logOnScreen() {
+		return nil
+	}
+	r := m.selectedWork()
+	if r == nil || r.lane == 0 {
+		return nil
+	}
+	band := laneBand(*r, padMain.inner(w))
+	if len(band) == 0 || (h-2) < len(band)+2 {
+		return nil
+	}
+	return band
+}
+
 // mainPanel is the lens: the selected row's log, or a read-only detail when it has none.
 func (m model) mainPanel(w, h int) string {
 	title := m.mainTitle()
+	band := m.mainBand(w, h)
+	rows := append(band, strings.Split(m.vp.View(), "\n")...)
 	// The pane lights up the same way a panel does — heavy box, title in
 	// the focus accent — so "where are my keys pointed" is answered by the
 	// chrome the operator already reads for it. Between the two panels and
@@ -4070,10 +4108,10 @@ func (m model) mainPanel(w, h int) string {
 	// keys the other one has.
 	if m.mainFocused() {
 		return panelBox(styleTitleFocus.Render(title), true, w, h,
-			strings.Split(m.vp.View(), "\n"), padMain, m.mainScrollbar(h))
+			rows, padMain, m.mainScrollbar(w, h))
 	}
 	return panelBox(styleFaint.Render(title), false, w, h,
-		strings.Split(m.vp.View(), "\n"), padMain, m.mainScrollbar(h))
+		rows, padMain, m.mainScrollbar(w, h))
 }
 
 // mainScrollbar is the pane's position indicator over whatever the viewport
@@ -4082,11 +4120,13 @@ func (m model) mainPanel(w, h int) string {
 // through this same box. h is the panel's outer height, matching panelBox's
 // own ih = h-2, so the two can never disagree about how many rows the thumb
 // has to cover.
-func (m model) mainScrollbar(h int) *scrollbar {
-	sb, ok := scrollThumb(m.vp.TotalLineCount(), h-2, m.vp.YOffset)
+func (m model) mainScrollbar(w, h int) *scrollbar {
+	band := m.mainBand(w, h)
+	sb, ok := scrollThumb(m.vp.TotalLineCount(), h-2-len(band), m.vp.YOffset)
 	if !ok {
 		return nil
 	}
+	sb.top += len(band)
 	return &sb
 }
 

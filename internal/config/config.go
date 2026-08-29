@@ -310,6 +310,27 @@ func (c *RepoConfig) ContextWindows() map[string]int {
 	return windows
 }
 
+// RunnerIdentity is the display identity of a configured runner: its name,
+// vendor adapter, model, and effort level.
+type RunnerIdentity struct{ Name, Vendor, Model, Effort string }
+
+// QueueRunners maps each queue name to its runner's identity. A queue whose
+// runner is missing from config has no entry.
+func (c *RepoConfig) QueueRunners() map[string]RunnerIdentity {
+	runners := make(map[string]RunnerIdentity)
+	for name, q := range c.Queues {
+		if r, ok := c.Runners[q.Runner]; ok {
+			runners[name] = RunnerIdentity{
+				Name:   q.Runner,
+				Vendor: r.Vendor,
+				Model:  r.Model,
+				Effort: r.Effort,
+			}
+		}
+	}
+	return runners
+}
+
 // FindRepoConfig looks for a single repo config file at root among
 // RepoConfigNames (lerp.toml, lerp.yaml, lerp.yml, lerp.json).
 //

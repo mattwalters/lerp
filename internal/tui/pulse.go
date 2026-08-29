@@ -91,6 +91,7 @@ type pulse struct {
 	tokens       int
 	cost         float64
 	tool, target string
+	model        string
 	// context is the worst live agent's latest context reading, zero until
 	// the stream reports one. Unlike tokens and cost it is not summed: a
 	// later reading simply replaces the one before it, the same as it does
@@ -145,7 +146,7 @@ func (p *pulse) read(now time.Time) {
 			// readings of a log that no longer exists, and the one still on
 			// screen would be a command from a run nobody can look at any
 			// more.
-			p.tokens, p.cost, p.tool, p.target, p.context = 0, 0, "", "", 0
+			p.tokens, p.cost, p.tool, p.target, p.context, p.model = 0, 0, "", "", 0, ""
 		}
 		if mid {
 			p.stream.SkipLine()
@@ -159,6 +160,9 @@ func (p *pulse) read(now time.Time) {
 			p.cost += ev.Cost
 			if ev.Context > 0 {
 				p.context = ev.Context
+			}
+			if ev.Model != "" {
+				p.model = ev.Model
 			}
 			if ev.Kind == logfmt.KindToolCall {
 				p.tool, p.target = ev.Tool, ev.Text

@@ -228,6 +228,7 @@ func openTUI(ctx context.Context, lanes int) error {
 		Statuses:       boardOrder,
 		PromoteTargets: repo.PromoteTargets(),
 		Windows:        repo.ContextWindows(),
+		Runners:        repo.QueueRunners(),
 		Interval:       loop.DefaultInterval,
 		Lanes:          lanes,
 		Events:         events,
