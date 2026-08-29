@@ -11,18 +11,18 @@ your machine.** Everything below is that sentence in detail.
 
 ## The threat model
 
-### `lerp.toml` is code
+### The repo config is code
 
-Lerp reads one config file, `lerp.toml` at the repo root, and that file
-contains shell commands: `provision`, `dispose`, and every runner's
-`command` — or, for a runner that names a built-in `vendor` instead,
-the `args` line it hands that vendor's adapter, which reaches the same
-place a hand-written `command` would. Cloning a repository and running
-`lerp` in it executes those commands — the same trust class as running
-`make` in a strange repository. A runner's `resume` is a fourth: lerp
-never runs it, it prints it for you to paste when you eject a run —
-which makes your paste the trigger and the file's author the one who
-chose the command.
+Lerp reads one config file at the repo root (`lerp.toml`, `lerp.yaml`,
+`lerp.yml`, or `lerp.json`), and that file contains shell commands:
+`provision`, `dispose`, and every runner's `command` — or, for a runner
+that names a built-in `vendor` instead, the `args` line it hands that
+vendor's adapter, which reaches the same place a hand-written `command`
+would. Cloning a repository and running `lerp` in it executes those
+commands — the same trust class as running `make` in a strange repository.
+A runner's `resume` is a fourth: lerp never runs it, it prints it for you
+to paste when you eject a run — which makes your paste the trigger and the
+file's author the one who chose the command.
 
 That is why the file is checked in rather than generated per machine:
 the pipeline, and the permissions it grants, are versioned and reviewed
@@ -71,13 +71,13 @@ that concrete: the agent edits files and runs commands without asking,
 as your user. `lerp init` asks before including that flag and defaults
 to leaving it out — but that is a default, not a fact about your repo:
 the shipped `lerp.example.toml`, and any config copied from another
-repo, carries the flag. Read your own `lerp.toml`'s `[runners.claude]`
+repo, carries the flag. Read your own repo config's `[runners.claude]`
 block: the flag sits on its `args` line for the stock vendor runner, or
 inside `command` for a hand-written one — either way, that block is the
 only place the answer lives. Declining has a
 cost — a headless run then fails at the first tool it is not allowed to
 use unless you curate an `--allowedTools` list — but it is a real
-grant, and the checked-in `lerp.toml` is where you make it
+grant, and the checked-in repo config is where you make it
 deliberately.
 
 ### No sandbox is provided or implied
@@ -191,6 +191,6 @@ escape sequences.
 
 **What is not:** the trust model on this page. An agent doing damage
 because someone who could write into a served ticket — its description
-or its comments — told it to, or because a `lerp.toml` was run unread,
+or its comments — told it to, or because a repo config was run unread,
 is lerp working as designed and documented. If you think the design
 itself is wrong, that is an issue, not an advisory — open one.

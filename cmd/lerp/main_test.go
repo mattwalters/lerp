@@ -162,7 +162,7 @@ func TestAnnounceDoesNotWaitWhenNobodyCanSeeIt(t *testing.T) {
 	}
 }
 
-// A missing lerp.toml is the most common first-run mistake; loadRepo points at
+// A missing repo config is the most common first-run mistake; loadRepo points at
 // lerp init in one line rather than surfacing a raw path error.
 func TestLoadRepoMissingConfigPointsAtInit(t *testing.T) {
 	dir := t.TempDir()
@@ -170,12 +170,12 @@ func TestLoadRepoMissingConfigPointsAtInit(t *testing.T) {
 	if err == nil {
 		t.Fatal("want error, got nil")
 	}
-	if want := `no lerp.toml: run "lerp init --team KEY"`; err.Error() != want {
+	if want := `no repo config: run "lerp init --team KEY"`; err.Error() != want {
 		t.Errorf("error = %q, want %q", err.Error(), want)
 	}
 }
 
-// A malformed lerp.toml (syntax or validation) must not point at init — that
+// A malformed repo config (syntax or validation) must not point at init — that
 // would send an operator with a typo down a setup flow they already finished.
 func TestLoadRepoMalformedConfigReportsDecoderError(t *testing.T) {
 	dir := t.TempDir()
@@ -205,6 +205,57 @@ func TestLoadRepoValidConfig(t *testing.T) {
 	}
 	if len(repo.Teams) == 0 {
 		t.Errorf("teams empty in loaded config: %+v", repo)
+	}
+}
+
+func TestLoadRepoValidYAMLConfig(t *testing.T) {
+	dir := t.TempDir()
+	yamlConfig := `
+teams:
+  - LERP
+provision: p
+dispose: d
+runners:
+  claude:
+    command: claude -p {{prompt}}
+queues:
+  implement:
+    status: Implementing
+    prompt: do it
+    runner: claude
+    on_success: Done
+`
+	if err := os.WriteFile(filepath.Join(dir, "lerp.yaml"), []byte(yamlConfig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	repo, err := loadRepo(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(repo.Teams) != 1 || repo.Teams[0] != "LERP" {
+		t.Errorf("teams in loaded YAML config: %+v", repo)
+	}
+}
+
+func TestLoadRepoMultipleConfigsRefusesWithoutMentioningInit(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "lerp.toml"), []byte("teams = ['LERP']\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "lerp.yaml"), []byte("teams:\n  - LERP\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := loadRepo(dir)
+	if err == nil {
+		t.Fatal("want error on multiple configs, got nil")
+	}
+	if strings.Contains(err.Error(), "lerp init") {
+		t.Errorf("error %q points at lerp init for multiple configs", err.Error())
+	}
+	for _, want := range []string{"lerp.toml", "lerp.yaml"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not name %s", err.Error(), want)
+		}
 	}
 }
 

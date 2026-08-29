@@ -97,7 +97,7 @@ archive them in Linear's settings.
 [quickstart](https://lerp.sh/latest/docs/quickstart/), the
 [model the board is a picture of](https://lerp.sh/latest/docs/how-lerp-works/),
 a page per motion through the interface, and the reference for
-`lerp.toml`, the command line and
+the repo config, the command line and
 [troubleshooting](https://lerp.sh/latest/docs/troubleshooting/).
 They are published from this repository, and every release tag freezes
 the copy that shipped with it.

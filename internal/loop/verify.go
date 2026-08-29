@@ -89,7 +89,7 @@ func verifyStatuses(ctx context.Context, client linear.Client, repo *config.Repo
 			plural = "status"
 		}
 		report = append(report, fmt.Sprintf("team %s is missing %d %s referenced by %s:",
-			team, len(refs), plural, config.RepoConfigFile))
+			team, len(refs), plural, "the repo config"))
 		for _, status := range slices.Sorted(maps.Keys(refs)) {
 			report = append(report, fmt.Sprintf("  %q (%s)", status, strings.Join(refs[status], ", ")))
 		}
@@ -99,7 +99,7 @@ func verifyStatuses(ctx context.Context, client linear.Client, repo *config.Repo
 		return nil
 	}
 	report = append(report, fmt.Sprintf("edit %s or run `lerp init` to create the missing statuses",
-		config.RepoConfigFile))
+		"the repo config"))
 	return errors.New(strings.Join(report, "\n"))
 }
 
@@ -188,7 +188,7 @@ func gitAutomationWarning(team, label string, a linear.GitAutomation, repo *conf
 		scope = fmt.Sprintf("for target branch %q on team %s", a.Branch, team)
 	}
 	lines := []string{fmt.Sprintf("team %s: %s moves tickets to %q, which %s never names:",
-		team, trigger, a.Status, config.RepoConfigFile)}
+		team, trigger, a.Status, "the repo config")}
 	for _, qname := range slices.Sorted(maps.Keys(repo.Queues)) {
 		q := repo.Queues[qname]
 		lines = append(lines, fmt.Sprintf(

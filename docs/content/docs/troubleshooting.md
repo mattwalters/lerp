@@ -25,13 +25,19 @@ A run whose ticket left its queue status before it finished keeps that
 move, and the status bar says which hop it skipped. An agent escalating
 moves a ticket to a status your pipeline names. An automation usually
 moves it to one it does not, and lerp names those automations at startup.
+`.lerp/loop.log` has the whole line:
+
+> LERP-42 left "Implementing" for "In Progress" during its run — the
+> on_success hop to "In Review" was skipped. "In Progress" is not a
+> status your pipeline names; an external automation (e.g. Linear's
+> GitHub integration) may be moving tickets.
 
 The usual culprit is Linear's GitHub integration, whose automations sit
 per team in workflow settings as pull request triggers. On the teams lerp
-serves, set the four open-PR triggers (draft opened, opened, review
-activity, ready for merge) to No action, since a run that opens a pull
-request trips them mid-stage. Leave On PR merge on, because it fires
-after the stock pipeline is done with the ticket. The startup check
+serves, set the four open-PR triggers (On draft PR open, On PR open, On PR
+review request or activity, On PR ready for merge) to No action, since a run
+that opens a pull request trips them mid-stage. Leave On PR merge on, because
+it fires after the stock pipeline is done with the ticket. The startup check
 cannot see that one, so the settings screen is worth a look.
 
 If your pipeline has a stage that runs after the merge, the merge trigger

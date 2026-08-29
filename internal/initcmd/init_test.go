@@ -453,6 +453,80 @@ func TestInitRejectsExistingConfigForOtherTeam(t *testing.T) {
 	}
 }
 
+func TestInitVerifiesExistingYAMLConfig(t *testing.T) {
+	dir := t.TempDir()
+	yamlConfig := `
+teams:
+  - LERP
+provision: mine
+dispose: mine
+runners:
+  mine:
+    command: mine {{prompt}}
+queues:
+  plan:
+    status: Planning
+    prompt: Plan {{ticket}}.
+    runner: mine
+    on_success: Implementing
+  code:
+    status: Implementing
+    prompt: Implement {{ticket}}.
+    runner: mine
+    on_success: Review
+    on_failure: Human Review
+`
+	yamlPath := filepath.Join(dir, "lerp.yaml")
+	if err := os.WriteFile(yamlPath, []byte(yamlConfig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b := &fakeBoard{existing: []string{"Planning", "Implementing"}}
+	var out bytes.Buffer
+	created, err := Init(context.Background(), b, &out, nil, dir, "LERP", "")
+	if err != nil {
+		t.Fatalf("Init error = %v", err)
+	}
+	if created {
+		t.Error("created = true, want false for existing lerp.yaml")
+	}
+	// Verify no lerp.toml was created
+	if _, err := os.Stat(filepath.Join(dir, config.RepoConfigFile)); !os.IsNotExist(err) {
+		t.Error("lerp.toml was written alongside lerp.yaml")
+	}
+	want := []linear.StateSpec{
+		{Name: "Human Review", Type: "started"},
+		{Name: "Implementing", Type: "started"},
+		{Name: "Planning", Type: "started"},
+		{Name: "Review", Type: "started"},
+	}
+	if !reflect.DeepEqual(b.states, want) {
+		t.Errorf("states = %+v, want %+v", b.states, want)
+	}
+}
+
+func TestInitRefusesMultipleConfigsBeforeBoardCall(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "lerp.toml"), []byte("teams = ['LERP']\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "lerp.yaml"), []byte("teams:\n  - LERP\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b := &fakeBoard{}
+	_, err := Init(context.Background(), b, nil, nil, dir, "LERP", "")
+	if err == nil {
+		t.Fatal("want error on multiple configs, got nil")
+	}
+	for _, want := range []string{"lerp.toml", "lerp.yaml"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not name %s", err.Error(), want)
+		}
+	}
+	if b.teamKey != "" {
+		t.Errorf("board called (%q) before refusing multi-config", b.teamKey)
+	}
+}
+
 func TestInitNormalizesTeamKeyCase(t *testing.T) {
 	for _, teamInput := range []string{"lerp", "  lerp  ", "lErP"} {
 		t.Run(teamInput, func(t *testing.T) {
