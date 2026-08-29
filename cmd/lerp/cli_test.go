@@ -114,3 +114,48 @@ func TestCLIDispatchGuards(t *testing.T) {
 		})
 	}
 }
+
+func TestInitNoCredentialsNonInteractive(t *testing.T) {
+	bin := lerpBinary(t)
+
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{
+			name: "yes flag",
+			args: []string{"init", "--team", "LERP", "--yes"},
+		},
+		{
+			name: "piped stdin",
+			args: []string{"init", "--team", "LERP"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			fakeHome := t.TempDir()
+			cmd := exec.Command(bin, tc.args...)
+			cmd.Dir = t.TempDir()
+			cmd.Env = append(childenv.Inherited(),
+				"HOME="+fakeHome,
+				"XDG_CONFIG_HOME="+fakeHome,
+			)
+			var stdout, stderr bytes.Buffer
+			cmd.Stdout = &stdout
+			cmd.Stderr = &stderr
+
+			err := cmd.Run()
+			var exitErr *exec.ExitError
+			if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
+				t.Fatalf("exit = %v, want exit code 1", err)
+			}
+			if !strings.Contains(stderr.String(), "no Linear credentials") {
+				t.Errorf("stderr %q does not contain %q", stderr.String(), "no Linear credentials")
+			}
+			if strings.Contains(stdout.String(), "Sign in to Linear") || strings.Contains(stderr.String(), "Sign in to Linear") {
+				t.Errorf("prompt printed in non-interactive run: stdout=%q, stderr=%q", stdout.String(), stderr.String())
+			}
+		})
+	}
+}

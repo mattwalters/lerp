@@ -59,8 +59,9 @@ var (
 // has nothing to inherit (childenv covers the children lerp builds an
 // environment for; this covers the rest). It follows that a second Resolve
 // in the same process no longer sees the key and falls through to the
-// token file — both of lerp's startup paths resolve exactly once, which is
-// what makes that acceptable.
+// token file — the second resolve happens only after a login, on a path the
+// env key's absence already established, so it reads the token file that
+// login just wrote.
 func Resolve(hc *http.Client) (func(context.Context) (string, error), error) {
 	return resolve(store{}, hc)
 }
