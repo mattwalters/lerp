@@ -30,7 +30,7 @@ const usage = `usage:
   lerp version, --version       print the version
   lerp login                    sign in to Linear (loopback OAuth); no flags
   lerp logout                   sign out of Linear and revoke the token; no flags
-  lerp init --team KEY [--yes]  map lerp's queues onto the team's board and write this repo's lerp.toml
+  lerp init [--team KEY] [--yes]  map lerp's queues onto the team's board and write this repo's lerp.toml
 `
 
 // defaultLanes is how many agents run at once unless -concurrency says so.
@@ -259,11 +259,11 @@ func initCommand(args []string) {
 	yes := fs.Bool("yes", false, "take the stock answer to every question")
 	fs.Parse(args)
 	*team = strings.ToUpper(strings.TrimSpace(*team))
-	if *team == "" {
+	interactive := !*yes && isTerminal(os.Stdin) && isTerminal(os.Stdout)
+	if *team == "" && !interactive {
 		fmt.Fprintln(os.Stderr, "lerp init: --team is required")
 		os.Exit(2)
 	}
-	interactive := !*yes && isTerminal(os.Stdin) && isTerminal(os.Stdout)
 	auth, err := resolveWithLogin(context.Background(), os.Stdout, os.Stdin, interactive, func() (func(context.Context) (string, error), error) {
 		return credentials.Resolve(nil)
 	}, credentials.Login)
@@ -287,7 +287,6 @@ func initCommand(args []string) {
 	if created {
 		fmt.Printf("wrote %s with Lerp's stock pipeline — review it and check it in\n", config.RepoConfigFile)
 	}
-	fmt.Printf("initialized %s for Linear team %s\n", repoRoot, *team)
 }
 
 // resolveWithLogin resolves Linear credentials, offering to run the OAuth

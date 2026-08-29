@@ -159,3 +159,41 @@ func TestInitNoCredentialsNonInteractive(t *testing.T) {
 		})
 	}
 }
+
+func TestInitTeamRequiredNonInteractive(t *testing.T) {
+	bin := lerpBinary(t)
+
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{
+			name: "yes flag without team",
+			args: []string{"init", "--yes"},
+		},
+		{
+			name: "piped stdin without team",
+			args: []string{"init"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := exec.Command(bin, tc.args...)
+			cmd.Dir = t.TempDir()
+			cmd.Env = childenv.Inherited()
+			var stdout, stderr bytes.Buffer
+			cmd.Stdout = &stdout
+			cmd.Stderr = &stderr
+
+			err := cmd.Run()
+			var exitErr *exec.ExitError
+			if !errors.As(err, &exitErr) || exitErr.ExitCode() != 2 {
+				t.Fatalf("exit = %v, want exit code 2", err)
+			}
+			if !strings.Contains(stderr.String(), "--team is required") {
+				t.Errorf("stderr %q does not contain %q", stderr.String(), "--team is required")
+			}
+		})
+	}
+}

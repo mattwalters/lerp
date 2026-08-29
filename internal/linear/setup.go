@@ -9,6 +9,35 @@ import (
 	"strings"
 )
 
+// TeamRef is a team as setup-time operations recognise it: key and name.
+type TeamRef struct {
+	Key  string `json:"key"`
+	Name string `json:"name"`
+}
+
+const teamsQuery = `
+query Teams {
+  teams(first: 250) { nodes { key name } }
+}`
+
+// Teams reports every team in the workspace, sorted by key. Like this
+// file's other reads it is a pure read, safe outside setup (invariant 6).
+func (c *HTTP) Teams(ctx context.Context) ([]TeamRef, error) {
+	var found struct {
+		Teams struct {
+			Nodes []TeamRef `json:"nodes"`
+		} `json:"teams"`
+	}
+	if err := c.do(ctx, teamsQuery, nil, &found); err != nil {
+		return nil, fmt.Errorf("teams: %w", err)
+	}
+	teams := found.Teams.Nodes
+	slices.SortFunc(teams, func(a, b TeamRef) int {
+		return strings.Compare(a.Key, b.Key)
+	})
+	return teams, nil
+}
+
 const teamByKeyQuery = `
 query TeamByKey($key: String!) { teams(filter: { key: { eq: $key } }, first: 1) { nodes { id } } }`
 
