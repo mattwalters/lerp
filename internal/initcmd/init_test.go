@@ -21,12 +21,13 @@ type fakeBoard struct {
 	teamStatesKey     string
 	teamNotFound      bool
 	// existing plays the statuses the team already has, in board order.
-	existing []string
+	existing []linear.WorkflowState
 	states   []linear.StateSpec
 	// categories plays Linear's category for existing states, name →
-	// category; existing states it does not name are "unstarted". Requested
-	// states not on the board come back as created, in their requested
-	// category — the contract of the real EnsureWorkflowStates.
+	// category; existing states it does not name use their WorkflowState
+	// Category (or "unstarted" if empty). Requested states not on the board
+	// come back as created, in their requested category — the contract of
+	// the real EnsureWorkflowStates.
 	categories map[string]string
 	err        error
 }
@@ -36,7 +37,7 @@ func (b *fakeBoard) EnsureTeam(_ context.Context, key, name string) error {
 	return b.err
 }
 
-func (b *fakeBoard) TeamStates(_ context.Context, teamKey string) ([]string, error) {
+func (b *fakeBoard) TeamWorkflowStates(_ context.Context, teamKey string) ([]linear.WorkflowState, error) {
 	b.teamStatesKey = teamKey
 	if b.err != nil {
 		return nil, b.err
@@ -53,8 +54,12 @@ func (b *fakeBoard) EnsureWorkflowStates(_ context.Context, _ string, states []l
 		return nil, b.err
 	}
 	categories := map[string]string{}
-	for _, name := range b.existing {
-		categories[name] = "unstarted"
+	for _, state := range b.existing {
+		cat := state.Category
+		if cat == "" {
+			cat = "unstarted"
+		}
+		categories[state.Name] = cat
 	}
 	for name, category := range b.categories {
 		categories[name] = category
@@ -68,7 +73,21 @@ func (b *fakeBoard) EnsureWorkflowStates(_ context.Context, _ string, states []l
 }
 
 // linearDefaults is the board a fresh Linear team comes with.
-var linearDefaults = []string{"Backlog", "Todo", "In Progress", "Done", "Canceled"}
+var linearDefaults = []linear.WorkflowState{
+	{Name: "Backlog", Category: "backlog"},
+	{Name: "Todo", Category: "unstarted"},
+	{Name: "In Progress", Category: "started"},
+	{Name: "Done", Category: "completed"},
+	{Name: "Canceled", Category: "canceled"},
+}
+
+func boardWorkflowStates(names ...string) []linear.WorkflowState {
+	states := make([]linear.WorkflowState, len(names))
+	for i, name := range names {
+		states[i] = linear.WorkflowState{Name: name, Category: "started"}
+	}
+	return states
+}
 
 // existingConfig is a hand-rolled lerp.toml whose queues differ from the
 // stock pipeline, so tests can tell which config drove the board setup.
@@ -158,7 +177,7 @@ func TestInitFastPathConversation(t *testing.T) {
 	}
 	transcript := out.String()
 	inOrder := []string{
-		"team LERP has: Backlog, Todo, In Progress, Done, Canceled",
+		"team LERP has:\n  backlog    Backlog\n  unstarted  Todo\n  started    In Progress\n  completed  Done\n  canceled   Canceled",
 		"Include a planning stage? [Y/n]",
 		"Review each change before it exits? [Y/n]",
 		"the pipeline references: Planning, Plan Review, Implementing, In Review, Needs Attention",
@@ -189,7 +208,13 @@ func TestInitFastPathConversation(t *testing.T) {
 // existing statuses are used, never modified, and only the rest are created.
 func TestInitCustomizeMapsOntoExistingStatuses(t *testing.T) {
 	dir := t.TempDir()
-	existing := []string{"Backlog", "Todo", "In Progress", "In Review", "Done"}
+	existing := []linear.WorkflowState{
+		{Name: "Backlog", Category: "backlog"},
+		{Name: "Todo", Category: "unstarted"},
+		{Name: "In Progress", Category: "started"},
+		{Name: "In Review", Category: "started"},
+		{Name: "Done", Category: "completed"},
+	}
 	var out bytes.Buffer
 	// plan yes, review yes, customize; plan → create, plan review → create,
 	// implement → 2) Todo, exit → default (In Review already exists),
@@ -225,13 +250,13 @@ func TestInitCustomizeMapsOntoExistingStatuses(t *testing.T) {
 	}
 	transcript := out.String()
 	for _, wanted := range []string{
-		`implement runs in:  1) Backlog  2) Todo `,
+		`implement runs in:  1) Backlog (backlog)  2) Todo (unstarted) `,
 		`c) create "Implementing"`,
-		`plans wait for approval in:  1) Backlog  2) Todo `,
+		`plans wait for approval in:  1) Backlog (backlog)  2) Todo (unstarted) `,
 		`c) create "Plan Review"`,
 		// The stock exit already exists, so its pick defaults to that status
 		// and offers nothing to create.
-		`finished work exits to:  1) Backlog  2) Todo  3) In Progress  4) In Review  5) Done  [4]`,
+		`finished work exits to:  1) Backlog (backlog)  2) Todo (unstarted)  3) In Progress (started)  4) In Review (started)  5) Done (completed)  [4]`,
 		"creating on team LERP: Needs Attention, Plan Review, Planning  ·  using existing: In Review (implement exit), Todo (implement)",
 	} {
 		if !strings.Contains(transcript, wanted) {
@@ -406,7 +431,7 @@ func TestInitIsIdempotentAndDoesNotReplaceConfig(t *testing.T) {
 	if err := os.WriteFile(path, []byte(existingConfig), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	b := &fakeBoard{existing: []string{"Planning", "Implementing"}}
+	b := &fakeBoard{existing: boardWorkflowStates("Planning", "Implementing")}
 	var out bytes.Buffer
 	answers := strings.NewReader("n\nn\nn\nn\n")
 	created, err := Init(context.Background(), b, &out, answers, dir, "LERP", "")
@@ -486,7 +511,7 @@ queues:
 	if err := os.WriteFile(yamlPath, []byte(yamlConfig), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	b := &fakeBoard{existing: []string{"Planning", "Implementing"}}
+	b := &fakeBoard{existing: boardWorkflowStates("Planning", "Implementing")}
 	var out bytes.Buffer
 	created, err := Init(context.Background(), b, &out, nil, dir, "LERP", "")
 	if err != nil {
@@ -584,7 +609,7 @@ func TestInitNormalizesTeamKeyOnRepeat(t *testing.T) {
 	if err := os.WriteFile(path, []byte(existingConfig), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	b := &fakeBoard{existing: []string{"Planning", "Implementing"}}
+	b := &fakeBoard{existing: boardWorkflowStates("Planning", "Implementing")}
 	created, err := Init(context.Background(), b, io.Discard, nil, dir, "  lerp  ", "")
 	if err != nil {
 		t.Fatalf("Init error = %v", err)
@@ -732,7 +757,13 @@ func TestInitConfirmNamesEveryWriteClass(t *testing.T) {
 
 	// Customize: plan -> create, plan review -> create, implement -> 2) Todo, exit -> 4) In Review, failures -> create; bypass -> n; MCP -> y
 	answers := strings.NewReader("\n\nc\nc\nc\n2\n\nc\nn\ny\n")
-	existing := []string{"Backlog", "Todo", "In Progress", "In Review", "Done"}
+	existing := []linear.WorkflowState{
+		{Name: "Backlog", Category: "backlog"},
+		{Name: "Todo", Category: "unstarted"},
+		{Name: "In Progress", Category: "started"},
+		{Name: "In Review", Category: "started"},
+		{Name: "Done", Category: "completed"},
+	}
 	var out bytes.Buffer
 	b := &orderBoard{
 		fakeBoard: fakeBoard{
@@ -994,7 +1025,7 @@ func TestInitIgnoresStateDirOnRepeat(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, config.RepoConfigFile), []byte(existingConfig), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	b := &fakeBoard{existing: []string{"Planning", "Implementing"}}
+	b := &fakeBoard{existing: boardWorkflowStates("Planning", "Implementing")}
 	if _, err := Init(context.Background(), b, io.Discard, nil, dir, "LERP", ""); err != nil {
 		t.Fatal(err)
 	}
@@ -1271,7 +1302,7 @@ on_success = "In Review"
 	defer restore()
 
 	answers := strings.NewReader("y\n")
-	b := &fakeBoard{existing: []string{"Planning", "Implementing", "In Review"}}
+	b := &fakeBoard{existing: boardWorkflowStates("Planning", "Implementing", "In Review")}
 	_, err := Init(context.Background(), b, &out, answers, dir, "LERP", "")
 	if err != nil {
 		t.Fatal(err)

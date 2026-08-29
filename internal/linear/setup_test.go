@@ -116,6 +116,59 @@ func TestTeamStatesPreservesOrderOnEqualPositionAndSortsUnknownTypesLast(t *test
 	}
 }
 
+func TestTeamWorkflowStatesReportsStatesInBoardOrder(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		req := decodeRequest(t, r)
+		if !strings.Contains(req.Query, "TeamStates") {
+			t.Errorf("unexpected query: %s", req.Query)
+		}
+		if !strings.Contains(req.Query, "position") {
+			t.Errorf("query does not request position: %s", req.Query)
+		}
+		if req.Variables["key"] != "LERP" {
+			t.Errorf("key = %v", req.Variables["key"])
+		}
+		// States delivered in creation order (out of board order) across multiple categories and positions.
+		writeData(t, w, `{"teams":{"nodes":[{"id":"team-1","states":{"nodes":[
+			{"name":"Done","type":"completed","position":10},
+			{"name":"Plan Review","type":"unstarted","position":20},
+			{"name":"Backlog","type":"backlog","position":5},
+			{"name":"Implementing","type":"started","position":10},
+			{"name":"Planning","type":"unstarted","position":10},
+			{"name":"In Review","type":"started","position":20},
+			{"name":"Canceled","type":"canceled","position":10},
+			{"name":"Triage","type":"triage","position":1}
+		]}}]}}`)
+	})
+	states, err := c.TeamWorkflowStates(context.Background(), "LERP")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []WorkflowState{
+		{Name: "Triage", Category: "triage", Position: 1},
+		{Name: "Backlog", Category: "backlog", Position: 5},
+		{Name: "Planning", Category: "unstarted", Position: 10},
+		{Name: "Plan Review", Category: "unstarted", Position: 20},
+		{Name: "Implementing", Category: "started", Position: 10},
+		{Name: "In Review", Category: "started", Position: 20},
+		{Name: "Done", Category: "completed", Position: 10},
+		{Name: "Canceled", Category: "canceled", Position: 10},
+	}
+	if !reflect.DeepEqual(states, want) {
+		t.Errorf("states = %+v, want %+v", states, want)
+	}
+}
+
+func TestTeamWorkflowStatesReportsUnknownTeam(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		writeData(t, w, `{"teams":{"nodes":[]}}`)
+	})
+	_, err := c.TeamWorkflowStates(context.Background(), "NOPE")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("error = %v, want ErrNotFound", err)
+	}
+}
+
 func TestTeamStatesReportsUnknownTeam(t *testing.T) {
 	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 		writeData(t, w, `{"teams":{"nodes":[]}}`)

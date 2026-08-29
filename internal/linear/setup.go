@@ -52,21 +52,21 @@ query TeamStates($key: String!) {
   teams(filter: { key: { eq: $key } }, first: 1) { nodes { id states(first: 100) { nodes { name type position } } } }
 }`
 
-// teamState is one workflow state as the states query reports it.
-type teamState struct {
+// WorkflowState is one workflow state as the states query reports it.
+type WorkflowState struct {
 	Name     string  `json:"name"`
-	Type     string  `json:"type"`
+	Category string  `json:"type"`
 	Position float64 `json:"position"`
 }
 
 // teamStates reads a team's id and workflow states by team key.
-func (c *HTTP) teamStates(ctx context.Context, teamKey string) (string, []teamState, error) {
+func (c *HTTP) teamStates(ctx context.Context, teamKey string) (string, []WorkflowState, error) {
 	var found struct {
 		Teams struct {
 			Nodes []struct {
 				ID     string `json:"id"`
 				States struct {
-					Nodes []teamState `json:"nodes"`
+					Nodes []WorkflowState `json:"nodes"`
 				} `json:"states"`
 			} `json:"nodes"`
 		} `json:"teams"`
@@ -102,6 +102,25 @@ func stateTypeRank(t string) int {
 	}
 }
 
+// TeamWorkflowStates reports every workflow state on the team with its
+// category and position, in Linear board order (canonical category order:
+// backlog → unstarted → started → completed → canceled, then position
+// within each category). Unlike this file's Ensure methods it is a pure
+// read, safe outside setup.
+func (c *HTTP) TeamWorkflowStates(ctx context.Context, teamKey string) ([]WorkflowState, error) {
+	_, states, err := c.teamStates(ctx, teamKey)
+	if err != nil {
+		return nil, fmt.Errorf("team states: %w", err)
+	}
+	slices.SortStableFunc(states, func(a, b WorkflowState) int {
+		if c := cmp.Compare(stateTypeRank(a.Category), stateTypeRank(b.Category)); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.Position, b.Position)
+	})
+	return states, nil
+}
+
 // TeamStates reports the names of every workflow state on the team, in
 // Linear board order (canonical category order: backlog → unstarted → started
 // → completed → canceled, then position within each category). Unlike this
@@ -110,16 +129,10 @@ func stateTypeRank(t string) int {
 // configured status names a real state (and to show the team's actual names
 // next to a miss), and the TUI uses it to order statuses across the board.
 func (c *HTTP) TeamStates(ctx context.Context, teamKey string) ([]string, error) {
-	_, states, err := c.teamStates(ctx, teamKey)
+	states, err := c.TeamWorkflowStates(ctx, teamKey)
 	if err != nil {
-		return nil, fmt.Errorf("team states: %w", err)
+		return nil, err
 	}
-	slices.SortStableFunc(states, func(a, b teamState) int {
-		if c := cmp.Compare(stateTypeRank(a.Type), stateTypeRank(b.Type)); c != 0 {
-			return c
-		}
-		return cmp.Compare(a.Position, b.Position)
-	})
 	names := make([]string, len(states))
 	for i, s := range states {
 		names[i] = s.Name
@@ -195,7 +208,7 @@ func (c *HTTP) EnsureWorkflowStates(ctx context.Context, teamKey string, states 
 	}
 	categories := map[string]string{}
 	for _, state := range existing {
-		categories[state.Name] = state.Type
+		categories[state.Name] = state.Category
 	}
 	states = append([]StateSpec(nil), states...)
 	slices.SortFunc(states, func(a, b StateSpec) int { return strings.Compare(a.Name, b.Name) })

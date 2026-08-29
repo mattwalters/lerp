@@ -29,7 +29,7 @@ import (
 // after the call, keyed by state name.
 type Board interface {
 	EnsureTeam(ctx context.Context, key, name string) error
-	TeamStates(ctx context.Context, teamKey string) ([]string, error)
+	TeamWorkflowStates(ctx context.Context, teamKey string) ([]linear.WorkflowState, error)
 	EnsureWorkflowStates(ctx context.Context, teamKey string, states []linear.StateSpec) (map[string]string, error)
 }
 
@@ -54,7 +54,7 @@ type readState struct {
 	teamKey          string
 	teamName         string
 	createTeam       bool
-	existingStatuses []string
+	existingStatuses []linear.WorkflowState
 	repoRoot         string
 	configPath       string
 	fresh            bool
@@ -90,7 +90,7 @@ type plan struct {
 	teamKey          string
 	teamName         string
 	createTeam       bool
-	existingStatuses []string
+	existingStatuses []linear.WorkflowState
 	repoRoot         string
 	configPath       string
 	writeConfig      bool
@@ -181,8 +181,7 @@ func read(ctx context.Context, board Board, repoRoot, teamKey, teamName string) 
 	} else {
 		return readState{}, findErr
 	}
-
-	existing, err := board.TeamStates(ctx, teamKey)
+	existing, err := board.TeamWorkflowStates(ctx, teamKey)
 	createTeam := false
 	if err != nil {
 		if errors.Is(err, linear.ErrNotFound) {
@@ -556,12 +555,34 @@ func ignoresStateDir(gitignore []byte) bool {
 // answer to everything: every stage included, stock status names, bypass
 // declined. EOF mid-conversation answers the remaining questions the same
 // way each question's default would.
-func converse(out io.Writer, in *bufio.Reader, teamKey string, existing []string) config.Stock {
+func converse(out io.Writer, in *bufio.Reader, teamKey string, existing []linear.WorkflowState) config.Stock {
 	s := config.Stock{Teams: []string{teamKey}, Plan: true, Review: true}
 	if len(existing) == 0 {
 		fmt.Fprintf(out, "team %s has no statuses yet\n", teamKey)
 	} else {
-		fmt.Fprintf(out, "team %s has: %s\n", teamKey, strings.Join(existing, ", "))
+		type categoryGroup struct {
+			category string
+			names    []string
+		}
+		var groups []categoryGroup
+		categoryIndex := map[string]int{}
+		for _, state := range existing {
+			cat := state.Category
+			if cat == "" {
+				cat = "unknown"
+			}
+			idx, ok := categoryIndex[cat]
+			if !ok {
+				idx = len(groups)
+				categoryIndex[cat] = idx
+				groups = append(groups, categoryGroup{category: cat})
+			}
+			groups[idx].names = append(groups[idx].names, state.Name)
+		}
+		fmt.Fprintf(out, "team %s has:\n", teamKey)
+		for _, g := range groups {
+			fmt.Fprintf(out, "  %-9s  %s\n", g.category, strings.Join(g.names, ", "))
+		}
 	}
 	if in == nil {
 		return s
@@ -602,11 +623,11 @@ func pipelineSlots(s *config.Stock) []slot {
 
 // mapStatuses maps the chosen pipeline onto the board: the fast path accepts
 // the stock names in one answer, customize picks per referenced status.
-func mapStatuses(out io.Writer, in *bufio.Reader, teamKey string, existing []string, s *config.Stock) {
+func mapStatuses(out io.Writer, in *bufio.Reader, teamKey string, existing []linear.WorkflowState, s *config.Stock) {
 	slots := pipelineSlots(s)
 	has := map[string]bool{}
-	for _, name := range existing {
-		has[name] = true
+	for _, state := range existing {
+		has[state.Name] = true
 	}
 	names := make([]string, len(slots))
 	missing := 0
@@ -651,13 +672,13 @@ func mapStatuses(out io.Writer, in *bufio.Reader, teamKey string, existing []str
 // pickStatus asks where one referenced status lands: a numbered existing
 // status, or create the stock name. When the stock name already exists on
 // the board it is the default pick, and there is nothing to create.
-func pickStatus(out io.Writer, in *bufio.Reader, sl slot, existing []string) string {
+func pickStatus(out io.Writer, in *bufio.Reader, sl slot, existing []linear.WorkflowState) string {
 	var menu strings.Builder
 	fmt.Fprintf(&menu, "%s: ", sl.label)
 	def := "c"
-	for i, name := range existing {
-		fmt.Fprintf(&menu, " %d) %s ", i+1, name)
-		if name == sl.stock {
+	for i, state := range existing {
+		fmt.Fprintf(&menu, " %d) %s (%s) ", i+1, state.Name, state.Category)
+		if state.Name == sl.stock {
 			def = strconv.Itoa(i + 1)
 		}
 	}
@@ -675,7 +696,7 @@ func pickStatus(out io.Writer, in *bufio.Reader, sl slot, existing []string) str
 			return sl.stock
 		}
 		if n, err := strconv.Atoi(answer); err == nil && n >= 1 && n <= len(existing) {
-			return existing[n-1]
+			return existing[n-1].Name
 		}
 		if eof {
 			return sl.stock
@@ -737,11 +758,11 @@ func readAnswer(out io.Writer, in *bufio.Reader) (answer string, eof bool) {
 // found, never silent (SCOPE invariant 6 discipline: create deliberately,
 // touch nothing silently). Existing statuses are annotated with their part
 // in the pipeline; created ones are the names the operator just chose.
-func reportStatuses(out io.Writer, teamKey string, cfg *config.RepoConfig, existing []string) {
+func reportStatuses(out io.Writer, teamKey string, cfg *config.RepoConfig, existing []linear.WorkflowState) {
 	roles := statusRoles(cfg)
 	has := map[string]bool{}
-	for _, name := range existing {
-		has[name] = true
+	for _, state := range existing {
+		has[state.Name] = true
 	}
 	var create, use []string
 	for _, name := range slices.Sorted(maps.Keys(roles)) {
