@@ -50,6 +50,56 @@ func SetCommandRunner(runner CommandRunner) func() {
 	return func() { defaultCommandRunner = prev }
 }
 
+type readState struct {
+	teamKey          string
+	teamName         string
+	createTeam       bool
+	existingStatuses []string
+	repoRoot         string
+	configPath       string
+	fresh            bool
+	existingCfg      *config.RepoConfig
+	needsGitignore   bool
+	mcpConfigured    map[string]bool
+}
+
+type mcpIntent int
+
+const (
+	mcpIntentNone mcpIntent = iota
+	mcpIntentHTTP
+	mcpIntentBridge
+)
+
+type mcpCLIState int
+
+const (
+	mcpStateConfigured mcpCLIState = iota
+	mcpStateRegisteredNow
+	mcpStateDeclined
+)
+
+type mcpCLIInfo struct {
+	vendorName string
+	adapter    vendors.Adapter
+	state      mcpCLIState
+	intent     mcpIntent
+}
+
+type plan struct {
+	teamKey          string
+	teamName         string
+	createTeam       bool
+	existingStatuses []string
+	repoRoot         string
+	configPath       string
+	writeConfig      bool
+	stockText        string
+	cfg              *config.RepoConfig
+	needsGitignore   bool
+	mcpInfos         []mcpCLIInfo
+}
+
 // Init fits lerp onto the team's existing board, writing this repo's config
 // when it has none. Repeating it verifies the existing config rather than
 // replacing the operator's choices.
@@ -63,10 +113,15 @@ func SetCommandRunner(runner CommandRunner) func() {
 // loudly which statuses it creates and which existing ones it uses; existing
 // statuses are never modified.
 //
-// After writing (or verifying) the pipeline, init checks whether each vendor
-// runner CLI has a Linear MCP server registered. If missing, it offers to
-// register it directly or via the shared mcp-remote bridge, or declines by
-// default and prints the registration commands.
+// Init runs in four phases:
+//  1. Read: inspects existing repo config, queries team statuses from Linear,
+//     checks .gitignore, and probes runner CLI MCP configuration.
+//  2. Decide: runs the conversation (or applies defaults), renders stock config,
+//     validates repo config, and collects MCP registration choices.
+//  3. Confirm: reports all planned writes (team creation, status creation/adoption,
+//     config path, .gitignore update, and MCP registrations).
+//  4. Execute: creates the team if needed, creates workflow states, writes repo
+//     config, ignores state directory, registers MCP servers, and reports exits/summary.
 //
 // The file is written only after the board calls succeed, so a failed board
 // call leaves nothing behind; created reports whether this invocation wrote
@@ -94,58 +149,252 @@ func Init(ctx context.Context, board Board, out io.Writer, answers io.Reader, re
 	if out == nil {
 		out = io.Discard
 	}
+
+	r, err := read(ctx, board, repoRoot, teamKey, teamName)
+	if err != nil {
+		return false, err
+	}
+
+	p, err := decide(out, answers, r)
+	if err != nil {
+		return false, err
+	}
+
+	reportPlan(out, p)
+
+	return execute(ctx, board, out, p, defaultCommandRunner)
+}
+
+func read(ctx context.Context, board Board, repoRoot, teamKey, teamName string) (readState, error) {
 	foundPath, findErr := config.FindRepoConfig(repoRoot)
 	var cfg *config.RepoConfig
 	fresh := false
 	path := filepath.Join(repoRoot, config.RepoConfigFile)
 	if findErr == nil {
 		path = foundPath
+		var err error
 		if cfg, err = loadFor(path, teamKey); err != nil {
-			return false, err
+			return readState{}, err
 		}
 	} else if errors.Is(findErr, fs.ErrNotExist) {
 		fresh = true
 	} else {
-		return false, findErr
+		return readState{}, findErr
 	}
-	if err := board.EnsureTeam(ctx, teamKey, teamName); err != nil {
-		return false, fmt.Errorf("ensure team %q: %w", teamKey, err)
-	}
+
 	existing, err := board.TeamStates(ctx, teamKey)
+	createTeam := false
 	if err != nil {
-		return false, fmt.Errorf("read statuses of team %q: %w", teamKey, err)
+		if errors.Is(err, linear.ErrNotFound) {
+			createTeam = true
+			existing = nil
+		} else {
+			return readState{}, fmt.Errorf("read statuses of team %q: %w", teamKey, err)
+		}
 	}
+
+	gitIgnorePath := filepath.Join(repoRoot, gitignoreFile)
+	existingGitignore, gitErr := os.ReadFile(gitIgnorePath)
+	needsGitignore := true
+	if gitErr == nil && ignoresStateDir(existingGitignore) {
+		needsGitignore = false
+	}
+
+	mcpConfigured := make(map[string]bool)
+	for _, name := range vendors.Names() {
+		if adapter, ok := vendors.Lookup(name); ok {
+			mcpConfigured[name] = adapter.HasLinearMCP(repoRoot)
+		}
+	}
+
+	return readState{
+		teamKey:          teamKey,
+		teamName:         teamName,
+		createTeam:       createTeam,
+		existingStatuses: existing,
+		repoRoot:         repoRoot,
+		configPath:       path,
+		fresh:            fresh,
+		existingCfg:      cfg,
+		needsGitignore:   needsGitignore,
+		mcpConfigured:    mcpConfigured,
+	}, nil
+}
+
+func decide(out io.Writer, answers io.Reader, r readState) (plan, error) {
 	var in *bufio.Reader
 	if answers != nil {
 		in = bufio.NewReader(answers)
 	}
+
+	var cfg *config.RepoConfig
 	stock := ""
-	if fresh {
-		choices := converse(out, in, teamKey, existing)
+	if r.fresh {
+		choices := converse(out, in, r.teamKey, r.existingStatuses)
 		stock = choices.Render()
 		// Parsing what we are about to install catches a broken assembly here —
 		// a declined stage, a mapping that folds two queues onto one status —
 		// not on the operator's first run.
-		if cfg, err = config.ParseRepoConfig(stock, path); err != nil {
-			return false, fmt.Errorf("assembled repo config: %w", err)
+		var err error
+		if cfg, err = config.ParseRepoConfig(stock, r.configPath); err != nil {
+			return plan{}, fmt.Errorf("assembled repo config: %w", err)
+		}
+	} else {
+		cfg = r.existingCfg
+	}
+
+	seen := make(map[string]bool)
+	var vendorNames []string
+	for _, runner := range cfg.Runners {
+		if runner.Vendor != "" && !seen[runner.Vendor] {
+			seen[runner.Vendor] = true
+			vendorNames = append(vendorNames, runner.Vendor)
 		}
 	}
-	reportStatuses(out, teamKey, cfg, existing)
-	categories, err := board.EnsureWorkflowStates(ctx, teamKey, stateSpecs(cfg))
-	if err != nil {
-		return false, fmt.Errorf("ensure workflow states for %q: %w", teamKey, err)
+	slices.Sort(vendorNames)
+
+	var infos []mcpCLIInfo
+	var missingCount int
+	for _, vName := range vendorNames {
+		adapter, ok := vendors.Lookup(vName)
+		if !ok {
+			continue
+		}
+		info := mcpCLIInfo{vendorName: vName, adapter: adapter}
+		if r.mcpConfigured[vName] {
+			info.state = mcpStateConfigured
+		} else {
+			info.state = mcpStateDeclined
+			missingCount++
+		}
+		infos = append(infos, info)
 	}
-	reportExits(out, cfg, categories)
-	reportStatusOwnership(out, teamKey)
-	// Every init, not only a fresh one: an adopter who set this repo up with
-	// an earlier lerp picks the ignore up by repeating init.
-	ignoreStateDir(out, repoRoot)
-	if fresh {
-		if created, err = writeRepoConfig(path, teamKey, stock); err != nil {
+
+	if missingCount > 0 && in != nil {
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, "Each runner CLI needs its own Linear MCP server to read tickets and post stage artifacts.")
+		fmt.Fprintln(out, "Registration writes into each CLI's configuration; interactive OAuth authentication")
+		fmt.Fprintln(out, "remains to be done once in each CLI afterward.")
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, "Alternative single-auth bridge:")
+		fmt.Fprintln(out, "  Registering the stdio bridge (`<cli> mcp add linear -- npx -y mcp-remote https://mcp.linear.app/mcp`)")
+		fmt.Fprintln(out, "  shares one OAuth token across all CLIs via ~/.mcp-auth.")
+		fmt.Fprintln(out, "  Caveats: requires Node/npx in agent PATH and caches a single Linear account across all CLIs.")
+		fmt.Fprintln(out)
+		fmt.Fprint(out, "Register Linear MCP for unconfigured CLIs? [y]es (HTTP) / [b]ridge (shared OAuth) / [N]o ")
+		answer, _ := readAnswer(out, in)
+
+		var registerBridge bool
+		var shouldRegister bool
+		switch answer {
+		case "y", "yes":
+			shouldRegister = true
+			registerBridge = false
+		case "b", "bridge":
+			shouldRegister = true
+			registerBridge = true
+		}
+
+		if shouldRegister {
+			for i := range infos {
+				if infos[i].state == mcpStateConfigured {
+					continue
+				}
+				if registerBridge {
+					infos[i].intent = mcpIntentBridge
+				} else {
+					infos[i].intent = mcpIntentHTTP
+				}
+			}
+		}
+	}
+
+	return plan{
+		teamKey:          r.teamKey,
+		teamName:         r.teamName,
+		createTeam:       r.createTeam,
+		existingStatuses: r.existingStatuses,
+		repoRoot:         r.repoRoot,
+		configPath:       r.configPath,
+		writeConfig:      r.fresh,
+		stockText:        stock,
+		cfg:              cfg,
+		needsGitignore:   r.needsGitignore,
+		mcpInfos:         infos,
+	}, nil
+}
+
+func reportPlan(out io.Writer, p plan) {
+	if p.createTeam {
+		if p.teamName != "" && p.teamName != p.teamKey {
+			fmt.Fprintf(out, "creating team %s (%s)\n", p.teamKey, p.teamName)
+		} else {
+			fmt.Fprintf(out, "creating team %s\n", p.teamKey)
+		}
+	}
+	reportStatuses(out, p.teamKey, p.cfg, p.existingStatuses)
+	if p.writeConfig {
+		fmt.Fprintf(out, "writing %s\n", p.configPath)
+	} else {
+		fmt.Fprintf(out, "using existing %s\n", p.configPath)
+	}
+	if p.needsGitignore {
+		fmt.Fprintf(out, "adding %s to %s\n", stateDirPattern, gitignoreFile)
+	} else {
+		fmt.Fprintf(out, "%s already ignores %s\n", gitignoreFile, stateDirPattern)
+	}
+	for _, info := range p.mcpInfos {
+		cli := info.adapter.CLIName()
+		label := info.vendorName
+		if info.vendorName != cli {
+			label = fmt.Sprintf("%s (%s)", info.vendorName, cli)
+		}
+		switch info.intent {
+		case mcpIntentHTTP:
+			fmt.Fprintf(out, "registering %s Linear MCP\n", label)
+		case mcpIntentBridge:
+			fmt.Fprintf(out, "registering %s Linear MCP (bridge)\n", label)
+		}
+	}
+}
+
+func execute(ctx context.Context, board Board, out io.Writer, p plan, runner CommandRunner) (created bool, err error) {
+	if p.createTeam {
+		if err := board.EnsureTeam(ctx, p.teamKey, p.teamName); err != nil {
+			return false, fmt.Errorf("ensure team %q: %w", p.teamKey, err)
+		}
+	}
+	categories, err := board.EnsureWorkflowStates(ctx, p.teamKey, stateSpecs(p.cfg))
+	if err != nil {
+		return false, fmt.Errorf("ensure workflow states for %q: %w", p.teamKey, err)
+	}
+	reportExits(out, p.cfg, categories)
+	reportStatusOwnership(out, p.teamKey)
+	ignoreStateDir(out, p.repoRoot)
+	if p.writeConfig {
+		if created, err = writeRepoConfig(p.configPath, p.teamKey, p.stockText); err != nil {
 			return false, err
 		}
 	}
-	offerMCPRegistration(ctx, out, in, repoRoot, cfg, defaultCommandRunner)
+	for i := range p.mcpInfos {
+		info := &p.mcpInfos[i]
+		if info.intent != mcpIntentNone {
+			var cmdArgs []string
+			if info.intent == mcpIntentBridge {
+				cmdArgs = info.adapter.MCPRegisterBridge()
+			} else {
+				cmdArgs = info.adapter.MCPRegisterHTTP()
+			}
+			if len(cmdArgs) > 0 {
+				if err := runner(ctx, cmdArgs[0], cmdArgs[1:]...); err == nil {
+					info.state = mcpStateRegisteredNow
+				} else {
+					fmt.Fprintf(out, "could not register %s MCP: %v\n", info.adapter.CLIName(), err)
+				}
+			}
+		}
+	}
+	reportMCPSummary(out, p.mcpInfos)
 	return created, nil
 }
 
@@ -256,7 +505,6 @@ func appendStateDirIgnore(out io.Writer, repoRoot string) error {
 		return fmt.Errorf("read %s: %w", gitignoreFile, err)
 	}
 	if ignoresStateDir(existing) {
-		fmt.Fprintf(out, "%s already ignores %s\n", gitignoreFile, stateDirPattern)
 		return nil
 	}
 	// Never continue somebody's last line, and keep one blank line between
@@ -606,106 +854,10 @@ func reportExits(out io.Writer, cfg *config.RepoConfig, categories map[string]st
 	}
 }
 
-type mcpCLIState int
-
-const (
-	mcpStateConfigured mcpCLIState = iota
-	mcpStateRegisteredNow
-	mcpStateDeclined
-)
-
-type mcpCLIInfo struct {
-	vendorName string
-	adapter    vendors.Adapter
-	state      mcpCLIState
-}
-
-// offerMCPRegistration checks whether each vendor runner CLI has a Linear MCP
-// registered. If any is missing, it offers to register it directly or via the
-// shared stdio bridge (defaulting to decline / no-op), and summarizes the
-// final state of each CLI.
-func offerMCPRegistration(ctx context.Context, out io.Writer, in *bufio.Reader, repoRoot string, cfg *config.RepoConfig, runner CommandRunner) {
-	seen := make(map[string]bool)
-	var vendorNames []string
-	for _, r := range cfg.Runners {
-		if r.Vendor != "" && !seen[r.Vendor] {
-			seen[r.Vendor] = true
-			vendorNames = append(vendorNames, r.Vendor)
-		}
-	}
-	if len(vendorNames) == 0 {
+func reportMCPSummary(out io.Writer, infos []mcpCLIInfo) {
+	if len(infos) == 0 {
 		return
 	}
-	slices.Sort(vendorNames)
-
-	var infos []mcpCLIInfo
-	var missingCount int
-	for _, vName := range vendorNames {
-		adapter, ok := vendors.Lookup(vName)
-		if !ok {
-			continue
-		}
-		info := mcpCLIInfo{vendorName: vName, adapter: adapter}
-		if adapter.HasLinearMCP(repoRoot) {
-			info.state = mcpStateConfigured
-		} else {
-			info.state = mcpStateDeclined
-			missingCount++
-		}
-		infos = append(infos, info)
-	}
-
-	if missingCount > 0 && in != nil {
-		fmt.Fprintln(out)
-		fmt.Fprintln(out, "Each runner CLI needs its own Linear MCP server to read tickets and post stage artifacts.")
-		fmt.Fprintln(out, "Registration writes into each CLI's configuration; interactive OAuth authentication")
-		fmt.Fprintln(out, "remains to be done once in each CLI afterward.")
-		fmt.Fprintln(out)
-		fmt.Fprintln(out, "Alternative single-auth bridge:")
-		fmt.Fprintln(out, "  Registering the stdio bridge (`<cli> mcp add linear -- npx -y mcp-remote https://mcp.linear.app/mcp`)")
-		fmt.Fprintln(out, "  shares one OAuth token across all CLIs via ~/.mcp-auth.")
-		fmt.Fprintln(out, "  Caveats: requires Node/npx in agent PATH and caches a single Linear account across all CLIs.")
-		fmt.Fprintln(out)
-		fmt.Fprint(out, "Register Linear MCP for unconfigured CLIs? [y]es (HTTP) / [b]ridge (shared OAuth) / [N]o ")
-		answer, _ := readAnswer(out, in)
-
-		var registerBridge bool
-		var shouldRegister bool
-		switch answer {
-		case "y", "yes":
-			shouldRegister = true
-			registerBridge = false
-		case "b", "bridge":
-			shouldRegister = true
-			registerBridge = true
-		}
-
-		if shouldRegister {
-			for i := range infos {
-				if infos[i].state == mcpStateConfigured {
-					continue
-				}
-				var cmdArgs []string
-				if registerBridge {
-					cmdArgs = infos[i].adapter.MCPRegisterBridge()
-				} else {
-					cmdArgs = infos[i].adapter.MCPRegisterHTTP()
-				}
-				if len(cmdArgs) > 0 {
-					if err := runner(ctx, cmdArgs[0], cmdArgs[1:]...); err == nil {
-						infos[i].state = mcpStateRegisteredNow
-					} else {
-						fmt.Fprintf(out, "could not register %s MCP: %v\n", infos[i].adapter.CLIName(), err)
-					}
-				}
-			}
-		}
-	}
-
-	reportMCPSummary(out, infos)
-}
-
-func reportMCPSummary(out io.Writer, infos []mcpCLIInfo) {
 	fmt.Fprintln(out)
 	for _, info := range infos {
 		cli := info.adapter.CLIName()
