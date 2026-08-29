@@ -556,9 +556,9 @@ func TestTeamGitAutomations(t *testing.T) {
 		writeData(t, w, `{"teams":{"nodes":[{"gitAutomationStates":{
 			"pageInfo":{"hasNextPage":false,"endCursor":""},
 			"nodes":[
-				{"event":"start","state":{"name":"In Progress"},"targetBranch":null},
-				{"event":"review","state":null,"targetBranch":null},
-				{"event":"merge","state":{"name":"Done"},"targetBranch":{"branchPattern":"main"}}
+				{"id":"auto-1","event":"start","state":{"name":"In Progress"},"targetBranch":null},
+				{"id":"auto-2","event":"review","state":null,"targetBranch":null},
+				{"id":"auto-3","event":"merge","state":{"name":"Done"},"targetBranch":{"branchPattern":"main"}}
 			]}}]}}`)
 	})
 	automations, err := c.TeamGitAutomations(context.Background(), "LERP")
@@ -566,9 +566,9 @@ func TestTeamGitAutomations(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []GitAutomation{
-		{Event: GitEventStart, Status: "In Progress"},
-		{Event: GitEventReview},
-		{Event: GitEventMerge, Status: "Done", Branch: "main"},
+		{ID: "auto-1", Event: GitEventStart, Status: "In Progress"},
+		{ID: "auto-2", Event: GitEventReview},
+		{ID: "auto-3", Event: GitEventMerge, Status: "Done", Branch: "main"},
 	}
 	if !reflect.DeepEqual(automations, want) {
 		t.Errorf("automations = %+v, want %+v", automations, want)
@@ -585,20 +585,20 @@ func TestTeamGitAutomationsFollowsPages(t *testing.T) {
 		if req.Variables["after"] == nil {
 			writeData(t, w, `{"teams":{"nodes":[{"gitAutomationStates":{
 				"pageInfo":{"hasNextPage":true,"endCursor":"page-2"},
-				"nodes":[{"event":"merge","state":{"name":"Done"},"targetBranch":null}]}}]}}`)
+				"nodes":[{"id":"auto-1","event":"merge","state":{"name":"Done"},"targetBranch":null}]}}]}}`)
 			return
 		}
 		writeData(t, w, `{"teams":{"nodes":[{"gitAutomationStates":{
 			"pageInfo":{"hasNextPage":false,"endCursor":""},
-			"nodes":[{"event":"start","state":{"name":"In Progress"},"targetBranch":null}]}}]}}`)
+			"nodes":[{"id":"auto-2","event":"start","state":{"name":"In Progress"},"targetBranch":null}]}}]}}`)
 	})
 	automations, err := c.TeamGitAutomations(context.Background(), "LERP")
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := []GitAutomation{
-		{Event: GitEventMerge, Status: "Done"},
-		{Event: GitEventStart, Status: "In Progress"},
+		{ID: "auto-1", Event: GitEventMerge, Status: "Done"},
+		{ID: "auto-2", Event: GitEventStart, Status: "In Progress"},
 	}
 	if !reflect.DeepEqual(automations, want) {
 		t.Errorf("automations = %+v, want %+v", automations, want)

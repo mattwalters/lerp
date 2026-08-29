@@ -565,6 +565,7 @@ query TeamGitAutomations($key: String!, $after: String) {
       gitAutomationStates(first: 50, after: $after) {
         pageInfo { hasNextPage endCursor }
         nodes {
+          id
           event
           state { name }
           targetBranch { branchPattern }
@@ -593,6 +594,7 @@ func (c *HTTP) TeamGitAutomations(ctx context.Context, teamKey string) ([]GitAut
 							EndCursor   string `json:"endCursor"`
 						} `json:"pageInfo"`
 						Nodes []struct {
+							ID    string `json:"id"`
 							Event string `json:"event"`
 							// Null when the rule is set to take no action.
 							State *struct {
@@ -619,7 +621,7 @@ func (c *HTTP) TeamGitAutomations(ctx context.Context, teamKey string) ([]GitAut
 		}
 		states := resp.Teams.Nodes[0].GitAutomationStates
 		for _, n := range states.Nodes {
-			a := GitAutomation{Event: n.Event}
+			a := GitAutomation{ID: n.ID, Event: n.Event}
 			if n.State != nil {
 				a.Status = n.State.Name
 			}

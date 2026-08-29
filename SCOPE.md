@@ -56,11 +56,11 @@ request is open are not, and opening a pull request is what an
 implement stage does. Nothing in lerp can resolve that collision
 without becoming privileged, so it is a condition of use rather than a
 defect: on a served team, the triggers that fire mid-stage are set to
-No action — or, deliberately, at a status the pipeline itself names,
-which makes the automation the next stage's trigger rather than the
-thief of the last one's hop. Lerp reads the served teams' automations
-at startup and names the mid-stage ones that point somewhere the
-config does not.
+No action (and `lerp init` sets them itself on a team it creates) — or,
+deliberately, at a status the pipeline itself names, which makes the
+automation the next stage's trigger rather than the thief of the last
+one's hop. Lerp reads the served teams' automations at startup and names
+the mid-stage ones that point somewhere the config does not.
 
 ## The five concepts
 
@@ -168,9 +168,9 @@ five. If that trade is unappealing, the feature is out of scope.
    queue serves, where a ticket rests until a human promotes it.
 
 6. **Setup time and run time never mix.** `lerp init` (and humans) may
-   create board structure — teams, statuses matching queues. The loop
-   only moves tickets. A reconciler that edits its own board schema is
-   how you get spooky action.
+   create board structure — teams, statuses matching queues, and git-automation
+   defaults on a team init created. The loop only moves tickets. A reconciler
+   that edits its own board schema is how you get spooky action.
 
 7. **Durable = decisions; ephemeral = process.** Linear receives
    stage-boundary artifacts. The high-fidelity agent stream — every

@@ -3,6 +3,7 @@ package gitauto
 import (
 	"context"
 	"errors"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -197,5 +198,28 @@ func TestCheckReadsTeamAutomations(t *testing.T) {
 	warnings := Check(context.Background(), client, verifyRepo(), "LERP")
 	if len(warnings) == 0 || !strings.Contains(warnings[0], `team LERP: "On PR open" moves tickets to "In Progress"`) {
 		t.Errorf("Check warnings = %v", warnings)
+	}
+}
+
+func TestCollisions(t *testing.T) {
+	automations := []linear.GitAutomation{
+		{ID: "auto-1", Event: linear.GitEventMerge, Status: "In Progress"},                      // merge (benign)
+		{ID: "auto-2", Event: linear.GitEventStart},                                             // No action
+		{ID: "auto-3", Event: "closed", Status: "In Progress"},                                  // unknown event
+		{ID: "auto-4", Event: linear.GitEventStart, Status: "Plan Review"},                      // named by queue
+		{ID: "auto-5", Event: linear.GitEventMergeable, Status: "In Progress"},                  // mid-stage 4
+		{ID: "auto-6", Event: linear.GitEventStart, Status: "In Progress", Branch: "release/*"}, // mid-stage 2 (branch)
+		{ID: "auto-7", Event: linear.GitEventStart, Status: "In Progress"},                      // mid-stage 2 (team-wide)
+		{ID: "auto-8", Event: linear.GitEventDraft, Status: "In Progress"},                      // mid-stage 1
+	}
+	got := Collisions(verifyRepo(), automations)
+	want := []Collision{
+		{Automation: linear.GitAutomation{ID: "auto-8", Event: linear.GitEventDraft, Status: "In Progress"}, Label: "On draft PR open"},
+		{Automation: linear.GitAutomation{ID: "auto-7", Event: linear.GitEventStart, Status: "In Progress"}, Label: "On PR open"},
+		{Automation: linear.GitAutomation{ID: "auto-6", Event: linear.GitEventStart, Status: "In Progress", Branch: "release/*"}, Label: "On PR open"},
+		{Automation: linear.GitAutomation{ID: "auto-5", Event: linear.GitEventMergeable, Status: "In Progress"}, Label: "On PR ready for merge"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Collisions =\n%+v\nwant\n%+v", got, want)
 	}
 }

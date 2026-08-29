@@ -339,3 +339,32 @@ func TestEnsureWorkflowStatesDoesNotCreateExistingStates(t *testing.T) {
 		t.Errorf("categories = %v, want %v", categories, want)
 	}
 }
+
+func TestDisableGitAutomation(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		req := decodeRequest(t, r)
+		if !strings.Contains(req.Query, "GitAutomationDisable") {
+			t.Errorf("unexpected query: %s", req.Query)
+		}
+		if !strings.Contains(req.Query, "stateId: null") {
+			t.Errorf("query does not send stateId: null: %s", req.Query)
+		}
+		if req.Variables["id"] != "auto-1" {
+			t.Errorf("id = %v, want auto-1", req.Variables["id"])
+		}
+		writeData(t, w, `{"gitAutomationStateUpdate":{"success":true}}`)
+	})
+	if err := c.DisableGitAutomation(context.Background(), "auto-1"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDisableGitAutomationReportsFailure(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		writeData(t, w, `{"gitAutomationStateUpdate":{"success":false}}`)
+	})
+	err := c.DisableGitAutomation(context.Background(), "auto-1")
+	if err == nil || !strings.Contains(err.Error(), "reported failure") {
+		t.Errorf("err = %v, want reported failure error", err)
+	}
+}

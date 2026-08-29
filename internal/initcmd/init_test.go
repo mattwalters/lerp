@@ -60,6 +60,8 @@ type fakeBoard struct {
 	ensureCalls       int
 	automations       []linear.GitAutomation
 	automationsErr    error
+	disableCalls      []string
+	disableErr        error
 	teams             []linear.TeamRef
 	teamsErr          error
 	// existing plays the statuses the team already has, in board order.
@@ -141,6 +143,11 @@ func (b *fakeBoard) TeamGitAutomations(_ context.Context, key string) ([]linear.
 		return nil, b.automationsErr
 	}
 	return b.automations, nil
+}
+
+func (b *fakeBoard) DisableGitAutomation(_ context.Context, id string) error {
+	b.disableCalls = append(b.disableCalls, id)
+	return b.disableErr
 }
 
 func boardWorkflowStates(names ...string) []linear.WorkflowState {
@@ -1569,21 +1576,85 @@ func TestInitSurvivesUnreadableAutomations(t *testing.T) {
 	}
 }
 
-func TestInitReportsAutomationsOnCreatedTeam(t *testing.T) {
+func TestInitCreatedTeamDisablesCollidingAutomations(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		answers io.Reader
+	}{
+		{"non-interactive", nil},
+		{"interactive", strings.NewReader("interactive")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			var out bytes.Buffer
+			b := &fakeBoard{
+				teamNotFound: true,
+				automations: []linear.GitAutomation{
+					{ID: "auto-start", Event: linear.GitEventStart, Status: "In Progress"},
+					{ID: "auto-review", Event: linear.GitEventReview, Status: "In Review"},
+					{ID: "auto-merge", Event: linear.GitEventMerge, Status: "Done"},
+				},
+			}
+			if tc.answers != nil {
+				stubWizardResult(t, initui.Result{
+					TeamKey:    "DIP",
+					TeamName:   "Dip",
+					CreateTeam: true,
+					Stock: config.Stock{
+						Teams:  []string{"DIP"},
+						Plan:   true,
+						Review: true,
+						Bypass: true,
+					},
+				}, nil)
+			}
+			created, err := Init(context.Background(), b, &out, tc.answers, dir, "DIP", "Dip")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !created {
+				t.Error("created = false, want true")
+			}
+			if want := []string{"auto-start"}; !reflect.DeepEqual(b.disableCalls, want) {
+				t.Errorf("disableCalls = %v, want %v", b.disableCalls, want)
+			}
+			output := out.String()
+			for _, want := range []string{
+				"creating team DIP (Dip)",
+				"colliding pull-request automations will be set to No action",
+				"lerp now drives team DIP by moving tickets between statuses",
+				`team DIP: set "On PR open" to No action — it moved tickets to "In Progress", which this pipeline never names`,
+			} {
+				if !strings.Contains(output, want) {
+					t.Errorf("output missing %q:\n%s", want, output)
+				}
+			}
+			if strings.Contains(output, "fix: set that automation") {
+				t.Errorf("output contains unexpected fix line:\n%s", output)
+			}
+		})
+	}
+}
+
+func TestInitCreatedTeamDisableFails(t *testing.T) {
 	dir := t.TempDir()
 	var out bytes.Buffer
 	b := &fakeBoard{
 		teamNotFound: true,
 		automations: []linear.GitAutomation{
-			{Event: linear.GitEventStart, Status: "In Progress"},
+			{ID: "auto-start", Event: linear.GitEventStart, Status: "In Progress"},
 		},
+		disableErr: errors.New("network error"),
 	}
 	created, err := Init(context.Background(), b, &out, nil, dir, "NEWTEAM", "New Team")
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Init = %v, want success despite disable failure", err)
 	}
 	if !created {
 		t.Error("created = false, want true")
+	}
+	if want := []string{"auto-start"}; !reflect.DeepEqual(b.disableCalls, want) {
+		t.Errorf("disableCalls = %v, want %v", b.disableCalls, want)
 	}
 	output := out.String()
 	for _, want := range []string{
@@ -1591,6 +1662,40 @@ func TestInitReportsAutomationsOnCreatedTeam(t *testing.T) {
 		"lerp now drives team NEWTEAM by moving tickets between statuses",
 		`team NEWTEAM: "On PR open" moves tickets to "In Progress", which the repo config never names:`,
 		`fix: set that automation to No action for team NEWTEAM, or point a queue at "In Progress"`,
+		"could not disable git automation: network error",
+	} {
+		if !strings.Contains(output, want) {
+			t.Errorf("output missing %q:\n%s", want, output)
+		}
+	}
+}
+
+func TestInitAdoptedTeamDoesNotDisableAutomations(t *testing.T) {
+	dir := t.TempDir()
+	var out bytes.Buffer
+	b := &fakeBoard{
+		existing: linearDefaults,
+		automations: []linear.GitAutomation{
+			{ID: "auto-start", Event: linear.GitEventStart, Status: "In Progress"},
+			{ID: "auto-review", Event: linear.GitEventReview, Status: "In Review"},
+			{ID: "auto-merge", Event: linear.GitEventMerge, Status: "Done"},
+		},
+	}
+	created, err := Init(context.Background(), b, &out, nil, dir, "LERP", "Lerp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created {
+		t.Error("created = false, want true")
+	}
+	if len(b.disableCalls) != 0 {
+		t.Errorf("disableCalls = %v, want none on adopted team", b.disableCalls)
+	}
+	output := out.String()
+	for _, want := range []string{
+		"lerp now drives team LERP by moving tickets between statuses",
+		`team LERP: "On PR open" moves tickets to "In Progress", which the repo config never names:`,
+		`fix: set that automation to No action for team LERP, or point a queue at "In Progress"`,
 	} {
 		if !strings.Contains(output, want) {
 			t.Errorf("output missing %q:\n%s", want, output)

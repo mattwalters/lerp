@@ -36,6 +36,7 @@ type Board interface {
 	TeamWorkflowStates(ctx context.Context, teamKey string) ([]linear.WorkflowState, error)
 	EnsureWorkflowStates(ctx context.Context, teamKey string, states []linear.StateSpec) (map[string]string, error)
 	TeamGitAutomations(ctx context.Context, teamKey string) ([]linear.GitAutomation, error)
+	DisableGitAutomation(ctx context.Context, id string) error
 }
 
 // CommandRunner runs an external command with context and arguments.
@@ -493,6 +494,7 @@ func reportPlan(out io.Writer, p plan) {
 		} else {
 			fmt.Fprintf(out, "creating team %s\n", p.teamKey)
 		}
+		fmt.Fprintf(out, "  colliding pull-request automations will be set to No action\n")
 	}
 	reportStatuses(out, p.teamKey, p.cfg, p.existingStatuses)
 	if p.writeConfig {
@@ -530,8 +532,8 @@ func execute(ctx context.Context, board Board, out io.Writer, p plan, runner Com
 		}
 		// A newly created team did not exist during the read phase, so
 		// its automations are checked now that EnsureTeam has created it.
-		findings := gitauto.Check(ctx, board, p.cfg, p.teamKey)
-		reportGitAutomationsFindings(out, p.teamKey, findings)
+		automations, readErr := board.TeamGitAutomations(ctx, p.teamKey)
+		handleCreatedTeamAutomations(ctx, board, out, p.cfg, p.teamKey, automations, readErr)
 	}
 	categories, err := board.EnsureWorkflowStates(ctx, p.teamKey, stateSpecs(p.cfg))
 	if err != nil {
@@ -597,6 +599,34 @@ func writeRepoConfig(path, teamKey, stock string) (created bool, err error) {
 		return false, fmt.Errorf("close repo config: %w", closeErr)
 	}
 	return true, nil
+}
+
+func handleCreatedTeamAutomations(ctx context.Context, board Board, out io.Writer, cfg *config.RepoConfig, teamKey string, automations []linear.GitAutomation, readErr error) {
+	reportStatusOwnership(out, teamKey)
+	if readErr != nil {
+		fmt.Fprintf(out, "team %s: could not read git automations, so they are not checked: %v\n", teamKey, readErr)
+		return
+	}
+	collisions := gitauto.Collisions(cfg, automations)
+	if len(collisions) == 0 {
+		fmt.Fprintf(out, "  team %s has no pull-request automation that would move a ticket mid-stage\n", teamKey)
+		return
+	}
+	for _, c := range collisions {
+		if err := board.DisableGitAutomation(ctx, c.Automation.ID); err != nil {
+			for _, line := range gitauto.GitAutomationWarning(teamKey, c.Label, c.Automation, cfg) {
+				fmt.Fprintln(out, line)
+			}
+			fmt.Fprintf(out, "could not disable git automation: %v\n", err)
+		} else {
+			trigger := fmt.Sprintf("%q", c.Label)
+			if c.Automation.Branch != "" {
+				trigger = fmt.Sprintf("%q (target branch %q)", c.Label, c.Automation.Branch)
+			}
+			fmt.Fprintf(out, "team %s: set %s to No action — it moved tickets to %q, which this pipeline never names\n",
+				teamKey, trigger, c.Automation.Status)
+		}
+	}
 }
 
 func reportGitAutomations(out io.Writer, cfg *config.RepoConfig, teamKey string, automations []linear.GitAutomation, readErr error) {
