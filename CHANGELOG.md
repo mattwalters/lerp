@@ -4,7 +4,8 @@ All notable changes to lerp are documented in this file. The format is based
 on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-The changelog covers the binary, not the website. From 0.2.0 onward, the
+The changelog covers the binary, not the website. Each version's section is
+what GitHub publishes as that release's body. From 0.2.0 onward, the
 load-bearing sections are Changed and Removed.
 
 ## [Unreleased]
