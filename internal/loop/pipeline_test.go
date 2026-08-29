@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/mattwalters/lerp/internal/config"
+	"github.com/mattwalters/lerp/internal/gitauto"
 	"github.com/mattwalters/lerp/internal/linear"
 )
 
@@ -290,11 +291,11 @@ func TestSkippedHopNoteIsWhatTheDocsQuote(t *testing.T) {
 // adopter to a settings row under a name the screen does not use.
 func TestTheDocsNameTheMidStageTriggers(t *testing.T) {
 	page := flatten(string(readFile(t, statusFieldPage)))
-	for _, ev := range midStageEvents {
-		if !strings.Contains(page, ev.label) {
+	for _, ev := range gitauto.MidStageEvents {
+		if !strings.Contains(page, ev.Label) {
 			t.Errorf("%s never names the %q trigger the startup warning prints —\n"+
 				"the settings row an adopter is sent to find must carry one name, not two",
-				statusFieldPage, ev.label)
+				statusFieldPage, ev.Label)
 		}
 	}
 }

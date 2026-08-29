@@ -24,7 +24,7 @@ claim](starting-past-the-limit.md) and runs the stage.
 A run whose ticket left its queue status before it finished keeps that
 move, and the status bar says which hop it skipped. An agent escalating
 moves a ticket to a status your pipeline names. An automation usually
-moves it to one it does not, and lerp names those automations at startup.
+moves it to one it does not, and lerp names those automations at init and every start.
 `.lerp/loop.log` has the whole line:
 
 > LERP-42 left "Implementing" for "In Progress" during its run — the

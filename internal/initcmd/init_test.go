@@ -20,6 +20,8 @@ type fakeBoard struct {
 	teamKey, teamName string
 	teamStatesKey     string
 	teamNotFound      bool
+	automations       []linear.GitAutomation
+	automationsErr    error
 	// existing plays the statuses the team already has, in board order.
 	existing []linear.WorkflowState
 	states   []linear.StateSpec
@@ -46,6 +48,13 @@ func (b *fakeBoard) TeamWorkflowStates(_ context.Context, teamKey string) ([]lin
 		return nil, linear.ErrNotFound
 	}
 	return b.existing, nil
+}
+
+func (b *fakeBoard) TeamGitAutomations(_ context.Context, _ string) ([]linear.GitAutomation, error) {
+	if b.automationsErr != nil {
+		return nil, b.automationsErr
+	}
+	return b.automations, nil
 }
 
 func (b *fakeBoard) EnsureWorkflowStates(_ context.Context, _ string, states []linear.StateSpec) (map[string]string, error) {
@@ -732,7 +741,6 @@ func TestInitConfirmPrecedesExecute(t *testing.T) {
 			afterWorkflow := output[b.reportLenAtWorkflow:]
 			for _, want := range []string{
 				"pipeline exit \"In Review\"",
-				"lerp now drives team LERP by moving tickets between statuses",
 				"added .lerp/ to .gitignore",
 			} {
 				if !strings.Contains(afterWorkflow, want) {
@@ -876,15 +884,18 @@ func TestInitReportsStatusOwnership(t *testing.T) {
 			}
 			for _, want := range []string{
 				"lerp now drives team LERP by moving tickets between statuses",
-				"team LERP's workflow settings",
-				"No action",
-				// The merged-PR trigger is benign only for a pipeline that
-				// ends before the merge, and this clause is the copy that
-				// has to stay in step with the README's version of it.
-				"unless your pipeline has a stage that runs after the merge",
 			} {
 				if !strings.Contains(out.String(), want) {
 					t.Errorf("report %q\nmissing %q", out.String(), want)
+				}
+			}
+			for _, dontWant := range []string{
+				"team LERP's workflow settings",
+				"No action",
+				"unless your pipeline has a stage that runs after the merge",
+			} {
+				if strings.Contains(out.String(), dontWant) {
+					t.Errorf("report %q\ncontains trimmed text %q", out.String(), dontWant)
 				}
 			}
 		})
@@ -1345,6 +1356,125 @@ func TestInitMCPRegistrationFailureReportsError(t *testing.T) {
 		"could not register claude MCP: command not found in PATH",
 		"claude: Linear MCP not configured",
 		"register: claude mcp add --transport http linear https://mcp.linear.app/mcp",
+	} {
+		if !strings.Contains(output, want) {
+			t.Errorf("output missing %q:\n%s", want, output)
+		}
+	}
+}
+
+func TestInitReportsCollidingAutomationOnConfirm(t *testing.T) {
+	dir := t.TempDir()
+	var out bytes.Buffer
+	b := &orderBoard{
+		fakeBoard: fakeBoard{
+			existing: linearDefaults,
+			automations: []linear.GitAutomation{
+				{Event: linear.GitEventStart, Status: "In Progress"},
+			},
+		},
+		out: &out,
+	}
+	_, err := Init(context.Background(), b, &out, nil, dir, "LERP", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := out.String()
+	// Confirm before execute: the collision finding is printed before EnsureWorkflowStates runs
+	if b.reportLenAtWorkflow <= 0 {
+		t.Fatal("EnsureWorkflowStates was not called")
+	}
+	reportPrefix := output[:b.reportLenAtWorkflow]
+	for _, want := range []string{
+		`team LERP: "On PR open" moves tickets to "In Progress", which the repo config never names:`,
+		`  a run in "Planning" that opens a pull request will be moved there mid-stage, losing its on_success hop to "Plan Review"`,
+		`fix: set that automation to No action for team LERP, or point a queue at "In Progress"`,
+	} {
+		if !strings.Contains(reportPrefix, want) {
+			t.Errorf("confirm report missing %q:\n%s", want, reportPrefix)
+		}
+	}
+}
+
+func TestInitReportsCleanWhenPipelineNamesTarget(t *testing.T) {
+	dir := t.TempDir()
+	var out bytes.Buffer
+	// Target is "Plan Review", which stock config names
+	b := &fakeBoard{
+		existing: linearDefaults,
+		automations: []linear.GitAutomation{
+			{Event: linear.GitEventStart, Status: "Plan Review"},
+		},
+	}
+	_, err := Init(context.Background(), b, &out, nil, dir, "LERP", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "team LERP has no pull-request automation that would move a ticket mid-stage"
+	if !strings.Contains(out.String(), want) {
+		t.Errorf("output missing clean line %q:\n%s", want, out.String())
+	}
+	if strings.Contains(out.String(), "fix: set that automation") {
+		t.Errorf("output contains unexpected finding:\n%s", out.String())
+	}
+}
+
+func TestInitReportsCleanWhenNoAutomations(t *testing.T) {
+	dir := t.TempDir()
+	var out bytes.Buffer
+	b := &fakeBoard{existing: linearDefaults}
+	_, err := Init(context.Background(), b, &out, nil, dir, "LERP", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "team LERP has no pull-request automation that would move a ticket mid-stage"
+	if !strings.Contains(out.String(), want) {
+		t.Errorf("output missing clean line %q:\n%s", want, out.String())
+	}
+}
+
+func TestInitSurvivesUnreadableAutomations(t *testing.T) {
+	dir := t.TempDir()
+	var out bytes.Buffer
+	b := &fakeBoard{
+		existing:       linearDefaults,
+		automationsErr: errors.New("network timeout"),
+	}
+	created, err := Init(context.Background(), b, &out, nil, dir, "LERP", "")
+	if err != nil {
+		t.Fatalf("Init = %v, want success despite unreadable automations", err)
+	}
+	if !created {
+		t.Error("created = false, want true")
+	}
+	want := "team LERP: could not read git automations, so they are not checked: network timeout"
+	if !strings.Contains(out.String(), want) {
+		t.Errorf("output missing warning %q:\n%s", want, out.String())
+	}
+}
+
+func TestInitReportsAutomationsOnCreatedTeam(t *testing.T) {
+	dir := t.TempDir()
+	var out bytes.Buffer
+	b := &fakeBoard{
+		teamNotFound: true,
+		automations: []linear.GitAutomation{
+			{Event: linear.GitEventStart, Status: "In Progress"},
+		},
+	}
+	created, err := Init(context.Background(), b, &out, nil, dir, "NEWTEAM", "New Team")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created {
+		t.Error("created = false, want true")
+	}
+	output := out.String()
+	for _, want := range []string{
+		"creating team NEWTEAM (New Team)",
+		"lerp now drives team NEWTEAM by moving tickets between statuses",
+		`team NEWTEAM: "On PR open" moves tickets to "In Progress", which the repo config never names:`,
+		`fix: set that automation to No action for team NEWTEAM, or point a queue at "In Progress"`,
 	} {
 		if !strings.Contains(output, want) {
 			t.Errorf("output missing %q:\n%s", want, output)

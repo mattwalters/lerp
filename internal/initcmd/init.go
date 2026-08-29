@@ -20,6 +20,7 @@ import (
 
 	"github.com/mattwalters/lerp/internal/childenv"
 	"github.com/mattwalters/lerp/internal/config"
+	"github.com/mattwalters/lerp/internal/gitauto"
 	"github.com/mattwalters/lerp/internal/linear"
 	"github.com/mattwalters/lerp/internal/vendors"
 )
@@ -31,6 +32,7 @@ type Board interface {
 	EnsureTeam(ctx context.Context, key, name string) error
 	TeamWorkflowStates(ctx context.Context, teamKey string) ([]linear.WorkflowState, error)
 	EnsureWorkflowStates(ctx context.Context, teamKey string, states []linear.StateSpec) (map[string]string, error)
+	TeamGitAutomations(ctx context.Context, teamKey string) ([]linear.GitAutomation, error)
 }
 
 // CommandRunner runs an external command with context and arguments.
@@ -55,6 +57,8 @@ type readState struct {
 	teamName         string
 	createTeam       bool
 	existingStatuses []linear.WorkflowState
+	automations      []linear.GitAutomation
+	automationsErr   error
 	repoRoot         string
 	configPath       string
 	fresh            bool
@@ -91,6 +95,8 @@ type plan struct {
 	teamName         string
 	createTeam       bool
 	existingStatuses []linear.WorkflowState
+	automations      []linear.GitAutomation
+	automationsErr   error
 	repoRoot         string
 	configPath       string
 	writeConfig      bool
@@ -191,6 +197,11 @@ func read(ctx context.Context, board Board, repoRoot, teamKey, teamName string) 
 			return readState{}, fmt.Errorf("read statuses of team %q: %w", teamKey, err)
 		}
 	}
+	var automations []linear.GitAutomation
+	var automationsErr error
+	if !createTeam {
+		automations, automationsErr = board.TeamGitAutomations(ctx, teamKey)
+	}
 
 	gitIgnorePath := filepath.Join(repoRoot, gitignoreFile)
 	existingGitignore, gitErr := os.ReadFile(gitIgnorePath)
@@ -211,6 +222,8 @@ func read(ctx context.Context, board Board, repoRoot, teamKey, teamName string) 
 		teamName:         teamName,
 		createTeam:       createTeam,
 		existingStatuses: existing,
+		automations:      automations,
+		automationsErr:   automationsErr,
 		repoRoot:         repoRoot,
 		configPath:       path,
 		fresh:            fresh,
@@ -313,6 +326,8 @@ func decide(out io.Writer, answers io.Reader, r readState) (plan, error) {
 		teamName:         r.teamName,
 		createTeam:       r.createTeam,
 		existingStatuses: r.existingStatuses,
+		automations:      r.automations,
+		automationsErr:   r.automationsErr,
 		repoRoot:         r.repoRoot,
 		configPath:       r.configPath,
 		writeConfig:      r.fresh,
@@ -355,6 +370,9 @@ func reportPlan(out io.Writer, p plan) {
 			fmt.Fprintf(out, "registering %s Linear MCP (bridge)\n", label)
 		}
 	}
+	if !p.createTeam {
+		reportGitAutomations(out, p.cfg, p.teamKey, p.automations, p.automationsErr)
+	}
 }
 
 func execute(ctx context.Context, board Board, out io.Writer, p plan, runner CommandRunner) (created bool, err error) {
@@ -362,13 +380,16 @@ func execute(ctx context.Context, board Board, out io.Writer, p plan, runner Com
 		if err := board.EnsureTeam(ctx, p.teamKey, p.teamName); err != nil {
 			return false, fmt.Errorf("ensure team %q: %w", p.teamKey, err)
 		}
+		// A newly created team did not exist during the read phase, so
+		// its automations are checked now that EnsureTeam has created it.
+		findings := gitauto.Check(ctx, board, p.cfg, p.teamKey)
+		reportGitAutomationsFindings(out, p.teamKey, findings)
 	}
 	categories, err := board.EnsureWorkflowStates(ctx, p.teamKey, stateSpecs(p.cfg))
 	if err != nil {
 		return false, fmt.Errorf("ensure workflow states for %q: %w", p.teamKey, err)
 	}
 	reportExits(out, p.cfg, categories)
-	reportStatusOwnership(out, p.teamKey)
 	ignoreStateDir(out, p.repoRoot)
 	if p.writeConfig {
 		if created, err = writeRepoConfig(p.configPath, p.teamKey, p.stockText); err != nil {
@@ -430,35 +451,38 @@ func writeRepoConfig(path, teamKey, stock string) (created bool, err error) {
 	return true, nil
 }
 
+func reportGitAutomations(out io.Writer, cfg *config.RepoConfig, teamKey string, automations []linear.GitAutomation, readErr error) {
+	findings := gitauto.Findings(cfg, teamKey, automations, readErr)
+	reportGitAutomationsFindings(out, teamKey, findings)
+}
+
+func reportGitAutomationsFindings(out io.Writer, teamKey string, findings []string) {
+	reportStatusOwnership(out, teamKey)
+	if len(findings) == 0 {
+		fmt.Fprintf(out, "  team %s has no pull-request automation that would move a ticket mid-stage\n", teamKey)
+		return
+	}
+	for _, line := range findings {
+		fmt.Fprintln(out, line)
+	}
+}
+
 // reportStatusOwnership states the price of lerp's central bet, at the one
 // moment the operator is configuring this team: a queue is a status, a stage
 // finishes by moving the ticket, so lerp needs the status field on the teams
 // it serves. An automation that moves a ticket mid-stage takes that stage's
-// move away — the loop keeps whatever move it finds, since that is how an
-// agent escalates — and the on_success hop never happens. Nothing in the
-// config expresses that requirement, so an adopter who is never told pays it
-// by surprise, one silently skipped stage at a time.
+// move away.
 //
 // Setup time is where it belongs (SCOPE invariant 6): the team's settings
 // screen is the one part of setup lerp does not do, and this is the moment
 // the operator is already on the board.
 //
-// Deliberately short, and deliberately not a list of trigger names. The
-// startup check reads the team's actual automations and names each mid-stage
-// rule whose target the config never mentions, what each queue loses to it and
-// the fix; repeating any of that here would be a second copy going stale
-// against the real one. What init adds is the rule itself, before there is
-// anything to detect — an operator who hears "lerp owns this field" while
-// setting the team up does not have to trip the collision to learn it.
+// Deliberately short: the rule itself, followed by the team's actual findings
+// or the clean line saying none were found.
 func reportStatusOwnership(out io.Writer, teamKey string) {
 	fmt.Fprintf(out, "lerp now drives team %s by moving tickets between statuses, so it needs that\n", teamKey)
 	fmt.Fprintf(out, "  field: an automation that moves a ticket while a stage is running takes the\n")
-	fmt.Fprintf(out, "  stage's own move away, and the hop it would have made never happens. Under\n")
-	fmt.Fprintf(out, "  team %s's workflow settings, set the pull-request triggers that fire while a\n", teamKey)
-	fmt.Fprintf(out, "  pull request is open to No action; the one for a merged pull request is the\n")
-	fmt.Fprintf(out, "  keeper, unless your pipeline has a stage that runs after the merge. Every\n")
-	fmt.Fprintf(out, "  `lerp` start re-reads this team's automations and names the mid-stage ones\n")
-	fmt.Fprintf(out, "  that point somewhere %s does not.\n", "the repo config")
+	fmt.Fprintf(out, "  stage's own move away, and the hop it would have made never happens.\n")
 }
 
 // gitignoreFile is the ignore list init appends to, at the repository root.

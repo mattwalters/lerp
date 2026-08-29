@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/mattwalters/lerp/internal/config"
+	"github.com/mattwalters/lerp/internal/gitauto"
 	"github.com/mattwalters/lerp/internal/linear"
 	"github.com/mattwalters/lerp/internal/vendors"
 )
@@ -103,23 +104,6 @@ func verifyStatuses(ctx context.Context, client linear.Client, repo *config.Repo
 	return errors.New(strings.Join(report, "\n"))
 }
 
-// midStageEvents are the Linear git automation events that fire while a pull
-// request is open — which, for a ticket a queue is running, is mid-stage —
-// paired with the way this warning names them. Listed in the order they fire,
-// which is the order the report walks them in.
-//
-// "merge" is deliberately absent: it fires once the pull request lands, after
-// the pipeline is finished with the ticket, and SCOPE names that the benign
-// case. So is any event Linear may add that lerp has never heard of — a rule
-// lerp cannot place in a run's life is one it cannot honestly advise on, and
-// a guess here would be the heuristic this check exists to avoid.
-var midStageEvents = []struct{ event, label string }{
-	{linear.GitEventDraft, "On draft PR open"},
-	{linear.GitEventStart, "On PR open"},
-	{linear.GitEventReview, "On PR review request or activity"},
-	{linear.GitEventMergeable, "On PR ready for merge"},
-}
-
 // verifyGitAutomations reports the team git automations that would move a
 // ticket out from under a live run. Linear's git automations are configured
 // per team; one that fires mid-stage moves the ticket while an agent is still
@@ -137,66 +121,11 @@ var midStageEvents = []struct{ event, label string }{
 // check never blocks a run, and one that failed to run is a thing to say, not
 // a reason to stop.
 func verifyGitAutomations(ctx context.Context, client linear.Client, repo *config.RepoConfig) []string {
-	// Every status lerp.toml names: each queue's own status plus every
-	// on_success and on_failure target, which is exactly the list promote
-	// offers.
-	named := make(map[string]bool)
-	for _, status := range repo.PromoteTargets() {
-		named[status] = true
-	}
 	var report []string
 	for _, team := range repo.Teams {
-		automations, err := client.TeamGitAutomations(ctx, team)
-		if err != nil {
-			report = append(report, fmt.Sprintf(
-				"team %s: could not read git automations, so this run is not checked for them: %v", team, err))
-			continue
-		}
-		for _, ev := range midStageEvents {
-			// One automation per event team-wide, plus one per target branch
-			// scoped to it; branch order keeps the report stable whatever
-			// order Linear lists them in.
-			var colliding []linear.GitAutomation
-			for _, a := range automations {
-				if a.Event == ev.event && a.Status != "" && !named[a.Status] {
-					colliding = append(colliding, a)
-				}
-			}
-			slices.SortFunc(colliding, func(x, y linear.GitAutomation) int {
-				return strings.Compare(x.Branch, y.Branch)
-			})
-			for _, a := range colliding {
-				report = append(report, gitAutomationWarning(team, ev.label, a, repo)...)
-			}
-		}
+		report = append(report, gitauto.Check(ctx, client, repo, team)...)
 	}
 	return report
-}
-
-// gitAutomationWarning is one collision as the operator reads it: what the
-// automation does, what it costs each stage, and the two ways out. It names
-// every queue because lerp cannot know which stage opens the pull request
-// that trips the automation — so each line says what a run in that status
-// loses if it is the one that opens it, rather than asserting that it will.
-func gitAutomationWarning(team, label string, a linear.GitAutomation, repo *config.RepoConfig) []string {
-	trigger, scope := fmt.Sprintf("%q", label), fmt.Sprintf("for team %s", team)
-	if a.Branch != "" {
-		// A branch-scoped rule lives on its own settings row and overrides
-		// the team-wide one; an operator sent to the team default would find
-		// it already saying something else.
-		trigger = fmt.Sprintf("%q (target branch %q)", label, a.Branch)
-		scope = fmt.Sprintf("for target branch %q on team %s", a.Branch, team)
-	}
-	lines := []string{fmt.Sprintf("team %s: %s moves tickets to %q, which %s never names:",
-		team, trigger, a.Status, "the repo config")}
-	for _, qname := range slices.Sorted(maps.Keys(repo.Queues)) {
-		q := repo.Queues[qname]
-		lines = append(lines, fmt.Sprintf(
-			"  a run in %q that opens a pull request will be moved there mid-stage, losing its on_success hop to %q",
-			q.Status, q.OnSuccess))
-	}
-	return append(lines, fmt.Sprintf(
-		"fix: set that automation to No action %s, or point a queue at %q", scope, a.Status))
 }
 
 // verifyLinearMCP reports any vendor runner whose CLI does not have a Linear
