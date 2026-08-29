@@ -52,7 +52,7 @@ Whichever route you took, `lerp version` prints what you got.
 - Coding agents. One or more of Claude Code CLI, Codex CLI, or
   Antigravity CLI. Each one needs its own Linear access, set up below.
 - Linear automations that move tickets mid-run break the pipeline. Lerp
-  names the offenders at startup, and
+  names the offenders at init and every start, and
   [troubleshooting](troubleshooting.md#why-did-my-ticket-skip-a-stage)
   has the fix.
 - Read [SECURITY.md](SECURITY.md). Anyone with write access to your
