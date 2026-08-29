@@ -18,6 +18,8 @@ import (
 
 type fakeBoard struct {
 	teamKey, teamName string
+	teamStatesKey     string
+	teamNotFound      bool
 	// existing plays the statuses the team already has, in board order.
 	existing []string
 	states   []linear.StateSpec
@@ -34,9 +36,13 @@ func (b *fakeBoard) EnsureTeam(_ context.Context, key, name string) error {
 	return b.err
 }
 
-func (b *fakeBoard) TeamStates(_ context.Context, _ string) ([]string, error) {
+func (b *fakeBoard) TeamStates(_ context.Context, teamKey string) ([]string, error) {
+	b.teamStatesKey = teamKey
 	if b.err != nil {
 		return nil, b.err
+	}
+	if b.teamNotFound {
+		return nil, linear.ErrNotFound
 	}
 	return b.existing, nil
 }
@@ -90,7 +96,7 @@ on_failure = "Human Review"
 
 func TestInitCreatesConfigAndStates(t *testing.T) {
 	dir := t.TempDir()
-	b := &fakeBoard{existing: linearDefaults}
+	b := &fakeBoard{teamNotFound: true}
 	var out bytes.Buffer
 	// Fast path with every default, then an explicit yes to the grant.
 	answers := strings.NewReader("\n\n\ny\n")
@@ -531,7 +537,7 @@ func TestInitNormalizesTeamKeyCase(t *testing.T) {
 	for _, teamInput := range []string{"lerp", "  lerp  ", "lErP"} {
 		t.Run(teamInput, func(t *testing.T) {
 			dir := t.TempDir()
-			b := &fakeBoard{existing: linearDefaults}
+			b := &fakeBoard{teamNotFound: true}
 			created, err := Init(context.Background(), b, io.Discard, nil, dir, teamInput, "")
 			if err != nil {
 				t.Fatalf("Init error = %v", err)
@@ -586,8 +592,8 @@ func TestInitNormalizesTeamKeyOnRepeat(t *testing.T) {
 	if created {
 		t.Error("created = true, want false for existing config")
 	}
-	if b.teamKey != "LERP" {
-		t.Errorf("EnsureTeam key = %q, want LERP", b.teamKey)
+	if b.teamStatesKey != "LERP" {
+		t.Errorf("TeamStates key = %q, want LERP", b.teamStatesKey)
 	}
 }
 
@@ -598,12 +604,163 @@ func TestInitRejectsMappingTwoQueuesOntoOneStatus(t *testing.T) {
 	// Customize: plan → 2) Todo, plan review → create, implement → 2) Todo,
 	// then defaults.
 	answers := strings.NewReader("\n\nc\n2\nc\n2\nc\nc\nc\nn\n")
-	_, err := Init(context.Background(), &fakeBoard{existing: linearDefaults}, io.Discard, answers, dir, "LERP", "")
+	b := &fakeBoard{existing: linearDefaults}
+	_, err := Init(context.Background(), b, io.Discard, answers, dir, "LERP", "")
 	if err == nil || !strings.Contains(err.Error(), `both watch status "Todo"`) {
 		t.Fatalf("Init error = %v", err)
 	}
 	if _, statErr := os.Stat(filepath.Join(dir, config.RepoConfigFile)); !os.IsNotExist(statErr) {
 		t.Fatalf("config was created: %v", statErr)
+	}
+	if b.teamKey != "" {
+		t.Errorf("board touched (%q) before rejection: EnsureTeam must not run before validation", b.teamKey)
+	}
+}
+
+// A fresh init against a team that does not exist runs converse against an
+// empty status list, reports team creation, and calls EnsureTeam in execute.
+func TestInitCreatesNonExistentTeam(t *testing.T) {
+	dir := t.TempDir()
+	b := &fakeBoard{teamNotFound: true}
+	var out bytes.Buffer
+	answers := strings.NewReader("\n\n\ny\n")
+	created, err := Init(context.Background(), b, &out, answers, dir, "NEWTEAM", "New Team")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created {
+		t.Error("created = false, want true")
+	}
+	if b.teamKey != "NEWTEAM" || b.teamName != "New Team" {
+		t.Errorf("EnsureTeam = (%q, %q), want (NEWTEAM, New Team)", b.teamKey, b.teamName)
+	}
+	output := out.String()
+	for _, want := range []string{
+		"team NEWTEAM has no statuses yet",
+		"creating team NEWTEAM (New Team)",
+		"creating on team NEWTEAM: Implementing, In Review, Needs Attention, Plan Review, Planning",
+	} {
+		if !strings.Contains(output, want) {
+			t.Errorf("output missing %q:\n%s", want, output)
+		}
+	}
+}
+
+type orderBoard struct {
+	fakeBoard
+	out                 *bytes.Buffer
+	reportLenAtTeam     int
+	reportLenAtWorkflow int
+}
+
+func (b *orderBoard) EnsureTeam(ctx context.Context, key, name string) error {
+	b.reportLenAtTeam = b.out.Len()
+	return b.fakeBoard.EnsureTeam(ctx, key, name)
+}
+
+func (b *orderBoard) EnsureWorkflowStates(ctx context.Context, key string, states []linear.StateSpec) (map[string]string, error) {
+	b.reportLenAtWorkflow = b.out.Len()
+	return b.fakeBoard.EnsureWorkflowStates(ctx, key, states)
+}
+
+// Confirm precedes execute: the entire pre-write report is printed before
+// the first board write or file modification happens.
+func TestInitConfirmPrecedesExecute(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		answers io.Reader
+	}{
+		{"interactive", strings.NewReader("\n\n\n\n")},
+		{"non-interactive", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			var out bytes.Buffer
+			b := &orderBoard{
+				fakeBoard: fakeBoard{teamNotFound: true},
+				out:       &out,
+			}
+			_, err := Init(context.Background(), b, &out, tc.answers, dir, "LERP", "Lerp")
+			if err != nil {
+				t.Fatal(err)
+			}
+			output := out.String()
+			if b.reportLenAtTeam <= 0 {
+				t.Fatalf("EnsureTeam was not called or called before report")
+			}
+			if b.reportLenAtWorkflow <= 0 {
+				t.Fatalf("EnsureWorkflowStates was not called or called before report")
+			}
+			// Pre-write report is before the first write
+			reportPrefix := output[:b.reportLenAtWorkflow]
+			for _, want := range []string{
+				"creating team LERP (Lerp)",
+				"creating on team LERP: Implementing, In Review, Needs Attention, Plan Review, Planning",
+				"writing " + filepath.Join(dir, config.RepoConfigFile),
+				"adding .lerp/ to .gitignore",
+			} {
+				if !strings.Contains(reportPrefix, want) {
+					t.Errorf("confirm report missing %q before execute:\n%s", want, reportPrefix)
+				}
+			}
+			// Post-execute reports appear after
+			afterWorkflow := output[b.reportLenAtWorkflow:]
+			for _, want := range []string{
+				"pipeline exit \"In Review\"",
+				"lerp now drives team LERP by moving tickets between statuses",
+				"added .lerp/ to .gitignore",
+			} {
+				if !strings.Contains(afterWorkflow, want) {
+					t.Errorf("post-execute report missing %q:\n%s", want, afterWorkflow)
+				}
+			}
+		})
+	}
+}
+
+// Confirm names every write class: team creation, created statuses, adopted
+// statuses, config path, .gitignore line, and MCP registrations.
+func TestInitConfirmNamesEveryWriteClass(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	var commandsRun [][]string
+	restore := SetCommandRunner(func(ctx context.Context, name string, args ...string) error {
+		commandsRun = append(commandsRun, append([]string{name}, args...))
+		return nil
+	})
+	defer restore()
+
+	// Customize: plan -> create, plan review -> create, implement -> 2) Todo, exit -> 4) In Review, failures -> create; bypass -> n; MCP -> y
+	answers := strings.NewReader("\n\nc\nc\nc\n2\n\nc\nn\ny\n")
+	existing := []string{"Backlog", "Todo", "In Progress", "In Review", "Done"}
+	var out bytes.Buffer
+	b := &orderBoard{
+		fakeBoard: fakeBoard{
+			teamNotFound: true,
+			existing:     existing,
+		},
+		out: &out,
+	}
+	// For testing all write classes together:
+	// A new team where existing statuses are adopted and some created:
+	// If teamNotFound is false, team creation is tested in TestInitCreatesNonExistentTeam and TestInitConfirmPrecedesExecute.
+	// Here with teamNotFound: false, we have created statuses + adopted statuses + config + gitignore + MCP.
+	b.teamNotFound = false
+	_, err := Init(context.Background(), b, &out, answers, dir, "LERP", "Lerp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := out.String()
+	reportPrefix := output[:b.reportLenAtWorkflow]
+	for _, want := range []string{
+		"creating on team LERP: Needs Attention, Plan Review, Planning  ·  using existing: In Review (implement exit), Todo (implement)",
+		"writing " + filepath.Join(dir, config.RepoConfigFile),
+		"adding .lerp/ to .gitignore",
+		"registering claude Linear MCP",
+	} {
+		if !strings.Contains(reportPrefix, want) {
+			t.Errorf("confirm report missing write class %q:\n%s", want, reportPrefix)
+		}
 	}
 }
 
