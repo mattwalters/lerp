@@ -6,10 +6,11 @@ weight: 120
 
 # `lerp.toml`
 
-Lerp reads one file, `lerp.toml` at the repo root, **checked in**. It
-declares which Linear teams the repo serves, how to build a workspace,
-and the pipeline itself, runners and queues with their prompts. It holds
-no durable state, because [Linear is the
+Lerp reads one file, `lerp.toml` at the root of your project — the
+directory holding the file, found by walking up from wherever lerp was
+run — **checked in**. It declares which Linear teams the repo serves,
+how to build a workspace, and the pipeline itself, runners and queues
+with their prompts. It holds no durable state, because [Linear is the
 database](how-lerp-works.md#ticket). Parsing is strict, and an unknown
 key is an error.
 
