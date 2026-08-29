@@ -65,6 +65,22 @@ jobs:
       # Dependabot or a scheduled bump do the floating.
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
 
+  # Defense in depth behind GitHub's push protection, which is already enabled
+  # and catches the main case before a push lands. What gitleaks adds over it:
+  # custom rules GitHub does not carry (like Linear API keys) and a check that
+  # fails the build on any leak detected. On pull requests it scans only the
+  # incoming commit range; on pushes to main it scans history. fetch-depth: 0
+  # ensures the commit graph is available for range resolution.
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   # `.goreleaser.yaml` is otherwise executed exactly once in anger — by
   # release.yml, on a tag push, which is to say *after* the one step in the
   # Makefile that cannot be undone. A config error, a schema rule a later
