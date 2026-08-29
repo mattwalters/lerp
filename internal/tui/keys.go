@@ -25,7 +25,9 @@ type keymap struct {
 	Promote   key.Binding
 	// Visual starts the inbox's multi-select: lazygit's own key for a range
 	// selection, extended by the movement keys and fed straight to Promote.
-	// VisualAll selects the entire shown range in one keystroke.
+	// VisualAll is A for "all" — selected over vim's V so it reads on its
+	// own rather than relying on knowing visual line mode — selecting the
+	// entire shown range in one keystroke.
 	Visual     key.Binding
 	VisualAll  key.Binding
 	Eject      key.Binding
@@ -85,7 +87,7 @@ func newKeymap() keymap {
 		Close:     key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "close detail")),
 		Promote:   key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "promote")),
 		Visual:    key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "select a range")),
-		VisualAll: key.NewBinding(key.WithKeys("V"), key.WithHelp("V", "select all")),
+		VisualAll: key.NewBinding(key.WithKeys("A"), key.WithHelp("A", "select all")),
 		Eject:     key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "eject")),
 		// S, not s: a letter that means two different things depending on
 		// which panel has focus is worse than a letter nothing else uses.
