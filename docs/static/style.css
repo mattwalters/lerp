@@ -607,6 +607,90 @@ th, td {
   text-align: left;
 }
 
+/* Config snippets & format tabs ------------------------------------ */
+
+.config-snippet {
+  margin: 1.2rem 0;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--bg-soft);
+  overflow: hidden;
+}
+
+.config-snippet .config-tabs {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.4rem 0.6rem;
+  background: var(--bg);
+  border-bottom: 1px solid var(--rule);
+}
+
+.config-snippet .config-tab {
+  font: 0.8rem/1 var(--mono);
+  color: var(--fg-soft);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 0.3rem 0.6rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+.config-snippet .config-tab:hover {
+  color: var(--fg);
+}
+
+.config-snippet .config-tab:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* Default (TOML active) */
+:root:not([data-format="yaml"]):not([data-format="json"]) .config-snippet .config-tab-toml,
+:root[data-format="toml"] .config-snippet .config-tab-toml {
+  color: var(--fg);
+  background: var(--bg-soft);
+  border-color: var(--rule);
+  font-weight: 600;
+}
+
+:root:not([data-format="yaml"]):not([data-format="json"]) .config-snippet .config-panel:not(.config-panel-toml),
+:root[data-format="toml"] .config-snippet .config-panel:not(.config-panel-toml) {
+  display: none;
+}
+
+/* YAML active */
+:root[data-format="yaml"] .config-snippet .config-tab-yaml {
+  color: var(--fg);
+  background: var(--bg-soft);
+  border-color: var(--rule);
+  font-weight: 600;
+}
+
+:root[data-format="yaml"] .config-snippet .config-panel:not(.config-panel-yaml) {
+  display: none;
+}
+
+/* JSON active */
+:root[data-format="json"] .config-snippet .config-tab-json {
+  color: var(--fg);
+  background: var(--bg-soft);
+  border-color: var(--rule);
+  font-weight: 600;
+}
+
+:root[data-format="json"] .config-snippet .config-panel:not(.config-panel-json) {
+  display: none;
+}
+
+.config-snippet .config-panel pre {
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+}
+
 /* Casts -------------------------------------------------------------- */
 
 /* A recording of the TUI, with the keys it presses named underneath — the
@@ -629,47 +713,20 @@ figure.cast video {
   border-radius: 6px;
 }
 
-/* Cast and shot pairs: light twin visible by default, swapped under
+/* Cast video pairs: light twin visible by default, swapped under
    dark mode across all three states (system preference, explicit dark, explicit
    light override) mirroring the palette block above. */
-figure.cast video.cast-dark,
-img.shot-dark {
+figure.cast video.cast-dark {
   display: none;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) figure.cast video.cast-dark { display: block; }
-  :root:not([data-theme="light"]) img.shot-dark { display: inline; }
-  :root:not([data-theme="light"]) figure.cast video.cast-light,
-  :root:not([data-theme="light"]) img.shot-light { display: none; }
+  :root:not([data-theme="light"]) figure.cast video.cast-light { display: none; }
 }
 
 :root[data-theme="dark"] figure.cast video.cast-dark { display: block; }
-:root[data-theme="dark"] img.shot-dark { display: inline; }
-:root[data-theme="dark"] figure.cast video.cast-light,
-:root[data-theme="dark"] img.shot-light { display: none; }
-
-/* A shot otherwise sits flush against the paragraph after it: the gap
-   above comes from the previous paragraph's bottom margin, and the
-   paragraph below brings no top margin of its own.
-
-   The border is the window's edge: the shots render on the same Catppuccin
-   base the page is painted with, so without it the code floats on the page
-   with nothing marking where the window ends — same treatment as the cast
-   videos above. Radius 10 matches the radius the Makefile bakes into the
-   SVG's own window; the shot and page backgrounds being identical is what
-   keeps any scaled-corner mismatch invisible. */
-img.shot-dark,
-img.shot-light {
-  /* width, not just max-width: an SVG shot has a natural width (the longest
-     line freeze rendered), and left alone it fills the column only on
-     screens narrow enough to clamp it. Full measure everywhere, like the
-     pipeline SVG and the cast videos. */
-  width: 100%;
-  margin-bottom: 1rem;
-  border: 1px solid var(--rule);
-  border-radius: 10px;
-}
+:root[data-theme="dark"] figure.cast video.cast-light { display: none; }
 /* A hand-drawn inline-SVG diagram (see the loop-diagram shortcode). The
    SVG inherits the page's variables, so one drawing follows the theme.
    Unlike a shot, whose border is a window edge sitting flush on the

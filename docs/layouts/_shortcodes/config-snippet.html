@@ -1,0 +1,26 @@
+{{- $name := or (.Get "src") (.Get 0) -}}
+{{- if not $name -}}
+  {{- errorf "config-snippet: %s missing snippet name (e.g. {{< config-snippet src=\"shape\" >}})" .Position -}}
+{{- end -}}
+{{- $tomlPath := printf "snippets/%s.toml" $name -}}
+{{- $yamlPath := printf "snippets/%s.yaml" $name -}}
+{{- $jsonPath := printf "snippets/%s.json" $name -}}
+{{- $toml := strings.TrimRight "\n\r" (readFile $tomlPath) -}}
+{{- $yaml := strings.TrimRight "\n\r" (readFile $yamlPath) -}}
+{{- $json := strings.TrimRight "\n\r" (readFile $jsonPath) -}}
+<div class="config-snippet">
+  <div class="config-tabs" role="tablist" aria-label="Configuration format">
+    <button type="button" class="config-tab config-tab-toml" data-set-format="toml" role="tab" aria-selected="true">TOML</button>
+    <button type="button" class="config-tab config-tab-yaml" data-set-format="yaml" role="tab" aria-selected="false">YAML</button>
+    <button type="button" class="config-tab config-tab-json" data-set-format="json" role="tab" aria-selected="false">JSON</button>
+  </div>
+  <div class="config-panel config-panel-toml" role="tabpanel" data-format="toml">
+    {{ highlight $toml "toml" "" }}
+  </div>
+  <div class="config-panel config-panel-yaml" role="tabpanel" data-format="yaml">
+    {{ highlight $yaml "yaml" "" }}
+  </div>
+  <div class="config-panel config-panel-json" role="tabpanel" data-format="json">
+    {{ highlight $json "json" "" }}
+  </div>
+</div>

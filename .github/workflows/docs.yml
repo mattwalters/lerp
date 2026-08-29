@@ -231,10 +231,10 @@ jobs:
           mkdir -p public/casts
           cp -r docs/static/casts/. public/casts/
 
-      # Product imagery — posters, og card, and the config shots — belongs to
+      # Product imagery — posters and the og card — belongs to
       # the release layer alongside the casts it must match: a main push
       # updates prose and chrome without touching depictions of the product,
-      # so the poster, card, shot and video always describe one release,
+      # so the poster, card and video always describe one release,
       # atomically. keep_files preserves them between tags the same way it
       # preserves public/casts.
       - name: Stage this release's product imagery at the site root
@@ -242,7 +242,7 @@ jobs:
         run: |
           mkdir -p public/posters
           cp -r docs/static/posters/. public/posters/
-          cp docs/static/og.png docs/static/config.svg docs/static/config-light.svg public/
+          cp docs/static/og.png public/
 
       # The docs publish only from a tag, from that tag's own tree —
       # never from main, which is what keeps docs that ship with an

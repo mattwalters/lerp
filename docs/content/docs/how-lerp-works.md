@@ -21,7 +21,7 @@ of its own. Local disk holds config, credentials, run evidence and
 A Linear status with instructions attached. A ticket sitting in `status`
 runs through `runner` with `prompt`, then moves to `on_success`, or to
 `on_failure` when the agent exits non-zero.
-[`lerp.toml`](lerp-toml.md) has the fields.
+[Configuration](configuration.md) has the fields.
 
 Those four fields are the whole workflow language. No conditionals, no
 templates, no DAG. The topology is where each `on_success` points, and
@@ -30,7 +30,7 @@ branching is a person or an agent moving a ticket.
 ## Runner
 
 An adapter to a coding-agent CLI, one of Claude Code, Codex, Antigravity,
-or a [raw command](lerp-toml.md#runners). It takes a prompt and a working
+or a [raw command](configuration.md#runners). It takes a prompt and a working
 directory, runs to exit, and its exit code means done or failed.
 
 ## Lane

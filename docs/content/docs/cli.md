@@ -135,8 +135,8 @@ them, is read as dark. That is what `LERP_BACKGROUND` is for.
 
 Lerp sets variables of its own on the commands it starts, `LERP_LANE`,
 `LERP_TICKET_ID` and `LERP_WORKSPACE` on a provision or dispose command,
-and `LERP_TICKET` on a runner. Those are [`lerp.toml`'s
-side](lerp-toml.md#workspace-commands) of the contract.
+and `LERP_TICKET` on a runner. Those are [Configuration's
+side](configuration.md#workspace-commands) of the contract.
 
 ## Cleanup and uninstall
 

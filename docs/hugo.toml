@@ -177,12 +177,11 @@ weight = 110
 section = "The interface"
 
 [[menus.main]]
-name = "lerp.toml"
-pageRef = "/docs/lerp-toml"
+name = "Configuration"
+pageRef = "/docs/configuration"
 weight = 120
 [menus.main.params]
 section = "Reference"
-mono = true
 
 [[menus.main]]
 name = "Telemetry"

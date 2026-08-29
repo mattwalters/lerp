@@ -23,11 +23,11 @@ key, the LERP in LERP-42. Check it, because init creates the team when no
 team has that key.
 
 Init asks a few questions to fit the [stock
-pipeline](lerp-toml.md#the-stock-pipeline) onto your board, then writes
-[`lerp.toml`](lerp-toml.md) and adds `.lerp/` to `.gitignore`. Review
+pipeline](configuration.md#the-stock-pipeline) onto your board, then writes
+[`lerp.toml`](configuration.md) and adds `.lerp/` to `.gitignore`. Review
 both, and commit both. Answer no to the `bypassPermissions` question
 unless you have read [what it
-grants](lerp-toml.md#permission-grants-in-checked-in-config).
+grants](configuration.md#permission-grants-in-checked-in-config).
 
 ## 2. Promote a ticket
 

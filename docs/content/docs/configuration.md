@@ -1,23 +1,26 @@
 ---
-title: lerp.toml
+title: Configuration
+aliases:
+  - /docs/lerp-toml
+  - /docs/lerp-toml/
 summary: The one file lerp reads, teams, workspace commands, runners and queues, and the stock pipeline it ships with.
 weight: 120
 ---
 
-# `lerp.toml`
+# Configuration
 
-Lerp reads one file, `lerp.toml` at the root of your project — the
-directory holding the file, found by walking up from wherever lerp was
-run — **checked in**. It declares which Linear teams the repo serves,
+Lerp reads one config file at the root of your project, **checked in**.
+The root is the directory holding that file, found by walking up from
+wherever lerp was run. It declares which Linear teams the repo serves,
 how to build a workspace, and the pipeline itself, runners and queues
 with their prompts. It holds no durable state, because [Linear is the
 database](how-lerp-works.md#ticket). Parsing is strict, and an unknown
 key is an error.
 
-TOML is the default format and what `lerp init` writes. YAML (`lerp.yaml`
-or `lerp.yml`) and JSON (`lerp.json`) are accepted as well. Exactly one
-config file may exist at the repo root; having more than one is refused
-at startup.
+TOML is the default format and what `lerp init` writes (`lerp.toml`).
+YAML (`lerp.yaml` or `lerp.yml`) and JSON (`lerp.json`) are accepted as
+well. Exactly one config file may exist at the repo root; having more
+than one is refused at startup.
 
 `lerp init --team KEY` writes it (see [Quickstart](quickstart.md)).
 [lerp.example.toml](lerp.example.toml) is the stock pipeline in full,
@@ -25,7 +28,7 @@ with prompts you can read and argue with. Read it before you run it.
 
 ## The shape of it
 
-{{< shot src="lerp-toml-shape.svg" alt="A minimal lerp.toml, every field annotated: a teams list; provision and dispose commands building a git worktree per lane; a claude runner with commented-out model, effort and context overrides and an explicit permission grant in args, and two queues, plan, watching Planning and moving to Implementing, and implement, watching Implementing and moving to In Review, with Needs Attention as its on_failure." >}}
+{{< config-snippet "shape" >}}
 
 Those queue fields are the complete set, `status`, `prompt`, `runner`,
 `on_success`, and optionally `on_failure`. There is no conditional,
@@ -52,7 +55,7 @@ denominator, prompt and working directory in, exit code out. Reach for
 one for an unsupported CLI, an agent inside a container or VM (`docker
 exec ...`), or a custom wrapper.
 
-{{< shot src="runner-command.svg" alt="A command-template runner: command invokes my-agent with prompt, workdir and session placeholders, and resume changes into the workdir and resumes the session, the command eject hands back." >}}
+{{< config-snippet "runner-command" >}}
 
 ### Runner configuration keys
 

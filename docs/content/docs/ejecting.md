@@ -28,7 +28,7 @@ finish in and yours to remove.
 The command shows until you dismiss it, and it also lands in
 `.lerp/loop.log`, so it survives both the dismissal and the session.
 
-It comes from the runner's `resume` line in [`lerp.toml`](lerp-toml.md),
+It comes from the runner's `resume` line in [Configuration](configuration.md),
 built from the session ID lerp generated before the run started and the
 workspace it provisioned. A runner with no `resume` cannot be ejected, so
 `e` is not offered on its runs.

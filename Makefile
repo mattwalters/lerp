@@ -214,8 +214,6 @@ DEMO_MAX_BYTES := 3145728
 OG_MAX_BYTES := 524288
 CAST_MAX_BYTES := 1310720
 POSTER_MAX_BYTES := 327680
-SHOTS_DIR := docs/shots
-SHOT_MAX_BYTES := 524288
 
 THEME_dark := catppuccin-mocha
 THEME_light := catppuccin-latte
@@ -369,36 +367,6 @@ casts: ## Render every tape under docs/tapes/ into docs/static/casts/ (needs vhs
 	    done; \
 	  done; \
 	  test "$$missing" -eq 0
-
-.PHONY: shots
-shots: ## Render every docs/shots/*.toml into docs/static/ as an SVG pair, dark and light (needs freeze)
-	@command -v freeze >/dev/null || { \
-	  echo 'shots: freeze is not installed — see https://github.com/charmbracelet/freeze'; \
-	  exit 1; }
-	@rm -rf $(DEMO_RENDER_DIR)
-	@mkdir -p $(DEMO_RENDER_DIR)
-	@for src in $(SHOTS_DIR)/*.toml; do \
-	  base=$$(basename "$$src" .toml); \
-	  for variant in dark light; do \
-	    suffix=""; \
-	    theme="$(THEME_dark)"; \
-	    if [ "$$variant" = "light" ]; then \
-	      suffix="-light"; \
-	      theme="$(THEME_light)"; \
-	    fi; \
-	    out="$(DEMO_RENDER_DIR)/$$base$$suffix.svg"; \
-	    freeze "$$src" -o "$$out" -l toml --window --font.size 15 --padding 24 --border.radius 10 --theme "$$theme" < /dev/null || exit 1; \
-	    test -s "$$out" || { \
-	      printf 'shots: %s rendered empty\n' "$$out"; exit 1; }; \
-	    size=$$(wc -c < "$$out" | tr -d ' '); \
-	    test "$$size" -le $(SHOT_MAX_BYTES) || { \
-	      printf 'shots: %s%s.svg came back %s bytes, over the %s cap\n' \
-	        "$$base" "$$suffix" "$$size" '$(SHOT_MAX_BYTES)'; exit 1; }; \
-	    target="docs/static/$$base$$suffix.svg"; \
-	    mv "$$out" "$$target" && \
-	    printf 'rendered %s (%s bytes)\n' "$$target" "$$size"; \
-	  done; \
-	done
 
 # --------------------------------------------------------------------------
 # The docs site
