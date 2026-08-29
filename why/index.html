@@ -14,6 +14,10 @@
         if (t === "light" || t === "dark") {
           document.documentElement.dataset.theme = t;
         }
+        var f = localStorage.getItem("lerp-format");
+        if (f === "yaml" || f === "json") {
+          document.documentElement.dataset.format = f;
+        }
       } catch (e) {}
     })();
   </script>
@@ -291,5 +295,42 @@ length, that lives in <a href="../latest/scope/">SCOPE.md</a>.</p>
     })();
   </script>
   
+  <script>
+    
+    
+    
+    (function () {
+      var formats = ["toml", "yaml", "json"];
+      function setFormat(fmt) {
+        if (formats.indexOf(fmt) === -1) return;
+        if (fmt === "toml") {
+          delete document.documentElement.dataset.format;
+          try { localStorage.removeItem("lerp-format"); } catch (e) {}
+        } else {
+          document.documentElement.dataset.format = fmt;
+          try { localStorage.setItem("lerp-format", fmt); } catch (e) {}
+        }
+        updateTabs(fmt);
+      }
+      function updateTabs(fmt) {
+        var tabs = document.querySelectorAll(".config-tab");
+        for (var i = 0; i < tabs.length; i++) {
+          var isCurrent = tabs[i].getAttribute("data-set-format") === fmt;
+          tabs[i].setAttribute("aria-selected", isCurrent ? "true" : "false");
+        }
+      }
+      document.addEventListener("click", function (e) {
+        var btn = e.target.closest("[data-set-format]");
+        if (!btn) return;
+        setFormat(btn.getAttribute("data-set-format"));
+      });
+      var current = "toml";
+      try {
+        var stored = localStorage.getItem("lerp-format");
+        if (stored === "yaml" || stored === "json") { current = stored; }
+      } catch (e) {}
+      updateTabs(current);
+    })();
+  </script>
 </body>
 </html>

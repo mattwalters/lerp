@@ -15,6 +15,10 @@
         if (t === "light" || t === "dark") {
           document.documentElement.dataset.theme = t;
         }
+        var f = localStorage.getItem("lerp-format");
+        if (f === "yaml" || f === "json") {
+          document.documentElement.dataset.format = f;
+        }
       } catch (e) {}
     })();
   </script>
@@ -222,8 +226,93 @@ the board with the agent processes on your machine, starts what is
 missing, reaps what has finished, and adopts anything a previous lerp
 left running.</p>
 <p>The config for the board above is one file, checked into the repo.</p>
-<img class="shot-dark" src="./config.svg" alt="lerp.toml for the board above. Two runners, claude and antigravity; a plan queue on Planning running claude into Plan Review; an implement queue on In Progress running antigravity into In Review; git worktree provision and dispose commands, with lerp setting LERP_WORKSPACE per lane." loading="lazy">
-<img class="shot-light" src="./config-light.svg" alt="lerp.toml for the board above. Two runners, claude and antigravity; a plan queue on Planning running claude into Plan Review; an implement queue on In Progress running antigravity into In Review; git worktree provision and dispose commands, with lerp setting LERP_WORKSPACE per lane." loading="lazy">
+<div class="config-snippet">
+  <div class="config-tabs" role="tablist" aria-label="Configuration format">
+    <button type="button" class="config-tab config-tab-toml" data-set-format="toml" role="tab" aria-selected="true">TOML</button>
+    <button type="button" class="config-tab config-tab-yaml" data-set-format="yaml" role="tab" aria-selected="false">YAML</button>
+    <button type="button" class="config-tab config-tab-json" data-set-format="json" role="tab" aria-selected="false">JSON</button>
+  </div>
+  <div class="config-panel config-panel-toml" role="tabpanel" data-format="toml">
+    <div class="highlight"><pre tabindex="0" class="chroma"><code class="language-toml" data-lang="toml"><span class="line"><span class="cl"><span class="nx">teams</span> <span class="p">=</span> <span class="p">[</span><span class="s2">&#34;LERP&#34;</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c"># lerp sets $LERP_WORKSPACE per lane</span>
+</span></span><span class="line"><span class="cl"><span class="nx">provision</span> <span class="p">=</span> <span class="s1">&#39;git worktree add --detach &#34;$LERP_WORKSPACE&#34; HEAD&#39;</span>
+</span></span><span class="line"><span class="cl"><span class="nx">dispose</span> <span class="p">=</span> <span class="s1">&#39;git worktree remove --force &#34;$LERP_WORKSPACE&#34;&#39;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="p">[</span><span class="nx">runners</span><span class="p">.</span><span class="nx">claude</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl"><span class="nx">vendor</span> <span class="p">=</span> <span class="s2">&#34;claude&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="p">[</span><span class="nx">runners</span><span class="p">.</span><span class="nx">antigravity</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl"><span class="nx">vendor</span> <span class="p">=</span> <span class="s2">&#34;antigravity&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="p">[</span><span class="nx">queues</span><span class="p">.</span><span class="nx">plan</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl"><span class="nx">status</span> <span class="p">=</span> <span class="s2">&#34;Planning&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="nx">prompt</span> <span class="p">=</span> <span class="s2">&#34;Read {{ticket}} and post a plan as a comment.&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="nx">runner</span> <span class="p">=</span> <span class="s2">&#34;claude&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="nx">on_success</span> <span class="p">=</span> <span class="s2">&#34;Plan Review&#34;</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="p">[</span><span class="nx">queues</span><span class="p">.</span><span class="nx">implement</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl"><span class="nx">status</span> <span class="p">=</span> <span class="s2">&#34;In Progress&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="nx">prompt</span> <span class="p">=</span> <span class="s2">&#34;Implement {{ticket}} per its plan comment. Open a PR.&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="nx">runner</span> <span class="p">=</span> <span class="s2">&#34;antigravity&#34;</span>
+</span></span><span class="line"><span class="cl"><span class="nx">on_success</span> <span class="p">=</span> <span class="s2">&#34;In Review&#34;</span></span></span></code></pre></div>
+  </div>
+  <div class="config-panel config-panel-yaml" role="tabpanel" data-format="yaml">
+    <div class="highlight"><pre tabindex="0" class="chroma"><code class="language-yaml" data-lang="yaml"><span class="line"><span class="cl"><span class="nt">teams</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span>- <span class="l">LERP</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="c"># lerp sets $LERP_WORKSPACE per lane</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="nt">provision</span><span class="p">:</span><span class="w"> </span><span class="l">git worktree add --detach &#34;$LERP_WORKSPACE&#34; HEAD</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="nt">dispose</span><span class="p">:</span><span class="w"> </span><span class="l">git worktree remove --force &#34;$LERP_WORKSPACE&#34;</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="nt">runners</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="nt">claude</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">vendor</span><span class="p">:</span><span class="w"> </span><span class="l">claude</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="nt">antigravity</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">vendor</span><span class="p">:</span><span class="w"> </span><span class="l">antigravity</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="nt">queues</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="nt">plan</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="l">Planning</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">prompt</span><span class="p">:</span><span class="w"> </span><span class="l">Read {{ticket}} and post a plan as a comment.</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">runner</span><span class="p">:</span><span class="w"> </span><span class="l">claude</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">on_success</span><span class="p">:</span><span class="w"> </span><span class="l">Plan Review</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="nt">implement</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="l">In Progress</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">prompt</span><span class="p">:</span><span class="w"> </span><span class="l">Implement {{ticket}} per its plan comment. Open a PR.</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">runner</span><span class="p">:</span><span class="w"> </span><span class="l">antigravity</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">on_success</span><span class="p">:</span><span class="w"> </span><span class="l">In Review</span></span></span></code></pre></div>
+  </div>
+  <div class="config-panel config-panel-json" role="tabpanel" data-format="json">
+    <div class="highlight"><pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;teams&#34;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&#34;LERP&#34;</span><span class="p">],</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;provision&#34;</span><span class="p">:</span> <span class="s2">&#34;git worktree add --detach \&#34;$LERP_WORKSPACE\&#34; HEAD&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;dispose&#34;</span><span class="p">:</span> <span class="s2">&#34;git worktree remove --force \&#34;$LERP_WORKSPACE\&#34;&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;runners&#34;</span><span class="p">:</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;claude&#34;</span><span class="p">:</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;vendor&#34;</span><span class="p">:</span> <span class="s2">&#34;claude&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="p">},</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;antigravity&#34;</span><span class="p">:</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;vendor&#34;</span><span class="p">:</span> <span class="s2">&#34;antigravity&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">  <span class="p">},</span>
+</span></span><span class="line"><span class="cl">  <span class="nt">&#34;queues&#34;</span><span class="p">:</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;plan&#34;</span><span class="p">:</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;status&#34;</span><span class="p">:</span> <span class="s2">&#34;Planning&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;prompt&#34;</span><span class="p">:</span> <span class="s2">&#34;Read {{ticket}} and post a plan as a comment.&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;runner&#34;</span><span class="p">:</span> <span class="s2">&#34;claude&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;on_success&#34;</span><span class="p">:</span> <span class="s2">&#34;Plan Review&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="p">},</span>
+</span></span><span class="line"><span class="cl">    <span class="nt">&#34;implement&#34;</span><span class="p">:</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;status&#34;</span><span class="p">:</span> <span class="s2">&#34;In Progress&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;prompt&#34;</span><span class="p">:</span> <span class="s2">&#34;Implement {{ticket}} per its plan comment. Open a PR.&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;runner&#34;</span><span class="p">:</span> <span class="s2">&#34;antigravity&#34;</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">      <span class="nt">&#34;on_success&#34;</span><span class="p">:</span> <span class="s2">&#34;In Review&#34;</span>
+</span></span><span class="line"><span class="cl">    <span class="p">}</span>
+</span></span><span class="line"><span class="cl">  <span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span></span></span></code></pre></div>
+  </div>
+</div>
 
 <p>Everything runs on your machine. There is no server and no daemon, and
 the only account involved is your Linear account. <strong>Linear is the
@@ -347,5 +436,42 @@ side is pluggable.</p>
     })();
   </script>
   
+  <script>
+    
+    
+    
+    (function () {
+      var formats = ["toml", "yaml", "json"];
+      function setFormat(fmt) {
+        if (formats.indexOf(fmt) === -1) return;
+        if (fmt === "toml") {
+          delete document.documentElement.dataset.format;
+          try { localStorage.removeItem("lerp-format"); } catch (e) {}
+        } else {
+          document.documentElement.dataset.format = fmt;
+          try { localStorage.setItem("lerp-format", fmt); } catch (e) {}
+        }
+        updateTabs(fmt);
+      }
+      function updateTabs(fmt) {
+        var tabs = document.querySelectorAll(".config-tab");
+        for (var i = 0; i < tabs.length; i++) {
+          var isCurrent = tabs[i].getAttribute("data-set-format") === fmt;
+          tabs[i].setAttribute("aria-selected", isCurrent ? "true" : "false");
+        }
+      }
+      document.addEventListener("click", function (e) {
+        var btn = e.target.closest("[data-set-format]");
+        if (!btn) return;
+        setFormat(btn.getAttribute("data-set-format"));
+      });
+      var current = "toml";
+      try {
+        var stored = localStorage.getItem("lerp-format");
+        if (stored === "yaml" || stored === "json") { current = stored; }
+      } catch (e) {}
+      updateTabs(current);
+    })();
+  </script>
 </body>
 </html>
