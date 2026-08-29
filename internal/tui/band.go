@@ -2,18 +2,30 @@ package tui
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
+	"time"
 
-	ntsparkline "github.com/NimbleMarkets/ntcharts/sparkline"
+	"github.com/NimbleMarkets/ntcharts/linechart"
+	"github.com/NimbleMarkets/ntcharts/linechart/timeserieslinechart"
 	"github.com/charmbracelet/lipgloss"
 )
 
 const (
-	// laneChartHeight is the fixed height of the lane pane activity chart:
-	// three rows of braille give twelve distinct vertical levels of resolution
-	// for peaks and quiet stretches without eating into the log below it.
-	laneChartHeight = 3
+	// laneChartHeight is the maximum height of the lane pane activity chart:
+	// twelve rows of braille give about 48 distinct vertical levels of
+	// resolution, a relative time X axis, and a numbered events/min Y axis,
+	// with a legend row under it.
+	//
+	// laneChartMinHeight is where a Y axis stops being able to say anything:
+	// below six rows the chart and legend drop together.
+	//
+	// laneLogMinHeight is the minimum height the log tail gets when a chart is
+	// shown beside it.
+	laneChartHeight    = 12
+	laneChartMinHeight = 6
+	laneLogMinHeight   = 8
 )
 
 // laneBand renders the pinned header band over a running ticket's log:
@@ -112,57 +124,141 @@ func laneBand(r workRow, width int) []string {
 	return []string{splitRow(left, clock, width)}
 }
 
-// laneChart renders a fixed-height braille line chart of recent activity
-// across the lane pane's width, oldest first, using ntcharts. It is drawn from
-// the same bucketed event counts the work row sparkline uses (r.rate).
+// yCeiling rounds maxVal up to a readable ceiling (1, 2 or 5 times a power of
+// ten), with a floor of 1 so an all-quiet window has a non-zero range.
+func yCeiling(maxVal float64) float64 {
+	if maxVal <= 1 {
+		return 1
+	}
+	p10 := math.Pow(10, math.Floor(math.Log10(maxVal)))
+	norm := maxVal / p10
+	if norm <= 1.0 {
+		return 1.0 * p10
+	} else if norm <= 2.0 {
+		return 2.0 * p10
+	} else if norm <= 5.0 {
+		return 5.0 * p10
+	}
+	return 10.0 * p10
+}
+
+// relativeTimeFormatter formats unix seconds as relative time from right
+// ("now", "-5m", "-90s"), rounding to the nearest tick step based on the
+// horizon.
+func relativeTimeFormatter(right time.Time, horizon time.Duration) linechart.LabelFormatter {
+	rightSec := float64(right.Unix())
+	var step float64
+	var formatMins bool
+	if horizon >= 2*time.Minute {
+		formatMins = true
+		if horizon >= 10*time.Minute {
+			step = (5 * time.Minute).Seconds()
+		} else {
+			step = (1 * time.Minute).Seconds()
+		}
+	} else {
+		formatMins = false
+		if horizon <= 45*time.Second {
+			step = 10
+		} else {
+			step = 30
+		}
+	}
+
+	return func(i int, v float64) string {
+		ageSec := rightSec - v
+		if ageSec < 0 {
+			ageSec = 0
+		}
+		roundedAge := math.Round(ageSec/step) * step
+		if roundedAge <= 0 {
+			return "now"
+		}
+		if formatMins {
+			mins := int(math.Round(roundedAge / 60))
+			return fmt.Sprintf("-%dm", mins)
+		}
+		secs := int(math.Round(roundedAge))
+		return fmt.Sprintf("-%ds", secs)
+	}
+}
+
+// laneChart renders a braille time series line chart of recent activity
+// across the lane pane's width at the given height, with a relative time X axis,
+// a numbered events/min Y axis, and a legend row under it.
 //
-// The horizon is the pane's width (one bucket per column). When the run is
-// younger than the pane, the line draws the history it has, padded on the left
-// with spaces so "now" is the right edge.
-func laneChart(r workRow, width int) []string {
-	if width <= 0 || len(r.rate) == 0 {
+// It is drawn from the dated buckets in r.chart. The horizon is the duration
+// the window actually holds, so a run younger than fifteen minutes draws only
+// the history it has.
+func laneChart(r workRow, width, height int) []string {
+	if width <= 0 || height <= 0 || len(r.chart) == 0 {
 		return nil
 	}
 
-	n := min(width, len(r.rate))
-	counts := r.rate[len(r.rate)-n:]
-
-	hi := 0
-	for _, c := range counts {
-		hi = max(hi, c)
+	n := len(r.chart)
+	right := r.chart[n-1].at
+	left := right.Add(-time.Duration(n-1) * pulseBucket)
+	if left.Equal(right) {
+		left = right.Add(-pulseBucket)
 	}
 
-	data := make([]float64, len(counts)+1)
-	for i, c := range counts {
-		if c > 0 {
-			data[i] = max(0.25/float64(laneChartHeight), float64(c)/float64(hi))
+	maxVal := 0.0
+	for _, b := range r.chart {
+		v := float64(b.count) * 60.0 / pulseBucket.Seconds()
+		if v > maxVal {
+			maxVal = v
 		}
 	}
-	data[len(counts)] = data[len(counts)-1]
+	hi := yCeiling(maxVal)
 
-	s := ntsparkline.New(len(counts)+1, laneChartHeight)
-	s.SetMax(1)
-	s.PushAll(data)
-	s.DrawBraille()
-
-	rawLines := strings.Split(s.View(), "\n")
-	if len(rawLines) > laneChartHeight {
-		rawLines = rawLines[:laneChartHeight]
+	horizon := right.Sub(left)
+	xFormatter := relativeTimeFormatter(right, horizon)
+	yFormatter := func(i int, v float64) string {
+		return strconv.Itoa(int(math.Round(v)))
 	}
 
-	pad := ""
-	if width > len(counts) {
-		pad = strings.Repeat(" ", width-len(counts))
+	chart := timeserieslinechart.New(
+		width,
+		height,
+		timeserieslinechart.WithTimeRange(left, right),
+		timeserieslinechart.WithYRange(0, hi),
+		timeserieslinechart.WithXYSteps(1, 2),
+		timeserieslinechart.WithXLabelFormatter(xFormatter),
+		timeserieslinechart.WithYLabelFormatter(yFormatter),
+		timeserieslinechart.WithAxesStyles(styleFaint, styleFaint),
+		timeserieslinechart.WithDataSetStyle("main", styleRunning),
+	)
+	chart.SetViewTimeAndYRange(left, right, 0, hi)
+
+	for _, b := range r.chart {
+		val := float64(b.count) * 60.0 / pulseBucket.Seconds()
+		chart.PushDataSet("main", timeserieslinechart.TimePoint{
+			Time:  b.at,
+			Value: val,
+		})
 	}
 
-	out := make([]string, 0, len(rawLines))
-	for _, l := range rawLines {
-		runes := []rune(l)
-		if len(runes) > len(counts) {
-			runes = runes[:len(counts)]
-		}
-		line := pad + string(runes)
-		out = append(out, styleFaint.Render(line))
+	chart.DrawBrailleAll()
+
+	lines := strings.Split(chart.View(), "\n")
+	if len(lines) > height {
+		lines = lines[:height]
 	}
-	return out
+
+	// Legend row: events/min · ▇ main
+	series := []struct {
+		name  string
+		style lipgloss.Style
+	}{
+		{"main", styleRunning},
+	}
+	var legendParts []string
+	legendParts = append(legendParts, styleFaint.Render("events/min"))
+	for _, s := range series {
+		legendParts = append(legendParts, s.style.Render("▇")+" "+styleFaint.Render(s.name))
+	}
+	legend := strings.Join(legendParts, styleFaint.Render(" · "))
+
+	lines = append(lines, padTo(legend, width))
+	return lines
 }

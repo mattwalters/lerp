@@ -184,27 +184,38 @@ func TestLaneBandNarrowDropsFiguresFromRight(t *testing.T) {
 	}
 }
 
-// laneChart renders a fixed-height (3 rows) braille chart spanning the width.
-// If width is 0 or rate is empty, it returns nil.
+// laneChart returns nil if width <= 0, height <= 0, or chart is empty.
 func TestLaneChartEmptyOrZeroWidth(t *testing.T) {
 	r := workRow{lane: 1}
-	if got := laneChart(r, 80); len(got) != 0 {
-		t.Fatalf("laneChart with empty rate returned %d lines, want 0", len(got))
+	if got := laneChart(r, 80, 12); len(got) != 0 {
+		t.Fatalf("laneChart with empty chart returned %d lines, want 0", len(got))
 	}
-	r.rate = []int{1, 2, 3}
-	if got := laneChart(r, 0); len(got) != 0 {
+	now := time.Now()
+	r.chart = []timedBucket{{at: now, count: 1}}
+	if got := laneChart(r, 0, 12); len(got) != 0 {
 		t.Fatalf("laneChart with width 0 returned %d lines, want 0", len(got))
+	}
+	if got := laneChart(r, 80, 0); len(got) != 0 {
+		t.Fatalf("laneChart with height 0 returned %d lines, want 0", len(got))
 	}
 }
 
 func TestLaneChartRendersBrailleLines(t *testing.T) {
-	// Full-width chart with some activity
-	rate := []int{0, 1, 4, 10, 5, 2, 0, 0, 8, 12, 1, 0}
-	r := workRow{lane: 1, rate: rate}
+	now := time.Now()
+	// A 15-minute window (300 buckets of 3s)
+	chart := make([]timedBucket, 300)
+	for i := range chart {
+		chart[i] = timedBucket{
+			at:    now.Add(-time.Duration(300-1-i) * pulseBucket),
+			count: (i % 5),
+		}
+	}
+	r := workRow{lane: 1, chart: chart}
 	width := 80
-	lines := laneChart(r, width)
-	if len(lines) != laneChartHeight {
-		t.Fatalf("laneChart returned %d lines, want %d", len(lines), laneChartHeight)
+	height := 12
+	lines := laneChart(r, width, height)
+	if len(lines) != height+1 {
+		t.Fatalf("laneChart returned %d lines, want %d (12 chart + 1 legend)", len(lines), height+1)
 	}
 	for i, l := range lines {
 		stripped := ansi.Strip(l)
@@ -213,48 +224,93 @@ func TestLaneChartRendersBrailleLines(t *testing.T) {
 		}
 	}
 
-	// Bottom line must contain braille pattern
-	bottom := ansi.Strip(lines[laneChartHeight-1])
-	if !strings.ContainsFunc(bottom, runes.IsBraillePattern) {
-		t.Fatalf("bottom line has no braille runes: %q", bottom)
+	// Bottom chart rows contain braille
+	chartArea := strings.Join(lines[:height], "\n")
+	if !strings.ContainsFunc(chartArea, runes.IsBraillePattern) {
+		t.Fatalf("chart area has no braille runes:\n%s", chartArea)
+	}
+
+	// X label row is line height-1 (bottom row of linechart)
+	xRow := ansi.Strip(lines[height-1])
+	if !strings.Contains(xRow, "now") {
+		t.Errorf("X label row = %q, want it to contain %q", xRow, "now")
+	}
+	if !strings.Contains(xRow, "-15m") && !strings.Contains(xRow, "-10m") && !strings.Contains(xRow, "-5m") {
+		t.Errorf("X label row = %q, want it to contain relative -Nm label", xRow)
+	}
+
+	// Y label column carries ascending integers on the left
+	y0 := ansi.Strip(lines[height-2]) // bottom line of Y axis ticks (above X axis)
+	if !strings.Contains(y0, "0") {
+		t.Errorf("bottom Y tick line = %q, want 0", y0)
+	}
+
+	// Legend row is lines[height]
+	legend := ansi.Strip(lines[height])
+	if !strings.Contains(legend, "events/min") {
+		t.Errorf("legend row = %q, want events/min", legend)
+	}
+	if strings.Count(legend, "events/min") != 1 {
+		t.Errorf("legend row = %q, want events/min once", legend)
+	}
+	if !strings.Contains(legend, "main") {
+		t.Errorf("legend row = %q, want main", legend)
 	}
 }
 
-func TestLaneChartPadsYoungRunOnLeft(t *testing.T) {
-	// A run with 5 buckets on a 20-column pane: left 15 columns are spaces, right 5 have braille.
-	rate := []int{0, 2, 5, 1, 0}
-	r := workRow{lane: 1, rate: rate}
-	width := 20
-	lines := laneChart(r, width)
-	if len(lines) != laneChartHeight {
-		t.Fatalf("laneChart returned %d lines, want %d", len(lines), laneChartHeight)
+func TestLaneChartYoungRunShortHorizon(t *testing.T) {
+	now := time.Now()
+	// A run with 5 buckets (12-15 seconds old)
+	chart := make([]timedBucket, 5)
+	for i := range chart {
+		chart[i] = timedBucket{
+			at:    now.Add(-time.Duration(5-1-i) * pulseBucket),
+			count: i + 1,
+		}
+	}
+	r := workRow{lane: 1, chart: chart}
+	width := 60
+	height := 8
+	lines := laneChart(r, width, height)
+	if len(lines) != height+1 {
+		t.Fatalf("laneChart returned %d lines, want %d", len(lines), height+1)
 	}
 	for i, l := range lines {
 		stripped := ansi.Strip(l)
 		if lipgloss.Width(stripped) != width {
 			t.Errorf("line %d width = %d, want %d", i, lipgloss.Width(stripped), width)
 		}
-		// Left 15 chars should be spaces
-		runesList := []rune(stripped)
-		for j := 0; j < 15; j++ {
-			if runesList[j] != ' ' {
-				t.Errorf("line %d col %d = %q, want space padding", i, j, runesList[j])
-			}
-		}
+	}
+
+	// X label row should not contain 15m or 10m (short horizon)
+	xRow := ansi.Strip(lines[height-1])
+	if strings.Contains(xRow, "-15m") || strings.Contains(xRow, "-10m") {
+		t.Errorf("young run X label row = %q contained long horizon labels", xRow)
+	}
+	if !strings.Contains(xRow, "now") {
+		t.Errorf("young run X label row = %q missing now", xRow)
 	}
 }
 
 func TestLaneChartAllZerosReadsFlat(t *testing.T) {
-	rate := []int{0, 0, 0, 0, 0}
-	r := workRow{lane: 1, rate: rate}
-	width := 10
-	lines := laneChart(r, width)
-	if len(lines) != laneChartHeight {
-		t.Fatalf("laneChart returned %d lines, want %d", len(lines), laneChartHeight)
+	now := time.Now()
+	chart := make([]timedBucket, 20)
+	for i := range chart {
+		chart[i] = timedBucket{
+			at:    now.Add(-time.Duration(20-1-i) * pulseBucket),
+			count: 0,
+		}
 	}
-	// Bottom line should be floor braille (⣀)
-	bottom := ansi.Strip(lines[laneChartHeight-1])
-	if !strings.HasSuffix(bottom, "⣀⣀⣀⣀⣀") {
-		t.Fatalf("all-zero rate does not end in flat floor line: %q", bottom)
+	r := workRow{lane: 1, chart: chart}
+	width := 40
+	height := 6
+	lines := laneChart(r, width, height)
+	if len(lines) != height+1 {
+		t.Fatalf("laneChart returned %d lines, want %d", len(lines), height+1)
+	}
+	// Chart area should contain braille and not panic
+	chartArea := strings.Join(lines[:height], "\n")
+	if !strings.ContainsFunc(chartArea, runes.IsBraillePattern) {
+		t.Fatalf("all-zero chart has no braille runes:\n%s", chartArea)
 	}
 }

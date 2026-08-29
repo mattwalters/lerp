@@ -8744,15 +8744,19 @@ func TestMainBandShortPaneThreshold(t *testing.T) {
 		t.Fatalf("mainBand(80, 3) before poll = %v, want 0 lines (dropped)", band)
 	}
 
-	// After polling, the pulse has read the log and rate is available:
+	// After polling, the pulse has read the log and rate/chart is available:
 	m = update(t, m, pollMsg{})
-	// h=8: ih=6 >= 1(header)+3(chart)+2(log) -> both bands (4 lines)
-	if band := m.mainBand(80, 8); len(band) != 1+laneChartHeight {
-		t.Fatalf("mainBand(80, 8) = %v, want %d lines (header + chart)", band, 1+laneChartHeight)
+	// h=24: ih=22 -> chartH=min(12, 22-1-1-8)=12 -> 14 lines (header + 12 chart + 1 legend)
+	if band := m.mainBand(80, 24); len(band) != 1+laneChartHeight+1 {
+		t.Fatalf("mainBand(80, 24) = %v, want %d lines (header + 12 chart + legend)", band, 1+laneChartHeight+1)
 	}
-	// h=7: ih=5 < 6 -> chart drops, header kept (1 line)
-	if band := m.mainBand(80, 7); len(band) != 1 {
-		t.Fatalf("mainBand(80, 7) = %v, want 1 line (header only, chart dropped)", band)
+	// h=18: ih=16 -> chartH=min(12, 16-1-1-8)=6 -> 8 lines (header + 6 chart + 1 legend)
+	if band := m.mainBand(80, 18); len(band) != 1+laneChartMinHeight+1 {
+		t.Fatalf("mainBand(80, 18) = %v, want %d lines (header + 6 chart + legend)", band, 1+laneChartMinHeight+1)
+	}
+	// h=17: ih=15 -> chartH=5 < 6 -> chart drops, header kept (1 line)
+	if band := m.mainBand(80, 17); len(band) != 1 {
+		t.Fatalf("mainBand(80, 17) = %v, want 1 line (header only, chart dropped)", band)
 	}
 	// h=5: ih=3 >= 3 -> header kept (1 line)
 	if band := m.mainBand(80, 5); len(band) != 1 {
@@ -8764,7 +8768,7 @@ func TestMainBandShortPaneThreshold(t *testing.T) {
 	}
 }
 
-// Raw mode (r) keeps the pinned header band and chart band.
+// Raw mode (r) keeps the pinned header band, chart band, and legend.
 func TestMainBandRawKeepsBand(t *testing.T) {
 	logPath := filepath.Join(t.TempDir(), "run.log")
 	writeLog(t, logPath, []byte(`{"type":"system","subtype":"init","model":"claude-opus-5"}`+"\n"))
@@ -8793,7 +8797,7 @@ func TestMainBandRawKeepsBand(t *testing.T) {
 	m = openMain(t, update(t, m, keyMsg("2")))
 	m = update(t, m, pollMsg{})
 
-	wantLines := 1 + laneChartHeight
+	wantLines := 1 + laneChartHeight + 1
 	if band := m.mainBand(m.geometry().mainW, m.geometry().mainH); len(band) != wantLines {
 		t.Fatalf("before raw toggle, band = %v, want %d lines", band, wantLines)
 	}
@@ -8811,6 +8815,9 @@ func TestMainBandRawKeepsBand(t *testing.T) {
 	}
 	if !strings.ContainsFunc(view, runes.IsBraillePattern) {
 		t.Fatalf("raw view does not contain activity chart braille:\n%s", view)
+	}
+	if !strings.Contains(view, "events/min") {
+		t.Fatalf("raw view does not contain legend unit:\n%s", view)
 	}
 }
 
@@ -8907,8 +8914,8 @@ func TestWorkGroupsRunnerPlumbing(t *testing.T) {
 	}
 }
 
-// Stacking: mainBand returns header band (line 0) and chart band (lines 1..3)
-// above the log tail in full view.
+// Stacking: mainBand returns header band (line 0), chart band (lines 1..12)
+// and legend (line 13) above the log tail in full view.
 func TestMainBandStacksHeaderAndChart(t *testing.T) {
 	logPath := filepath.Join(t.TempDir(), "run.log")
 	writeLog(t, logPath, []byte(`{"type":"system","subtype":"init","model":"claude-opus-5"}`+"\n"+
@@ -8940,8 +8947,9 @@ func TestMainBandStacksHeaderAndChart(t *testing.T) {
 
 	g := m.geometry()
 	band := m.mainBand(g.mainW, g.mainH)
-	if len(band) != 1+laneChartHeight {
-		t.Fatalf("mainBand returned %d lines, want %d (1 header + %d chart)", len(band), 1+laneChartHeight, laneChartHeight)
+	wantLines := 1 + laneChartHeight + 1
+	if len(band) != wantLines {
+		t.Fatalf("mainBand returned %d lines, want %d (1 header + %d chart + 1 legend)", len(band), wantLines, laneChartHeight)
 	}
 
 	// Line 0 is header
@@ -8949,14 +8957,92 @@ func TestMainBandStacksHeaderAndChart(t *testing.T) {
 		t.Errorf("line 0 is not header band: %q", band[0])
 	}
 
-	// Lines 1..3 are chart
+	// Lines 1..12 are chart
 	for i := 1; i <= laneChartHeight; i++ {
 		if lipgloss.Width(band[i]) != padMain.inner(g.mainW) {
 			t.Errorf("chart line %d width = %d, want %d", i, lipgloss.Width(band[i]), padMain.inner(g.mainW))
 		}
 	}
-	bottomChart := ansi.Strip(band[laneChartHeight])
-	if !strings.ContainsFunc(bottomChart, runes.IsBraillePattern) {
-		t.Errorf("bottom chart line has no braille: %q", bottomChart)
+	chartArea := strings.Join(band[1:1+laneChartHeight], "\n")
+	if !strings.ContainsFunc(chartArea, runes.IsBraillePattern) {
+		t.Errorf("chart area has no braille: %q", chartArea)
+	}
+
+	// Line 13 is legend
+	legendLine := ansi.Strip(band[laneChartHeight+1])
+	if !strings.Contains(legendLine, "events/min") || !strings.Contains(legendLine, "main") {
+		t.Errorf("legend line %q missing unit or main", legendLine)
+	}
+}
+
+// Ladder tests over inner heights 4 through 30: the sequence is nothing,
+// header, header+chart at growing heights up to twelve, and never a chart under
+// six rows or a log under eight beside one.
+func TestMainBandHeightLadder(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "run.log")
+	writeLog(t, logPath, []byte(`{"type":"system","subtype":"init","model":"claude-opus-5"}`+"\n"+
+		`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"a.go"}}]}}`+"\n"))
+
+	events := make(chan loop.Event, 8)
+	m := newModel(context.Background(), Options{
+		Engine:   fakeEngine{&countingTicker{}, &recordingPromoter{}, &recordingEjector{}, &recordingStarter{}, &recordingReader{}},
+		Statuses: defaultTestStatuses,
+		Runners: map[string]config.RunnerIdentity{
+			"implement": {Name: "agent", Vendor: "claude"},
+		},
+		Interval: time.Millisecond,
+		Lanes:    1,
+		Events:   events,
+	})
+	m = pastTheSplash(t, m)
+	m = resize(t, m, 120, 30)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
+			{ID: "t1", Identifier: "LERP-1", Title: "running", Assigned: true},
+		}},
+	}}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		TicketID: "t1", Ticket: "LERP-1", Queue: "implement", LogPath: logPath}})
+
+	m = openMain(t, update(t, m, keyMsg("2")))
+	m = update(t, m, pollMsg{})
+
+	for ih := 4; ih <= 30; ih++ {
+		h := ih + 2
+		band := m.mainBand(80, h)
+		switch {
+		case ih < 3:
+			if len(band) != 0 {
+				t.Errorf("at ih=%d (h=%d), band len = %d, want 0", ih, h, len(band))
+			}
+		case ih <= 15:
+			// Header only (1 line); chart dropped because chartH < 6
+			if len(band) != 1 {
+				t.Errorf("at ih=%d (h=%d), band len = %d, want 1 (header only)", ih, h, len(band))
+			}
+		case ih <= 21:
+			// Header + chart (6..11) + legend (1)
+			expectedChartH := ih - 1 - 1 - laneLogMinHeight
+			wantLines := 1 + expectedChartH + 1
+			if len(band) != wantLines {
+				t.Errorf("at ih=%d (h=%d), band len = %d, want %d (header + %d chart + legend)",
+					ih, h, len(band), wantLines, expectedChartH)
+			}
+			logH := ih - len(band)
+			if logH < laneLogMinHeight {
+				t.Errorf("at ih=%d, log height = %d, want >= %d", ih, logH, laneLogMinHeight)
+			}
+		default: // ih >= 22
+			// Header + full chart (12) + legend (1) = 14 lines
+			wantLines := 1 + laneChartHeight + 1
+			if len(band) != wantLines {
+				t.Errorf("at ih=%d (h=%d), band len = %d, want %d (header + 12 chart + legend)",
+					ih, h, len(band), wantLines)
+			}
+			logH := ih - len(band)
+			if logH < laneLogMinHeight {
+				t.Errorf("at ih=%d, log height = %d, want >= %d", ih, logH, laneLogMinHeight)
+			}
+		}
 	}
 }
