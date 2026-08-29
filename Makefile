@@ -123,6 +123,23 @@ release: ## Tag main and push it, which starts the release build (VERSION=v0.1.0
 	@test "$$(git rev-parse HEAD)" = "$$(git rev-parse origin/main)" || { \
 	  echo 'release: HEAD is not origin/main — releases are cut from merged main'; \
 	  exit 1; }
+# A changelog with no guard behind it is stale by the third release; the tag
+# push cannot be taken back, so the refusal has to happen first.
+#
+# The [0-9] in that pattern is load-bearing: ## [Unreleased] is permanent, so
+# matching the first heading would find it every time and the guard would never
+# pass. Matching the first heading that begins with a digit skips it.
+#
+# Note what this deliberately does not prove: that the section says anything
+# true, and that the changelog commit is the newest commit on main.
+# Version-match is the invariant; commit ordering is only a proxy for it, and
+# requiring it would block a release on an unrelated docs PR.
+	@test -f CHANGELOG.md || { echo 'release: CHANGELOG.md is missing'; exit 1; }
+	@top=$$(sed -n 's/^## \[\([0-9][^]]*\)\].*/\1/p' CHANGELOG.md | head -1); \
+	  test "$$top" = '$(VERSION:v%=%)' || { \
+	    printf 'release: the newest section in CHANGELOG.md is [%s], not [%s]\n' \
+	      "$$top" '$(VERSION:v%=%)'; \
+	    echo 'release: write the section and merge it before tagging'; exit 1; }
 # Origin is asked first, because whether the tag is published is the fact the
 # local check below needs. --exit-code so the three answers stay three: 0 the
 # tag is there, 2 it is not, anything else means the question was never put to
