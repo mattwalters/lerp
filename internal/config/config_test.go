@@ -588,6 +588,50 @@ on_success = "Done"
 	}
 }
 
+// QueueRunners maps a queue to its runner's identity (name, vendor, model,
+// effort), and omits a queue whose runner is missing.
+func TestQueueRunners(t *testing.T) {
+	path := writeFile(t, "lerp.toml", `
+teams = ["LERP"]
+provision = "p"
+dispose = "d"
+
+[runners.claude]
+vendor = "claude"
+model = "claude-opus-5"
+effort = "high"
+
+[runners.agent]
+command = "sh -c {{prompt}}"
+
+[queues.plan]
+status = "Planning"
+prompt = "p"
+runner = "claude"
+on_success = "Implementing"
+
+[queues.implement]
+status = "Implementing"
+prompt = "p"
+runner = "agent"
+on_success = "Done"
+`)
+	c, err := LoadRepoConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Add an unconfigured runner to queues directly to test the missing-runner skip.
+	c.Queues["review"] = Queue{Runner: "missing"}
+
+	want := map[string]RunnerIdentity{
+		"plan":      {Name: "claude", Vendor: "claude", Model: "claude-opus-5", Effort: "high"},
+		"implement": {Name: "agent"},
+	}
+	if got := c.QueueRunners(); !reflect.DeepEqual(got, want) {
+		t.Errorf("QueueRunners = %+v, want %+v", got, want)
+	}
+}
+
 // A three-line vendor block resolves to the adapter's default command and
 // resume, with nothing downstream needing a case for vendors.
 func TestVendorRunnerResolves(t *testing.T) {

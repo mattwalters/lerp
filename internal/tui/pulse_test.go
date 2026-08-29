@@ -525,3 +525,22 @@ func TestPulseTracksContext(t *testing.T) {
 		t.Fatalf("the rewritten log kept a context of %d", p.context)
 	}
 }
+
+// model is taken from the init line, and cleared with everything else when
+// the log is rewritten under the pulse.
+func TestPulseTracksModel(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.log")
+	appendLog(t, path, `{"type":"system","subtype":"init","model":"claude-opus-5","session_id":"abc"}`+"\n")
+	now := time.Now()
+	p := newPulse(path)
+	p.read(now)
+	if p.model != "claude-opus-5" {
+		t.Fatalf("model = %q, want claude-opus-5", p.model)
+	}
+
+	writeLog(t, path, []byte("a wholly new log\n"))
+	p.read(now.Add(sparkBucket))
+	if p.model != "" {
+		t.Fatalf("the rewritten log kept a model of %q", p.model)
+	}
+}

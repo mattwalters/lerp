@@ -102,8 +102,12 @@ func TestTheHarnessWiresEveryOptionTheTUIRequires(t *testing.T) {
 		t.Fatalf("build the reconciler the harness builds: %v", err)
 	}
 	events := make(chan loop.Event)
-	if err := tuiOptions(rec, repo, events).Validate(); err != nil {
+	opts := tuiOptions(rec, repo, events)
+	if err := opts.Validate(); err != nil {
 		t.Fatalf("the harness would render a cast of this error instead of lerp: %v", err)
+	}
+	if len(opts.Runners) == 0 {
+		t.Errorf("the harness did not wire Runners from config")
 	}
 	for _, q := range []string{"plan", "implement"} {
 		if can, why := rec.CanEject(q); !can {

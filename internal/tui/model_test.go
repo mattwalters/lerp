@@ -19,6 +19,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
 
+	"github.com/mattwalters/lerp/internal/config"
 	"github.com/mattwalters/lerp/internal/linear"
 	"github.com/mattwalters/lerp/internal/loop"
 )
@@ -1232,7 +1233,7 @@ func TestMainPaneScrollbarTracksThePosition(t *testing.T) {
 	// has none.
 	m = selectAndRead(t, m, 0, linear.IssueDetail{Body: "a short ticket"}, nil, reader)
 	g := m.geometry()
-	if sb := m.mainScrollbar(g.mainH); sb != nil {
+	if sb := m.mainScrollbar(g.mainW, g.mainH); sb != nil {
 		t.Fatalf("a ticket shorter than the pane drew a thumb: %+v", *sb)
 	}
 	if strings.Contains(mainView(m), scrollThumbGlyph) {
@@ -1245,7 +1246,7 @@ func TestMainPaneScrollbarTracksThePosition(t *testing.T) {
 	body := strings.Repeat("a line of the plan\n", 80)
 	m = selectAndRead(t, m, 1, linear.IssueDetail{Body: body}, nil, reader)
 	g = m.geometry()
-	top := m.mainScrollbar(g.mainH)
+	top := m.mainScrollbar(g.mainW, g.mainH)
 	if top == nil {
 		t.Fatalf("a ticket far longer than the pane drew no thumb:\n%s", mainView(m))
 	}
@@ -1268,7 +1269,7 @@ func TestMainPaneScrollbarTracksThePosition(t *testing.T) {
 		m = update(t, m, keyMsg("j"))
 	}
 	g = m.geometry()
-	moved := m.mainScrollbar(g.mainH)
+	moved := m.mainScrollbar(g.mainW, g.mainH)
 	if moved == nil {
 		t.Fatalf("the thumb disappeared after scrolling down:\n%s", mainView(m))
 	}
@@ -1284,7 +1285,7 @@ func TestMainPaneScrollbarTracksThePosition(t *testing.T) {
 	// end of the ticket, the same edge scrollThumb's own tests pin.
 	m = update(t, m, keyMsg("G"))
 	g = m.geometry()
-	bottom := m.mainScrollbar(g.mainH)
+	bottom := m.mainScrollbar(g.mainW, g.mainH)
 	if bottom == nil {
 		t.Fatalf("the thumb disappeared at the bottom:\n%s", mainView(m))
 	}
@@ -8635,5 +8636,248 @@ func TestProjectFilterVisualAllPromoteInBacklogSlice(t *testing.T) {
 	}
 	if promoter.calls[0].ticketID != "id-22" || promoter.calls[1].ticketID != "id-23" {
 		t.Fatalf("promoter calls = %+v, want id-22 and id-23", promoter.calls)
+	}
+}
+
+// Across a range of pane sizes, m.vp.Height + len(band) == g.mainH-2, and
+// the scroll thumb sits entirely below the band and inside the track.
+func TestMainBandLayoutAndScrollbar(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "run.log")
+	var body []byte
+	for i := 0; i < 200; i++ {
+		body = append(body, []byte(fmt.Sprintf("log line %d\n", i))...)
+	}
+	writeLog(t, logPath, body)
+
+	events := make(chan loop.Event, 8)
+	m := newModel(context.Background(), Options{
+		Engine:   fakeEngine{&countingTicker{}, &recordingPromoter{}, &recordingEjector{}, &recordingStarter{}, &recordingReader{}},
+		Statuses: defaultTestStatuses,
+		Runners: map[string]config.RunnerIdentity{
+			"implement": {Name: "agent", Vendor: "claude", Model: "claude-opus-5", Effort: "high"},
+		},
+		Windows:  map[string]int{"implement": 200000},
+		Interval: time.Millisecond,
+		Lanes:    1,
+		Events:   events,
+	})
+	m = pastTheSplash(t, m)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
+			{ID: "t1", Identifier: "LERP-1", Title: "running", Assigned: true},
+		}},
+	}}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		TicketID: "t1", Ticket: "LERP-1", Queue: "implement", LogPath: logPath}})
+
+	m = resize(t, m, 120, 30)
+	m = openMain(t, update(t, m, keyMsg("2")))
+	if !m.logOnScreen() {
+		t.Fatal("log is not on screen")
+	}
+
+	for h := 15; h <= 40; h += 5 {
+		for w := 100; w <= 140; w += 20 {
+			m = resize(t, m, w, h)
+			g := m.geometry()
+			band := m.mainBand(g.mainW, g.mainH)
+			if len(band) == 0 {
+				t.Fatalf("at size %dx%d, mainBand returned no lines", w, h)
+			}
+			if got := m.vp.Height + len(band); got != g.mainH-2 {
+				t.Errorf("at size %dx%d, vp.Height (%d) + len(band) (%d) = %d, want %d",
+					w, h, m.vp.Height, len(band), got, g.mainH-2)
+			}
+			sb := m.mainScrollbar(g.mainW, g.mainH)
+			if sb == nil {
+				t.Fatalf("at size %dx%d, expected scrollbar thumb for 200 lines", w, h)
+			}
+			if sb.top < len(band) {
+				t.Errorf("at size %dx%d, scroll thumb top = %d, want >= len(band) (%d)",
+					w, h, sb.top, len(band))
+			}
+			if sb.top+sb.len > g.mainH-2 {
+				t.Errorf("at size %dx%d, scroll thumb bottom = %d, want <= track height (%d)",
+					w, h, sb.top+sb.len, g.mainH-2)
+			}
+		}
+	}
+}
+
+// A pane at the short-pane threshold drops the band and keeps the log rows.
+func TestMainBandShortPaneThreshold(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "run.log")
+	writeLog(t, logPath, []byte("line 1\nline 2\nline 3\n"))
+
+	events := make(chan loop.Event, 8)
+	m := newModel(context.Background(), Options{
+		Engine:   fakeEngine{&countingTicker{}, &recordingPromoter{}, &recordingEjector{}, &recordingStarter{}, &recordingReader{}},
+		Statuses: defaultTestStatuses,
+		Runners: map[string]config.RunnerIdentity{
+			"implement": {Name: "agent"},
+		},
+		Interval: time.Millisecond,
+		Lanes:    1,
+		Events:   events,
+	})
+	m = pastTheSplash(t, m)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
+			{ID: "t1", Identifier: "LERP-1", Title: "running", Assigned: true},
+		}},
+	}}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		TicketID: "t1", Ticket: "LERP-1", Queue: "implement", LogPath: logPath}})
+
+	m = resize(t, m, 120, 30)
+	m = openMain(t, update(t, m, keyMsg("2")))
+
+	if band := m.mainBand(80, 5); len(band) != 1 {
+		t.Fatalf("mainBand(80, 5) = %v, want 1 line", band)
+	}
+	if band := m.mainBand(80, 4); len(band) != 0 {
+		t.Fatalf("mainBand(80, 4) = %v, want 0 lines (dropped)", band)
+	}
+	if band := m.mainBand(80, 3); len(band) != 0 {
+		t.Fatalf("mainBand(80, 3) = %v, want 0 lines (dropped)", band)
+	}
+}
+
+// Raw mode (r) keeps the pinned header band.
+func TestMainBandRawKeepsBand(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "run.log")
+	writeLog(t, logPath, []byte(`{"type":"system","subtype":"init","model":"claude-opus-5"}`+"\n"))
+
+	events := make(chan loop.Event, 8)
+	m := newModel(context.Background(), Options{
+		Engine:   fakeEngine{&countingTicker{}, &recordingPromoter{}, &recordingEjector{}, &recordingStarter{}, &recordingReader{}},
+		Statuses: defaultTestStatuses,
+		Runners: map[string]config.RunnerIdentity{
+			"implement": {Name: "agent", Vendor: "claude"},
+		},
+		Interval: time.Millisecond,
+		Lanes:    1,
+		Events:   events,
+	})
+	m = pastTheSplash(t, m)
+	m = resize(t, m, 120, 30)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
+			{ID: "t1", Identifier: "LERP-1", Title: "running", Assigned: true},
+		}},
+	}}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		TicketID: "t1", Ticket: "LERP-1", Queue: "implement", LogPath: logPath}})
+
+	m = openMain(t, update(t, m, keyMsg("2")))
+	m = update(t, m, pollMsg{})
+
+	if band := m.mainBand(m.geometry().mainW, m.geometry().mainH); len(band) != 1 {
+		t.Fatalf("before raw toggle, band = %v", band)
+	}
+
+	m = update(t, m, keyMsg("r"))
+	if !m.rawLog {
+		t.Fatal("expected rawLog to be true")
+	}
+	if band := m.mainBand(m.geometry().mainW, m.geometry().mainH); len(band) != 1 {
+		t.Fatalf("after raw toggle, band = %v, want 1 line", band)
+	}
+	view := m.View()
+	if !strings.Contains(view, "lane 1 · agent (claude) · claude-opus-5") {
+		t.Fatalf("raw view does not contain band:\n%s", view)
+	}
+}
+
+// The band is absent for the inbox lens, the work ticket lens, and a "last log" row whose run has ended.
+func TestMainBandAbsentForOtherLenses(t *testing.T) {
+	reader := &recordingReader{}
+	events := make(chan loop.Event, 8)
+	m := newModel(context.Background(), Options{
+		Engine:   fakeEngine{&countingTicker{}, &recordingPromoter{}, &recordingEjector{}, &recordingStarter{}, reader},
+		Statuses: defaultTestStatuses,
+		Runners: map[string]config.RunnerIdentity{
+			"implement": {Name: "agent"},
+		},
+		Interval: time.Millisecond,
+		Lanes:    1,
+		Events:   events,
+	})
+	m = pastTheSplash(t, m)
+	m = resize(t, m, 120, 30)
+
+	logPath := filepath.Join(t.TempDir(), "run.log")
+	writeLog(t, logPath, []byte("finished log\n"))
+
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventAttention, Attention: []loop.AttentionItem{
+		{Ticket: "LERP-10", TicketID: "t10", Title: "inbox ticket", Status: "Triage"},
+	}}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
+			{ID: "t1", Identifier: "LERP-1", Title: "pending ticket", Eligible: true},
+		}},
+	}}})
+
+	g := m.geometry()
+
+	// 1. Inbox lens:
+	m = update(t, m, keyMsg("1"))
+	m = openMain(t, m)
+	if band := m.mainBand(g.mainW, g.mainH); len(band) != 0 {
+		t.Errorf("inbox lens: mainBand = %v, want nil", band)
+	}
+
+	// 2. Work ticket lens (pending ticket, no running lane):
+	m = update(t, m, keyMsg("2"))
+	if band := m.mainBand(g.mainW, g.mainH); len(band) != 0 {
+		t.Errorf("work ticket lens: mainBand = %v, want nil", band)
+	}
+
+	// 3. "Last log" row whose run has ended:
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		TicketID: "t1", Ticket: "LERP-1", Queue: "implement", LogPath: logPath}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventExited, RunID: "r1", Lane: 1,
+		TicketID: "t1", Ticket: "LERP-1", Queue: "implement"}})
+	if !m.showingLog() {
+		t.Fatal("expected showingLog to be true for last log")
+	}
+	if band := m.mainBand(g.mainW, g.mainH); len(band) != 0 {
+		t.Errorf("last log lens: mainBand = %v, want nil", band)
+	}
+}
+
+// A running row's runner identity comes from Options.Runners, keyed by the
+// queue it is running in.
+func TestWorkGroupsRunnerPlumbing(t *testing.T) {
+	ticker := &countingTicker{}
+	events := make(chan loop.Event, 8)
+	m := newModel(context.Background(), Options{
+		Engine:   fakeEngine{ticker, &recordingPromoter{}, &recordingEjector{}, &recordingStarter{}, &recordingReader{}},
+		Statuses: defaultTestStatuses,
+		Runners: map[string]config.RunnerIdentity{
+			"implement": {Name: "agent", Vendor: "claude", Model: "claude-opus-5", Effort: "high"},
+		},
+		Interval: time.Millisecond,
+		Lanes:    2,
+		Events:   events,
+	})
+	resized, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = pastTheSplash(t, resized.(model))
+
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		TicketID: "id-42", Ticket: "LERP-42", Queue: "implement", LogPath: "/dev/null"}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r2", Lane: 2,
+		TicketID: "id-43", Ticket: "LERP-43", Queue: "plan", LogPath: "/dev/null"}})
+
+	runners := make(map[string]config.RunnerIdentity)
+	for _, r := range m.workRows() {
+		runners[r.ticket] = r.runner
+	}
+	want42 := config.RunnerIdentity{Name: "agent", Vendor: "claude", Model: "claude-opus-5", Effort: "high"}
+	if runners["LERP-42"] != want42 {
+		t.Errorf("LERP-42's row.runner = %+v, want %+v from Options.Runners[implement]", runners["LERP-42"], want42)
+	}
+	if (runners["LERP-43"] != config.RunnerIdentity{}) {
+		t.Errorf("LERP-43's row.runner = %+v, want empty — its queue has no configured runner", runners["LERP-43"])
 	}
 }
