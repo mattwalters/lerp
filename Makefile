@@ -50,13 +50,14 @@ fmt: ## Format all Go source
 # Releases
 # --------------------------------------------------------------------------
 
-# The two halves of cutting a release. `snapshot` builds what a tag would
-# build, without publishing anything; `release` pushes the tag and stops,
-# because the build itself belongs to .github/workflows/release.yml — a
-# release nobody can reproduce from a clean checkout is a release built on
-# somebody's laptop.
+# The two halves of cutting a release, plus an optional helper to draft
+# notes. `snapshot` builds what a tag would build, without publishing
+# anything; `release` pushes the tag and stops, because the build itself
+# belongs to .github/workflows/release.yml — a release nobody can reproduce
+# from a clean checkout is a release built on somebody's laptop; and
+# `changelog` drafts the next section with Claude Code.
 #
-# Neither is in `check`. The gate needs nothing installed beyond Go, and
+# None is in `check`. The gate needs nothing installed beyond Go, and
 # cross-building four binaries is not what a pre-commit run is for.
 
 .PHONY: snapshot
@@ -92,6 +93,11 @@ snapshot: ## Build the release binaries locally, publishing nothing (needs gorel
 SEMVER_NUM := (0|[1-9][0-9]*)
 SEMVER_ID := ($(SEMVER_NUM)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)
 SEMVER_RE := ^v$(SEMVER_NUM)\.$(SEMVER_NUM)\.$(SEMVER_NUM)(-$(SEMVER_ID)(\.$(SEMVER_ID))*)?
+
+# The newest released section's version. Both the release guard and the
+# changelog summary read it, and a guard and a summary that disagree about
+# which version is written is a bug, so there is one spelling.
+CHANGELOG_TOP = sed -n 's/^## \[\([0-9][^]]*\)\].*/\1/p' CHANGELOG.md | head -1
 
 .PHONY: release
 release: ## Tag main and push it, which starts the release build (VERSION=v0.1.0)
@@ -135,7 +141,7 @@ release: ## Tag main and push it, which starts the release build (VERSION=v0.1.0
 # Version-match is the invariant; commit ordering is only a proxy for it, and
 # requiring it would block a release on an unrelated docs PR.
 	@test -f CHANGELOG.md || { echo 'release: CHANGELOG.md is missing'; exit 1; }
-	@top=$$(sed -n 's/^## \[\([0-9][^]]*\)\].*/\1/p' CHANGELOG.md | head -1); \
+	@top=$$($(CHANGELOG_TOP)); \
 	  test "$$top" = '$(VERSION:v%=%)' || { \
 	    printf 'release: the newest section in CHANGELOG.md is [%s], not [%s]\n' \
 	      "$$top" '$(VERSION:v%=%)'; \
@@ -170,6 +176,28 @@ release: ## Tag main and push it, which starts the release build (VERSION=v0.1.0
 	git push origin 'refs/tags/$(VERSION)'
 	@printf 'pushed %s — the release build takes it from here:\n' '$(VERSION)'
 	@printf '  https://github.com/mattwalters/lerp/actions/workflows/release.yml\n'
+
+.PHONY: changelog
+changelog: ## Draft the next CHANGELOG.md section with Claude Code (needs claude)
+# An optional drafter for the next CHANGELOG.md section. `make release` must
+# never invoke claude: its changelog guard is sed and test against a file,
+# so releases work identically if Claude Code is not installed or the section
+# is written by hand. This target is interactive, drives Claude Code seeded
+# with .github/prompts/changelog.md under a scoped tool grant, and derives
+# the next make release command from whatever was written.
+	@command -v claude >/dev/null || { \
+	  echo 'changelog: needs Claude Code on PATH — or write the section by hand'; \
+	  exit 1; }
+	@test -t 0 || { echo 'changelog: this target is interactive, run it in a terminal'; exit 1; }
+	@test -z "$$(git status --porcelain)" || { \
+	  echo 'changelog: the tree is dirty — the drafted section should be the only change'; \
+	  exit 1; }
+	git fetch --quiet origin main
+	@claude "$$(cat .github/prompts/changelog.md)" --allowedTools 'Bash(git *) Read Edit'
+	@top=$$($(CHANGELOG_TOP)); \
+	  test -n "$$top" || { echo 'changelog: no version section was written'; exit 1; }; \
+	  printf '\nchangelog: newest section is [%s]\n' "$$top"; \
+	  printf 'commit it, open a PR, merge it, then:\n  make release VERSION=v%s\n' "$$top"
 
 # Where the example generator writes before it is moved into place. Gitignored
 # and beside the target, not in TMPDIR, so the move is a same-filesystem

@@ -107,7 +107,9 @@ The same rules the agents work under (see `AGENTS.md`):
 - PRs go against `main`. Releases are tagged from `main` after their
   changelog section has landed:
   1. Write the new version's section in `CHANGELOG.md` on a branch
-     (see the file header for the binary-not-website filter).
+     (`make changelog` drafts it with Claude Code; by hand is the other
+     way, and releases work identically without it — see the file
+     header for the binary-not-website filter).
   2. Commit, PR, and merge it, so the version number and notes go
      through review like any other change.
   3. `git checkout main && git pull`
