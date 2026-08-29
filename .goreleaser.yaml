@@ -100,3 +100,11 @@ release:
   # `v0.2.0-rc1` is a release candidate whether or not anyone remembers to
   # tick the box; goreleaser reads the prerelease segment of the tag.
   prerelease: auto
+
+# Strictly redundant with `--release-notes` in .github/workflows/release.yml,
+# which already suppresses goreleaser's commit changelog. It is here because
+# the config is where somebody looks to answer whether this project generates
+# a changelog, and the flag that actually suppresses generation lives a file
+# away.
+changelog:
+  disable: true

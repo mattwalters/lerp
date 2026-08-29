@@ -34,6 +34,27 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
+      # Slices the release body out of CHANGELOG.md rather than generating it
+      # from the commit log: the published release notes should be the
+      # curated changelog prose, not a raw dump of commit SHAs.
+      #
+      # Staged into $RUNNER_TEMP rather than the repo root so goreleaser's
+      # git dirty-state check (`git status --porcelain`) does not see an
+      # untracked release-notes.md and fail the build before anything runs.
+      #
+      # The `test -s` duplicates the Makefile's release guard on purpose: the
+      # Makefile runs before the tag is pushed; this catches a tag that reached
+      # origin some other way and fails loudly rather than publishing an empty
+      # release body.
+      - name: Slice this version's section out of CHANGELOG.md
+        run: |
+          awk -v tag="${GITHUB_REF_NAME#v}" '
+            $0 ~ "^## \\[" tag "\\]" {p=1; next}
+            p && /^## \[/ {exit}
+            p {print}
+          ' CHANGELOG.md > "$RUNNER_TEMP/release-notes.md"
+          test -s "$RUNNER_TEMP/release-notes.md" || {
+            echo "release: CHANGELOG.md has no section for ${GITHUB_REF_NAME}"; exit 1; }
       - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7
         with:
           # A major-version constraint, not a pin: `.goreleaser.yaml` declares
@@ -42,7 +63,7 @@ jobs:
           # this in step with the goreleaser a developer's `make snapshot`
           # installs; a v3 would be a deliberate change to both.
           version: "~> v2"
-          args: release --clean
+          args: release --clean --release-notes=${{ runner.temp }}/release-notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # The workflow token above is scoped to this repo; pushing the brew
