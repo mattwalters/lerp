@@ -67,10 +67,11 @@ jobs:
 
   # Defense in depth behind GitHub's push protection, which is already enabled
   # and catches the main case before a push lands. What gitleaks adds over it:
-  # custom rules GitHub does not carry (like Linear API keys) and a check that
+  # rules GitHub does not carry (including Linear API keys) and a check that
   # fails the build on any leak detected. On pull requests it scans only the
-  # incoming commit range; on pushes to main it scans history. fetch-depth: 0
-  # ensures the commit graph is available for range resolution.
+  # incoming commit range; on pushes to main it scans full history by setting
+  # GITHUB_EVENT_NAME to schedule. fetch-depth: 0 ensures the commit graph is
+  # available for range resolution.
   secrets:
     runs-on: ubuntu-latest
     steps:
@@ -80,6 +81,7 @@ jobs:
       - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_EVENT_NAME: ${{ github.event_name == 'push' && 'schedule' || github.event_name }}
 
   # `.goreleaser.yaml` is otherwise executed exactly once in anger — by
   # release.yml, on a tag push, which is to say *after* the one step in the
