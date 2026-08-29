@@ -9,6 +9,35 @@ import (
 	"testing"
 )
 
+func TestTeamsReportsAllTeamsInKeyOrder(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		req := decodeRequest(t, r)
+		if !strings.Contains(req.Query, "Teams") {
+			t.Errorf("unexpected query: %s", req.Query)
+		}
+		if !strings.Contains(req.Query, "teams(first: 250)") {
+			t.Errorf("query does not request 250 teams: %s", req.Query)
+		}
+		writeData(t, w, `{"teams":{"nodes":[
+			{"key":"LERP","name":"Lerp"},
+			{"key":"ACEM","name":"Acme Marketing"},
+			{"key":"ENG","name":"Engineering"}
+		]}}`)
+	})
+	teams, err := c.Teams(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []TeamRef{
+		{Key: "ACEM", Name: "Acme Marketing"},
+		{Key: "ENG", Name: "Engineering"},
+		{Key: "LERP", Name: "Lerp"},
+	}
+	if !reflect.DeepEqual(teams, want) {
+		t.Errorf("teams = %+v, want %+v", teams, want)
+	}
+}
+
 func TestEnsureTeamCreatesOnlyWhenMissing(t *testing.T) {
 	calls := 0
 	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {

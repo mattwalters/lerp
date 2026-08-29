@@ -12,7 +12,7 @@ usage:
   lerp version, --version       print the version
   lerp login                    sign in to Linear (loopback OAuth); no flags
   lerp logout                   sign out of Linear and revoke the token; no flags
-  lerp init --team KEY [--yes]  map lerp's queues onto the team's board and write this repo's lerp.toml
+  lerp init [--team KEY] [--yes]  map lerp's queues onto the team's board and write this repo's lerp.toml
 ```
 
 That is the whole surface. `lerp -h` prints it, subcommands included.
@@ -77,7 +77,7 @@ lerp init --team LERP --team-name "Lerp"
 
 | Flag | Meaning |
 | --- | --- |
-| `--team KEY` | the Linear team key, the LERP in LERP-42. Required. |
+| `--team KEY` | the Linear team key, the LERP in LERP-42. Optional at a terminal; required with `--yes` or in a pipe. |
 | `--team-name NAME` | display name, used only if the team must be created |
 | `--yes` | take the stock answer to every question. Piped input implies it |
 

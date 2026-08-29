@@ -20,8 +20,12 @@ type fakeBoard struct {
 	teamKey, teamName string
 	teamStatesKey     string
 	teamNotFound      bool
+	ensureTeamCalled  bool
+	ensureCalls       int
 	automations       []linear.GitAutomation
 	automationsErr    error
+	teams             []linear.TeamRef
+	teamsErr          error
 	// existing plays the statuses the team already has, in board order.
 	existing []linear.WorkflowState
 	states   []linear.StateSpec
@@ -35,8 +39,25 @@ type fakeBoard struct {
 }
 
 func (b *fakeBoard) EnsureTeam(_ context.Context, key, name string) error {
+	b.ensureCalls++
+	b.ensureTeamCalled = true
 	b.teamKey, b.teamName = key, name
 	return b.err
+}
+
+func (b *fakeBoard) Teams(_ context.Context) ([]linear.TeamRef, error) {
+	if b.teamsErr != nil {
+		return nil, b.teamsErr
+	}
+	if b.teamNotFound && b.teams == nil {
+		return nil, nil
+	}
+	if b.teams == nil {
+		return []linear.TeamRef{
+			{Key: "LERP", Name: "Lerp"},
+		}, nil
+	}
+	return b.teams, nil
 }
 
 func (b *fakeBoard) TeamWorkflowStates(_ context.Context, teamKey string) ([]linear.WorkflowState, error) {
@@ -124,7 +145,7 @@ on_failure = "Human Review"
 
 func TestInitCreatesConfigAndStates(t *testing.T) {
 	dir := t.TempDir()
-	b := &fakeBoard{teamNotFound: true}
+	b := &fakeBoard{existing: linearDefaults, teamName: "Lerp"}
 	var out bytes.Buffer
 	// Fast path with every default, then an explicit yes to the grant.
 	answers := strings.NewReader("\n\n\ny\n")
@@ -134,9 +155,6 @@ func TestInitCreatesConfigAndStates(t *testing.T) {
 	}
 	if !created {
 		t.Error("created = false, want true")
-	}
-	if b.teamKey != "LERP" || b.teamName != "Lerp" {
-		t.Errorf("EnsureTeam = (%q, %q)", b.teamKey, b.teamName)
 	}
 	// Every status the stock pipeline names, all "started": init never infers
 	// a completed category — "In Review" is only ever an on_success target,
@@ -657,7 +675,7 @@ func TestInitCreatesNonExistentTeam(t *testing.T) {
 	dir := t.TempDir()
 	b := &fakeBoard{teamNotFound: true}
 	var out bytes.Buffer
-	answers := strings.NewReader("\n\n\ny\n")
+	answers := strings.NewReader("y\n\n\n\ny\n")
 	created, err := Init(context.Background(), b, &out, answers, dir, "NEWTEAM", "New Team")
 	if err != nil {
 		t.Fatal(err)
@@ -670,7 +688,8 @@ func TestInitCreatesNonExistentTeam(t *testing.T) {
 	}
 	output := out.String()
 	for _, want := range []string{
-		"team NEWTEAM has no statuses yet",
+		"workspace has no team \"NEWTEAM\"",
+		"Create team NEWTEAM? [y/N]",
 		"creating team NEWTEAM (New Team)",
 		"creating on team NEWTEAM: Implementing, In Review, Needs Attention, Plan Review, Planning",
 	} {
@@ -704,7 +723,7 @@ func TestInitConfirmPrecedesExecute(t *testing.T) {
 		name    string
 		answers io.Reader
 	}{
-		{"interactive", strings.NewReader("\n\n\n\n")},
+		{"interactive", strings.NewReader("y\n\n\n\n")},
 		{"non-interactive", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1479,5 +1498,418 @@ func TestInitReportsAutomationsOnCreatedTeam(t *testing.T) {
 		if !strings.Contains(output, want) {
 			t.Errorf("output missing %q:\n%s", want, output)
 		}
+	}
+}
+
+func TestInitTeamGivenAndExistsDoesNotAskOrCallEnsureTeam(t *testing.T) {
+	dir := t.TempDir()
+	b := &fakeBoard{
+		teams:    []linear.TeamRef{{Key: "LERP", Name: "Lerp"}},
+		existing: linearDefaults,
+	}
+	var out bytes.Buffer
+	answers := strings.NewReader("\n\n\ny\n")
+	created, err := Init(context.Background(), b, &out, answers, dir, "LERP", "Lerp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created {
+		t.Error("created = false, want true")
+	}
+	if b.ensureCalls != 0 {
+		t.Errorf("ensureCalls = %d, want 0 when key already exists", b.ensureCalls)
+	}
+	if strings.Contains(out.String(), "Create team") {
+		t.Errorf("asked to create existing team:\n%s", out.String())
+	}
+}
+
+func TestInitTeamGivenAndMissingTerminalConfirmsCreate(t *testing.T) {
+	dir := t.TempDir()
+	b := &fakeBoard{
+		teams:    []linear.TeamRef{{Key: "ENG", Name: "Engineering"}},
+		existing: linearDefaults,
+	}
+	var out bytes.Buffer
+	answers := strings.NewReader("y\n\n\n\ny\n")
+	created, err := Init(context.Background(), b, &out, answers, dir, "ACEM", "Acme Marketing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created {
+		t.Error("created = false, want true")
+	}
+	if b.ensureCalls != 1 || b.teamKey != "ACEM" || b.teamName != "Acme Marketing" {
+		t.Errorf("EnsureTeam = (%q, %q), calls = %d", b.teamKey, b.teamName, b.ensureCalls)
+	}
+	for _, want := range []string{
+		`workspace has no team "ACEM"; workspace has: ENG`,
+		"Create team ACEM? [y/N]",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output missing %q:\n%s", want, out.String())
+		}
+	}
+}
+
+func TestInitTeamGivenAndMissingTerminalDeclinesCreate(t *testing.T) {
+	dir := t.TempDir()
+	b := &fakeBoard{
+		teams:    []linear.TeamRef{{Key: "ENG", Name: "Engineering"}},
+		existing: linearDefaults,
+	}
+	var out bytes.Buffer
+	answers := strings.NewReader("n\n")
+	_, err := Init(context.Background(), b, &out, answers, dir, "ACEM", "Acme Marketing")
+	if err == nil || !strings.Contains(err.Error(), `team "ACEM" not created`) {
+		t.Fatalf("error = %v, want team ACEM not created", err)
+	}
+	if b.ensureCalls != 0 {
+		t.Errorf("ensureCalls = %d, want 0 when declined", b.ensureCalls)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, config.RepoConfigFile)); !os.IsNotExist(statErr) {
+		t.Fatalf("config created despite decline: %v", statErr)
+	}
+}
+
+func TestInitTeamGivenAndMissingNonInteractiveCreatesSilently(t *testing.T) {
+	dir := t.TempDir()
+	b := &fakeBoard{
+		teams:    []linear.TeamRef{{Key: "ENG", Name: "Engineering"}},
+		existing: linearDefaults,
+	}
+	var out bytes.Buffer
+	created, err := Init(context.Background(), b, &out, nil, dir, "ACEM", "Acme Marketing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created {
+		t.Error("created = false, want true")
+	}
+	if b.ensureCalls != 1 || b.teamKey != "ACEM" || b.teamName != "Acme Marketing" {
+		t.Errorf("EnsureTeam = (%q, %q), calls = %d", b.teamKey, b.teamName, b.ensureCalls)
+	}
+	if strings.Contains(out.String(), "?") {
+		t.Errorf("non-interactive init asked a question:\n%s", out.String())
+	}
+}
+
+func TestInitTeamAbsentTerminalPicksFromNumberedList(t *testing.T) {
+	dir := t.TempDir()
+	b := &fakeBoard{
+		teams: []linear.TeamRef{
+			{Key: "ENG", Name: "Engineering"},
+			{Key: "LERP", Name: "Lerp"},
+		},
+		existing: linearDefaults,
+	}
+	var out bytes.Buffer
+	// Pick row 2: LERP, then defaults for plan, review, map, bypass.
+	answers := strings.NewReader("2\n\n\n\ny\n")
+	created, err := Init(context.Background(), b, &out, answers, dir, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created {
+		t.Error("created = false, want true")
+	}
+	if b.ensureCalls != 0 {
+		t.Errorf("ensureCalls = %d, want 0 for existing team pick", b.ensureCalls)
+	}
+	for _, want := range []string{
+		"  1) ENG  Engineering",
+		"  2) LERP  Lerp",
+		"  3) create a new team",
+		"Pick a team [1]:",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output missing %q:\n%s", want, out.String())
+		}
+	}
+	c, err := config.LoadRepoConfig(filepath.Join(dir, config.RepoConfigFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(c.Teams, []string{"LERP"}) {
+		t.Errorf("teams = %v, want [LERP]", c.Teams)
+	}
+}
+
+func TestInitTeamAbsentTerminalSelectsCreateRow(t *testing.T) {
+	dir := t.TempDir()
+	b := &fakeBoard{
+		teams: []linear.TeamRef{
+			{Key: "LERP", Name: "Lerp"},
+		},
+		existing: linearDefaults,
+	}
+	var out bytes.Buffer
+	// Pick row 2 (create a new team), enter key ACEM, name Acme Marketing, then plan, review, map, bypass.
+	answers := strings.NewReader("2\nACEM\nAcme Marketing\n\n\n\ny\n")
+	created, err := Init(context.Background(), b, &out, answers, dir, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created {
+		t.Error("created = false, want true")
+	}
+	if b.ensureCalls != 1 || b.teamKey != "ACEM" || b.teamName != "Acme Marketing" {
+		t.Errorf("EnsureTeam = (%q, %q), calls = %d", b.teamKey, b.teamName, b.ensureCalls)
+	}
+	for _, want := range []string{
+		"  2) create a new team",
+		"Team key:",
+		"Team name [ACEM]:",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output missing %q:\n%s", want, out.String())
+		}
+	}
+	c, err := config.LoadRepoConfig(filepath.Join(dir, config.RepoConfigFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(c.Teams, []string{"ACEM"}) {
+		t.Errorf("teams = %v, want [ACEM]", c.Teams)
+	}
+}
+
+func TestInitTeamAbsentTerminalCreateRowUsesDefaultTeamName(t *testing.T) {
+	dir := t.TempDir()
+	b := &fakeBoard{
+		teams: []linear.TeamRef{
+			{Key: "LERP", Name: "Lerp"},
+		},
+		existing: linearDefaults,
+	}
+	var out bytes.Buffer
+	// Pick row 2 (create), enter key ACEM, press Enter for default name from --team-name
+	answers := strings.NewReader("2\nACEM\n\n\n\n\ny\n")
+	created, err := Init(context.Background(), b, &out, answers, dir, "", "Provided Name")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created {
+		t.Error("created = false, want true")
+	}
+	if b.ensureCalls != 1 || b.teamKey != "ACEM" || b.teamName != "Provided Name" {
+		t.Errorf("EnsureTeam = (%q, %q), calls = %d", b.teamKey, b.teamName, b.ensureCalls)
+	}
+	if !strings.Contains(out.String(), "Team name [Provided Name]:") {
+		t.Errorf("output missing Provided Name prompt:\n%s", out.String())
+	}
+}
+
+func TestInitTeamAbsentNonInteractiveErrors(t *testing.T) {
+	dir := t.TempDir()
+	b := &fakeBoard{
+		teams:    []linear.TeamRef{{Key: "LERP", Name: "Lerp"}},
+		existing: linearDefaults,
+	}
+	_, err := Init(context.Background(), b, nil, nil, dir, "", "")
+	if err == nil || !strings.Contains(err.Error(), "--team is required") {
+		t.Fatalf("error = %v, want --team is required", err)
+	}
+	if b.ensureCalls != 0 {
+		t.Errorf("ensureCalls = %d, want 0", b.ensureCalls)
+	}
+}
+
+func TestInitWorkspaceHasNoTeamsGoesStraightToCreate(t *testing.T) {
+	dir := t.TempDir()
+	b := &fakeBoard{
+		teams:    []linear.TeamRef{},
+		existing: linearDefaults,
+	}
+	var out bytes.Buffer
+	// Straight to create prompts: key ACEM, name Acme, then plan, review, map, bypass.
+	answers := strings.NewReader("ACEM\nAcme\n\n\n\ny\n")
+	created, err := Init(context.Background(), b, &out, answers, dir, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created {
+		t.Error("created = false, want true")
+	}
+	if b.ensureCalls != 1 || b.teamKey != "ACEM" || b.teamName != "Acme" {
+		t.Errorf("EnsureTeam = (%q, %q), calls = %d", b.teamKey, b.teamName, b.ensureCalls)
+	}
+	for _, want := range []string{
+		"Team key:",
+		"Team name [ACEM]:",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output missing %q:\n%s", want, out.String())
+		}
+	}
+	if strings.Contains(out.String(), "Pick a team") {
+		t.Errorf("output should not contain picker when workspace has no teams:\n%s", out.String())
+	}
+}
+
+func TestInitTeamQuestionEOFErrorsWithoutCreating(t *testing.T) {
+	dir := t.TempDir()
+	b := &fakeBoard{
+		teams:    []linear.TeamRef{{Key: "LERP", Name: "Lerp"}},
+		existing: linearDefaults,
+	}
+	answers := strings.NewReader("")
+	_, err := Init(context.Background(), b, nil, answers, dir, "", "")
+	if err == nil {
+		t.Fatal("want error on EOF at team question, got nil")
+	}
+	if b.ensureCalls != 0 {
+		t.Errorf("ensureCalls = %d, want 0", b.ensureCalls)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, config.RepoConfigFile)); !os.IsNotExist(statErr) {
+		t.Fatalf("config created on EOF: %v", statErr)
+	}
+}
+
+func TestInitRepeatInitSingleConfiguredTeamSeedsWithoutAsking(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, config.RepoConfigFile)
+	if err := os.WriteFile(path, []byte(existingConfig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b := &fakeBoard{
+		teams: []linear.TeamRef{
+			{Key: "ENG", Name: "Engineering"},
+			{Key: "LERP", Name: "Lerp"},
+		},
+		existing: []linear.WorkflowState{{Name: "Planning", Category: "started"}, {Name: "Implementing", Category: "started"}},
+	}
+	var out bytes.Buffer
+	answers := strings.NewReader("")
+	created, err := Init(context.Background(), b, &out, answers, dir, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created {
+		t.Error("created = true, want false for repeat init")
+	}
+	if b.ensureCalls != 0 {
+		t.Errorf("ensureCalls = %d, want 0", b.ensureCalls)
+	}
+	if strings.Contains(out.String(), "Pick a team") {
+		t.Errorf("asked for team on repeat init with single configured team:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "on team LERP:") {
+		t.Errorf("output missing LERP report:\n%s", out.String())
+	}
+}
+
+func TestInitRepeatInitMultipleConfiguredTeamsSeedsPickerList(t *testing.T) {
+	dir := t.TempDir()
+	multiConfig := strings.ReplaceAll(existingConfig, `teams = ["LERP"]`, `teams = ["ENG", "LERP"]`)
+	path := filepath.Join(dir, config.RepoConfigFile)
+	if err := os.WriteFile(path, []byte(multiConfig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b := &fakeBoard{
+		teams: []linear.TeamRef{
+			{Key: "ACEM", Name: "Acme Marketing"},
+			{Key: "ENG", Name: "Engineering"},
+			{Key: "LERP", Name: "Lerp"},
+		},
+		existing: []linear.WorkflowState{{Name: "Planning", Category: "started"}, {Name: "Implementing", Category: "started"}},
+	}
+	var out bytes.Buffer
+	answers := strings.NewReader("2\n")
+	created, err := Init(context.Background(), b, &out, answers, dir, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created {
+		t.Error("created = true, want false for repeat init")
+	}
+	if b.ensureCalls != 0 {
+		t.Errorf("ensureCalls = %d, want 0", b.ensureCalls)
+	}
+	transcript := out.String()
+	for _, want := range []string{
+		"  1) ENG  Engineering",
+		"  2) LERP  Lerp",
+		"Pick a team [1]:",
+		"on team LERP:",
+	} {
+		if !strings.Contains(transcript, want) {
+			t.Errorf("output missing %q:\n%s", want, transcript)
+		}
+	}
+	if strings.Contains(transcript, "create a new team") {
+		t.Errorf("picker offered create a new team on repeat init:\n%s", transcript)
+	}
+	if strings.Contains(transcript, "ACEM") {
+		t.Errorf("picker offered team ACEM not in repo config:\n%s", transcript)
+	}
+}
+
+func TestInitRepeatInitSingleConfiguredTeamNoneExistInWorkspaceErrors(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, config.RepoConfigFile)
+	if err := os.WriteFile(path, []byte(existingConfig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b := &fakeBoard{
+		teams: []linear.TeamRef{
+			{Key: "ACEM", Name: "Acme Marketing"},
+		},
+		existing: []linear.WorkflowState{{Name: "Planning", Category: "started"}, {Name: "Implementing", Category: "started"}},
+	}
+	var out bytes.Buffer
+	answers := strings.NewReader("")
+	_, err := Init(context.Background(), b, &out, answers, dir, "", "")
+	if err == nil || !strings.Contains(err.Error(), "none of the teams configured in") {
+		t.Fatalf("error = %v, want none of the teams configured in ... exist in workspace", err)
+	}
+}
+
+func TestInitRepeatInitMultipleConfiguredTeamsNoneExistInWorkspaceErrors(t *testing.T) {
+	dir := t.TempDir()
+	multiConfig := strings.ReplaceAll(existingConfig, `teams = ["LERP"]`, `teams = ["ENG", "LERP"]`)
+	path := filepath.Join(dir, config.RepoConfigFile)
+	if err := os.WriteFile(path, []byte(multiConfig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b := &fakeBoard{
+		teams: []linear.TeamRef{
+			{Key: "ACEM", Name: "Acme Marketing"},
+		},
+		existing: []linear.WorkflowState{{Name: "Planning", Category: "started"}, {Name: "Implementing", Category: "started"}},
+	}
+	var out bytes.Buffer
+	answers := strings.NewReader("1\n")
+	_, err := Init(context.Background(), b, &out, answers, dir, "", "")
+	if err == nil || !strings.Contains(err.Error(), "none of the teams configured in") {
+		t.Fatalf("error = %v, want none of the teams configured in ... exist in workspace", err)
+	}
+}
+
+func TestInitRepeatInitMultipleConfiguredTeamsOneExistsAutoPicks(t *testing.T) {
+	dir := t.TempDir()
+	multiConfig := strings.ReplaceAll(existingConfig, `teams = ["LERP"]`, `teams = ["ENG", "LERP"]`)
+	path := filepath.Join(dir, config.RepoConfigFile)
+	if err := os.WriteFile(path, []byte(multiConfig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b := &fakeBoard{
+		teams: []linear.TeamRef{
+			{Key: "ACEM", Name: "Acme Marketing"},
+			{Key: "LERP", Name: "Lerp"},
+		},
+		existing: []linear.WorkflowState{{Name: "Planning", Category: "started"}, {Name: "Implementing", Category: "started"}},
+	}
+	var out bytes.Buffer
+	answers := strings.NewReader("")
+	created, err := Init(context.Background(), b, &out, answers, dir, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created {
+		t.Error("created = true, want false for repeat init")
+	}
+	if strings.Contains(out.String(), "Pick a team") {
+		t.Errorf("asked for team when only one configured team exists in workspace:\n%s", out.String())
 	}
 }

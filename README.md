@@ -50,7 +50,7 @@ Prebuilt binaries (macOS and Linux, amd64 and arm64) are on the
 
 ```sh
 lerp login                                  # sign in to Linear (loopback OAuth)
-lerp init --team LERP                       # wire this repo to a Linear team
+lerp init                                   # wire this repo to a Linear team (asks, or pass --team LERP)
 lerp                                        # open the board
 ```
 

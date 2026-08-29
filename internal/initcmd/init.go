@@ -30,6 +30,7 @@ import (
 // after the call, keyed by state name.
 type Board interface {
 	EnsureTeam(ctx context.Context, key, name string) error
+	Teams(ctx context.Context) ([]linear.TeamRef, error)
 	TeamWorkflowStates(ctx context.Context, teamKey string) ([]linear.WorkflowState, error)
 	EnsureWorkflowStates(ctx context.Context, teamKey string, states []linear.StateSpec) (map[string]string, error)
 	TeamGitAutomations(ctx context.Context, teamKey string) ([]linear.GitAutomation, error)
@@ -53,18 +54,15 @@ func SetCommandRunner(runner CommandRunner) func() {
 }
 
 type readState struct {
-	teamKey          string
-	teamName         string
-	createTeam       bool
-	existingStatuses []linear.WorkflowState
-	automations      []linear.GitAutomation
-	automationsErr   error
-	repoRoot         string
-	configPath       string
-	fresh            bool
-	existingCfg      *config.RepoConfig
-	needsGitignore   bool
-	mcpConfigured    map[string]bool
+	teamKey        string
+	teamName       string
+	workspaceTeams []linear.TeamRef
+	repoRoot       string
+	configPath     string
+	fresh          bool
+	existingCfg    *config.RepoConfig
+	needsGitignore bool
+	mcpConfigured  map[string]bool
 }
 
 type mcpIntent int
@@ -145,13 +143,6 @@ type plan struct {
 //
 // out receives the whole conversation and report; nil discards it.
 func Init(ctx context.Context, board Board, out io.Writer, answers io.Reader, repoRoot, teamKey, teamName string) (created bool, err error) {
-	teamKey = strings.ToUpper(strings.TrimSpace(teamKey))
-	if teamKey == "" {
-		return false, fmt.Errorf("team key must not be empty")
-	}
-	if teamName == "" {
-		teamName = teamKey
-	}
 	if out == nil {
 		out = io.Discard
 	}
@@ -161,7 +152,7 @@ func Init(ctx context.Context, board Board, out io.Writer, answers io.Reader, re
 		return false, err
 	}
 
-	p, err := decide(out, answers, r)
+	p, err := decide(ctx, board, out, answers, r)
 	if err != nil {
 		return false, err
 	}
@@ -178,29 +169,27 @@ func read(ctx context.Context, board Board, repoRoot, teamKey, teamName string) 
 	path := filepath.Join(repoRoot, config.RepoConfigFile)
 	if findErr == nil {
 		path = foundPath
-		var err error
-		if cfg, err = loadFor(path, teamKey); err != nil {
-			return readState{}, err
+		c, err := config.LoadRepoConfig(path)
+		if err != nil {
+			return readState{}, fmt.Errorf("existing repo config: %w", err)
 		}
+		cfg = c
 	} else if errors.Is(findErr, fs.ErrNotExist) {
 		fresh = true
 	} else {
 		return readState{}, findErr
 	}
-	existing, err := board.TeamWorkflowStates(ctx, teamKey)
-	createTeam := false
-	if err != nil {
-		if errors.Is(err, linear.ErrNotFound) {
-			createTeam = true
-			existing = nil
-		} else {
-			return readState{}, fmt.Errorf("read statuses of team %q: %w", teamKey, err)
+
+	normKey := strings.ToUpper(strings.TrimSpace(teamKey))
+	if !fresh && cfg != nil && normKey != "" {
+		if !slices.Contains(cfg.Teams, normKey) {
+			return readState{}, fmt.Errorf("existing repo config %s does not serve team %q", path, normKey)
 		}
 	}
-	var automations []linear.GitAutomation
-	var automationsErr error
-	if !createTeam {
-		automations, automationsErr = board.TeamGitAutomations(ctx, teamKey)
+
+	teams, err := board.Teams(ctx)
+	if err != nil {
+		return readState{}, fmt.Errorf("read workspace teams: %w", err)
 	}
 
 	gitIgnorePath := filepath.Join(repoRoot, gitignoreFile)
@@ -218,31 +207,57 @@ func read(ctx context.Context, board Board, repoRoot, teamKey, teamName string) 
 	}
 
 	return readState{
-		teamKey:          teamKey,
-		teamName:         teamName,
-		createTeam:       createTeam,
-		existingStatuses: existing,
-		automations:      automations,
-		automationsErr:   automationsErr,
-		repoRoot:         repoRoot,
-		configPath:       path,
-		fresh:            fresh,
-		existingCfg:      cfg,
-		needsGitignore:   needsGitignore,
-		mcpConfigured:    mcpConfigured,
+		teamKey:        normKey,
+		teamName:       teamName,
+		workspaceTeams: teams,
+		repoRoot:       repoRoot,
+		configPath:     path,
+		fresh:          fresh,
+		existingCfg:    cfg,
+		needsGitignore: needsGitignore,
+		mcpConfigured:  mcpConfigured,
 	}, nil
 }
 
-func decide(out io.Writer, answers io.Reader, r readState) (plan, error) {
+func decide(ctx context.Context, board Board, out io.Writer, answers io.Reader, r readState) (plan, error) {
 	var in *bufio.Reader
 	if answers != nil {
 		in = bufio.NewReader(answers)
 	}
 
+	teamKey, teamName, createTeam, err := resolveTeam(out, in, r.workspaceTeams, r.existingCfg, r.configPath, r.teamKey, r.teamName)
+	if err != nil {
+		return plan{}, err
+	}
+
+	if !r.fresh && r.existingCfg != nil {
+		if !slices.Contains(r.existingCfg.Teams, teamKey) {
+			return plan{}, fmt.Errorf("existing repo config %s does not serve team %q", r.configPath, teamKey)
+		}
+	}
+
+	var existing []linear.WorkflowState
+	var automations []linear.GitAutomation
+	var automationsErr error
+	if !createTeam {
+		states, err := board.TeamWorkflowStates(ctx, teamKey)
+		if err != nil {
+			if errors.Is(err, linear.ErrNotFound) {
+				createTeam = true
+				existing = nil
+			} else {
+				return plan{}, fmt.Errorf("read statuses of team %q: %w", teamKey, err)
+			}
+		} else {
+			existing = states
+			automations, automationsErr = board.TeamGitAutomations(ctx, teamKey)
+		}
+	}
+
 	var cfg *config.RepoConfig
 	stock := ""
 	if r.fresh {
-		choices := converse(out, in, r.teamKey, r.existingStatuses)
+		choices := converse(out, in, teamKey, existing)
 		stock = choices.Render()
 		// Parsing what we are about to install catches a broken assembly here —
 		// a declined stage, a mapping that folds two queues onto one status —
@@ -322,12 +337,12 @@ func decide(out io.Writer, answers io.Reader, r readState) (plan, error) {
 	}
 
 	return plan{
-		teamKey:          r.teamKey,
-		teamName:         r.teamName,
-		createTeam:       r.createTeam,
-		existingStatuses: r.existingStatuses,
-		automations:      r.automations,
-		automationsErr:   r.automationsErr,
+		teamKey:          teamKey,
+		teamName:         teamName,
+		createTeam:       createTeam,
+		existingStatuses: existing,
+		automations:      automations,
+		automationsErr:   automationsErr,
 		repoRoot:         r.repoRoot,
 		configPath:       r.configPath,
 		writeConfig:      r.fresh,
@@ -923,4 +938,166 @@ func reportMCPSummary(out io.Writer, infos []mcpCLIInfo) {
 			fmt.Fprintf(out, "  then authenticate: %s\n", info.adapter.AuthInstruction())
 		}
 	}
+}
+
+// resolveTeam resolves the team to use for init, prompting at a terminal
+// when --team is absent or missing from the workspace.
+func resolveTeam(out io.Writer, in *bufio.Reader, teams []linear.TeamRef, cfg *config.RepoConfig, configPath, teamKey, teamName string) (resolvedKey string, resolvedName string, shouldCreate bool, err error) {
+	teamKey = strings.ToUpper(strings.TrimSpace(teamKey))
+	teamName = strings.TrimSpace(teamName)
+
+	if cfg != nil {
+		if teamKey != "" {
+			for _, t := range teams {
+				if t.Key == teamKey {
+					name := teamName
+					if name == "" {
+						name = t.Name
+					}
+					return teamKey, name, false, nil
+				}
+			}
+			return "", "", false, fmt.Errorf("team %q configured in %s does not exist in workspace", teamKey, configPath)
+		}
+
+		var filtered []linear.TeamRef
+		for _, t := range teams {
+			if slices.Contains(cfg.Teams, t.Key) {
+				filtered = append(filtered, t)
+			}
+		}
+		if len(filtered) == 0 {
+			return "", "", false, fmt.Errorf("none of the teams configured in %s (%s) exist in workspace", configPath, strings.Join(cfg.Teams, ", "))
+		}
+		if len(filtered) == 1 {
+			return filtered[0].Key, filtered[0].Name, false, nil
+		}
+		teams = filtered
+	}
+
+	if teamKey == "" && in == nil {
+		return "", "", false, errors.New("team key must not be empty (--team is required)")
+	}
+
+	if teamKey != "" {
+		for _, t := range teams {
+			if t.Key == teamKey {
+				name := teamName
+				if name == "" {
+					name = t.Name
+				}
+				return teamKey, name, false, nil
+			}
+		}
+		if teamName == "" {
+			teamName = teamKey
+		}
+		if in == nil {
+			return teamKey, teamName, true, nil
+		}
+		if len(teams) == 0 {
+			fmt.Fprintf(out, "workspace has no team %q\n", teamKey)
+		} else {
+			keys := make([]string, len(teams))
+			for i, t := range teams {
+				keys[i] = t.Key
+			}
+			fmt.Fprintf(out, "workspace has no team %q; workspace has: %s\n", teamKey, strings.Join(keys, ", "))
+		}
+		if !askYesNo(out, in, fmt.Sprintf("Create team %s?", teamKey), false) {
+			return "", "", false, fmt.Errorf("team %q not created", teamKey)
+		}
+		return teamKey, teamName, true, nil
+	}
+
+	if len(teams) == 0 {
+		key, name, err := promptCreateTeam(out, in, teamName)
+		if err != nil {
+			return "", "", false, err
+		}
+		return key, name, true, nil
+	}
+
+	return pickTeam(out, in, teams, teamName, cfg == nil)
+}
+
+func pickTeam(out io.Writer, in *bufio.Reader, teams []linear.TeamRef, defaultName string, allowCreate bool) (key, name string, shouldCreate bool, err error) {
+	for i, t := range teams {
+		fmt.Fprintf(out, "  %d) %s  %s\n", i+1, t.Key, t.Name)
+	}
+	if allowCreate {
+		fmt.Fprintf(out, "  %d) create a new team\n", len(teams)+1)
+	}
+
+	for {
+		fmt.Fprintf(out, "Pick a team [1]: ")
+		answer, eof := readAnswer(out, in)
+		if eof {
+			return "", "", false, errors.New("no team chosen")
+		}
+		if answer == "" {
+			answer = "1"
+		}
+		if n, err := strconv.Atoi(answer); err == nil {
+			if n >= 1 && n <= len(teams) {
+				return teams[n-1].Key, teams[n-1].Name, false, nil
+			}
+			if allowCreate && n == len(teams)+1 {
+				k, n, err := promptCreateTeam(out, in, defaultName)
+				if err != nil {
+					return "", "", false, err
+				}
+				return k, n, true, nil
+			}
+		}
+		for _, t := range teams {
+			if strings.EqualFold(answer, t.Key) {
+				return t.Key, t.Name, false, nil
+			}
+		}
+		if allowCreate && (answer == "c" || answer == "create") {
+			k, n, err := promptCreateTeam(out, in, defaultName)
+			if err != nil {
+				return "", "", false, err
+			}
+			return k, n, true, nil
+		}
+	}
+}
+
+func promptCreateTeam(out io.Writer, in *bufio.Reader, defaultName string) (key, name string, err error) {
+	for {
+		fmt.Fprint(out, "Team key: ")
+		k, eof := readLine(out, in)
+		if eof {
+			return "", "", errors.New("no team key entered")
+		}
+		k = strings.ToUpper(strings.TrimSpace(k))
+		if k != "" {
+			key = k
+			break
+		}
+	}
+	def := strings.TrimSpace(defaultName)
+	if def == "" {
+		def = key
+	}
+	fmt.Fprintf(out, "Team name [%s]: ", def)
+	n, eof := readLine(out, in)
+	if eof || n == "" {
+		name = def
+	} else {
+		name = strings.TrimSpace(n)
+	}
+	return key, name, nil
+}
+
+func readLine(out io.Writer, in *bufio.Reader) (line string, eof bool) {
+	s, err := in.ReadString('\n')
+	line = strings.TrimSpace(s)
+	if err != nil {
+		fmt.Fprintln(out)
+		return line, true
+	}
+	return line, false
 }

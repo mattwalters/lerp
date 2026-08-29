@@ -14,13 +14,13 @@ Linear access](install.md#give-the-agents-linear-access).
 
 ```sh
 lerp login
-lerp init --team LERP --team-name "Lerp"
+lerp init
 ```
 
 Run it from the directory you want to be the root of lerp's work,
-which is where init writes `lerp.toml`. `--team` is the Linear team
-key, the LERP in LERP-42. Check it, because init creates the team when no
-team has that key.
+which is where init writes `lerp.toml`. Init lists your workspace's
+teams so you can pick one, or creates a new one if you choose (in
+scripts and CI, pass `--team KEY` and `--yes`).
 
 Init asks a few questions to fit the [stock
 pipeline](configuration.md#the-stock-pipeline) onto your board, then writes
