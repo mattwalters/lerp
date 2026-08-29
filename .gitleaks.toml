@@ -1,6 +1,9 @@
 [extend]
 useDefault = true
 
+# The generic-api-key rule flags lin_api_key_test_123 in cmd/lerp/main_test.go
+# due to entropy (>3.5) in historical commits. Other test fixtures (e.g.
+# lin_api_secret) fall below the threshold and do not trigger findings.
 [allowlist]
 description = "Ignore test fixtures"
 stopwords = [
