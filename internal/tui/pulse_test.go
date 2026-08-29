@@ -3,6 +3,7 @@ package tui
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -111,7 +112,7 @@ func TestPulseQuietGoesFlat(t *testing.T) {
 	appendLog(t, path, "busy\nbusy\n")
 	p.read(start)
 
-	p.read(start.Add(2 * sparkBucket))
+	p.read(start.Add(2 * pulseBucket))
 	got := p.window()
 	if len(got) != 3 {
 		t.Fatalf("window = %v, want the three buckets that have existed", got)
@@ -128,7 +129,7 @@ func TestPulseQuietGoesFlat(t *testing.T) {
 
 	// Quiet for longer than the whole window leaves nothing to draw.
 	p.read(start.Add(time.Hour))
-	if bars := sparkline(p.window()); bars != strings.Repeat("⣀", sparkCells) {
+	if bars := sparkline(p.window()); bars != strings.Repeat("⣀", pulseBuckets) {
 		t.Fatalf("a long-dead run does not read flat: %q", bars)
 	}
 }
@@ -201,13 +202,13 @@ func TestPulseWindowGrowsWithTheRun(t *testing.T) {
 	if got := len(p.window()); got != 1 {
 		t.Fatalf("a run one poll old draws %d buckets, want 1", got)
 	}
-	p.read(start.Add(3 * sparkBucket))
+	p.read(start.Add(3 * pulseBucket))
 	if got := len(p.window()); got != 4 {
 		t.Fatalf("a run four buckets old draws %d, want 4", got)
 	}
 	p.read(start.Add(time.Hour))
-	if got := len(p.window()); got != sparkCells {
-		t.Fatalf("an old run draws %d buckets, want the whole window of %d", got, sparkCells)
+	if got := len(p.window()); got != pulseBuckets {
+		t.Fatalf("an old run draws %d buckets, want the whole window of %d", got, pulseBuckets)
 	}
 }
 
@@ -239,16 +240,16 @@ func TestPulseRebuildsAnAdoptedRunsHistory(t *testing.T) {
 	p.read(now)
 
 	got := p.window()
-	// The oldest event is five minutes — twenty buckets — back, and the
+	// The oldest event is five minutes — 100 buckets — back, and the
 	// reading reaches exactly that far: no further, which would claim quiet
 	// nobody measured, and no shorter, which would be the fresh line.
-	if want := 21; len(got) != want {
+	if want := 101; len(got) != want {
 		t.Fatalf("a run with five minutes of history draws %d buckets, want %d: %v", len(got), want, got)
 	}
 	if got[0] != 2 {
 		t.Fatalf("the old call and its heartbeat hold %d, want 2: %v", got[0], got)
 	}
-	if at := len(got) - 1 - 8; got[at] != 1 {
+	if at := len(got) - 1 - 40; got[at] != 1 {
 		t.Fatalf("the recent call landed at %d, want bucket %d of %v", got[at], at, got)
 	}
 	if p.tokens != 1500 {
@@ -271,8 +272,8 @@ func TestPulseHistoryBeyondTheRingStretchesTheLine(t *testing.T) {
 	p := newPulse(path)
 	p.read(now)
 	got := p.window()
-	if len(got) != sparkCells {
-		t.Fatalf("a run quiet since before the ring draws %d buckets, want %d", len(got), sparkCells)
+	if len(got) != pulseBuckets {
+		t.Fatalf("a run quiet since before the ring draws %d buckets, want %d", len(got), pulseBuckets)
 	}
 	for i, c := range got {
 		if c != 0 {
@@ -344,13 +345,13 @@ func TestPulseStartsOverWhenTheLogIsRewritten(t *testing.T) {
 	p := newPulse(path)
 	p.read(start)
 	appendLog(t, path, "four\nfive\n")
-	p.read(start.Add(sparkBucket))
+	p.read(start.Add(pulseBucket))
 	if got := len(p.window()); got != 2 {
 		t.Fatalf("window is %d buckets before the rewrite, want 2", got)
 	}
 
 	writeLog(t, path, []byte("a wholly new log\n"))
-	p.read(start.Add(2 * sparkBucket))
+	p.read(start.Add(2 * pulseBucket))
 	got := p.window()
 	if len(got) != 1 || got[0] != 1 {
 		t.Fatalf("the rewritten log carries the old ring: %v", got)
@@ -398,7 +399,7 @@ func TestPulseTracksSpendAndTheLastCall(t *testing.T) {
 	// A rewritten log takes both with it: they are readings of a file that
 	// is gone, and the command on screen would be one nobody can look up.
 	writeLog(t, path, []byte("a wholly new log\n"))
-	p.read(now.Add(sparkBucket))
+	p.read(now.Add(pulseBucket))
 	if p.tokens != 0 || p.tool != "" || p.target != "" {
 		t.Fatalf("the rewritten log kept %d tokens and the call %q %q", p.tokens, p.tool, p.target)
 	}
@@ -441,7 +442,7 @@ func TestPulseTracksCostFromTheResultLine(t *testing.T) {
 	// A rewritten log loses the figure with everything else it read: it is a
 	// reading of a file that is gone.
 	writeLog(t, path, []byte("a wholly new log\n"))
-	p.read(now.Add(sparkBucket))
+	p.read(now.Add(pulseBucket))
 	if p.cost != 0 {
 		t.Fatalf("the rewritten log kept a cost of $%.2f", p.cost)
 	}
@@ -485,7 +486,7 @@ func TestPulseBillsOneCallOnce(t *testing.T) {
 	p.read(now)
 	appendLog(t, path,
 		`{"type":"assistant","message":{"id":"msg_01","content":[{"type":"tool_use","name":"Read","input":{"file_path":"/a/b.go"}}],`+usage+`}}`+"\n")
-	p.read(now.Add(sparkBucket))
+	p.read(now.Add(pulseBucket))
 	if p.tokens != 1000 {
 		t.Fatalf("one call across three lines billed %d tokens, want 1000", p.tokens)
 	}
@@ -521,7 +522,7 @@ func TestPulseTracksContext(t *testing.T) {
 	// A rewritten log takes it with everything else: it is a reading of a
 	// file that is gone.
 	writeLog(t, path, []byte("a wholly new log\n"))
-	p.read(now.Add(sparkBucket))
+	p.read(now.Add(pulseBucket))
 	if p.context != 0 {
 		t.Fatalf("the rewritten log kept a context of %d", p.context)
 	}
@@ -540,8 +541,31 @@ func TestPulseTracksModel(t *testing.T) {
 	}
 
 	writeLog(t, path, []byte("a wholly new log\n"))
-	p.read(now.Add(sparkBucket))
+	p.read(now.Add(pulseBucket))
 	if p.model != "" {
 		t.Fatalf("the rewritten log kept a model of %q", p.model)
+	}
+}
+
+func TestDownsample(t *testing.T) {
+	tests := []struct {
+		name   string
+		counts []int
+		want   []int
+	}{
+		{"empty", nil, nil},
+		{"single fine bucket", []int{3}, []int{3}},
+		{"five fine buckets", []int{1, 2, 3, 4, 5}, []int{15}},
+		{"six fine buckets", []int{10, 1, 2, 3, 4, 5}, []int{10, 15}},
+		{"eight fine buckets", []int{1, 0, 3, 0, 9, 0, 0, 0}, []int{4, 9}},
+		{"ten fine buckets", []int{1, 1, 1, 1, 1, 2, 2, 2, 2, 2}, []int{5, 10}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := downsample(tc.counts)
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("downsample(%v) = %v, want %v", tc.counts, got, tc.want)
+			}
+		})
 	}
 }

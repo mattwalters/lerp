@@ -35,10 +35,10 @@ call.
 ## The log
 
 `enter` on a running ticket opens the main pane with a pinned header naming
-the run — its lane, runner, model, wall time, spend and context load — over a
-live tail of the agent's log. `esc` gives the screen back. `pgup` and `pgdn`
-scroll, `end` resumes following, and `r` toggles the raw output the runner
-wrote.
+the run — its lane, runner, model, wall time, spend and context load — and a
+braille activity chart over a live tail of the agent's log. `esc` gives the
+screen back. `pgup` and `pgdn` scroll, `end` resumes following, and `r`
+toggles the raw output the runner wrote.
 
 The tail reads as activity rather than bytes, one line per tool call,
 prose as prose, thinking collapsed to a line with its token count. Output

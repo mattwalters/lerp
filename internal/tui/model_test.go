@@ -6573,7 +6573,7 @@ func TestRunLineKeepsTheCallWhenNarrow(t *testing.T) {
 			fits = w
 		}
 	}
-	if want := lipgloss.Width("    $ go test ./...") + 1 + len(r.rate); fits != want {
+	if want := lipgloss.Width("    $ go test ./...") + 1 + len(downsample(r.rate)); fits != want {
 		t.Fatalf("the sparkline appears at %d columns, but the line draws in %d", fits, want)
 	}
 	tight := ansi.Strip(runLine(r, fits-1))
@@ -6870,7 +6870,7 @@ func TestRunLineHoldsItsPlaceBeforeTheFirstCall(t *testing.T) {
 // the same resolution, since narrowing the panel costs buckets and never
 // changes what one covers.
 func TestTheSparklineTakesTheWidthItIsGiven(t *testing.T) {
-	rate := make([]int, sparkCells)
+	rate := make([]int, pulseBuckets)
 	for i := range rate {
 		rate[i] = i % 4
 	}
@@ -6896,7 +6896,8 @@ func TestTheSparklineTakesTheWidthItIsGiven(t *testing.T) {
 	}
 	// The recent end, not the old one: a row too narrow for the history
 	// drops what has already been read, never what just happened.
-	want := sparkline(rate[len(rate)-beside:])
+	sparkCounts := downsample(rate)
+	want := sparkline(sparkCounts[len(sparkCounts)-beside:])
 	if got := sparkOf(ansi.Strip(runLine(r, padList.inner(m.geometry().sideW)))); got != want {
 		t.Fatalf("the narrow row drew %q, want the newest %d buckets %q", got, beside, want)
 	}
@@ -8730,17 +8731,36 @@ func TestMainBandShortPaneThreshold(t *testing.T) {
 	m = openMain(t, update(t, m, keyMsg("2")))
 
 	if band := m.mainBand(80, 5); len(band) != 1 {
-		t.Fatalf("mainBand(80, 5) = %v, want 1 line", band)
+		t.Fatalf("mainBand(80, 5) before poll = %v, want 1 line (header only, no rate yet)", band)
 	}
 	if band := m.mainBand(80, 4); len(band) != 0 {
-		t.Fatalf("mainBand(80, 4) = %v, want 0 lines (dropped)", band)
+		t.Fatalf("mainBand(80, 4) before poll = %v, want 0 lines (dropped)", band)
 	}
 	if band := m.mainBand(80, 3); len(band) != 0 {
-		t.Fatalf("mainBand(80, 3) = %v, want 0 lines (dropped)", band)
+		t.Fatalf("mainBand(80, 3) before poll = %v, want 0 lines (dropped)", band)
+	}
+
+	// After polling, the pulse has read the log and rate is available:
+	m = update(t, m, pollMsg{})
+	// h=8: ih=6 >= 1(header)+3(chart)+2(log) -> both bands (4 lines)
+	if band := m.mainBand(80, 8); len(band) != 1+laneChartHeight {
+		t.Fatalf("mainBand(80, 8) = %v, want %d lines (header + chart)", band, 1+laneChartHeight)
+	}
+	// h=7: ih=5 < 6 -> chart drops, header kept (1 line)
+	if band := m.mainBand(80, 7); len(band) != 1 {
+		t.Fatalf("mainBand(80, 7) = %v, want 1 line (header only, chart dropped)", band)
+	}
+	// h=5: ih=3 >= 3 -> header kept (1 line)
+	if band := m.mainBand(80, 5); len(band) != 1 {
+		t.Fatalf("mainBand(80, 5) = %v, want 1 line (header only)", band)
+	}
+	// h=4: ih=2 < 3 -> header dropped too (0 lines)
+	if band := m.mainBand(80, 4); len(band) != 0 {
+		t.Fatalf("mainBand(80, 4) = %v, want 0 lines (both dropped)", band)
 	}
 }
 
-// Raw mode (r) keeps the pinned header band.
+// Raw mode (r) keeps the pinned header band and chart band.
 func TestMainBandRawKeepsBand(t *testing.T) {
 	logPath := filepath.Join(t.TempDir(), "run.log")
 	writeLog(t, logPath, []byte(`{"type":"system","subtype":"init","model":"claude-opus-5"}`+"\n"))
@@ -8769,20 +8789,24 @@ func TestMainBandRawKeepsBand(t *testing.T) {
 	m = openMain(t, update(t, m, keyMsg("2")))
 	m = update(t, m, pollMsg{})
 
-	if band := m.mainBand(m.geometry().mainW, m.geometry().mainH); len(band) != 1 {
-		t.Fatalf("before raw toggle, band = %v", band)
+	wantLines := 1 + laneChartHeight
+	if band := m.mainBand(m.geometry().mainW, m.geometry().mainH); len(band) != wantLines {
+		t.Fatalf("before raw toggle, band = %v, want %d lines", band, wantLines)
 	}
 
 	m = update(t, m, keyMsg("r"))
 	if !m.rawLog {
 		t.Fatal("expected rawLog to be true")
 	}
-	if band := m.mainBand(m.geometry().mainW, m.geometry().mainH); len(band) != 1 {
-		t.Fatalf("after raw toggle, band = %v, want 1 line", band)
+	if band := m.mainBand(m.geometry().mainW, m.geometry().mainH); len(band) != wantLines {
+		t.Fatalf("after raw toggle, band = %v, want %d lines", band, wantLines)
 	}
 	view := m.View()
 	if !strings.Contains(view, "lane 1 · agent (claude) · claude-opus-5") {
 		t.Fatalf("raw view does not contain band:\n%s", view)
+	}
+	if !strings.ContainsFunc(view, runes.IsBraillePattern) {
+		t.Fatalf("raw view does not contain activity chart braille:\n%s", view)
 	}
 }
 
@@ -8876,5 +8900,59 @@ func TestWorkGroupsRunnerPlumbing(t *testing.T) {
 	}
 	if (runners["LERP-43"] != config.RunnerIdentity{}) {
 		t.Errorf("LERP-43's row.runner = %+v, want empty — its queue has no configured runner", runners["LERP-43"])
+	}
+}
+
+// Stacking: mainBand returns header band (line 0) and chart band (lines 1..3)
+// above the log tail in full view.
+func TestMainBandStacksHeaderAndChart(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "run.log")
+	writeLog(t, logPath, []byte(`{"type":"system","subtype":"init","model":"claude-opus-5"}`+"\n"+
+		`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"a.go"}}]}}`+"\n"))
+
+	events := make(chan loop.Event, 8)
+	m := newModel(context.Background(), Options{
+		Engine:   fakeEngine{&countingTicker{}, &recordingPromoter{}, &recordingEjector{}, &recordingStarter{}, &recordingReader{}},
+		Statuses: defaultTestStatuses,
+		Runners: map[string]config.RunnerIdentity{
+			"implement": {Name: "agent", Vendor: "claude"},
+		},
+		Interval: time.Millisecond,
+		Lanes:    1,
+		Events:   events,
+	})
+	m = pastTheSplash(t, m)
+	m = resize(t, m, 120, 30)
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventQueues, Queues: []loop.QueueSnapshot{
+		{Team: "LERP", Name: "implement", Status: "Todo", Tickets: []loop.QueueTicket{
+			{ID: "t1", Identifier: "LERP-1", Title: "running", Assigned: true},
+		}},
+	}}})
+	m = update(t, m, eventMsg{ev: loop.Event{Type: loop.EventStarted, RunID: "r1", Lane: 1,
+		TicketID: "t1", Ticket: "LERP-1", Queue: "implement", LogPath: logPath}})
+
+	m = openMain(t, update(t, m, keyMsg("2")))
+	m = update(t, m, pollMsg{})
+
+	g := m.geometry()
+	band := m.mainBand(g.mainW, g.mainH)
+	if len(band) != 1+laneChartHeight {
+		t.Fatalf("mainBand returned %d lines, want %d (1 header + %d chart)", len(band), 1+laneChartHeight, laneChartHeight)
+	}
+
+	// Line 0 is header
+	if !strings.Contains(band[0], "lane 1 · agent (claude) · claude-opus-5") {
+		t.Errorf("line 0 is not header band: %q", band[0])
+	}
+
+	// Lines 1..3 are chart
+	for i := 1; i <= laneChartHeight; i++ {
+		if lipgloss.Width(band[i]) != padMain.inner(g.mainW) {
+			t.Errorf("chart line %d width = %d, want %d", i, lipgloss.Width(band[i]), padMain.inner(g.mainW))
+		}
+	}
+	bottomChart := ansi.Strip(band[laneChartHeight])
+	if !strings.ContainsFunc(bottomChart, runes.IsBraillePattern) {
+		t.Errorf("bottom chart line has no braille: %q", bottomChart)
 	}
 }

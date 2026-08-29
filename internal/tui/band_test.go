@@ -5,7 +5,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NimbleMarkets/ntcharts/canvas/runes"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/mattwalters/lerp/internal/config"
 )
 
@@ -179,5 +181,80 @@ func TestLaneBandNarrowDropsFiguresFromRight(t *testing.T) {
 	}
 	if lipgloss.Width(s4) > wTruncated {
 		t.Errorf("s4 width %d > %d", lipgloss.Width(s4), wTruncated)
+	}
+}
+
+// laneChart renders a fixed-height (3 rows) braille chart spanning the width.
+// If width is 0 or rate is empty, it returns nil.
+func TestLaneChartEmptyOrZeroWidth(t *testing.T) {
+	r := workRow{lane: 1}
+	if got := laneChart(r, 80); len(got) != 0 {
+		t.Fatalf("laneChart with empty rate returned %d lines, want 0", len(got))
+	}
+	r.rate = []int{1, 2, 3}
+	if got := laneChart(r, 0); len(got) != 0 {
+		t.Fatalf("laneChart with width 0 returned %d lines, want 0", len(got))
+	}
+}
+
+func TestLaneChartRendersBrailleLines(t *testing.T) {
+	// Full-width chart with some activity
+	rate := []int{0, 1, 4, 10, 5, 2, 0, 0, 8, 12, 1, 0}
+	r := workRow{lane: 1, rate: rate}
+	width := 80
+	lines := laneChart(r, width)
+	if len(lines) != laneChartHeight {
+		t.Fatalf("laneChart returned %d lines, want %d", len(lines), laneChartHeight)
+	}
+	for i, l := range lines {
+		stripped := ansi.Strip(l)
+		if lipgloss.Width(stripped) != width {
+			t.Errorf("line %d width = %d, want %d", i, lipgloss.Width(stripped), width)
+		}
+	}
+
+	// Bottom line must contain braille pattern
+	bottom := ansi.Strip(lines[laneChartHeight-1])
+	if !strings.ContainsFunc(bottom, runes.IsBraillePattern) {
+		t.Fatalf("bottom line has no braille runes: %q", bottom)
+	}
+}
+
+func TestLaneChartPadsYoungRunOnLeft(t *testing.T) {
+	// A run with 5 buckets on a 20-column pane: left 15 columns are spaces, right 5 have braille.
+	rate := []int{0, 2, 5, 1, 0}
+	r := workRow{lane: 1, rate: rate}
+	width := 20
+	lines := laneChart(r, width)
+	if len(lines) != laneChartHeight {
+		t.Fatalf("laneChart returned %d lines, want %d", len(lines), laneChartHeight)
+	}
+	for i, l := range lines {
+		stripped := ansi.Strip(l)
+		if lipgloss.Width(stripped) != width {
+			t.Errorf("line %d width = %d, want %d", i, lipgloss.Width(stripped), width)
+		}
+		// Left 15 chars should be spaces
+		runesList := []rune(stripped)
+		for j := 0; j < 15; j++ {
+			if runesList[j] != ' ' {
+				t.Errorf("line %d col %d = %q, want space padding", i, j, runesList[j])
+			}
+		}
+	}
+}
+
+func TestLaneChartAllZerosReadsFlat(t *testing.T) {
+	rate := []int{0, 0, 0, 0, 0}
+	r := workRow{lane: 1, rate: rate}
+	width := 10
+	lines := laneChart(r, width)
+	if len(lines) != laneChartHeight {
+		t.Fatalf("laneChart returned %d lines, want %d", len(lines), laneChartHeight)
+	}
+	// Bottom line should be floor braille (⣀)
+	bottom := ansi.Strip(lines[laneChartHeight-1])
+	if !strings.HasSuffix(bottom, "⣀⣀⣀⣀⣀") {
+		t.Fatalf("all-zero rate does not end in flat floor line: %q", bottom)
 	}
 }

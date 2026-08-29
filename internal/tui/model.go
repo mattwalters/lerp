@@ -3948,9 +3948,10 @@ func runLine(r workRow, width int) string {
 	// narrowing the row rescales them to what is left in view, which is the
 	// same trade the row already makes against the run beside it.
 	right := ""
-	if room := width - lipgloss.Width(left) - 1; room >= min(sparkMinCells, len(r.rate)) {
-		if cells := min(room, len(r.rate)); cells > 0 {
-			right = styleFaint.Render(sparkline(r.rate[len(r.rate)-cells:]))
+	sparkCounts := downsample(r.rate)
+	if room := width - lipgloss.Width(left) - 1; room >= min(sparkMinCells, len(sparkCounts)) {
+		if cells := min(room, len(sparkCounts)); cells > 0 {
+			right = styleFaint.Render(sparkline(sparkCounts[len(sparkCounts)-cells:]))
 		}
 	}
 	return splitRow(left, right, width)
@@ -4067,16 +4068,17 @@ func contextLoad(context, window int) (string, bool) {
 	return styleFaint.Render(label), true
 }
 
-// mainBand is the single spelling of both what the band says and whether there
-// is room for it over the log. It is nil unless a live run's log is on screen
+// mainBand is the single spelling of both what the bands say and whether there
+// is room for them over the log. It is nil unless a live run's log is on screen
 // (m.logOnScreen() and r.lane > 0) — the ticket lens, the inbox lens and a
 // finished run's "last log" row have no lane, no clock and no live figures to
 // state. It ignores m.rawLog: raw is a statement about decoding the log, and
-// identity is not decoded from the log.
+// identity and activity are not decoded from the log.
 //
-// The band costs its lines only while the interior has room for the band and
-// at least two log rows (h-2 >= len(band)+2, mirroring panelBody's ih >= 3
-// test for the footer). Below that the log keeps the pane.
+// The header band, the chart band and the log stack in that order, and the log
+// is the one that grows. A pane too short for the chart drops it and keeps the
+// log, and a pane too short for both drops the header too; the log is the last
+// thing standing, requiring at least two rows (ih >= 2).
 func (m model) mainBand(w, h int) []string {
 	if !m.logOnScreen() {
 		return nil
@@ -4085,11 +4087,17 @@ func (m model) mainBand(w, h int) []string {
 	if r == nil || r.lane == 0 {
 		return nil
 	}
-	band := laneBand(*r, padMain.inner(w))
-	if len(band) == 0 || (h-2) < len(band)+2 {
-		return nil
+	innerW := padMain.inner(w)
+	header := laneBand(*r, innerW)
+	chart := laneChart(*r, innerW)
+	ih := h - 2
+	if len(header) > 0 && len(chart) > 0 && ih >= len(header)+len(chart)+2 {
+		return append(header, chart...)
 	}
-	return band
+	if len(header) > 0 && ih >= len(header)+2 {
+		return header
+	}
+	return nil
 }
 
 // mainPanel is the lens: the selected row's log, or a read-only detail when it has none.
