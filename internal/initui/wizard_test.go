@@ -324,6 +324,185 @@ func TestMappingScreenSlotCycling(t *testing.T) {
 	}
 }
 
+func TestMappingScreenAdoptedDefaultsAndStockPrepopulated(t *testing.T) {
+	boardWithReview := []linear.WorkflowState{
+		{Name: "Backlog", Category: "backlog"},
+		{Name: "Todo", Category: "unstarted"},
+		{Name: "In Progress", Category: "started"},
+		{Name: "In Review", Category: "started"},
+		{Name: "Done", Category: "completed"},
+	}
+
+	opts := defaultOpts()
+	m := New(context.Background(), opts)
+	m.existingStatuses = boardWithReview
+	m.screenIndex = 1 // Shape screen
+
+	// Advance to mapping
+	m2, _ := m.Update(keyPress("enter"))
+	m = m2.(Model)
+
+	if m.CurrentScreen() != screenMapping {
+		t.Fatalf("expected screenMapping, got %v", m.CurrentScreen())
+	}
+
+	// Stock already holds adopted defaults before any keystroke
+	if m.stock.ImplementStatus != "In Progress" {
+		t.Errorf("ImplementStatus = %q, want In Progress", m.stock.ImplementStatus)
+	}
+	if m.stock.ExitStatus != "In Review" {
+		t.Errorf("ExitStatus = %q, want In Review", m.stock.ExitStatus)
+	}
+	if m.stock.PlanStatus != "" {
+		t.Errorf("PlanStatus = %q, want \"\" (create)", m.stock.PlanStatus)
+	}
+	if m.stock.PlanReviewStatus != "" {
+		t.Errorf("PlanReviewStatus = %q, want \"\" (create)", m.stock.PlanReviewStatus)
+	}
+	if m.stock.AttentionStatus != "" {
+		t.Errorf("AttentionStatus = %q, want \"\" (create)", m.stock.AttentionStatus)
+	}
+
+	view := m.View()
+	if !strings.Contains(view, "In Progress (started)") {
+		t.Errorf("expected In Progress (started) in view:\n%s", view)
+	}
+	if !strings.Contains(view, "In Review (started)") {
+		t.Errorf("expected In Review (started) in view:\n%s", view)
+	}
+	if !strings.Contains(view, "3 statuses will be created on team LERP.") {
+		t.Errorf("expected create summary in view:\n%s", view)
+	}
+}
+
+func TestMappingScreenConflictCheckAndEnterBlocked(t *testing.T) {
+	boardWithReview := []linear.WorkflowState{
+		{Name: "Backlog", Category: "backlog"},
+		{Name: "Todo", Category: "unstarted"},
+		{Name: "In Progress", Category: "started"},
+		{Name: "In Review", Category: "started"},
+		{Name: "Done", Category: "completed"},
+	}
+
+	opts := defaultOpts()
+	m := New(context.Background(), opts)
+	m.existingStatuses = boardWithReview
+	m.screenIndex = 1 // Shape screen
+	m2, _ := m.Update(keyPress("enter"))
+	m = m2.(Model)
+
+	// Currently slot 0 ("plan runs in") is create "Planning".
+	// Cycle right through: create "Planning" -> Backlog -> Todo -> In Progress
+	for i := 0; i < 3; i++ {
+		m2, _ = m.Update(keyPress("right"))
+		m = m2.(Model)
+	}
+
+	// Slot 0 is now "In Progress", colliding with slot 2 ("implement runs in", also "In Progress")
+	conflicts := m.mappingConflicts()
+	if len(conflicts) != 2 || conflicts[0] != "In Progress" || conflicts[2] != "In Progress" {
+		t.Fatalf("expected conflicts on slots 0 and 2 for In Progress, got %v", conflicts)
+	}
+
+	view := m.View()
+	if !strings.Contains(view, "conflict:") || !strings.Contains(view, "share status \"In Progress\"") {
+		t.Fatalf("expected conflict message in view:\n%s", view)
+	}
+
+	// Enter does not advance while conflict stands
+	m2, _ = m.Update(keyPress("enter"))
+	m = m2.(Model)
+	if m.CurrentScreen() != screenMapping {
+		t.Fatalf("expected to stay on screenMapping, got %v", m.CurrentScreen())
+	}
+
+	// Cycle slot 0 away: left arrow 3 times back to create "Planning"
+	for i := 0; i < 3; i++ {
+		m2, _ = m.Update(keyPress("left"))
+		m = m2.(Model)
+	}
+
+	if len(m.mappingConflicts()) != 0 {
+		t.Fatalf("expected no conflicts after cycling away, got %v", m.mappingConflicts())
+	}
+
+	// Enter now advances to Runner
+	m2, _ = m.Update(keyPress("enter"))
+	m = m2.(Model)
+	if m.CurrentScreen() != screenRunner {
+		t.Fatalf("expected screenRunner after resolving conflict, got %v", m.CurrentScreen())
+	}
+}
+
+func TestMappingScreenConflictCheckWithPlanningDisabled(t *testing.T) {
+	boardWithReview := []linear.WorkflowState{
+		{Name: "Backlog", Category: "backlog"},
+		{Name: "Todo", Category: "unstarted"},
+		{Name: "In Progress", Category: "started"},
+		{Name: "In Review", Category: "started"},
+		{Name: "Done", Category: "completed"},
+	}
+
+	opts := defaultOpts()
+	m := New(context.Background(), opts)
+	m.existingStatuses = boardWithReview
+	m.screenIndex = 1 // Shape screen
+
+	// Toggle Planning off
+	m2, _ := m.Update(keyPress(" "))
+	m = m2.(Model)
+	if m.stock.Plan {
+		t.Fatal("expected Plan = false")
+	}
+
+	// Advance to Mapping screen
+	m2, _ = m.Update(keyPress("enter"))
+	m = m2.(Model)
+	if m.CurrentScreen() != screenMapping {
+		t.Fatalf("expected screenMapping, got %v", m.CurrentScreen())
+	}
+
+	// Should have 3 slots
+	slots := PipelineSlots(&m.stock)
+	if len(slots) != 3 {
+		t.Fatalf("expected 3 slots, got %d", len(slots))
+	}
+
+	// Check summary: 1 status created ("Needs Attention"), 2 adopted ("In Progress", "In Review")
+	if !strings.Contains(m.View(), "1 status will be created on team LERP.") {
+		t.Fatalf("expected 1 status created summary in view:\n%s", m.View())
+	}
+
+	// Move cursor down to slot 1 ("finished work exits to")
+	m2, _ = m.Update(keyPress("down"))
+	m = m2.(Model)
+
+	// Cycle "finished work exits to" to "In Progress"
+	// Options: create "In Review", Backlog, Todo, In Progress, In Review, Done
+	// Currently at In Review (idx 4). Cycle left to In Progress (idx 3).
+	m2, _ = m.Update(keyPress("left"))
+	m = m2.(Model)
+
+	conflicts := m.mappingConflicts()
+	if len(conflicts) != 2 || conflicts[0] != "In Progress" || conflicts[1] != "In Progress" {
+		t.Fatalf("expected conflicts on slots 0 and 1 with 3 slots, got %v", conflicts)
+	}
+
+	// Enter is blocked
+	m2, _ = m.Update(keyPress("enter"))
+	m = m2.(Model)
+	if m.CurrentScreen() != screenMapping {
+		t.Fatalf("expected screenMapping, got %v", m.CurrentScreen())
+	}
+
+	// Esc goes back to Shape
+	m2, _ = m.Update(keyPress("esc"))
+	m = m2.(Model)
+	if m.CurrentScreen() != screenShape {
+		t.Fatalf("expected screenShape after esc, got %v", m.CurrentScreen())
+	}
+}
+
 func TestRunnerAndPermissionsScreens(t *testing.T) {
 	opts := defaultOpts()
 	m := New(context.Background(), opts)

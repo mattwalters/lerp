@@ -235,6 +235,9 @@ func (m Model) updateMapping(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case key.Matches(msg, m.keys.Enter):
+		if len(m.mappingConflicts()) > 0 {
+			return m, nil
+		}
 		return m.advance()
 	case key.Matches(msg, m.keys.Back):
 		return m.back()
@@ -531,33 +534,112 @@ func (m Model) viewMapping() string {
 	b.WriteString(fmt.Sprintf("Map the pipeline onto team %s's statuses:\n\n", m.teamKey))
 
 	slots := PipelineSlots(&m.stock)
+	conflicts := m.mappingConflicts()
+	createCount := 0
+
 	for i, sl := range slots {
-		prefix := "    "
+		hasConflict := false
+		if _, ok := conflicts[i]; ok {
+			hasConflict = true
+		}
+
 		isSelected := (i == m.mappingCursor)
-		if isSelected {
+		prefix := "    "
+		if hasConflict {
+			if isSelected {
+				prefix = "  " + theme.Focus.Render("▸") + theme.Err.Render("!")
+			} else {
+				prefix = "  " + theme.Err.Render("! ")
+			}
+		} else if isSelected {
 			prefix = "  " + theme.Focus.Render("▸ ")
 		}
 
 		optText := ""
 		if i < len(m.mappingOptions) && len(m.mappingOptions[i]) > 0 {
 			sel := m.mappingSelected[i]
-			optText = m.mappingOptions[i][sel]
-			// If it's an existing status, find its category
-			for _, st := range m.existingStatuses {
-				if st.Name == optText {
-					optText = fmt.Sprintf("%s (%s)", st.Name, st.Category)
-					break
+			opt := m.mappingOptions[i][sel]
+			if strings.HasPrefix(opt, "create ") {
+				createCount++
+				optText = opt
+			} else {
+				optText = opt
+				// If it's an existing status, find its category
+				for _, st := range m.existingStatuses {
+					if st.Name == optText {
+						optText = fmt.Sprintf("%s (%s)", st.Name, st.Category)
+						break
+					}
 				}
 			}
 		}
 
 		label := fmt.Sprintf("%-28s", sl.Label+":")
 		if isSelected {
-			b.WriteString(prefix + theme.Ticket.Render(label) + "  " + theme.Focus.Render("◀  ") + theme.Ticket.Render(optText) + theme.Focus.Render("  ▶") + "\n")
+			labelRendered := theme.Ticket.Render(label)
+			if hasConflict {
+				labelRendered = theme.Err.Render(label)
+			}
+			b.WriteString(prefix + labelRendered + "  " + theme.Focus.Render("◀  ") + theme.Ticket.Render(optText) + theme.Focus.Render("  ▶") + "\n")
 		} else {
-			b.WriteString(prefix + theme.Faint.Render(label) + "     " + optText + "\n")
+			labelRendered := theme.Faint.Render(label)
+			if hasConflict {
+				labelRendered = theme.Err.Render(label)
+			}
+			b.WriteString(prefix + labelRendered + "     " + optText + "\n")
 		}
 	}
+
+	if len(conflicts) > 0 {
+		type conflictGroup struct {
+			status string
+			slots  []string
+		}
+		var groups []conflictGroup
+		seen := map[string]int{}
+		for i, sl := range slots {
+			if st, ok := conflicts[i]; ok {
+				if idx, found := seen[st]; found {
+					groups[idx].slots = append(groups[idx].slots, sl.Label)
+				} else {
+					seen[st] = len(groups)
+					groups = append(groups, conflictGroup{status: st, slots: []string{sl.Label}})
+				}
+			}
+		}
+		var msgs []string
+		for _, g := range groups {
+			var joined string
+			if len(g.slots) == 2 {
+				joined = g.slots[0] + " and " + g.slots[1]
+			} else if len(g.slots) > 2 {
+				joined = strings.Join(g.slots[:len(g.slots)-1], ", ") + " and " + g.slots[len(g.slots)-1]
+			} else {
+				joined = g.slots[0]
+			}
+			msgs = append(msgs, fmt.Sprintf("%s share status %q", joined, g.status))
+		}
+		b.WriteString("\n" + theme.Err.Render("conflict: "+strings.Join(msgs, "; ")) + "\n")
+	}
+
+	var summary string
+	if m.teamKey != "" {
+		if createCount == 1 {
+			summary = fmt.Sprintf("1 status will be created on team %s.", m.teamKey)
+		} else {
+			summary = fmt.Sprintf("%d statuses will be created on team %s.", createCount, m.teamKey)
+		}
+	} else {
+		if createCount == 1 {
+			summary = "1 status will be created."
+		} else {
+			summary = fmt.Sprintf("%d statuses will be created.", createCount)
+		}
+	}
+	if len(conflicts) == 0 {
+		b.WriteString("\n")
+	}
+	b.WriteString(theme.Faint.Render(summary) + "\n")
 
 	return b.String()
 }
