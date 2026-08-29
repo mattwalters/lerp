@@ -1,0 +1,834 @@
+/* The whole theme. One stylesheet, no build step, no preprocessor: the site
+   is prose, and the layout it needs is a header, a sidebar, a column of text
+   and a rail. Colours are declared once as custom properties and swapped by
+   the reader's light/dark preference. */
+
+:root {
+  color-scheme: light dark;
+  /* The site's one type size: everything else is rem, so this scales the
+     headings, the chrome, and the 48rem measure together. */
+  font-size: 17px;
+
+  /* Catppuccin Latte: base, mantle, text, subtext0, surface0, blue, green —
+     the same flavour the light shots and casts are rendered in. */
+  --bg: #eff1f5;
+  --bg-soft: #e6e9ef;
+  --fg: #4c4f69;
+  --fg-soft: #6c6f85;
+  --fg-strong: #000000;
+  --rule: #ccd0da;
+  --link: #1e66f5;
+  --accent: #40a02b;
+
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  --measure: 48rem;
+  /* The full shell: 12rem sidebar + 3rem gap + 48rem measure + 3rem gap +
+     14rem rail. The wrap and the header both centre on it, so the wordmark
+     and the sidebar share a left edge however wide the window is. */
+  --shell: 80rem;
+}
+
+/* The dark palette appears twice on purpose: once for a system in dark
+   mode with no stored choice, once for an explicit choice from the theme
+   picker (see baseof.html). Keep the two blocks identical. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    /* Catppuccin Mocha: base, surface0, text, subtext0, surface0, blue,
+       green — the same flavour the dark shots and casts are rendered in. */
+    --bg: #1e1e2e;
+    --bg-soft: #313244;
+    --fg: #cdd6f4;
+    --fg-soft: #a6adc8;
+    --fg-strong: #ffffff;
+    --rule: #313244;
+    --link: #89b4fa;
+    --accent: #a6e3a1;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #1e1e2e;
+  --bg-soft: #313244;
+  --fg: #cdd6f4;
+  --fg-soft: #a6adc8;
+  --fg-strong: #ffffff;
+  --rule: #313244;
+  --link: #89b4fa;
+  --accent: #a6e3a1;
+}
+
+:root[data-theme="light"] { color-scheme: light; }
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 1rem/1.6 var(--sans);
+}
+
+a { color: var(--link); }
+
+/* Header ------------------------------------------------------------- */
+
+header {
+  display: flex;
+  /* Centred, not baseline: with the 2rem mark leading the wordmark, a
+     shared baseline hangs every text item low in the bar — the mark's
+     height all lands above the line. Centring keeps one vertical rhythm
+     for mark, wordmark, links and pickers alike. */
+  align-items: center;
+  flex-wrap: wrap;
+  /* A row gap as well as a column one: on a narrow phone the header wraps,
+     and every item in it has line-height 1. */
+  /* Wide enough that "Docs · Why lerp" reads as two links, not three
+     words running together. */
+  gap: 0.35rem 1.5rem;
+  /* The border runs the whole window, but the contents stop at the shell's
+     edges: once the window outgrows the shell, the side padding absorbs the
+     difference, which is the same arithmetic margin: auto does on .wrap. */
+  padding: 0.9rem max(1.5rem, calc((100% - var(--shell)) / 2));
+  border-bottom: 1px solid var(--rule);
+}
+
+header .brand {
+  font: 600 1.1rem/1 var(--mono);
+  color: var(--fg);
+  text-decoration: none;
+  /* Flex, so the mark and the word centre on each other instead of
+     meeting at a baseline the mark has no stake in. */
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+/* The interpolation mark beside the wordmark, twice the type size so its
+   geometry parses. */
+header .brand .brand-mark {
+  width: 2rem;
+  height: 2rem;
+}
+
+header .nav {
+  font: 0.85rem/1 var(--mono);
+  text-decoration: none;
+}
+
+header .nav.here { color: var(--accent); }
+
+header .spacer { flex: 1; }
+
+/* The GitHub mark. display: block, or the inline image rides the text
+   baseline and leaves a descender gap under the icon-only link. */
+header .nav.github svg {
+  width: 1rem;
+  height: 1rem;
+  display: block;
+}
+
+/* The splash pages' version link (see baseof.html): dressed like the docs
+   pages' version label, but it goes somewhere. */
+header .version-latest {
+  font: 0.8rem/1 var(--mono);
+  color: var(--fg-soft);
+  text-decoration: none;
+}
+
+header .version-latest:hover { color: var(--link); }
+
+header .version {
+  font: 0.8rem/1 var(--mono);
+  color: var(--fg-soft);
+}
+
+header .version select {
+  font: 0.8rem/1 var(--mono);
+  color: var(--fg-soft);
+  background: var(--bg-soft);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 0.1rem 0.2rem;
+}
+
+/* The theme picker: a button cycling system, light, dark. Fixed min
+   width so the header does not shift as the word changes, and a border
+   colour change in place of the browser's focus glow — visible to a
+   keyboard user without the halo. */
+header button.theme {
+  font: 0.8rem/1 var(--mono);
+  color: var(--fg-soft);
+  background: var(--bg-soft);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 0.3rem 0.5rem;
+  min-width: 4.9rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+header button.theme:hover {
+  color: var(--fg);
+  border-color: var(--fg-soft);
+}
+
+header button.theme:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* The picker replaces the static label once versions.json has loaded, so the
+   two are never both on screen. */
+header .version:has(select:not([hidden])) .version-label { display: none; }
+
+/* Page shell --------------------------------------------------------- */
+
+.wrap {
+  display: flex;
+  gap: 3rem;
+  align-items: flex-start;
+  padding: 2rem 1.5rem 6rem;
+  /* Centred as a box, not as contents: a docs page short enough to have no
+     rail keeps its sidebar and prose exactly where every other page puts
+     them, instead of drifting right to re-centre a narrower row. */
+  max-width: calc(var(--shell) + 3rem);
+  margin: 0 auto;
+}
+
+main {
+  min-width: 0;
+  max-width: var(--measure);
+}
+
+/* The two splash pages (home and Why lerp) run without either rail, so main
+   is the wrap's only child; a lone reading column left-flush in a centred
+   shell reads as off-balance, so it centres itself instead. */
+.wrap > main:only-child { margin-inline: auto; }
+
+.prose { overflow-wrap: break-word; }
+
+/* Sidebar ------------------------------------------------------------ */
+
+/* The curated rail (see the menu in hugo.toml). It scrolls on its own once
+   it outgrows the window, so a long menu never pushes the entry you are
+   reaching for below the fold of a sticky column. */
+.sidenav {
+  position: sticky;
+  top: 2rem;
+  flex: 0 0 12rem;
+  max-height: calc(100vh - 4rem);
+  overflow-y: auto;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.sidenav h5 {
+  margin: 1.5rem 0 0.4rem;
+  font: 600 0.7rem/1 var(--sans);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-soft);
+}
+
+.sidenav h5:first-child { margin-top: 0; }
+
+.sidenav a {
+  display: block;
+  padding: 0.18rem 0;
+  color: var(--fg);
+  text-decoration: none;
+}
+
+.sidenav a:hover { color: var(--link); }
+
+.sidenav a.active {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* Entries naming a command, marked mono in hugo.toml. Not <code>: the menu
+   name is a plain string, so the face is set here. */
+.sidenav a.mono {
+  font-family: var(--mono);
+  font-size: 0.86em;
+}
+
+.toc {
+  position: sticky;
+  top: 2rem;
+  flex: 0 0 14rem;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: var(--fg-soft);
+}
+
+.toc h5 {
+  margin: 0 0 0.5rem;
+  font: 600 0.7rem/1 var(--sans);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-soft);
+}
+
+.toc ul {
+  margin: 0;
+  padding-left: 1rem;
+  list-style: none;
+}
+
+.toc > ul { padding-left: 0; }
+
+.toc a {
+  display: block;
+  padding: 0.15rem 0;
+  color: var(--fg-soft);
+  text-decoration: none;
+}
+
+.toc a:hover { color: var(--link); }
+
+/* Home --------------------------------------------------------------- */
+
+/* Centred, and the install box shrink-wraps so it centres with the words —
+   its text stays left-set inside, because it is a command. */
+.hero {
+  max-width: var(--measure);
+  margin-bottom: 2rem;
+  text-align: center;
+}
+
+/* The homepage masthead: the TUI's five-line ASCII figure (internal/tui/mark.go),
+   centred as a block and left-aligned inside so its characters stay aligned.
+   Rendered in monospace at full foreground brightness rather than dimmed
+   like the TUI's watermark. Scales with viewport width on narrow screens,
+   and falls back to the plain title word when the mark no longer fits
+   whole — the web twin of wordmarkFits. */
+.hero .wordmark {
+  margin: 0;
+  color: var(--fg);
+}
+
+.hero .wordmark pre {
+  display: inline-block;
+  margin: 0;
+  padding: 0;
+  background: none;
+  border: none;
+  font: 700 clamp(0.75rem, 3vw, 1.4rem)/1.15 var(--mono);
+  color: inherit;
+  text-align: left;
+}
+
+.hero .wordmark .fallback {
+  display: none;
+  font: 700 2.6rem/1 var(--mono);
+  letter-spacing: -0.02em;
+}
+
+.hero .tagline {
+  margin: 0.6rem 0 1.4rem;
+  font-size: 1.15rem;
+  color: var(--fg-soft);
+}
+
+/* The install box: full column width, the command centred in it, and the
+   copy button floating at the right edge. The side padding is symmetric
+   so the centred command does not lean away from the button. */
+.hero-install {
+  position: relative;
+  margin: 1.2rem 0;
+}
+
+.hero-install pre {
+  margin: 0;
+  padding-left: 4.8rem;
+  padding-right: 4.8rem;
+  text-align: center;
+}
+
+.hero-install .copy-button {
+  position: absolute;
+  top: 50%;
+  right: 0.6rem;
+  transform: translateY(-50%);
+  font: 0.75rem/1 var(--mono);
+  color: var(--fg-soft);
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 0.35rem 0.55rem;
+  min-width: 3.8rem;
+  text-align: center;
+  cursor: pointer;
+  user-select: none;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.hero-install .copy-button:hover {
+  color: var(--fg);
+  border-color: var(--fg-soft);
+}
+
+.hero-install .copy-button.copied {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* The dictionary line under the cast: the name explained without the
+   joke being told, dressed as the entry it pretends to be — bold
+   headword, pronunciation, italic part of speech, in a quiet box. */
+.epigraph {
+  width: fit-content;
+  margin: 0 0 2.2rem;
+  padding: 0.55rem 1.2rem;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  font-size: 0.9rem;
+  color: var(--fg-soft);
+}
+
+.epigraph .headword {
+  font-weight: 700;
+  font-size: 1.02em;
+  color: var(--fg);
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+
+.epigraph .headword:hover { color: var(--link); }
+
+.epigraph .pron { color: var(--fg-soft); }
+
+/* The pipeline diagram: the stock pipeline as four boxes. Queues an agent
+   serves are filled, gates a human decides at are dashed, and every colour
+   is a palette variable so it follows the reader's theme. On a narrow
+   screen it scrolls sideways inside its figure instead of shrinking the
+   labels below legibility. */
+.pipeline {
+  margin: 1.8rem 0;
+  overflow-x: auto;
+}
+
+.pipeline svg {
+  display: block;
+  width: 100%;
+  min-width: 38rem;
+  height: auto;
+  margin: 0 auto;
+}
+
+/* The board's edges: intake before the pipeline, done after it, faded so
+   the four stages stay the subject. Backlog wears Linear's dashed ring,
+   Done a filled dot. */
+.pipeline .pl-stub { opacity: 0.55; }
+
+.pipeline .pl-dot-backlog {
+  fill: none;
+  stroke: var(--fg-soft);
+  stroke-width: 1.5;
+  stroke-dasharray: 2.4 1.8;
+}
+
+.pipeline .pl-dot-done { fill: var(--link); }
+
+.pipeline .pl-col {
+  fill: var(--bg-soft);
+  stroke: var(--rule);
+}
+
+.pipeline .pl-dot { fill: var(--accent); }
+
+.pipeline .pl-name {
+  fill: var(--fg);
+  font: 600 12.5px var(--sans);
+}
+
+.pipeline .pl-card {
+  fill: var(--bg);
+  stroke: var(--rule);
+}
+
+.pipeline .pl-card-active { stroke: var(--accent); }
+
+.pipeline .pl-bar {
+  fill: var(--fg-soft);
+  opacity: 0.5;
+}
+
+/* The two kinds of transition are the diagram's whole argument: the moves
+   lerp makes on a clean exit are accent and solid, and every move a human
+   makes is soft and dashed. The consumer chips hang in accent below the
+   statuses lerp serves — the chips and the accent arrows together are what
+   lerp adds to an otherwise ordinary board. */
+.pipeline .pl-move-lerp { stroke: var(--accent); stroke-width: 1.8; }
+
+.pipeline .pl-move-you {
+  stroke: var(--fg-soft);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+}
+
+.pipeline .pl-move-label-lerp {
+  fill: var(--accent);
+  font: italic 11.5px var(--sans);
+  text-anchor: middle;
+}
+
+.pipeline .pl-move-label-you {
+  fill: var(--fg-soft);
+  font: italic 11.5px var(--sans);
+}
+
+.pipeline .pl-arrowhead { fill: var(--fg-soft); }
+
+.pipeline .pl-arrowhead-lerp { fill: var(--accent); }
+
+.pipeline .pl-tether { stroke: var(--accent); stroke-width: 1.5; }
+
+.pipeline .pl-chip {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+}
+
+.pipeline .pl-chip-text {
+  fill: var(--accent);
+  font: italic 12px var(--sans);
+  text-anchor: middle;
+}
+
+/* The get-started call to action: a prompt in a box, centred. */
+.cta {
+  text-align: center;
+  margin: 2.4rem 0 1.2rem;
+}
+
+/* The full mark signs the homepage off below the CTA — the one placement
+   large enough for its hairline traces to read. */
+.mark-signoff {
+  display: block;
+  margin: 4rem auto 2rem;
+}
+
+.cta a {
+  display: inline-block;
+  font: 0.95rem/1 var(--mono);
+  color: var(--fg);
+  background: var(--bg-soft);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 0.75rem 1.4rem;
+  text-decoration: none;
+}
+
+.cta a:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* Prose -------------------------------------------------------------- */
+
+h1, h2, h3, h4 {
+  line-height: 1.25;
+  margin: 2.2rem 0 0.8rem;
+}
+
+h1 { font-size: 1.9rem; }
+h2 { font-size: 1.35rem; }
+h3 { font-size: 1.1rem; }
+
+/* The first heading of a published file is its own title; it should sit
+   where a page title sits, not two lines below the header. */
+.prose > h1:first-child { margin-top: 0; }
+
+p, ul, ol, blockquote { margin: 0 0 1rem; }
+
+/* Bold carries a paragraph's topic sentence, and on the dark ground the
+   weight change alone barely registers against --fg. The strong colour
+   steps past --fg to the palette's extreme so the lead reads set off in
+   both themes. */
+strong { color: var(--fg-strong); }
+
+blockquote {
+  margin-left: 0;
+  padding-left: 1rem;
+  border-left: 3px solid var(--rule);
+  color: var(--fg-soft);
+}
+
+img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+}
+
+sub { color: var(--fg-soft); }
+
+hr {
+  border: 0;
+  border-top: 1px solid var(--rule);
+  margin: 2rem 0;
+}
+
+code {
+  font-family: var(--mono);
+  font-size: 0.87em;
+  background: var(--bg-soft);
+  border-radius: 4px;
+  padding: 0.1em 0.3em;
+}
+
+pre {
+  background: var(--bg-soft);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 0.9rem 1rem;
+  overflow-x: auto;
+}
+
+pre code {
+  background: none;
+  padding: 0;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin-bottom: 1rem;
+}
+
+th, td {
+  border: 1px solid var(--rule);
+  padding: 0.4rem 0.6rem;
+  text-align: left;
+}
+
+/* Config snippets & format tabs ------------------------------------ */
+
+.config-snippet {
+  margin: 1.2rem 0;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--bg-soft);
+  overflow: hidden;
+}
+
+.config-snippet .config-tabs {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.4rem 0.6rem;
+  background: var(--bg);
+  border-bottom: 1px solid var(--rule);
+}
+
+.config-snippet .config-tab {
+  font: 0.8rem/1 var(--mono);
+  color: var(--fg-soft);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 0.3rem 0.6rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+.config-snippet .config-tab:hover {
+  color: var(--fg);
+}
+
+.config-snippet .config-tab:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* Default (TOML active) */
+:root:not([data-format="yaml"]):not([data-format="json"]) .config-snippet .config-tab-toml,
+:root[data-format="toml"] .config-snippet .config-tab-toml {
+  color: var(--fg);
+  background: var(--bg-soft);
+  border-color: var(--rule);
+  font-weight: 600;
+}
+
+:root:not([data-format="yaml"]):not([data-format="json"]) .config-snippet .config-panel:not(.config-panel-toml),
+:root[data-format="toml"] .config-snippet .config-panel:not(.config-panel-toml) {
+  display: none;
+}
+
+/* YAML active */
+:root[data-format="yaml"] .config-snippet .config-tab-yaml {
+  color: var(--fg);
+  background: var(--bg-soft);
+  border-color: var(--rule);
+  font-weight: 600;
+}
+
+:root[data-format="yaml"] .config-snippet .config-panel:not(.config-panel-yaml) {
+  display: none;
+}
+
+/* JSON active */
+:root[data-format="json"] .config-snippet .config-tab-json {
+  color: var(--fg);
+  background: var(--bg-soft);
+  border-color: var(--rule);
+  font-weight: 600;
+}
+
+:root[data-format="json"] .config-snippet .config-panel:not(.config-panel-json) {
+  display: none;
+}
+
+.config-snippet .config-panel pre {
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+}
+
+/* Casts -------------------------------------------------------------- */
+
+/* A recording of the TUI, with the keys it presses named underneath — the
+   caption is where the keystrokes are, because VHS cannot draw them into the
+   frame (see the cast shortcode). */
+figure.cast { margin: 1.6rem 0; }
+
+figure.cast video {
+  display: block;
+  width: 100%;
+  height: auto;
+  /* `auto` first, so the real ratio wins the moment metadata lands; the
+     fallback is the tape size docs/tapes/house.tape sets, which is what a
+     cast recorded by this repo's own harness comes back as. The poster covers
+     the pre-metadata frame, but the ratio still prevents a layout shift when
+     a poster 404s, rather than laying out at the spec's 300x150 and jumping. */
+  aspect-ratio: auto 1200 / 640;
+  background: var(--bg-soft);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+}
+
+/* Cast video pairs: light twin visible by default, swapped under
+   dark mode across all three states (system preference, explicit dark, explicit
+   light override) mirroring the palette block above. */
+figure.cast video.cast-dark {
+  display: none;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) figure.cast video.cast-dark { display: block; }
+  :root:not([data-theme="light"]) figure.cast video.cast-light { display: none; }
+}
+
+:root[data-theme="dark"] figure.cast video.cast-dark { display: block; }
+:root[data-theme="dark"] figure.cast video.cast-light { display: none; }
+/* A hand-drawn inline-SVG diagram (see the loop-diagram shortcode). The
+   SVG inherits the page's variables, so one drawing follows the theme.
+   Unlike a shot, whose border is a window edge sitting flush on the
+   frame, a diagram draws on the page itself — so its border is a card,
+   padded so the drawing does not touch it. */
+figure.diagram {
+  margin: 0 0 1rem;
+  border: 2px solid var(--rule);
+  border-radius: 10px;
+  padding: 1.25rem 1rem;
+}
+figure.diagram svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+figure.cast figcaption {
+  margin-top: 0.55rem;
+  font-size: 0.85rem;
+  color: var(--fg-soft);
+}
+
+/* The separators are in the markup (see the cast shortcode), so they need
+   nothing here but a colour that keeps them behind the words — the soft
+   foreground, not the rule colour, which is mixed for 1px lines and is all
+   but invisible as text. */
+.keys .sep { color: var(--fg-soft); }
+
+/* Scoped to the caption, not a bare kbd: goldmark runs with unsafe = true,
+   so a <kbd> written into the README would otherwise pick up keycap chrome
+   with no cast anywhere near it. */
+.keys kbd {
+  font: 0.85em var(--mono);
+  color: var(--fg);
+  background: var(--bg-soft);
+  border: 1px solid var(--rule);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  padding: 0.1em 0.4em;
+}
+
+/* Narrow screens ----------------------------------------------------- */
+
+/* Two rails and a reading column need 83rem: 48rem of measure, 12 of
+   sidebar, 14 of rail, and the padding and gaps between them. Below that the
+   "On this page" rail goes first — it is the one a scrollbar substitutes for,
+   and the sidebar is the only way between pages. The cost is real and worth
+   naming: on a mid-size window the README and SCOPE lose a rail they used to
+   have. The alternative was both rails standing while the prose they frame
+   ran at 30rem, which is worse for the same two pages. */
+@media (max-width: 83rem) {
+  .toc { display: none; }
+}
+
+@media (max-width: 60rem) {
+  /* The sidebar stays — it is the only way between pages — but folds into a
+     row of links above the text, because a column beside the prose at this
+     width leaves neither of them room. The group headings go with the
+     column: stacked they were signposts, in a row they are noise.
+     This is a rule for a short menu. A row of twenty links is a screenful
+     of undifferentiated names before a phone reader reaches a word of
+     prose, and with the headings suppressed nothing separates the groups —
+     when the docs get there, this is the rule to revisit, and the answer
+     is a fold, not a script. */
+  .wrap {
+    display: block;
+    padding: 1.5rem 1.25rem 4rem;
+  }
+
+  .sidenav {
+    position: static;
+    max-height: none;
+    overflow: visible;
+    margin-bottom: 1.5rem;
+    padding-bottom: 0.9rem;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  .sidenav h5 { display: none; }
+
+  .sidenav a {
+    display: inline-block;
+    margin-right: 1.1rem;
+  }
+  .hero .wordmark .fallback { font-size: 2.1rem; }
+  /* The README's pipeline table is three columns of prose. It is set tighter
+     here to leave the widest column room, and deliberately left as a table:
+     making it scroll sideways costs more than it buys — auto layout already
+     gives the prose column most of the width, and a table overridden to
+     display:block leaves the accessibility tree with no rows or columns at
+     exactly the size where the table is hardest to follow. */
+  th, td {
+    padding: 0.3rem 0.4rem;
+    font-size: 0.92rem;
+  }
+}
+
+@media (max-width: 22rem) {
+  /* On a screen too narrow for the ASCII mark to fit whole without clipping
+     or shrinking below legibility, fall back to the plain word — the web
+     twin of wordmarkFits. */
+  .hero .wordmark pre { display: none; }
+  .hero .wordmark .fallback { display: block; }
+}

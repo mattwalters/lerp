@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+  <script>
+    
+    
+    
+    (function () {
+      try {
+        var t = localStorage.getItem("lerp-theme");
+        if (t === "light" || t === "dark") {
+          document.documentElement.dataset.theme = t;
+        }
+        var f = localStorage.getItem("lerp-format");
+        if (f === "yaml" || f === "json") {
+          document.documentElement.dataset.format = f;
+        }
+      } catch (e) {}
+    })();
+  </script>
+  
+  
+  
+  
+  <title>The command line · lerp</title>
+  
+  
+  
+  
+  
+  <meta name="description" content="The whole surface, `lerp`, `lerp login`, `lerp logout`, `lerp init` and `lerp version`, and the environment they read.">
+  
+  <link rel="canonical" href="https://lerp.sh/latest/docs/cli/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="lerp">
+  <meta property="og:title" content="The command line · lerp">
+  <meta property="og:description" content="The whole surface, `lerp`, `lerp login`, `lerp logout`, `lerp init` and `lerp version`, and the environment they read.">
+  <meta property="og:url" content="https://lerp.sh/latest/docs/cli/">
+  <meta property="og:image" content="https://lerp.sh/og.png">
+  <meta property="og:image:alt" content="The lerp board: tickets waiting on a human in the On you panel, a work panel of queues and three lanes running coding agents">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="640">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="The command line · lerp">
+  <meta name="twitter:description" content="The whole surface, `lerp`, `lerp login`, `lerp logout`, `lerp init` and `lerp version`, and the environment they read.">
+  <meta name="twitter:image" content="https://lerp.sh/og.png">
+  <meta name="twitter:image:alt" content="The lerp board: tickets waiting on a human in the On you panel, a work panel of queues and three lanes running coding agents">
+  <link rel="stylesheet" href="../../style.css">
+</head>
+<body>
+  
+  
+  
+  
+  
+  
+  
+  <header>
+    
+    <a class="brand" href="../../"><img class="brand-mark" src="../../favicon.svg" alt="">lerp</a>
+    <span class="spacer"></span>
+    
+    <a class="nav here" href="../../docs/">Docs</a>
+    
+    <a class="nav" href="../../why/">Why</a>
+    
+    
+    <button type="button" id="theme-picker" class="theme" aria-label="Theme">◐ system</button>
+    <a class="nav github" href="https://github.com/mattwalters/lerp" target="_blank" rel="noopener" aria-label="GitHub"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg></a>
+    
+    
+    <span class="version">
+      
+      <span class="version-label">v0.1.0</span>
+      <select id="version-picker" hidden aria-label="Documentation version"></select>
+    </span>
+    
+  </header>
+  <div class="wrap">
+    
+    
+    <nav class="sidenav" aria-label="Docs">
+      
+      
+      
+      <h5>Start</h5>
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/">Documentation</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/install/">Install</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/quickstart/">Quickstart</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/how-lerp-works/">How lerp works</a>
+      
+      <h5>The interface</h5>
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/reading-the-board/">Reading the board</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/finding-tickets/">Finding tickets</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/watching-a-run/">Watching a run</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/ejecting/">Ejecting</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/promoting/">Promoting</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/starting-past-the-limit/">Starting past the limit</a>
+      
+      <h5>Reference</h5>
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/configuration/">Configuration</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/telemetry/">Telemetry</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/cli/" class="active" aria-current="page">The command line</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/troubleshooting/">Troubleshooting</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../scope/">SCOPE</a>
+      
+    </nav>
+    
+    <main>
+      
+
+<div class="prose">
+  <h1 id="the-command-line">The command line</h1>
+<pre tabindex="0"><code>usage:
+  lerp [-concurrency N]         open the TUI; the loop runs while it is open
+  lerp version, --version       print the version
+  lerp login                    sign in to Linear (loopback OAuth); no flags
+  lerp logout                   sign out of Linear and revoke the token; no flags
+  lerp init --team KEY [--yes]  map lerp&#39;s queues onto the team&#39;s board and write this repo&#39;s lerp.toml
+</code></pre><p>That is the whole surface. <code>lerp -h</code> prints it, subcommands included.</p>
+<h2 id="lerp"><code>lerp</code></h2>
+<p>Bare <code>lerp</code> opens <a href="../../docs/reading-the-board/">the board</a>. Run it from the
+directory holding <code>lerp.toml</code>, or anywhere below it.</p>
+<p><code>-concurrency N</code> caps how many agents run at once. The default is 10, and
+a value below 1 is refused. Each lane is a whole workspace, so lower it
+in a repo whose <code>provision</code> command is heavy.</p>
+<p>The TUI needs a terminal. In a pipe or a script, <code>lerp</code> prints usage and
+exits 2 rather than quietly starting to claim tickets.</p>
+<p>Before the first pass, lerp refuses to start unless every status the
+config names exists on its team. A team automation that would move a
+ticket mid-stage is shown at the same moment but only warns. See <a href="../../docs/troubleshooting/#why-did-my-ticket-skip-a-stage">Why did
+my ticket skip a
+stage?</a>.</p>
+<p>An advisory lock at <code>.lerp/lock</code> keeps it to one loop per clone. A second
+<code>lerp</code> on the same clone fails on the lock rather than racing the first.</p>
+<p><code>q</code> or <code>ctrl+c</code> closes the screen, stops future passes, and waits briefly
+for a pass in flight to settle. The agents are never touched. They are
+their own processes, with run evidence on disk, and the next <code>lerp</code>
+adopts them.</p>
+<h2 id="lerp-login"><code>lerp login</code></h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sh" data-lang="sh"><span class="line"><span class="cl">lerp login
+</span></span></code></pre></div><p>Signs in to Linear via OAuth 2.0 with PKCE (RFC 8252). An ephemeral
+loopback listener on <code>127.0.0.1</code> takes the redirect from Linear&rsquo;s
+authorization page in your browser, and the token pair is saved. No
+flags.</p>
+<p>Login requests <code>read,write</code> permissions (<code>actor=user</code>), never <code>admin</code>.
+The token is written to <code>token.json</code> under your user config directory
+(<code>~/.config/lerp/token.json</code> on Linux, <code>~/Library/Application Support/lerp/token.json</code> on macOS), file mode <code>0600</code> inside a <code>0700</code>
+directory, and the access token renews before expiry.</p>
+<h2 id="lerp-logout"><code>lerp logout</code></h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sh" data-lang="sh"><span class="line"><span class="cl">lerp <span class="nb">logout</span>
+</span></span></code></pre></div><p>Sends a best-effort revocation request to Linear and deletes the local
+<code>token.json</code>. No flags.</p>
+<h2 id="lerp-init"><code>lerp init</code></h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sh" data-lang="sh"><span class="line"><span class="cl">lerp init --team LERP --team-name <span class="s2">&#34;Lerp&#34;</span>
+</span></span></code></pre></div><table>
+	<thead>
+			<tr>
+					<th>Flag</th>
+					<th>Meaning</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td><code>--team KEY</code></td>
+					<td>the Linear team key, the LERP in LERP-42. Required.</td>
+			</tr>
+			<tr>
+					<td><code>--team-name NAME</code></td>
+					<td>display name, used only if the team must be created</td>
+			</tr>
+			<tr>
+					<td><code>--yes</code></td>
+					<td>take the stock answer to every question. Piped input implies it</td>
+			</tr>
+	</tbody>
+</table>
+<p>Init creates the Linear team if it is missing, fits the stock pipeline
+onto the board through a short conversation, writes <code>lerp.toml</code>, and
+appends <code>.lerp/</code> to the repository&rsquo;s <code>.gitignore</code>.
+<a href="../../docs/quickstart/">Quickstart</a> walks the whole of it.</p>
+<p>It is safe to repeat. It creates only missing Linear structure, adds
+nothing to <code>.gitignore</code> twice, and never replaces an existing
+<code>lerp.toml</code>. On a repeat run it checks that the existing config serves
+the requested team and that the statuses its queues name exist.</p>
+<h2 id="lerp-version"><code>lerp version</code></h2>
+<p>Prints the version the binary was stamped with, and <code>--version</code> answers
+the same question. A release archive carries its tag, <code>make install</code>
+stamps <code>git describe</code> with a dirty tree marked, and a <code>go install</code> build
+reports the module version Go records. Only a build with no VCS info at
+all reports the literal <code>dev</code>.</p>
+<p>When the local update cache knows a newer release tag, <code>lerp version</code>
+prints a second line pointing to <code>brew upgrade lerp</code>. It makes no network
+request of its own, and reads only what a previous board session cached.</p>
+<h2 id="authentication">Authentication</h2>
+<p>Every lerp command needs a Linear credential. <code>LINEAR_API_KEY</code> wins if it
+is set, otherwise lerp reads the <code>token.json</code> that <code>lerp login</code> stored,
+and with neither it exits telling you to run <code>lerp login</code>.</p>
+<p>Prefer <code>lerp login</code>. Its tokens are scoped (<code>read,write</code>, no <code>admin</code>) and
+expiring, and OAuth clients get Linear&rsquo;s 5,000 requests per hour. A
+personal API key defaults to full workspace access, never expires, and
+shares the 2,500 per hour personal limit.</p>
+<p>Either credential is lerp&rsquo;s alone. Stored tokens are never passed to a
+provision, dispose or runner command, and <code>LINEAR_API_KEY</code> is dropped
+from lerp&rsquo;s environment after it is read.</p>
+<h2 id="environment">Environment</h2>
+<table>
+	<thead>
+			<tr>
+					<th>Variable</th>
+					<th>What it does</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td><code>LINEAR_API_KEY</code></td>
+					<td>the Linear personal API key, supported as a fallback for headless servers and CI. When set, it takes precedence over the token <code>lerp login</code> stores. Defaults to your full workspace access unless restricted at creation. Dropped from lerp&rsquo;s own environment after reading, never passed to a provision, dispose or runner command.</td>
+			</tr>
+			<tr>
+					<td><code>LERP_BACKGROUND</code></td>
+					<td><code>light</code> or <code>dark</code>, saying which half of the palette to draw. Read once at startup, and any other value is an error.</td>
+			</tr>
+			<tr>
+					<td><code>LERP_NO_UPDATE_CHECK</code></td>
+					<td>any non-empty value disables the daily anonymous GitHub releases check for newer versions.</td>
+			</tr>
+			<tr>
+					<td><code>LERP_OPEN</code></td>
+					<td><code>desktop</code> rewrites ticket URLs to Linear&rsquo;s <code>linear://</code> deep-link scheme on <code>o</code>, opening the desktop app instead of the browser. Unset or any other value keeps <code>https://</code>.</td>
+			</tr>
+			<tr>
+					<td><code>NO_COLOR</code></td>
+					<td>any value turns colour off entirely.</td>
+			</tr>
+			<tr>
+					<td><code>XDG_STATE_HOME</code></td>
+					<td>overrides where <a href="../../docs/telemetry/">telemetry</a> is written (<code>$XDG_STATE_HOME/lerp/runs.jsonl</code>, defaulting to <code>~/.local/state/lerp/runs.jsonl</code>).</td>
+			</tr>
+	</tbody>
+</table>
+<p>Lerp otherwise picks its palette by asking the terminal for its
+background colour. A terminal that does not answer, tmux and screen among
+them, is read as dark. That is what <code>LERP_BACKGROUND</code> is for.</p>
+<p>Lerp sets variables of its own on the commands it starts, <code>LERP_LANE</code>,
+<code>LERP_TICKET_ID</code> and <code>LERP_WORKSPACE</code> on a provision or dispose command,
+and <code>LERP_TICKET</code> on a runner. Those are <a href="../../docs/configuration/#workspace-commands">Configuration&rsquo;s
+side</a> of the contract.</p>
+<h2 id="cleanup-and-uninstall">Cleanup and uninstall</h2>
+<ol>
+<li><strong>Remove the binary.</strong> <code>brew uninstall lerp</code> for a brew install,
+<code>make uninstall</code> from a clone, or delete the binary from
+<code>$HOME/.local/bin</code> or your <code>GOBIN</code>.</li>
+<li><strong>Remove stored credentials.</strong> <code>lerp logout</code>, or delete <code>token.json</code>
+from your user config directory.</li>
+<li><strong>Remove local state.</strong> <code>rm -rf .lerp/</code> once all agents have stopped,
+since run evidence is how the next <code>lerp</code> adopts or reaps them.
+Workspaces under <code>.lerp/workspaces/</code> are git worktrees, so
+<code>git worktree prune</code> cleans up stray registrations. To clear run
+metrics too, remove <code>$XDG_STATE_HOME/lerp/runs.jsonl</code> (or
+<code>~/.local/state/lerp/runs.jsonl</code>).</li>
+</ol>
+<p>Linear workflow statuses created by <code>lerp init</code> remain on your team until
+you delete or archive them in Linear&rsquo;s settings.</p>
+
+</div>
+
+      
+      <img class="mark-signoff" src="../../mark.svg" alt="" width="120" height="120">
+    </main>
+    
+    
+    
+    <nav class="toc" aria-label="On this page">
+      <h5>On this page</h5>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#lerp"><code>lerp</code></a></li>
+    <li><a href="#lerp-login"><code>lerp login</code></a></li>
+    <li><a href="#lerp-logout"><code>lerp logout</code></a></li>
+    <li><a href="#lerp-init"><code>lerp init</code></a></li>
+    <li><a href="#lerp-version"><code>lerp version</code></a></li>
+    <li><a href="#authentication">Authentication</a></li>
+    <li><a href="#environment">Environment</a></li>
+    <li><a href="#cleanup-and-uninstall">Cleanup and uninstall</a></li>
+  </ul>
+</nav>
+    </nav>
+    
+  </div>
+  <script>
+    
+    
+    
+    
+    (function () {
+      var modes = ["system", "light", "dark"];
+      var glyphs = { system: "◐", light: "○", dark: "●" };
+      var picker = document.getElementById("theme-picker");
+      var current = "system";
+      try {
+        var stored = localStorage.getItem("lerp-theme");
+        if (stored === "light" || stored === "dark") { current = stored; }
+      } catch (e) {}
+      function paint() {
+        picker.textContent = glyphs[current] + " " + current;
+        picker.setAttribute("aria-label", "Theme: " + current);
+        if (current === "system") {
+          delete document.documentElement.dataset.theme;
+        } else {
+          document.documentElement.dataset.theme = current;
+        }
+      }
+      paint();
+      picker.addEventListener("click", function () {
+        current = modes[(modes.indexOf(current) + 1) % modes.length];
+        try {
+          if (current === "system") {
+            localStorage.removeItem("lerp-theme");
+          } else {
+            localStorage.setItem("lerp-theme", current);
+          }
+        } catch (e) {}
+        paint();
+      });
+    })();
+  </script>
+  
+  <script>
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    (function () {
+      var here = new URL(".", document.querySelector('link[rel="stylesheet"]').href);
+      var root = new URL(".." + "/", here);
+      fetch(new URL("versions.json", root))
+        .then(function (r) { if (!r.ok) { throw r; } return r.json(); })
+        .then(function (versions) {
+          var picker = document.getElementById("version-picker");
+          ["latest"].concat(versions).forEach(function (v) {
+            var option = document.createElement("option");
+            option.value = v;
+            
+            
+            
+            option.textContent = v === "latest" && versions.length
+              ? versions[0] + " · latest" : v;
+            option.selected = v === "v0.1.0";
+            picker.appendChild(option);
+          });
+          
+          
+          
+          
+          
+          
+          picker.addEventListener("change", function () {
+            window.location.href = new URL(picker.value + "/docs/", root);
+          });
+          picker.hidden = false;
+        })
+        .catch(function () {});
+    })();
+  </script>
+  
+  <script>
+    
+    
+    
+    (function () {
+      var formats = ["toml", "yaml", "json"];
+      function setFormat(fmt) {
+        if (formats.indexOf(fmt) === -1) return;
+        if (fmt === "toml") {
+          delete document.documentElement.dataset.format;
+          try { localStorage.removeItem("lerp-format"); } catch (e) {}
+        } else {
+          document.documentElement.dataset.format = fmt;
+          try { localStorage.setItem("lerp-format", fmt); } catch (e) {}
+        }
+        updateTabs(fmt);
+      }
+      function updateTabs(fmt) {
+        var tabs = document.querySelectorAll(".config-tab");
+        for (var i = 0; i < tabs.length; i++) {
+          var isCurrent = tabs[i].getAttribute("data-set-format") === fmt;
+          tabs[i].setAttribute("aria-selected", isCurrent ? "true" : "false");
+        }
+      }
+      document.addEventListener("click", function (e) {
+        var btn = e.target.closest("[data-set-format]");
+        if (!btn) return;
+        setFormat(btn.getAttribute("data-set-format"));
+      });
+      var current = "toml";
+      try {
+        var stored = localStorage.getItem("lerp-format");
+        if (stored === "yaml" || stored === "json") { current = stored; }
+      } catch (e) {}
+      updateTabs(current);
+    })();
+  </script>
+</body>
+</html>

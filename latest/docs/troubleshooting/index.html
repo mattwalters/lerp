@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+  <script>
+    
+    
+    
+    (function () {
+      try {
+        var t = localStorage.getItem("lerp-theme");
+        if (t === "light" || t === "dark") {
+          document.documentElement.dataset.theme = t;
+        }
+        var f = localStorage.getItem("lerp-format");
+        if (f === "yaml" || f === "json") {
+          document.documentElement.dataset.format = f;
+        }
+      } catch (e) {}
+    })();
+  </script>
+  
+  
+  
+  
+  <title>Troubleshooting · lerp</title>
+  
+  
+  
+  
+  
+  <meta name="description" content="The questions a board raises, a ticket that will not start, a stage that got skipped, a run that outlived its lerp.">
+  
+  <link rel="canonical" href="https://lerp.sh/latest/docs/troubleshooting/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="lerp">
+  <meta property="og:title" content="Troubleshooting · lerp">
+  <meta property="og:description" content="The questions a board raises, a ticket that will not start, a stage that got skipped, a run that outlived its lerp.">
+  <meta property="og:url" content="https://lerp.sh/latest/docs/troubleshooting/">
+  <meta property="og:image" content="https://lerp.sh/og.png">
+  <meta property="og:image:alt" content="The lerp board: tickets waiting on a human in the On you panel, a work panel of queues and three lanes running coding agents">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="640">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Troubleshooting · lerp">
+  <meta name="twitter:description" content="The questions a board raises, a ticket that will not start, a stage that got skipped, a run that outlived its lerp.">
+  <meta name="twitter:image" content="https://lerp.sh/og.png">
+  <meta name="twitter:image:alt" content="The lerp board: tickets waiting on a human in the On you panel, a work panel of queues and three lanes running coding agents">
+  <link rel="stylesheet" href="../../style.css">
+</head>
+<body>
+  
+  
+  
+  
+  
+  
+  
+  <header>
+    
+    <a class="brand" href="../../"><img class="brand-mark" src="../../favicon.svg" alt="">lerp</a>
+    <span class="spacer"></span>
+    
+    <a class="nav here" href="../../docs/">Docs</a>
+    
+    <a class="nav" href="../../why/">Why</a>
+    
+    
+    <button type="button" id="theme-picker" class="theme" aria-label="Theme">◐ system</button>
+    <a class="nav github" href="https://github.com/mattwalters/lerp" target="_blank" rel="noopener" aria-label="GitHub"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg></a>
+    
+    
+    <span class="version">
+      
+      <span class="version-label">v0.1.0</span>
+      <select id="version-picker" hidden aria-label="Documentation version"></select>
+    </span>
+    
+  </header>
+  <div class="wrap">
+    
+    
+    <nav class="sidenav" aria-label="Docs">
+      
+      
+      
+      <h5>Start</h5>
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/">Documentation</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/install/">Install</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/quickstart/">Quickstart</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/how-lerp-works/">How lerp works</a>
+      
+      <h5>The interface</h5>
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/reading-the-board/">Reading the board</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/finding-tickets/">Finding tickets</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/watching-a-run/">Watching a run</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/ejecting/">Ejecting</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/promoting/">Promoting</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/starting-past-the-limit/">Starting past the limit</a>
+      
+      <h5>Reference</h5>
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/configuration/">Configuration</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/telemetry/">Telemetry</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/cli/">The command line</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/troubleshooting/" class="active" aria-current="page">Troubleshooting</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../scope/">SCOPE</a>
+      
+    </nav>
+    
+    <main>
+      
+
+<div class="prose">
+  <h1 id="troubleshooting">Troubleshooting</h1>
+<h2 id="why-isnt-my-ticket-being-picked-up">Why isn&rsquo;t my ticket being picked up?</h2>
+<p>Check the three <a href="../../docs/how-lerp-works/#the-claim">eligibility</a> conditions, a
+queue&rsquo;s status, no assignee, not blocked.</p>
+<p>The assignee is the one that surprises people. Assignment is the claim,
+so a ticket assigned to anyone, including you, is someone else&rsquo;s work as
+far as lerp is concerned. A finished run releases its claim, so a claim
+still standing means a human put it there, or a run died with nothing
+left to reap it. Either way, select the row in the work panel and press
+<code>S</code>, which <a href="../../docs/starting-past-the-limit/">takes back your own
+claim</a> and runs the stage.</p>
+<h2 id="why-did-my-ticket-skip-a-stage">Why did my ticket skip a stage?</h2>
+<p>A run whose ticket left its queue status before it finished keeps that
+move, and the status bar says which hop it skipped. An agent escalating
+moves a ticket to a status your pipeline names. An automation usually
+moves it to one it does not, and lerp names those automations at startup.
+<code>.lerp/loop.log</code> has the whole line:</p>
+<blockquote>
+<p>LERP-42 left &ldquo;Implementing&rdquo; for &ldquo;In Progress&rdquo; during its run — the
+on_success hop to &ldquo;In Review&rdquo; was skipped. &ldquo;In Progress&rdquo; is not a
+status your pipeline names; an external automation (e.g. Linear&rsquo;s
+GitHub integration) may be moving tickets.</p>
+</blockquote>
+<p>The usual culprit is Linear&rsquo;s GitHub integration, whose automations sit
+per team in workflow settings as pull request triggers. On the teams lerp
+serves, set the four open-PR triggers (On draft PR open, On PR open, On PR
+review request or activity, On PR ready for merge) to No action, since a run
+that opens a pull request trips them mid-stage. Leave On PR merge on, because
+it fires after the stock pipeline is done with the ticket. The startup check
+cannot see that one, so the settings screen is worth a look.</p>
+<p>If your pipeline has a stage that runs after the merge, the merge trigger
+is mid-stage for you too. Either set it to No action, or point the
+previous stage&rsquo;s <code>on_success</code> at the status the automation moves to,
+which makes the automation the next stage&rsquo;s trigger. That setup kills the
+queue&rsquo;s <code>on_failure</code> route, since the ticket has already moved by the
+time a failing run ends.</p>
+<h2 id="what-happens-on-crash-or-kill">What happens on crash or kill?</h2>
+<p>Every queue run is safe to kill and restart from its beginning. Progress
+is checkpointed only at queue boundaries, as artifacts in Linear, so the
+worst case is a re-run stage and never a lost ticket.</p>
+<p>That includes killing lerp itself. Agents outlive it, and the next <code>lerp</code>
+adopts the live ones and reaps the dead. An adopted run that reached its
+own last line recorded its exit status beside its log, so reaping applies
+the queue&rsquo;s move rule, and restarting lerp across a run&rsquo;s finish costs
+nothing.</p>
+<p>A run killed before it got that far records nothing, and reaping it
+releases the claim so the ticket becomes eligible again. A failed run
+whose queue has no <code>on_failure</code> route keeps its claim and waits on you.
+To run it again, select it in the work panel and press <code>S</code>.</p>
+<h2 id="why-does-init-tell-me-to-set-a-statuss-category-myself">Why does init tell me to set a status&rsquo;s category myself?</h2>
+<p>Statuses lerp creates are always in-progress (Linear&rsquo;s &ldquo;started&rdquo;
+category), and existing statuses are left exactly as you have them. That
+leaves one piece of setup only you can finish, where your pipeline ends.</p>
+<p>Linear counts a ticket as blocking its dependents (<code>blockedBy</code>) until its
+status carries a completed category, and init cannot infer which of your
+statuses mean the work is done. So for each <code>on_success</code> target no queue
+watches, it prints whether Linear categorises that status as completed.</p>
+<p>If the status means the work is finished, set its category to Done in
+Linear. Left in-progress, finished tickets there block their dependents
+forever. If a human still acts on tickets there, as with the stock Plan
+Review and In Review, in-progress is exactly right, and marking it
+completed would release dependents before the work had landed.</p>
+<h2 id="where-are-the-logs">Where are the logs?</h2>
+<ul>
+<li><code>.lerp/runs/</code> holds one record and one log per run, the agent&rsquo;s own
+output, which is what <a href="../../docs/watching-a-run/#the-log">the main pane
+tails</a>.</li>
+<li><code>.lerp/loop.log</code> holds the loop&rsquo;s diagnostics, provision, dispose,
+adopt, reap, the eject commands lerp handed back, and the full text of
+any status-bar line a narrow terminal truncated. It is appended to
+across sessions, with a marker line at each start.</li>
+<li><code>$XDG_STATE_HOME/lerp/runs.jsonl</code> (or <code>~/.local/state/lerp/runs.jsonl</code>)
+holds the append-only <a href="../../docs/telemetry/">telemetry</a> records for finished
+runs.</li>
+</ul>
+<h2 id="how-do-i-clean-up-or-uninstall">How do I clean up or uninstall?</h2>
+<p><a href="../../docs/cli/#cleanup-and-uninstall">Cleanup and uninstall</a> has the three
+steps. Delete <code>.lerp/</code> only once all agents have stopped, since run
+evidence is how the next <code>lerp</code> adopts or reaps them. Losing local state
+costs compute or charts, never correctness.</p>
+
+</div>
+
+      
+      <img class="mark-signoff" src="../../mark.svg" alt="" width="120" height="120">
+    </main>
+    
+    
+    
+    <nav class="toc" aria-label="On this page">
+      <h5>On this page</h5>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#why-isnt-my-ticket-being-picked-up">Why isn&rsquo;t my ticket being picked up?</a></li>
+    <li><a href="#why-did-my-ticket-skip-a-stage">Why did my ticket skip a stage?</a></li>
+    <li><a href="#what-happens-on-crash-or-kill">What happens on crash or kill?</a></li>
+    <li><a href="#why-does-init-tell-me-to-set-a-statuss-category-myself">Why does init tell me to set a status&rsquo;s category myself?</a></li>
+    <li><a href="#where-are-the-logs">Where are the logs?</a></li>
+    <li><a href="#how-do-i-clean-up-or-uninstall">How do I clean up or uninstall?</a></li>
+  </ul>
+</nav>
+    </nav>
+    
+  </div>
+  <script>
+    
+    
+    
+    
+    (function () {
+      var modes = ["system", "light", "dark"];
+      var glyphs = { system: "◐", light: "○", dark: "●" };
+      var picker = document.getElementById("theme-picker");
+      var current = "system";
+      try {
+        var stored = localStorage.getItem("lerp-theme");
+        if (stored === "light" || stored === "dark") { current = stored; }
+      } catch (e) {}
+      function paint() {
+        picker.textContent = glyphs[current] + " " + current;
+        picker.setAttribute("aria-label", "Theme: " + current);
+        if (current === "system") {
+          delete document.documentElement.dataset.theme;
+        } else {
+          document.documentElement.dataset.theme = current;
+        }
+      }
+      paint();
+      picker.addEventListener("click", function () {
+        current = modes[(modes.indexOf(current) + 1) % modes.length];
+        try {
+          if (current === "system") {
+            localStorage.removeItem("lerp-theme");
+          } else {
+            localStorage.setItem("lerp-theme", current);
+          }
+        } catch (e) {}
+        paint();
+      });
+    })();
+  </script>
+  
+  <script>
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    (function () {
+      var here = new URL(".", document.querySelector('link[rel="stylesheet"]').href);
+      var root = new URL(".." + "/", here);
+      fetch(new URL("versions.json", root))
+        .then(function (r) { if (!r.ok) { throw r; } return r.json(); })
+        .then(function (versions) {
+          var picker = document.getElementById("version-picker");
+          ["latest"].concat(versions).forEach(function (v) {
+            var option = document.createElement("option");
+            option.value = v;
+            
+            
+            
+            option.textContent = v === "latest" && versions.length
+              ? versions[0] + " · latest" : v;
+            option.selected = v === "latest";
+            picker.appendChild(option);
+          });
+          
+          
+          
+          
+          
+          
+          picker.addEventListener("change", function () {
+            window.location.href = new URL(picker.value + "/docs/", root);
+          });
+          picker.hidden = false;
+        })
+        .catch(function () {});
+    })();
+  </script>
+  
+  <script>
+    
+    
+    
+    (function () {
+      var formats = ["toml", "yaml", "json"];
+      function setFormat(fmt) {
+        if (formats.indexOf(fmt) === -1) return;
+        if (fmt === "toml") {
+          delete document.documentElement.dataset.format;
+          try { localStorage.removeItem("lerp-format"); } catch (e) {}
+        } else {
+          document.documentElement.dataset.format = fmt;
+          try { localStorage.setItem("lerp-format", fmt); } catch (e) {}
+        }
+        updateTabs(fmt);
+      }
+      function updateTabs(fmt) {
+        var tabs = document.querySelectorAll(".config-tab");
+        for (var i = 0; i < tabs.length; i++) {
+          var isCurrent = tabs[i].getAttribute("data-set-format") === fmt;
+          tabs[i].setAttribute("aria-selected", isCurrent ? "true" : "false");
+        }
+      }
+      document.addEventListener("click", function (e) {
+        var btn = e.target.closest("[data-set-format]");
+        if (!btn) return;
+        setFormat(btn.getAttribute("data-set-format"));
+      });
+      var current = "toml";
+      try {
+        var stored = localStorage.getItem("lerp-format");
+        if (stored === "yaml" || stored === "json") { current = stored; }
+      } catch (e) {}
+      updateTabs(current);
+    })();
+  </script>
+</body>
+</html>
