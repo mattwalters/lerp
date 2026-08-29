@@ -27,13 +27,13 @@
   
   
   
-  <meta name="description" content="Lerp&#39;s manual — install to a first promoted ticket, the concepts, the interface, and reference.">
+  <meta name="description" content="What lerp is, where the boundary with Linear sits, and the path from install to a first promoted ticket.">
   
   <link rel="canonical" href="https://lerp.sh/latest/docs/">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="lerp">
   <meta property="og:title" content="Documentation · lerp">
-  <meta property="og:description" content="Lerp&#39;s manual — install to a first promoted ticket, the concepts, the interface, and reference.">
+  <meta property="og:description" content="What lerp is, where the boundary with Linear sits, and the path from install to a first promoted ticket.">
   <meta property="og:url" content="https://lerp.sh/latest/docs/">
   <meta property="og:image" content="https://lerp.sh/og.png">
   <meta property="og:image:alt" content="The lerp board: tickets waiting on a human in the On you panel, a work panel of queues and three lanes running coding agents">
@@ -41,7 +41,7 @@
   <meta property="og:image:height" content="640">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Documentation · lerp">
-  <meta name="twitter:description" content="Lerp&#39;s manual — install to a first promoted ticket, the concepts, the interface, and reference.">
+  <meta name="twitter:description" content="What lerp is, where the boundary with Linear sits, and the path from install to a first promoted ticket.">
   <meta name="twitter:image" content="https://lerp.sh/og.png">
   <meta name="twitter:image:alt" content="The lerp board: tickets waiting on a human in the On you panel, a work panel of queues and three lanes running coding agents">
   <link rel="stylesheet" href="../style.css">
@@ -61,7 +61,7 @@
     
     <a class="nav here" href="../docs/">Docs</a>
     
-    <a class="nav" href="../why/">Why lerp</a>
+    <a class="nav" href="../why/">Why</a>
     
     
     <button type="button" id="theme-picker" class="theme" aria-label="Theme">◐ system</button>
@@ -69,7 +69,8 @@
     
     
     <span class="version">
-      <span class="version-label">latest</span>
+      
+      <span class="version-label">v0.0.7</span>
       <select id="version-picker" hidden aria-label="Documentation version"></select>
     </span>
     
@@ -77,7 +78,7 @@
   <div class="wrap">
     
     
-    <nav class="sidenav" aria-label="Manual">
+    <nav class="sidenav" aria-label="Docs">
       
       
       
@@ -99,16 +100,6 @@
       
       
       
-      <a href="../docs/overview/">Overview</a>
-      
-      
-      
-      
-      
-      
-      
-      
-      
       <a href="../docs/install/">Install</a>
       
       
@@ -121,7 +112,6 @@
       
       <a href="../docs/quickstart/">Quickstart</a>
       
-      <h5>Concepts</h5>
       
       
       
@@ -129,7 +119,8 @@
       
       
       
-      <a href="../docs/the-board/">The board</a>
+      
+      <a href="../docs/how-lerp-works/">How lerp works</a>
       
       <h5>The interface</h5>
       
@@ -159,7 +150,7 @@
       
       
       
-      <a href="../docs/promoting/">Promoting</a>
+      <a href="../docs/watching-a-run/">Watching a run</a>
       
       
       
@@ -179,7 +170,7 @@
       
       
       
-      <a href="../docs/watching-a-run/">Watching a run</a>
+      <a href="../docs/promoting/">Promoting</a>
       
       
       
@@ -241,8 +232,6 @@
       
       <a href="../scope/">SCOPE</a>
       
-      
-      <img class="sidenav-mark" src="../favicon.svg" alt="">
     </nav>
     
     <main>
@@ -250,89 +239,153 @@
 
 <div class="prose">
   <h1 id="documentation">Documentation</h1>
-<p>Lerp&rsquo;s manual. <strong>Start</strong> is install to a first promoted ticket;
-<strong>Concepts</strong> is the model the board is a picture of; <strong>The interface</strong> is one
-page per motion through the screen; <strong>Reference</strong> is the config file,
-telemetry, the command line, and what to do when something looks stuck.
-SCOPE.md is published beside them, as it is written rather than rewritten.</p>
+<p>Lerp runs coding agents against a Linear board.</p>
+<p>You write tickets in Linear. Your <code>lerp.toml</code> names the statuses lerp
+watches. When a ticket reaches one, lerp picks it up, runs a coding agent
+on it, and moves it when the run finishes. Lerp leaves the rest of the
+board alone, and you watch all of it from one screen.</p>
+<figure class="diagram">
+<svg viewBox="0 0 1104 466" role="img" aria-label="One trip around the loop. Linear holds the board: Implementing, In Review and Needs Attention columns with tickets. On your machine, lerp reads lerp.toml, which names the statuses: watch Implementing, on success In Review, on failure Needs Attention. Lerp takes a ticket from the watched Implementing column (1), starts a run in a lane's worktree (2), the run finishes (3), and lerp moves the ticket: to In Review on success, exit code zero (4a), to Needs Attention on failure, a non-zero exit (4b). You watch, promote, and eject from lerp." xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="loop-arr" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" style="fill: var(--fg-soft)"/>
+    </marker>
+  </defs>
 
   
-  <dl class="pagelist">
-    
-    
-    <dt><a href="../docs/overview/">Overview</a></dt>
-    
-    <dd>What lerp is, what is in the box, and where to start.</dd>
-    
-    
-    <dt><a href="../docs/install/">Install</a></dt>
-    
-    <dd>Platforms, the ways to get the binary, and the prerequisites lerp cannot satisfy for you.</dd>
-    
-    
-    <dt><a href="../docs/quickstart/">Quickstart</a></dt>
-    
-    <dd>From `lerp init` to a first promoted ticket, in four steps.</dd>
-    
-    
-    <dt><a href="../docs/the-board/">The board</a></dt>
-    
-    <dd>Tickets, queues, runners, lanes, the loop — and the claim that arbitrates between them.</dd>
-    
-    
-    <dt><a href="../docs/reading-the-board/">Reading the board</a></dt>
-    
-    <dd>The two panels, what each row says, and the main pane that opens beside them.</dd>
-    
-    
-    <dt><a href="../docs/finding-tickets/">Finding tickets</a></dt>
-    
-    <dd>Filtering, sorting, searching, and slicing to a status.</dd>
-    
-    
-    <dt><a href="../docs/promoting/">Promoting</a></dt>
-    
-    <dd>Moving a ticket into the next stage — the one routing decision, and one of the board&#39;s two writes.</dd>
-    
-    
-    <dt><a href="../docs/ejecting/">Ejecting</a></dt>
-    
-    <dd>Taking a headless run over as your own interactive session.</dd>
-    
-    
-    <dt><a href="../docs/watching-a-run/">Watching a run</a></dt>
-    
-    <dd>The activity line, the live log tail, the raw view, and following.</dd>
-    
-    
-    <dt><a href="../docs/starting-past-the-limit/">Starting past the limit</a></dt>
-    
-    <dd>`S` runs a queued ticket now, overriding the lane count and nothing else.</dd>
-    
-    
-    <dt><a href="../docs/lerp-toml/">lerp.toml</a></dt>
-    
-    <dd>The one file lerp reads — teams, workspace commands, runners, queues — and the stock pipeline it ships with.</dd>
-    
-    
-    <dt><a href="../docs/telemetry/">Telemetry</a></dt>
-    
-    <dd>One append-only JSONL line per finished run — where it lives, the schema, and querying with jq.</dd>
-    
-    
-    <dt><a href="../docs/cli/">The command line</a></dt>
-    
-    <dd>The whole surface — `lerp`, `lerp login`, `lerp logout`, `lerp init`, `lerp version` — and the environment they read.</dd>
-    
-    
-    <dt><a href="../docs/troubleshooting/">Troubleshooting</a></dt>
-    
-    <dd>The questions a board raises — a ticket that will not start, a stage that got skipped, a run that outlived its lerp.</dd>
-    
-  </dl>
+  <g style="fill: none; stroke: var(--rule)" stroke-dasharray="5 5">
+    <rect x="24" y="24" width="530" height="330" rx="10"/>
+    <rect x="610" y="24" width="470" height="330" rx="10"/>
+  </g>
+  <g style="fill: var(--fg-soft); font: 13.5px var(--sans)">
+    <text x="42" y="50">Linear</text>
+    <text x="1062" y="50" text-anchor="end">your machine</text>
+  </g>
+
   
+  <rect x="48" y="64" width="482" height="266" rx="8" style="fill: var(--bg-soft); stroke: var(--rule)"/>
+  <text x="289" y="94" text-anchor="middle" style="fill: var(--fg); font: 600 15px var(--mono)">the board</text>
+  
+  <rect x="62" y="106" width="140" height="190" rx="6" style="fill: var(--bg); stroke: var(--accent)"/>
+  <g style="fill: var(--bg); stroke: var(--rule)">
+    <rect x="216" y="106" width="140" height="190" rx="6"/>
+    <rect x="370" y="106" width="140" height="190" rx="6"/>
+  </g>
+  <text x="132" y="284" text-anchor="middle" style="fill: var(--accent); font: 10.5px var(--sans)">watched</text>
+  <g text-anchor="middle" style="fill: var(--fg-soft); font: 11.5px var(--sans)">
+    <text x="132" y="128">Implementing</text>
+    <text x="286" y="128">In Review</text>
+    <text x="440" y="128">Needs Attention</text>
+  </g>
+  <g style="fill: var(--bg-soft); stroke: var(--rule)">
+    <rect x="82" y="142" width="100" height="38" rx="5"/>
+    <rect x="82" y="190" width="100" height="38" rx="5"/>
+    <rect x="236" y="142" width="100" height="38" rx="5"/>
+    <rect x="236" y="190" width="100" height="38" rx="5"/>
+    <rect x="390" y="142" width="100" height="38" rx="5"/>
+  </g>
+  <g text-anchor="middle" style="fill: var(--fg); font: 12px var(--mono)">
+    <text x="132" y="165">ACME-3</text>
+    <text x="132" y="213">ACME-7</text>
+    <text x="286" y="165">ACME-9</text>
+    <text x="286" y="213">ACME-12</text>
+    <text x="440" y="165">ACME-4</text>
+  </g>
+
+  
+  <rect x="800" y="64" width="190" height="64" rx="8" style="fill: var(--bg-soft); stroke: var(--accent); stroke-width: 1.5"/>
+  <text x="895" y="92" text-anchor="middle" style="fill: var(--fg-strong); font: 600 18px var(--mono)">lerp</text>
+  <text x="895" y="112" text-anchor="middle" style="fill: var(--fg-soft); font: 12px var(--sans)">you watch, promote, eject</text>
+
+  
+  <path d="M640,210 h196 l14,14 v86 h-210 z" style="fill: var(--bg-soft); stroke: var(--rule)"/>
+  <path d="M836,210 v14 h14" style="fill: none; stroke: var(--rule)"/>
+  <text x="654" y="234" style="fill: var(--fg); font: 600 12px var(--mono)">lerp.toml</text>
+  <g style="fill: var(--fg-soft); font: 10.5px var(--mono)">
+    <text x="654" y="258">watch      = Implementing</text>
+    <text x="654" y="276">on_success = In Review</text>
+    <text x="654" y="294">on_failure = Needs Attention</text>
+  </g>
+  <path d="M760,206 C780,180 806,156 828,134" style="fill: none; stroke: var(--fg-soft)" stroke-dasharray="4 4" marker-end="url(#loop-arr)"/>
+
+  
+  <rect x="880" y="196" width="186" height="140" rx="8" style="fill: var(--bg-soft); stroke: var(--rule)"/>
+  <text x="973" y="220" text-anchor="middle" style="fill: var(--fg); font: 600 13px var(--mono)">coding agents</text>
+  <g style="fill: var(--bg); stroke: var(--rule)">
+    <rect x="892" y="232" width="162" height="28" rx="5"/>
+    <rect x="892" y="266" width="162" height="28" rx="5"/>
+    <rect x="892" y="300" width="162" height="28" rx="5"/>
+  </g>
+  <g text-anchor="middle" style="fill: var(--fg); font: 11px var(--mono)">
+    <text x="973" y="250">lane 1 · a worktree</text>
+    <text x="973" y="284">lane 2 · a worktree</text>
+    <text x="973" y="318">lane 3 · a worktree</text>
+  </g>
+
+  
+  <g style="fill: none; stroke: var(--fg-soft); stroke-width: 1.4" marker-end="url(#loop-arr)">
+    <path d="M186,211 C420,208 640,164 794,114"/>
+    <path d="M830,60 C640,8 400,20 288,136"/>
+    <path d="M800,100 C710,106 560,110 448,134"/>
+    <path d="M940,128 C952,148 958,168 962,190"/>
+    <path d="M880,240 C868,204 870,166 886,134"/>
+  </g>
+  
+  <g text-anchor="middle" style="fill: var(--fg-soft); font: 11px var(--sans)">
+    <text x="582" y="16">on success</text>
+    <text x="582" y="134">on failure</text>
+  </g>
+  
+  <g style="stroke: var(--fg-soft); fill: var(--bg)">
+    <circle cx="582" cy="33" r="10.5"/>
+    <circle cx="582" cy="110" r="10.5"/>
+    <circle cx="582" cy="181" r="10.5"/>
+    <circle cx="952" cy="158" r="10.5"/>
+    <circle cx="871" cy="190" r="10.5"/>
+  </g>
+  <g text-anchor="middle" style="fill: var(--fg); font: 10.5px var(--mono)">
+    <text x="582" y="37">4a</text>
+    <text x="582" y="114">4b</text>
+    <text x="582" y="185">1</text>
+    <text x="952" y="162">2</text>
+    <text x="871" y="194">3</text>
+  </g>
+
+  
+  <text x="552" y="384" text-anchor="middle" style="fill: var(--fg-soft); font: 13px var(--sans)">one trip around the loop</text>
+  <g style="fill: var(--bg-soft); stroke: var(--rule)">
+    <rect x="158" y="404" width="150" height="30" rx="15"/>
+    <rect x="338" y="404" width="136" height="30" rx="15"/>
+    <rect x="504" y="404" width="164" height="30" rx="15"/>
+    <rect x="704" y="390" width="280" height="28" rx="14"/>
+    <rect x="704" y="424" width="280" height="28" rx="14"/>
+  </g>
+  <g text-anchor="middle" style="fill: var(--fg); font: 13px var(--sans)">
+    <text x="233" y="424">1 · takes a ticket</text>
+    <text x="406" y="424">2 · starts a run</text>
+    <text x="586" y="424">3 · the run finishes</text>
+    <text x="844" y="409" style="font: 12.5px var(--sans)">4a · on success (exit 0), to In Review</text>
+    <text x="844" y="443" style="font: 12.5px var(--sans)">4b · on failure (exit non-zero), to Needs Attention</text>
+  </g>
+  <g style="fill: var(--fg-soft); font: 14px var(--sans)" text-anchor="middle">
+    <text x="323" y="424">→</text>
+    <text x="489" y="424">→</text>
+  </g>
+  <g style="fill: none; stroke: var(--fg-soft); stroke-width: 1.2" marker-end="url(#loop-arr)">
+    <path d="M674,412 C684,408 690,406 700,404"/>
+    <path d="M674,426 C684,430 690,432 700,434"/>
+  </g>
+</svg>
+</figure>
+
+<p>Linear stays the source of truth. Lerp reads the board, starts agents and
+moves tickets, and moving them is all it writes. There is no server and
+no store. Just one binary and the board.</p>
+
 </div>
 
+      
+      <img class="mark-signoff" src="../mark.svg" alt="" width="120" height="120">
     </main>
     
     
@@ -397,7 +450,11 @@ SCOPE.md is published beside them, as it is written rather than rewritten.</p>
           ["latest"].concat(versions).forEach(function (v) {
             var option = document.createElement("option");
             option.value = v;
-            option.textContent = v;
+            
+            
+            
+            option.textContent = v === "latest" && versions.length
+              ? versions[0] + " · latest" : v;
             option.selected = v === "latest";
             picker.appendChild(option);
           });

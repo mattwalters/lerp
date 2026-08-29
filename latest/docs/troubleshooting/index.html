@@ -27,13 +27,13 @@
   
   
   
-  <meta name="description" content="The questions a board raises — a ticket that will not start, a stage that got skipped, a run that outlived its lerp.">
+  <meta name="description" content="The questions a board raises, a ticket that will not start, a stage that got skipped, a run that outlived its lerp.">
   
   <link rel="canonical" href="https://lerp.sh/latest/docs/troubleshooting/">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="lerp">
   <meta property="og:title" content="Troubleshooting · lerp">
-  <meta property="og:description" content="The questions a board raises — a ticket that will not start, a stage that got skipped, a run that outlived its lerp.">
+  <meta property="og:description" content="The questions a board raises, a ticket that will not start, a stage that got skipped, a run that outlived its lerp.">
   <meta property="og:url" content="https://lerp.sh/latest/docs/troubleshooting/">
   <meta property="og:image" content="https://lerp.sh/og.png">
   <meta property="og:image:alt" content="The lerp board: tickets waiting on a human in the On you panel, a work panel of queues and three lanes running coding agents">
@@ -41,7 +41,7 @@
   <meta property="og:image:height" content="640">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Troubleshooting · lerp">
-  <meta name="twitter:description" content="The questions a board raises — a ticket that will not start, a stage that got skipped, a run that outlived its lerp.">
+  <meta name="twitter:description" content="The questions a board raises, a ticket that will not start, a stage that got skipped, a run that outlived its lerp.">
   <meta name="twitter:image" content="https://lerp.sh/og.png">
   <meta name="twitter:image:alt" content="The lerp board: tickets waiting on a human in the On you panel, a work panel of queues and three lanes running coding agents">
   <link rel="stylesheet" href="../../style.css">
@@ -61,7 +61,7 @@
     
     <a class="nav here" href="../../docs/">Docs</a>
     
-    <a class="nav" href="../../why/">Why lerp</a>
+    <a class="nav" href="../../why/">Why</a>
     
     
     <button type="button" id="theme-picker" class="theme" aria-label="Theme">◐ system</button>
@@ -69,7 +69,8 @@
     
     
     <span class="version">
-      <span class="version-label">latest</span>
+      
+      <span class="version-label">v0.0.7</span>
       <select id="version-picker" hidden aria-label="Documentation version"></select>
     </span>
     
@@ -77,7 +78,7 @@
   <div class="wrap">
     
     
-    <nav class="sidenav" aria-label="Manual">
+    <nav class="sidenav" aria-label="Docs">
       
       
       
@@ -99,16 +100,6 @@
       
       
       
-      <a href="../../docs/overview/">Overview</a>
-      
-      
-      
-      
-      
-      
-      
-      
-      
       <a href="../../docs/install/">Install</a>
       
       
@@ -121,7 +112,6 @@
       
       <a href="../../docs/quickstart/">Quickstart</a>
       
-      <h5>Concepts</h5>
       
       
       
@@ -129,7 +119,8 @@
       
       
       
-      <a href="../../docs/the-board/">The board</a>
+      
+      <a href="../../docs/how-lerp-works/">How lerp works</a>
       
       <h5>The interface</h5>
       
@@ -159,7 +150,7 @@
       
       
       
-      <a href="../../docs/promoting/">Promoting</a>
+      <a href="../../docs/watching-a-run/">Watching a run</a>
       
       
       
@@ -179,7 +170,7 @@
       
       
       
-      <a href="../../docs/watching-a-run/">Watching a run</a>
+      <a href="../../docs/promoting/">Promoting</a>
       
       
       
@@ -241,8 +232,6 @@
       
       <a href="../../scope/">SCOPE</a>
       
-      
-      <img class="sidenav-mark" src="../../favicon.svg" alt="">
     </nav>
     
     <main>
@@ -251,84 +240,82 @@
 <div class="prose">
   <h1 id="troubleshooting">Troubleshooting</h1>
 <h2 id="why-isnt-my-ticket-being-picked-up">Why isn&rsquo;t my ticket being picked up?</h2>
-<p>Check the three <a href="../../docs/the-board/#the-claim">eligibility</a> conditions: a
+<p>Check the three <a href="../../docs/how-lerp-works/#the-claim">eligibility</a> conditions, a
 queue&rsquo;s status, no assignee, not blocked.</p>
-<p>The assignee is the one that surprises people — the assignment is the
-claim, so a ticket assigned to anyone, including you, is someone else&rsquo;s
-work as far as lerp is concerned. A finished run releases its claim, so a
-claim still standing usually means a human put it there, or a run died
-where nothing was left to reap it. Either way the fix is the same: select
-the row in the work panel and press <code>S</code>, which
-<a href="../../docs/starting-past-the-limit/">takes back your own claim</a> and runs the
-stage.</p>
+<p>The assignee is the one that surprises people. Assignment is the claim,
+so a ticket assigned to anyone, including you, is someone else&rsquo;s work as
+far as lerp is concerned. A finished run releases its claim, so a claim
+still standing means a human put it there, or a run died with nothing
+left to reap it. Either way, select the row in the work panel and press
+<code>S</code>, which <a href="../../docs/starting-past-the-limit/">takes back your own
+claim</a> and runs the stage.</p>
 <h2 id="why-did-my-ticket-skip-a-stage">Why did my ticket skip a stage?</h2>
 <p>A run whose ticket left its queue status before it finished keeps that
-move, and says on the status bar which hop it therefore skipped.</p>
-<p>Something moved the ticket mid-stage: an agent escalating (a status your
-pipeline names), or an automation (usually one it does not) — see
-<a href="../../docs/install/#lerp-needs-the-status-field">Lerp needs the status field</a>,
-which is also what lerp warns about at startup.</p>
+move, and the status bar says which hop it skipped. An agent escalating
+moves a ticket to a status your pipeline names. An automation usually
+moves it to one it does not, and lerp names those automations at startup.</p>
+<p>The usual culprit is Linear&rsquo;s GitHub integration, whose automations sit
+per team in workflow settings as pull request triggers. On the teams lerp
+serves, set the four open-PR triggers (draft opened, opened, review
+activity, ready for merge) to No action, since a run that opens a pull
+request trips them mid-stage. Leave On PR merge on, because it fires
+after the stock pipeline is done with the ticket. The startup check
+cannot see that one, so the settings screen is worth a look.</p>
+<p>If your pipeline has a stage that runs after the merge, the merge trigger
+is mid-stage for you too. Either set it to No action, or point the
+previous stage&rsquo;s <code>on_success</code> at the status the automation moves to,
+which makes the automation the next stage&rsquo;s trigger. That setup kills the
+queue&rsquo;s <code>on_failure</code> route, since the ticket has already moved by the
+time a failing run ends.</p>
 <h2 id="what-happens-on-crash-or-kill">What happens on crash or kill?</h2>
-<p>Every queue run is safe to kill and restart from its beginning: progress
-is checkpointed only at queue boundaries, as artifacts in Linear — the
-plan in the ticket, a PR link — so the worst case is a re-run stage, never
-a lost ticket. <a href="../../scope/">SCOPE.md</a> invariants 3 and 4 carry the full
-argument.</p>
-<p>That includes killing lerp itself: agents outlive it, and the next <code>lerp</code>
+<p>Every queue run is safe to kill and restart from its beginning. Progress
+is checkpointed only at queue boundaries, as artifacts in Linear, so the
+worst case is a re-run stage and never a lost ticket.</p>
+<p>That includes killing lerp itself. Agents outlive it, and the next <code>lerp</code>
 adopts the live ones and reaps the dead. An adopted run that reached its
 own last line recorded its exit status beside its log, so reaping applies
-the queue&rsquo;s move rule — restarting lerp across a run&rsquo;s finish costs
+the queue&rsquo;s move rule, and restarting lerp across a run&rsquo;s finish costs
 nothing.</p>
 <p>A run killed before it got that far records nothing, and reaping it
 releases the claim so the ticket becomes eligible again. A failed run
-whose queue has no <code>on_failure</code> route keeps its claim and waits on you;
-to run it again, select it in the work panel and press <code>S</code>.</p>
+whose queue has no <code>on_failure</code> route keeps its claim and waits on you.
+To run it again, select it in the work panel and press <code>S</code>.</p>
 <h2 id="why-does-init-tell-me-to-set-a-statuss-category-myself">Why does init tell me to set a status&rsquo;s category myself?</h2>
 <p>Statuses lerp creates are always in-progress (Linear&rsquo;s &ldquo;started&rdquo;
 category), and existing statuses are left exactly as you have them. That
-leaves one piece of setup only you can finish: where your pipeline ends.</p>
+leaves one piece of setup only you can finish, where your pipeline ends.</p>
 <p>Linear counts a ticket as blocking its dependents (<code>blockedBy</code>) until its
-status carries a completed category — a fact about your process init
-cannot infer, so it reports instead of guessing. For each <code>on_success</code>
-target no queue watches, init prints whether Linear categorises it as
-completed.</p>
-<p>If such a status genuinely means the work is done, set its category to
-Done in Linear; left in-progress, finished tickets there block their
-dependents forever. If a human still acts on tickets there — the stock
-&ldquo;Plan Review&rdquo; and &ldquo;In Review&rdquo; — in-progress is exactly right, and marking
-it completed would release dependents before the work had landed.</p>
+status carries a completed category, and init cannot infer which of your
+statuses mean the work is done. So for each <code>on_success</code> target no queue
+watches, it prints whether Linear categorises that status as completed.</p>
+<p>If the status means the work is finished, set its category to Done in
+Linear. Left in-progress, finished tickets there block their dependents
+forever. If a human still acts on tickets there, as with the stock Plan
+Review and In Review, in-progress is exactly right, and marking it
+completed would release dependents before the work had landed.</p>
 <h2 id="where-are-the-logs">Where are the logs?</h2>
-<p>Three places:</p>
 <ul>
-<li><code>.lerp/runs/</code> holds one record and one log per run — the agent&rsquo;s own
-output, what <a href="../../docs/watching-a-run/#the-log">the main pane tails</a>.</li>
-<li><code>.lerp/loop.log</code> holds the loop&rsquo;s diagnostics: provision, dispose,
+<li><code>.lerp/runs/</code> holds one record and one log per run, the agent&rsquo;s own
+output, which is what <a href="../../docs/watching-a-run/#the-log">the main pane
+tails</a>.</li>
+<li><code>.lerp/loop.log</code> holds the loop&rsquo;s diagnostics, provision, dispose,
 adopt, reap, the eject commands lerp handed back, and the full text of
-any status-bar line a narrow terminal truncated. Appended to across
-sessions, with a marker line at each start.</li>
-<li><code>$XDG_STATE_HOME/lerp/runs.jsonl</code> (or
-<code>~/.local/state/lerp/runs.jsonl</code>) holds the append-only
-<a href="../../docs/telemetry/">telemetry</a> records for finished runs.</li>
+any status-bar line a narrow terminal truncated. It is appended to
+across sessions, with a marker line at each start.</li>
+<li><code>$XDG_STATE_HOME/lerp/runs.jsonl</code> (or <code>~/.local/state/lerp/runs.jsonl</code>)
+holds the append-only <a href="../../docs/telemetry/">telemetry</a> records for finished
+runs.</li>
 </ul>
 <h2 id="how-do-i-clean-up-or-uninstall">How do I clean up or uninstall?</h2>
-<p><code>brew uninstall lerp</code> removes a brew install; <code>make uninstall</code> from a
-clone removes what <code>make install</code> put in your <code>GOBIN</code>; an install.sh
-install is removed by deleting <code>lerp</code> from <code>$HOME/.local/bin</code> (or the
-<code>--bin-dir</code> you chose).</p>
-<p><code>lerp logout</code> (or deleting the stored token file in your user config
-directory) revokes and removes Linear credentials.</p>
-<p>To clean up local state, delete <code>.lerp/</code> once all agents have stopped:</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sh" data-lang="sh"><span class="line"><span class="cl">rm -rf .lerp/
-</span></span><span class="line"><span class="cl">git worktree prune
-</span></span></code></pre></div><p>Run evidence in <code>.lerp/runs/</code> is how the next <code>lerp</code> adopts or reaps live
-agents, and workspaces under <code>.lerp/workspaces/</code> are git worktrees whose
-registrations <code>dispose</code> normally unwinds (<code>git worktree prune</code>
-unregisters strays). To clear run history too, remove
-<code>$XDG_STATE_HOME/lerp/runs.jsonl</code> (or <code>~/.local/state/lerp/runs.jsonl</code>).
-Losing local state costs compute or charts, never correctness.</p>
+<p><a href="../../docs/cli/#cleanup-and-uninstall">Cleanup and uninstall</a> has the three
+steps. Delete <code>.lerp/</code> only once all agents have stopped, since run
+evidence is how the next <code>lerp</code> adopts or reaps them. Losing local state
+costs compute or charts, never correctness.</p>
 
 </div>
 
+      
+      <img class="mark-signoff" src="../../mark.svg" alt="" width="120" height="120">
     </main>
     
     
@@ -407,7 +394,11 @@ Losing local state costs compute or charts, never correctness.</p>
           ["latest"].concat(versions).forEach(function (v) {
             var option = document.createElement("option");
             option.value = v;
-            option.textContent = v;
+            
+            
+            
+            option.textContent = v === "latest" && versions.length
+              ? versions[0] + " · latest" : v;
             option.selected = v === "latest";
             picker.appendChild(option);
           });

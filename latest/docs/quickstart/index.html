@@ -27,13 +27,13 @@
   
   
   
-  <meta name="description" content="From `lerp init` to a first promoted ticket, in four steps.">
+  <meta name="description" content="From `lerp init` to a first promoted ticket, in three steps.">
   
   <link rel="canonical" href="https://lerp.sh/latest/docs/quickstart/">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="lerp">
   <meta property="og:title" content="Quickstart · lerp">
-  <meta property="og:description" content="From `lerp init` to a first promoted ticket, in four steps.">
+  <meta property="og:description" content="From `lerp init` to a first promoted ticket, in three steps.">
   <meta property="og:url" content="https://lerp.sh/latest/docs/quickstart/">
   <meta property="og:image" content="https://lerp.sh/og.png">
   <meta property="og:image:alt" content="The lerp board: tickets waiting on a human in the On you panel, a work panel of queues and three lanes running coding agents">
@@ -41,7 +41,7 @@
   <meta property="og:image:height" content="640">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Quickstart · lerp">
-  <meta name="twitter:description" content="From `lerp init` to a first promoted ticket, in four steps.">
+  <meta name="twitter:description" content="From `lerp init` to a first promoted ticket, in three steps.">
   <meta name="twitter:image" content="https://lerp.sh/og.png">
   <meta name="twitter:image:alt" content="The lerp board: tickets waiting on a human in the On you panel, a work panel of queues and three lanes running coding agents">
   <link rel="stylesheet" href="../../style.css">
@@ -61,7 +61,7 @@
     
     <a class="nav here" href="../../docs/">Docs</a>
     
-    <a class="nav" href="../../why/">Why lerp</a>
+    <a class="nav" href="../../why/">Why</a>
     
     
     <button type="button" id="theme-picker" class="theme" aria-label="Theme">◐ system</button>
@@ -69,7 +69,8 @@
     
     
     <span class="version">
-      <span class="version-label">latest</span>
+      
+      <span class="version-label">v0.0.7</span>
       <select id="version-picker" hidden aria-label="Documentation version"></select>
     </span>
     
@@ -77,7 +78,7 @@
   <div class="wrap">
     
     
-    <nav class="sidenav" aria-label="Manual">
+    <nav class="sidenav" aria-label="Docs">
       
       
       
@@ -99,16 +100,6 @@
       
       
       
-      <a href="../../docs/overview/">Overview</a>
-      
-      
-      
-      
-      
-      
-      
-      
-      
       <a href="../../docs/install/">Install</a>
       
       
@@ -121,7 +112,6 @@
       
       <a href="../../docs/quickstart/" class="active" aria-current="page">Quickstart</a>
       
-      <h5>Concepts</h5>
       
       
       
@@ -129,7 +119,8 @@
       
       
       
-      <a href="../../docs/the-board/">The board</a>
+      
+      <a href="../../docs/how-lerp-works/">How lerp works</a>
       
       <h5>The interface</h5>
       
@@ -159,7 +150,7 @@
       
       
       
-      <a href="../../docs/promoting/">Promoting</a>
+      <a href="../../docs/watching-a-run/">Watching a run</a>
       
       
       
@@ -179,7 +170,7 @@
       
       
       
-      <a href="../../docs/watching-a-run/">Watching a run</a>
+      <a href="../../docs/promoting/">Promoting</a>
       
       
       
@@ -241,8 +232,6 @@
       
       <a href="../../scope/">SCOPE</a>
       
-      
-      <img class="sidenav-mark" src="../../favicon.svg" alt="">
     </nav>
     
     <main>
@@ -250,103 +239,39 @@
 
 <div class="prose">
   <h1 id="quickstart">Quickstart</h1>
-<p>Four steps, from a repository with no lerp in it to an agent working a
-ticket. It assumes you have <a href="../../docs/install/">installed lerp</a>, signed in with
-<code>lerp login</code> (or set <code>LINEAR_API_KEY</code>), and given the team&rsquo;s status field
-to lerp — that last one is a settings change nothing here can do for you,
-and skipping it costs every ticket its last hop.</p>
+<p>Three steps, from an unconfigured repository to an agent working a
+ticket. Finish <a href="../../docs/install/">Install</a> first, through <a href="../../docs/install/#give-the-agents-linear-access">giving the agents
+Linear access</a>.</p>
 <h2 id="1-wire-the-repo-to-a-team">1. Wire the repo to a team</h2>
-<p>Sign in to Linear if you have not already:</p>
 <div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sh" data-lang="sh"><span class="line"><span class="cl">lerp login
-</span></span></code></pre></div><p>Then from anywhere inside your Git repository:</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sh" data-lang="sh"><span class="line"><span class="cl">lerp init --team LERP --team-name <span class="s2">&#34;Lerp&#34;</span>
-</span></span></code></pre></div><p><code>--team</code> is the Linear team key — the ticket prefix, the LERP in LERP-42 —
-and <code>--team-name</code> is the display name used only if the team must be
-created. Check the key against Linear before you run: a key that matches
-no existing team is not an error, it quietly creates a new team.</p>
-<p>Init creates the team if it is missing and, on a first run, holds a short
-conversation to fit the <a href="../../docs/lerp-toml/#the-stock-pipeline">stock pipeline</a>
-onto the board the team already has: it shows the existing statuses, asks
-whether to include the optional planning stage and the review pass, and
-offers to create the stock statuses — or, on customize, to map each onto
-one you already have. Existing statuses are never modified, and init says
-what it will create and reuse before it acts. It then writes
-<a href="../../docs/lerp-toml/"><code>lerp.toml</code></a> at the repository root, uncommitted, for you
-to review and check in.</p>
-<p>Init also appends <code>.lerp/</code> to the repository&rsquo;s <code>.gitignore</code> (creating the
-file if needed) — run records, logs and workspace worktrees live there and
-none of it belongs in history. Commit that change with <code>lerp.toml</code>: a
-colleague who clones a repo that already has a <code>lerp.toml</code> never runs
-<code>lerp init</code>, so an uncommitted ignore covers only your clone. An ignore
-that already names <code>.lerp/</code> is left alone; one lerp cannot write is
-reported, not fatal.</p>
-<p>The conversation&rsquo;s last question is whether the stock Claude runner should
-include <code>--permission-mode bypassPermissions</code>. The default is no — yes is
-a real grant, and the diff you commit is where it gets reviewed. Declining
-has a cost too: a headless run fails at the first tool the agent is not
-allowed to use, unless you curate an <code>--allowedTools</code> list. Both are
-spelled out under <a href="../../docs/lerp-toml/#the-stock-pipeline">the stock pipeline</a>.
-Piped input or <code>--yes</code> skips the conversation and takes the stock answers:
-full pipeline, stock status names, no bypass grant.</p>
-<p>Init may also print a report about where your pipeline ends — statuses
-Linear does not yet count as completing work. Act on what it prints; the
-reasoning is under
-<a href="../../docs/troubleshooting/#why-does-init-tell-me-to-set-a-statuss-category-myself">troubleshooting</a>.</p>
-<h2 id="2-give-the-agent-what-it-needs">2. Give the agent what it needs</h2>
-<p>Lerp hands the runner a prompt and the ticket identifier, nothing more.
-The stock prompts expect the agent to read the ticket and write stage
-artifacts itself.</p>
-<p>Lerp runs a <strong>two-credential model</strong>: lerp&rsquo;s own access (<code>lerp login</code>&rsquo;s
-OAuth token or <code>LINEAR_API_KEY</code>) and the agents&rsquo; access are separate on
-purpose. Lerp scrubs its own credential from child environments before
-launching runners or workspace commands, so setting up one never sets up
-the other.</p>
-<p>The rule: <strong>every CLI a runner names needs its own Linear access,
-configured once in that CLI.</strong> See <a href="https://linear.app/docs/mcp">Linear&rsquo;s MCP
-documentation</a> for the authoritative
-endpoint. For the built-in vendor adapters:</p>
-<ul>
-<li><strong>Claude Code (<code>claude</code>)</strong>:
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sh" data-lang="sh"><span class="line"><span class="cl">claude mcp add --transport http linear https://mcp.linear.app/mcp
-</span></span></code></pre></div>Then start <code>claude</code> and run <code>/mcp</code> to complete the OAuth flow.</li>
-<li><strong>Antigravity (<code>agy</code>)</strong>:
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sh" data-lang="sh"><span class="line"><span class="cl">agy mcp add linear https://mcp.linear.app/mcp
-</span></span></code></pre></div>Then complete the OAuth authentication in agy&rsquo;s own settings (tokens
-land in <code>~/.gemini/antigravity-cli/mcp_oauth_tokens.json</code> and refresh
-automatically).</li>
-<li><strong>Codex (<code>codex</code>)</strong>:
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sh" data-lang="sh"><span class="line"><span class="cl">codex mcp add linear --url https://mcp.linear.app/mcp
-</span></span></code></pre></div>Then run <code>codex mcp login linear</code>.</li>
-</ul>
-<p>Each CLI manages its own tokens, so a second vendor means a second
-one-time MCP setup.</p>
-<p><strong>Shared OAuth bridge option:</strong> to share one browser login across several
-CLIs, register the stdio bridge in each instead:</p>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sh" data-lang="sh"><span class="line"><span class="cl">&lt;cli&gt; mcp add linear -- npx -y mcp-remote https://mcp.linear.app/mcp
-</span></span></code></pre></div><p>One browser OAuth is then shared through <code>mcp-remote</code>&rsquo;s <code>~/.mcp-auth</code>
-token cache. The caveats: a Node/npx dependency on the agent path, and a
-shared cache that misbehaves across multiple Linear accounts.</p>
-<p>What the agent may do beyond reading tickets is the other half of setup:
-read <code>lerp.toml</code> before you run it.</p>
-<h2 id="3-promote-a-ticket">3. Promote a ticket</h2>
-<p>Routing is done by placing a ticket: in Linear, move one into Planning (a
-big feature) or straight into Implementing (a small fix). Check while you
-are there that nothing makes it <a href="../../docs/the-board/#the-claim">ineligible</a> — an
-assignee left on the ticket is the one that surprises people.</p>
-<h2 id="4-run-it">4. Run it</h2>
+</span></span><span class="line"><span class="cl">lerp init --team LERP --team-name <span class="s2">&#34;Lerp&#34;</span>
+</span></span></code></pre></div><p>Run it from inside your Git repository. <code>--team</code> is the Linear team key,
+the LERP in LERP-42. Check it, because init creates the team when no
+team has that key.</p>
+<p>Init asks a few questions to fit the <a href="../../docs/lerp-toml/#the-stock-pipeline">stock
+pipeline</a> onto your board, then writes
+<a href="../../docs/lerp-toml/"><code>lerp.toml</code></a> and adds <code>.lerp/</code> to <code>.gitignore</code>. Review
+both, and commit both. Answer no to the <code>bypassPermissions</code> question
+unless you have read <a href="../../docs/lerp-toml/#permission-grants-in-checked-in-config">what it
+grants</a>.</p>
+<h2 id="2-promote-a-ticket">2. Promote a ticket</h2>
+<p>In Linear, move a ticket into Planning for a big feature, or straight
+into Implementing for a small fix. Where you put it is the whole routing
+decision. Leave it unassigned and unblocked, or lerp will not
+<a href="../../docs/how-lerp-works/#the-claim">claim</a> it.</p>
+<h2 id="3-run-it">3. Run it</h2>
 <div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sh" data-lang="sh"><span class="line"><span class="cl">lerp
-</span></span></code></pre></div><p>Bare <code>lerp</code> opens the TUI, and <a href="../../docs/reading-the-board/">the loop runs while it is
-open</a>: each pass claims what it can, provisions a
-workspace, runs the queue&rsquo;s agent to exit, and applies the queue&rsquo;s move
-rule. A pass runs every twelve seconds, so the promoted ticket should be
-on the Work panel with a lane under it almost at once.
-<a href="../../docs/the-board/">The board</a> is what that screen is a picture of.</p>
-<p>From here the manual is the motions: <a href="../../docs/promoting/">promoting</a> for the
-gates the stock pipeline waits at, <a href="../../docs/watching-a-run/">watching a run</a> for
-the log.</p>
+</span></span></code></pre></div><p>The board opens and <a href="../../docs/reading-the-board/">the loop runs while it is
+open</a>. A pass runs every twelve seconds, so your
+ticket should take a lane almost at once.</p>
+<p><a href="../../docs/how-lerp-works/">The board</a> explains that screen. <a href="../../docs/watching-a-run/">Watching a
+run</a> covers the log. <a href="../../docs/promoting/">Promoting</a> covers
+the gates ahead.</p>
 
 </div>
 
+      
+      <img class="mark-signoff" src="../../mark.svg" alt="" width="120" height="120">
     </main>
     
     
@@ -356,9 +281,8 @@ the log.</p>
       <nav id="TableOfContents">
   <ul>
     <li><a href="#1-wire-the-repo-to-a-team">1. Wire the repo to a team</a></li>
-    <li><a href="#2-give-the-agent-what-it-needs">2. Give the agent what it needs</a></li>
-    <li><a href="#3-promote-a-ticket">3. Promote a ticket</a></li>
-    <li><a href="#4-run-it">4. Run it</a></li>
+    <li><a href="#2-promote-a-ticket">2. Promote a ticket</a></li>
+    <li><a href="#3-run-it">3. Run it</a></li>
   </ul>
 </nav>
     </nav>
@@ -423,7 +347,11 @@ the log.</p>
           ["latest"].concat(versions).forEach(function (v) {
             var option = document.createElement("option");
             option.value = v;
-            option.textContent = v;
+            
+            
+            
+            option.textContent = v === "latest" && versions.length
+              ? versions[0] + " · latest" : v;
             option.selected = v === "latest";
             picker.appendChild(option);
           });

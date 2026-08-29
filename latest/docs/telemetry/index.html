@@ -27,13 +27,13 @@
   
   
   
-  <meta name="description" content="One append-only JSONL line per finished run — where it lives, the schema, and querying with jq.">
+  <meta name="description" content="One append-only JSONL line per finished run, where it lives, the schema, and querying with jq.">
   
   <link rel="canonical" href="https://lerp.sh/latest/docs/telemetry/">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="lerp">
   <meta property="og:title" content="Telemetry · lerp">
-  <meta property="og:description" content="One append-only JSONL line per finished run — where it lives, the schema, and querying with jq.">
+  <meta property="og:description" content="One append-only JSONL line per finished run, where it lives, the schema, and querying with jq.">
   <meta property="og:url" content="https://lerp.sh/latest/docs/telemetry/">
   <meta property="og:image" content="https://lerp.sh/og.png">
   <meta property="og:image:alt" content="The lerp board: tickets waiting on a human in the On you panel, a work panel of queues and three lanes running coding agents">
@@ -41,7 +41,7 @@
   <meta property="og:image:height" content="640">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Telemetry · lerp">
-  <meta name="twitter:description" content="One append-only JSONL line per finished run — where it lives, the schema, and querying with jq.">
+  <meta name="twitter:description" content="One append-only JSONL line per finished run, where it lives, the schema, and querying with jq.">
   <meta name="twitter:image" content="https://lerp.sh/og.png">
   <meta name="twitter:image:alt" content="The lerp board: tickets waiting on a human in the On you panel, a work panel of queues and three lanes running coding agents">
   <link rel="stylesheet" href="../../style.css">
@@ -61,7 +61,7 @@
     
     <a class="nav here" href="../../docs/">Docs</a>
     
-    <a class="nav" href="../../why/">Why lerp</a>
+    <a class="nav" href="../../why/">Why</a>
     
     
     <button type="button" id="theme-picker" class="theme" aria-label="Theme">◐ system</button>
@@ -69,7 +69,8 @@
     
     
     <span class="version">
-      <span class="version-label">latest</span>
+      
+      <span class="version-label">v0.0.7</span>
       <select id="version-picker" hidden aria-label="Documentation version"></select>
     </span>
     
@@ -77,7 +78,7 @@
   <div class="wrap">
     
     
-    <nav class="sidenav" aria-label="Manual">
+    <nav class="sidenav" aria-label="Docs">
       
       
       
@@ -99,16 +100,6 @@
       
       
       
-      <a href="../../docs/overview/">Overview</a>
-      
-      
-      
-      
-      
-      
-      
-      
-      
       <a href="../../docs/install/">Install</a>
       
       
@@ -121,7 +112,6 @@
       
       <a href="../../docs/quickstart/">Quickstart</a>
       
-      <h5>Concepts</h5>
       
       
       
@@ -129,7 +119,8 @@
       
       
       
-      <a href="../../docs/the-board/">The board</a>
+      
+      <a href="../../docs/how-lerp-works/">How lerp works</a>
       
       <h5>The interface</h5>
       
@@ -159,7 +150,7 @@
       
       
       
-      <a href="../../docs/promoting/">Promoting</a>
+      <a href="../../docs/watching-a-run/">Watching a run</a>
       
       
       
@@ -179,7 +170,7 @@
       
       
       
-      <a href="../../docs/watching-a-run/">Watching a run</a>
+      <a href="../../docs/promoting/">Promoting</a>
       
       
       
@@ -241,8 +232,6 @@
       
       <a href="../../scope/">SCOPE</a>
       
-      
-      <img class="sidenav-mark" src="../../favicon.svg" alt="">
     </nav>
     
     <main>
@@ -250,40 +239,26 @@
 
 <div class="prose">
   <h1 id="telemetry">Telemetry</h1>
-<p>At run exit, lerp appends one JSON line to a local telemetry file — a
-structured record of the finished run&rsquo;s duration, token usage, cost, and
-outcome.</p>
-<h2 id="design-stance">Design stance</h2>
-<p>Telemetry is history, not state (<a href="../../scope/">SCOPE.md</a> invariant 1). Four
-principles:</p>
-<ul>
-<li><strong>Written once at run exit by deterministic code.</strong> The settling lane&rsquo;s
-goroutine totals token usage from the stream log, notes exit timing and
-exit code, and appends the line before freeing the lane.</li>
-<li><strong>Read by nothing in lerp.</strong> The loop and the TUI do not query, parse,
-or depend on it. Losing the file costs a chart, never a ticket.</li>
-<li><strong>Never posted to Linear.</strong> Linear receives stage-boundary decisions —
-plans, pull requests, verdicts. Process measurements belong to local
-history (SCOPE.md invariant 7), never on a ticket.</li>
-<li><strong>Never trusts agent prose.</strong> Measurements come from config, the loop&rsquo;s
-own evidence records, and deterministic decoders of the stream logs —
-never from agents reporting their own spend.</li>
-</ul>
+<p>At run exit, lerp appends one JSON line to a local file, a record of the
+finished run&rsquo;s duration, token usage, cost and outcome.</p>
+<p>Telemetry is history, not state. The settling lane writes it once, from
+the run&rsquo;s stream log and the loop&rsquo;s own evidence, never from an agent&rsquo;s
+account of its own spend. Nothing in lerp reads it back, and none of it
+reaches Linear, which gets decisions rather than measurements. Losing the
+file costs a chart, never a ticket.</p>
 <h2 id="where-the-file-lives">Where the file lives</h2>
 <pre tabindex="0"><code>$XDG_STATE_HOME/lerp/runs.jsonl
 </code></pre><p>With <code>XDG_STATE_HOME</code> unset, <code>~/.local/state/lerp/runs.jsonl</code>, on both
 macOS and Linux.</p>
 <p>The file and its parent directories are created on the first finished
-run. Writes are serialized across lanes with a process mutex and use
-append mode (<code>O_APPEND</code>), so multiple <code>lerp</code> processes on different
-repositories can append concurrently without tearing lines.</p>
+run. Writes are serialized across lanes and use append mode, so several
+<code>lerp</code> processes can append at once without tearing lines.</p>
 <h2 id="the-line-format">The line format</h2>
-<p>The format is a stable interface: changes are additive only, and keys are
-never renamed or repurposed.</p>
-<p>Fields a runner or settlement path could not supply are omitted
-(<code>omitempty</code>) rather than zero-faked: a command-template runner naming no
-vendor omits <code>vendor</code>, and a killed run with no exit file omits
-<code>exit_code</code> and <code>duration_ms</code>.</p>
+<p>The format is a stable interface. Changes are additive only, and keys are
+never renamed or repurposed. A field the run could not supply is omitted
+rather than zero-faked, so a command-template runner omits <code>vendor</code>, and
+a run killed before it recorded an exit file omits <code>exit_code</code> and
+<code>duration_ms</code>.</p>
 <table>
 	<thead>
 			<tr>
@@ -301,7 +276,7 @@ vendor omits <code>vendor</code>, and a killed run with no exit file omits
 			<tr>
 					<td><code>repo</code></td>
 					<td>string</td>
-					<td>Absolute path to the repository directory (e.g. <code>&quot;/Users/matt/src/donewell/lerp&quot;</code>). Always present.</td>
+					<td>Absolute path to the repository directory (e.g. <code>&quot;/home/you/src/lerp&quot;</code>). Always present.</td>
 			</tr>
 			<tr>
 					<td><code>team</code></td>
@@ -366,7 +341,7 @@ vendor omits <code>vendor</code>, and a killed run with no exit file omits
 	</tbody>
 </table>
 <h3 id="example-line">Example line</h3>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span><span class="nt">&#34;at&#34;</span><span class="p">:</span><span class="s2">&#34;2026-08-27T10:04:11Z&#34;</span><span class="p">,</span><span class="nt">&#34;repo&#34;</span><span class="p">:</span><span class="s2">&#34;/Users/matt/src/donewell/lerp&#34;</span><span class="p">,</span><span class="nt">&#34;team&#34;</span><span class="p">:</span><span class="s2">&#34;LERP&#34;</span><span class="p">,</span><span class="nt">&#34;ticket&#34;</span><span class="p">:</span><span class="s2">&#34;LERP-138&#34;</span><span class="p">,</span><span class="nt">&#34;queue&#34;</span><span class="p">:</span><span class="s2">&#34;implement&#34;</span><span class="p">,</span><span class="nt">&#34;runner&#34;</span><span class="p">:</span><span class="s2">&#34;claude&#34;</span><span class="p">,</span><span class="nt">&#34;vendor&#34;</span><span class="p">:</span><span class="s2">&#34;claude&#34;</span><span class="p">,</span><span class="nt">&#34;model&#34;</span><span class="p">:</span><span class="s2">&#34;claude-opus-4-6&#34;</span><span class="p">,</span><span class="nt">&#34;session&#34;</span><span class="p">:</span><span class="s2">&#34;7420e6f8&#34;</span><span class="p">,</span><span class="nt">&#34;duration_ms&#34;</span><span class="p">:</span><span class="mi">742318</span><span class="p">,</span><span class="nt">&#34;tokens&#34;</span><span class="p">:</span><span class="mi">1284310</span><span class="p">,</span><span class="nt">&#34;cost_usd&#34;</span><span class="p">:</span><span class="mf">3.71</span><span class="p">,</span><span class="nt">&#34;exit_code&#34;</span><span class="p">:</span><span class="mi">0</span><span class="p">,</span><span class="nt">&#34;status&#34;</span><span class="p">:</span><span class="s2">&#34;In Review&#34;</span><span class="p">}</span>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-json" data-lang="json"><span class="line"><span class="cl"><span class="p">{</span><span class="nt">&#34;at&#34;</span><span class="p">:</span><span class="s2">&#34;2026-08-27T10:04:11Z&#34;</span><span class="p">,</span><span class="nt">&#34;repo&#34;</span><span class="p">:</span><span class="s2">&#34;/home/you/src/lerp&#34;</span><span class="p">,</span><span class="nt">&#34;team&#34;</span><span class="p">:</span><span class="s2">&#34;LERP&#34;</span><span class="p">,</span><span class="nt">&#34;ticket&#34;</span><span class="p">:</span><span class="s2">&#34;LERP-138&#34;</span><span class="p">,</span><span class="nt">&#34;queue&#34;</span><span class="p">:</span><span class="s2">&#34;implement&#34;</span><span class="p">,</span><span class="nt">&#34;runner&#34;</span><span class="p">:</span><span class="s2">&#34;claude&#34;</span><span class="p">,</span><span class="nt">&#34;vendor&#34;</span><span class="p">:</span><span class="s2">&#34;claude&#34;</span><span class="p">,</span><span class="nt">&#34;model&#34;</span><span class="p">:</span><span class="s2">&#34;claude-opus-4-6&#34;</span><span class="p">,</span><span class="nt">&#34;session&#34;</span><span class="p">:</span><span class="s2">&#34;7420e6f8&#34;</span><span class="p">,</span><span class="nt">&#34;duration_ms&#34;</span><span class="p">:</span><span class="mi">742318</span><span class="p">,</span><span class="nt">&#34;tokens&#34;</span><span class="p">:</span><span class="mi">1284310</span><span class="p">,</span><span class="nt">&#34;cost_usd&#34;</span><span class="p">:</span><span class="mf">3.71</span><span class="p">,</span><span class="nt">&#34;exit_code&#34;</span><span class="p">:</span><span class="mi">0</span><span class="p">,</span><span class="nt">&#34;status&#34;</span><span class="p">:</span><span class="s2">&#34;In Review&#34;</span><span class="p">}</span>
 </span></span></code></pre></div><h2 id="querying-with-jq">Querying with <code>jq</code></h2>
 <p>The file is standard JSON Lines, so <code>jq</code> is the dashboard.</p>
 <h3 id="total-cost-per-ticket">Total cost per ticket</h3>
@@ -383,13 +358,6 @@ vendor omits <code>vendor</code>, and a killed run with no exit file omits
 </span></span></span><span class="line"><span class="cl"><span class="s1">  total_cost_usd: (map(.cost_usd // 0) | add | (.*100 | round)/100),
 </span></span></span><span class="line"><span class="cl"><span class="s1">  runs: length
 </span></span></span><span class="line"><span class="cl"><span class="s1">}&#39;</span> ~/.local/state/lerp/runs.jsonl
-</span></span></code></pre></div><h3 id="spend-and-runs-by-model">Spend and runs by model</h3>
-<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sh" data-lang="sh"><span class="line"><span class="cl">jq -s <span class="s1">&#39;group_by(.model // &#34;unspecified&#34;)[] | {
-</span></span></span><span class="line"><span class="cl"><span class="s1">  model: .[0].model // &#34;unspecified&#34;,
-</span></span></span><span class="line"><span class="cl"><span class="s1">  total_cost_usd: (map(.cost_usd // 0) | add | (.*100 | round)/100),
-</span></span></span><span class="line"><span class="cl"><span class="s1">  total_tokens: (map(.tokens // 0) | add),
-</span></span></span><span class="line"><span class="cl"><span class="s1">  runs: length
-</span></span></span><span class="line"><span class="cl"><span class="s1">}&#39;</span> ~/.local/state/lerp/runs.jsonl
 </span></span></code></pre></div><h3 id="clean-exits-by-queue">Clean exits by queue</h3>
 <div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sh" data-lang="sh"><span class="line"><span class="cl">jq -s <span class="s1">&#39;group_by(.queue)[] | {
 </span></span></span><span class="line"><span class="cl"><span class="s1">  queue: .[0].queue,
@@ -399,6 +367,8 @@ vendor omits <code>vendor</code>, and a killed run with no exit file omits
 </span></span></code></pre></div>
 </div>
 
+      
+      <img class="mark-signoff" src="../../mark.svg" alt="" width="120" height="120">
     </main>
     
     
@@ -407,7 +377,6 @@ vendor omits <code>vendor</code>, and a killed run with no exit file omits
       <h5>On this page</h5>
       <nav id="TableOfContents">
   <ul>
-    <li><a href="#design-stance">Design stance</a></li>
     <li><a href="#where-the-file-lives">Where the file lives</a></li>
     <li><a href="#the-line-format">The line format</a>
       <ul>
@@ -418,7 +387,6 @@ vendor omits <code>vendor</code>, and a killed run with no exit file omits
       <ul>
         <li><a href="#total-cost-per-ticket">Total cost per ticket</a></li>
         <li><a href="#tokens-per-queue-over-the-past-7-days">Tokens per queue over the past 7 days</a></li>
-        <li><a href="#spend-and-runs-by-model">Spend and runs by model</a></li>
         <li><a href="#clean-exits-by-queue">Clean exits by queue</a></li>
       </ul>
     </li>
@@ -486,7 +454,11 @@ vendor omits <code>vendor</code>, and a killed run with no exit file omits
           ["latest"].concat(versions).forEach(function (v) {
             var option = document.createElement("option");
             option.value = v;
-            option.textContent = v;
+            
+            
+            
+            option.textContent = v === "latest" && versions.length
+              ? versions[0] + " · latest" : v;
             option.selected = v === "latest";
             picker.appendChild(option);
           });

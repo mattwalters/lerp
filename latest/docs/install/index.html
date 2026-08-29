@@ -61,7 +61,7 @@
     
     <a class="nav here" href="../../docs/">Docs</a>
     
-    <a class="nav" href="../../why/">Why lerp</a>
+    <a class="nav" href="../../why/">Why</a>
     
     
     <button type="button" id="theme-picker" class="theme" aria-label="Theme">◐ system</button>
@@ -69,7 +69,8 @@
     
     
     <span class="version">
-      <span class="version-label">latest</span>
+      
+      <span class="version-label">v0.0.7</span>
       <select id="version-picker" hidden aria-label="Documentation version"></select>
     </span>
     
@@ -77,7 +78,7 @@
   <div class="wrap">
     
     
-    <nav class="sidenav" aria-label="Manual">
+    <nav class="sidenav" aria-label="Docs">
       
       
       
@@ -99,16 +100,6 @@
       
       
       
-      <a href="../../docs/overview/">Overview</a>
-      
-      
-      
-      
-      
-      
-      
-      
-      
       <a href="../../docs/install/" class="active" aria-current="page">Install</a>
       
       
@@ -121,7 +112,6 @@
       
       <a href="../../docs/quickstart/">Quickstart</a>
       
-      <h5>Concepts</h5>
       
       
       
@@ -129,7 +119,8 @@
       
       
       
-      <a href="../../docs/the-board/">The board</a>
+      
+      <a href="../../docs/how-lerp-works/">How lerp works</a>
       
       <h5>The interface</h5>
       
@@ -159,7 +150,7 @@
       
       
       
-      <a href="../../docs/promoting/">Promoting</a>
+      <a href="../../docs/watching-a-run/">Watching a run</a>
       
       
       
@@ -179,7 +170,7 @@
       
       
       
-      <a href="../../docs/watching-a-run/">Watching a run</a>
+      <a href="../../docs/promoting/">Promoting</a>
       
       
       
@@ -241,8 +232,6 @@
       
       <a href="../../scope/">SCOPE</a>
       
-      
-      <img class="sidenav-mark" src="../../favicon.svg" alt="">
     </nav>
     
     <main>
@@ -250,112 +239,70 @@
 
 <div class="prose">
   <h1 id="install">Install</h1>
-<p>Lerp runs on macOS and Linux. Windows is not supported and does not build
-there: the loop holds an advisory <code>flock</code> on the clone, starts each agent
-in its own process group, and reaps by killing that group — none of which
-Windows has as such. Under WSL2 it is Linux as far as lerp is concerned.</p>
+<p>Lerp runs on macOS and Linux. Under WSL2 it is Linux as far as lerp is
+concerned.</p>
 <h2 id="get-the-binary">Get the binary</h2>
 <p>With Homebrew:</p>
 <div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sh" data-lang="sh"><span class="line"><span class="cl">brew install mattwalters/tap/lerp
 </span></span></code></pre></div><p>With a Go toolchain:</p>
 <div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sh" data-lang="sh"><span class="line"><span class="cl">go install github.com/mattwalters/lerp/cmd/lerp@latest
-</span></span></code></pre></div><p>With neither, <code>install.sh</code> downloads the release binary for your OS and
-arch, verifies it against the published checksum, and installs it to
-<code>$HOME/.local/bin</code> — no sudo, no PATH edits:</p>
+</span></span></code></pre></div><p>With curl:</p>
 <div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sh" data-lang="sh"><span class="line"><span class="cl">curl -fsSL https://raw.githubusercontent.com/mattwalters/lerp/main/install.sh <span class="p">|</span> sh
-</span></span></code></pre></div><p>Prebuilt binaries — macOS and Linux, amd64 and arm64 — are on the
-<a href="https://github.com/mattwalters/lerp/releases">releases page</a>, each tag
-with a <code>checksums.txt</code> beside its archives. Or from a clone:</p>
+</span></span></code></pre></div><p>Prebuilt binaries are on the
+<a href="https://github.com/mattwalters/lerp/releases">releases page</a>.</p>
+<h2 id="hacking-on-lerp">Hacking on lerp</h2>
+<p>To work on lerp itself, build from a clone:</p>
 <div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sh" data-lang="sh"><span class="line"><span class="cl">git clone https://github.com/mattwalters/lerp
 </span></span><span class="line"><span class="cl"><span class="nb">cd</span> lerp
 </span></span><span class="line"><span class="cl">make install
-</span></span></code></pre></div><p><code>make install</code> builds with the version stamped from <code>git describe</code> and
-installs into Go&rsquo;s bin dir — <code>GOBIN</code> when set, else <code>GOPATH/bin</code>.
-Whichever route you took, <code>lerp version</code> prints what you got.</p>
-<p>A clone also carries the gate and the release command: <code>make check</code> is
-gofmt, vet, build and test (CI runs the same target on Linux and macOS),
-and <code>make release VERSION=v0.1.0</code> tags merged main and pushes the tag —
-pushing a version tag is the only thing that cuts a release, and the build
-happens in CI from a clean checkout of the tag.
-<a href="https://github.com/mattwalters/lerp/blob/v0.0.6/CONTRIBUTING.md">CONTRIBUTING.md</a> is the rest of that story.</p>
+</span></span></code></pre></div><p><a href="https://github.com/mattwalters/lerp/blob/v0.0.7/CONTRIBUTING.md">CONTRIBUTING.md</a> has the rest.</p>
+<p>Whichever route you took, <code>lerp version</code> prints what you got.</p>
 <h2 id="what-else-you-need">What else you need</h2>
-<p>Lerp speaks exactly one external API: Linear, and every command needs a
-credential for it. The standard way is <code>lerp login</code>: run it once and it
-signs you in to Linear via OAuth in your browser (<code>read,write</code> scopes,
-never <code>admin</code>), storing an auto-renewing token in your user config
-directory (<code>0600</code>). OAuth also gets Linear&rsquo;s higher rate limit: 5,000
-requests/hour against 2,500/hour for personal API keys.</p>
-<p>For headless environments and CI, <code>LINEAR_API_KEY</code> is the fallback: create
-a personal API key in Linear&rsquo;s settings and export it. A personal key
-defaults to full workspace access unless restricted at creation, and when
-set it takes precedence over any stored OAuth token.</p>
-<p>Beyond Linear credentials, lerp itself needs only Git — but the stock
-pipeline shells out to <code>claude</code>
-(<a href="https://docs.claude.com/en/docs/claude-code">Claude Code</a>) as its runner,
-and its implementing prompt opens pull requests with <code>gh</code>, so install both
-before the <a href="../../docs/quickstart/">quickstart</a> reaches its first run.</p>
-<p>Before the first unattended run, read <a href="https://github.com/mattwalters/lerp/blob/v0.0.6/SECURITY.md">SECURITY.md</a>. Running
-lerp against a team gives everyone who can move a ticket into a served
-status the ability to start an agent on your machine; that page is the
-trust model in one place.</p>
-<h2 id="lerp-needs-the-status-field">Lerp needs the status field</h2>
-<p>The other prerequisite lerp cannot satisfy from here. On the teams lerp
-serves, the status field is lerp&rsquo;s: a queue <em>is</em> a status, and a stage
-finishes by moving the ticket to the next one. Lerp keeps whatever move it
-finds — that is how an agent escalates or refuses — so an automation that
-moves a ticket <em>during</em> a stage takes that stage&rsquo;s own move away, and the
-queue&rsquo;s <code>on_success</code> hop never happens.</p>
-<p>Linear&rsquo;s GitHub integration is the one nearly everybody has. Its
-automations are configured <strong>per team</strong>, under the team&rsquo;s workflow
-settings, as pull-request triggers each mapping to a status or to No
-action. On the teams lerp serves:</p>
 <ul>
-<li><strong>On draft PR open</strong>, <strong>On PR open</strong>, <strong>On PR review request or
-activity</strong> and <strong>On PR ready for merge</strong> all fire while a pull request
-is open — mid-stage, for a ticket a queue is running. Set all four to
-<strong>No action</strong>: the stock implement prompt opens its PR as a draft and
-flips it to ready at the end, so a single run can trip any of them.</li>
-<li><strong>On PR merge</strong> fires after the stock pipeline is finished with the
-ticket. Moving a merged ticket to Done is the benign automation — it is
-what carries &ldquo;In Review&rdquo; to the end — so leave it on. If your pipeline
-has a stage that runs <em>after</em> the merge, this trigger is mid-stage for
-you too: set it to No action, or point that stage&rsquo;s <code>on_success</code> at the
-status the automation moves to (below). This repo&rsquo;s own <code>lerp.toml</code>
-does the latter, with a merge queue whose <code>on_success</code> is the Done the
-automation is already heading for.</li>
+<li>Make sure Git is installed.</li>
+<li>Linear credentials. Either from <code>lerp login</code> or a <code>LINEAR_API_KEY</code>.</li>
+<li>Coding agents. One or more of Claude Code CLI, Codex CLI, or
+Antigravity CLI. Each one needs its own Linear access, set up below.</li>
+<li>Linear automations that move tickets mid-run break the pipeline. Lerp
+names the offenders at startup, and
+<a href="../../docs/troubleshooting/#why-did-my-ticket-skip-a-stage">troubleshooting</a>
+has the fix.</li>
+<li>Read <a href="https://github.com/mattwalters/lerp/blob/v0.0.7/SECURITY.md">SECURITY.md</a>. Anyone with write access to your
+Linear team could run code on your machine.</li>
 </ul>
-<p>It is a two-minute settings change, scoped to the teams lerp serves. Skip
-it and the failure is total, not intermittent: the implement stage&rsquo;s whole
-job is to open a pull request, so &ldquo;On PR open&rdquo; moves its ticket out of
-Implementing before the run exits, and every ticket stops short of review.</p>
-<p>Lerp says what it can on its own: every start reads the served teams'
-real automations and, before the board opens, names each mid-stage one
-whose target status <code>lerp.toml</code> never mentions — what each queue would
-lose to it, and the fix. It stays quiet about an automation pointing at a
-status your config <em>does</em> name (the deliberate configuration below), and
-it cannot see the merge trigger at all — so the settings screen is still
-worth the two minutes. After the fact, the symptom reaches the status bar
-from the run itself; <code>.lerp/loop.log</code> has the whole line:</p>
-<blockquote>
-<p>LERP-42 left &ldquo;Implementing&rdquo; for &ldquo;In Progress&rdquo; during its run — the
-on_success hop to &ldquo;In Review&rdquo; was skipped. &ldquo;In Progress&rdquo; is not a
-status your pipeline names; an external automation (e.g. Linear&rsquo;s
-GitHub integration) may be moving tickets.</p>
-</blockquote>
-<p><strong>Keeping an automation instead.</strong> Point the pipeline at what it does:
-give the queue whose runs open the pull request an <code>on_success</code> of the
-status the integration moves tickets <em>to</em>, and the automation becomes the
-trigger for the next stage instead of the thief of the last one&rsquo;s hop.
-This is the configuration the startup check stays quiet about. It costs
-three things: your pipeline is coupled to integration behaviour you do
-not control; a setting changed in Linear breaks the chain with no diff to
-read; and the queue&rsquo;s <code>on_failure</code> route is dead, since the automation
-has already moved the ticket by the time a failing run ends — the failed
-run rests at the success gate with only a status-bar line to say so, and
-a queue watching that status runs the next stage on the failed work.</p>
+<h2 id="give-the-agents-linear-access">Give the agents Linear access</h2>
+<p>Lerp hands a runner a prompt and a ticket identifier, nothing more. The
+agent reads the ticket from Linear itself, so every agent CLI needs its
+own Linear access, set up once in that CLI. Do it before your first run.</p>
+<p>Your access is not the agents&rsquo;. Lerp drops <code>LINEAR_API_KEY</code> from the
+environment of every process it launches, and <code>lerp login</code> writes its
+token outside the repository, so neither one reaches an agent.</p>
+<p>Linear&rsquo;s <a href="https://linear.app/docs/mcp">MCP documentation</a> has the
+authoritative endpoint. For the built-in vendor adapters:</p>
+<ul>
+<li><strong>Claude Code (<code>claude</code>)</strong>:
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sh" data-lang="sh"><span class="line"><span class="cl">claude mcp add --transport http linear https://mcp.linear.app/mcp
+</span></span></code></pre></div>Then start <code>claude</code> and run <code>/mcp</code> to complete the OAuth flow.</li>
+<li><strong>Antigravity (<code>agy</code>)</strong>:
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sh" data-lang="sh"><span class="line"><span class="cl">agy mcp add linear https://mcp.linear.app/mcp
+</span></span></code></pre></div>Then complete the OAuth flow in agy&rsquo;s own settings. Tokens land in
+<code>~/.gemini/antigravity-cli/mcp_oauth_tokens.json</code> and refresh
+automatically.</li>
+<li><strong>Codex (<code>codex</code>)</strong>:
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sh" data-lang="sh"><span class="line"><span class="cl">codex mcp add linear --url https://mcp.linear.app/mcp
+</span></span></code></pre></div>Then run <code>codex mcp login linear</code>.</li>
+</ul>
+<p>To share one browser login across several CLIs, register the stdio
+bridge in each instead of the URL:</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sh" data-lang="sh"><span class="line"><span class="cl">&lt;cli&gt; mcp add linear -- npx -y mcp-remote https://mcp.linear.app/mcp
+</span></span></code></pre></div><p>Every CLI then reads the token <code>mcp-remote</code> caches in <code>~/.mcp-auth</code>. It
+puts Node and npx on the agent path, and the shared cache misbehaves
+across multiple Linear accounts.</p>
 
 </div>
 
+      
+      <img class="mark-signoff" src="../../mark.svg" alt="" width="120" height="120">
     </main>
     
     
@@ -365,8 +312,9 @@ a queue watching that status runs the next stage on the failed work.</p>
       <nav id="TableOfContents">
   <ul>
     <li><a href="#get-the-binary">Get the binary</a></li>
+    <li><a href="#hacking-on-lerp">Hacking on lerp</a></li>
     <li><a href="#what-else-you-need">What else you need</a></li>
-    <li><a href="#lerp-needs-the-status-field">Lerp needs the status field</a></li>
+    <li><a href="#give-the-agents-linear-access">Give the agents Linear access</a></li>
   </ul>
 </nav>
     </nav>
@@ -431,7 +379,11 @@ a queue watching that status runs the next stage on the failed work.</p>
           ["latest"].concat(versions).forEach(function (v) {
             var option = document.createElement("option");
             option.value = v;
-            option.textContent = v;
+            
+            
+            
+            option.textContent = v === "latest" && versions.length
+              ? versions[0] + " · latest" : v;
             option.selected = v === "latest";
             picker.appendChild(option);
           });

@@ -61,7 +61,7 @@
     
     <a class="nav here" href="../../docs/">Docs</a>
     
-    <a class="nav" href="../../why/">Why lerp</a>
+    <a class="nav" href="../../why/">Why</a>
     
     
     <button type="button" id="theme-picker" class="theme" aria-label="Theme">◐ system</button>
@@ -69,7 +69,8 @@
     
     
     <span class="version">
-      <span class="version-label">latest</span>
+      
+      <span class="version-label">v0.0.7</span>
       <select id="version-picker" hidden aria-label="Documentation version"></select>
     </span>
     
@@ -77,7 +78,7 @@
   <div class="wrap">
     
     
-    <nav class="sidenav" aria-label="Manual">
+    <nav class="sidenav" aria-label="Docs">
       
       
       
@@ -99,16 +100,6 @@
       
       
       
-      <a href="../../docs/overview/">Overview</a>
-      
-      
-      
-      
-      
-      
-      
-      
-      
       <a href="../../docs/install/">Install</a>
       
       
@@ -121,7 +112,6 @@
       
       <a href="../../docs/quickstart/">Quickstart</a>
       
-      <h5>Concepts</h5>
       
       
       
@@ -129,7 +119,8 @@
       
       
       
-      <a href="../../docs/the-board/">The board</a>
+      
+      <a href="../../docs/how-lerp-works/">How lerp works</a>
       
       <h5>The interface</h5>
       
@@ -159,7 +150,7 @@
       
       
       
-      <a href="../../docs/promoting/">Promoting</a>
+      <a href="../../docs/watching-a-run/">Watching a run</a>
       
       
       
@@ -179,7 +170,7 @@
       
       
       
-      <a href="../../docs/watching-a-run/">Watching a run</a>
+      <a href="../../docs/promoting/">Promoting</a>
       
       
       
@@ -241,8 +232,6 @@
       
       <a href="../../scope/">SCOPE</a>
       
-      
-      <img class="sidenav-mark" src="../../favicon.svg" alt="">
     </nav>
     
     <main>
@@ -250,9 +239,9 @@
 
 <div class="prose">
   <h1 id="starting-past-the-limit">Starting past the limit</h1>
-<p>Select a queued ticket in the
-<a href="../../docs/reading-the-board/#the-work-panel">Work panel</a> and press <code>S</code>: it starts
-now, past the lane limit.</p>
+<p>Select a queued ticket in the <a href="../../docs/reading-the-board/#the-work-panel">Work
+panel</a> and press <code>S</code>. It starts now,
+past the lane limit.</p>
 <figure class="cast">
   
   <video class="cast-dark" controls muted loop playsinline preload="metadata" width="1200" height="640" aria-label="Force-starting a queued ticket past the lane limit with S">
@@ -266,27 +255,26 @@ now, past the lane limit.</p>
   <figcaption class="keys"><kbd>S</kbd></figcaption>
 </figure>
 
-<h2 id="what-it-overrides-and-what-it-does-not">What it overrides, and what it does not</h2>
-<p>Force-start overrides the lane count and nothing else. The claim protocol
-still runs, so a blocked ticket, or one somebody else has claimed, is
-refused with the reason — <code>S</code> is not a way around
-<a href="../../docs/the-board/#the-claim">eligibility</a>, only around capacity.</p>
-<p>Your own claim is the exception it takes over. That is how a ticket left
-claimed by a run nothing was left to reap gets run again — the fix for
-both ways a claim outlives its run: a human who assigned the ticket, and a
-run that died where no lerp was watching. It is also how to re-run a
-failed stage whose queue has no <code>on_failure</code> route, since such a run keeps
-its claim and waits on you.</p>
-<p>Every live run counts against the capacity in the panel title, whichever
-lane it landed on, so a force-start shows up there as <code>· +1 over</code> until
-one finishes.</p>
+<h2 id="what-it-overrides">What it overrides</h2>
+<p>The lane count and nothing else. The claim protocol still runs, so a
+blocked ticket, or one somebody else has claimed, is refused with the
+reason. <code>S</code> is a way around capacity, not around
+<a href="../../docs/how-lerp-works/#the-claim">eligibility</a>.</p>
+<p>Your own claim is the exception it takes over. That is how you re-run a
+ticket whose claim outlived its run, whether a human assigned it or a run
+died where no lerp was watching, and how you re-run a failed stage whose
+queue has no <code>on_failure</code> route, since such a run keeps its claim and
+waits on you.</p>
+<p>Every live run counts against the capacity in the panel title, so a
+force-start reads as <code>· +1 over</code> until one finishes.</p>
 <h2 id="not-an-ordering-key">Not an ordering key</h2>
-<p><code>S</code> runs <em>this</em> ticket now; it does not reorder the queue. To change what
-runs next, move tickets in Linear — pickup order is the board&rsquo;s, and lerp
-keeps no queue of its own to shuffle.</p>
+<p><code>S</code> runs this ticket now and does not reorder the queue. To change what
+runs next, move tickets in Linear.</p>
 
 </div>
 
+      
+      <img class="mark-signoff" src="../../mark.svg" alt="" width="120" height="120">
     </main>
     
     
@@ -295,7 +283,7 @@ keeps no queue of its own to shuffle.</p>
       <h5>On this page</h5>
       <nav id="TableOfContents">
   <ul>
-    <li><a href="#what-it-overrides-and-what-it-does-not">What it overrides, and what it does not</a></li>
+    <li><a href="#what-it-overrides">What it overrides</a></li>
     <li><a href="#not-an-ordering-key">Not an ordering key</a></li>
   </ul>
 </nav>
@@ -361,7 +349,11 @@ keeps no queue of its own to shuffle.</p>
           ["latest"].concat(versions).forEach(function (v) {
             var option = document.createElement("option");
             option.value = v;
-            option.textContent = v;
+            
+            
+            
+            option.textContent = v === "latest" && versions.length
+              ? versions[0] + " · latest" : v;
             option.selected = v === "latest";
             picker.appendChild(option);
           });

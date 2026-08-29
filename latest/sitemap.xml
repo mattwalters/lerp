@@ -1,16 +1,13 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
-    <loc>https://lerp.sh/latest/docs/overview/</loc>
-  </url>
-  <url>
     <loc>https://lerp.sh/latest/docs/install/</loc>
   </url>
   <url>
     <loc>https://lerp.sh/latest/docs/quickstart/</loc>
   </url>
   <url>
-    <loc>https://lerp.sh/latest/docs/the-board/</loc>
+    <loc>https://lerp.sh/latest/docs/how-lerp-works/</loc>
   </url>
   <url>
     <loc>https://lerp.sh/latest/docs/reading-the-board/</loc>
@@ -19,13 +16,13 @@
     <loc>https://lerp.sh/latest/docs/finding-tickets/</loc>
   </url>
   <url>
-    <loc>https://lerp.sh/latest/docs/promoting/</loc>
+    <loc>https://lerp.sh/latest/docs/watching-a-run/</loc>
   </url>
   <url>
     <loc>https://lerp.sh/latest/docs/ejecting/</loc>
   </url>
   <url>
-    <loc>https://lerp.sh/latest/docs/watching-a-run/</loc>
+    <loc>https://lerp.sh/latest/docs/promoting/</loc>
   </url>
   <url>
     <loc>https://lerp.sh/latest/docs/starting-past-the-limit/</loc>

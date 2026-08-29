@@ -61,7 +61,7 @@
     
     <a class="nav here" href="../../docs/">Docs</a>
     
-    <a class="nav" href="../../why/">Why lerp</a>
+    <a class="nav" href="../../why/">Why</a>
     
     
     <button type="button" id="theme-picker" class="theme" aria-label="Theme">◐ system</button>
@@ -69,7 +69,8 @@
     
     
     <span class="version">
-      <span class="version-label">latest</span>
+      
+      <span class="version-label">v0.0.7</span>
       <select id="version-picker" hidden aria-label="Documentation version"></select>
     </span>
     
@@ -77,7 +78,7 @@
   <div class="wrap">
     
     
-    <nav class="sidenav" aria-label="Manual">
+    <nav class="sidenav" aria-label="Docs">
       
       
       
@@ -99,16 +100,6 @@
       
       
       
-      <a href="../../docs/overview/">Overview</a>
-      
-      
-      
-      
-      
-      
-      
-      
-      
       <a href="../../docs/install/">Install</a>
       
       
@@ -121,7 +112,6 @@
       
       <a href="../../docs/quickstart/">Quickstart</a>
       
-      <h5>Concepts</h5>
       
       
       
@@ -129,7 +119,8 @@
       
       
       
-      <a href="../../docs/the-board/">The board</a>
+      
+      <a href="../../docs/how-lerp-works/">How lerp works</a>
       
       <h5>The interface</h5>
       
@@ -159,7 +150,7 @@
       
       
       
-      <a href="../../docs/promoting/">Promoting</a>
+      <a href="../../docs/watching-a-run/">Watching a run</a>
       
       
       
@@ -179,7 +170,7 @@
       
       
       
-      <a href="../../docs/watching-a-run/">Watching a run</a>
+      <a href="../../docs/promoting/">Promoting</a>
       
       
       
@@ -241,8 +232,6 @@
       
       <a href="../../scope/">SCOPE</a>
       
-      
-      <img class="sidenav-mark" src="../../favicon.svg" alt="">
     </nav>
     
     <main>
@@ -250,11 +239,39 @@
 
 <div class="prose">
   <h1 id="finding-tickets">Finding tickets</h1>
-<p>Four controls on the <a href="../../docs/reading-the-board/#the-on-you-panel">On you panel</a>
-decide what it shows and in what order: <code>F</code> filters by field and value,
-<code>s</code> sorts, <code>/</code> searches, and <code>]</code>/<code>[</code> slice to a status. All four are
-session-only — no saved views, no filter syntax — and none of them changes
-which tickets are fetched.</p>
+<p>Five keys narrow the <a href="../../docs/reading-the-board/#the-on-you-panel">On you
+panel</a>. All of them are
+session-only, and none changes which tickets the pass fetched.</p>
+<table>
+	<thead>
+			<tr>
+					<th>Key</th>
+					<th>What it does</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td><code>F</code></td>
+					<td>Filter by project, status or priority, in a two-step modal. The value list carries row counts and takes type-ahead. <code>enter</code> applies, <code>esc</code> backs out a level, and <code>F</code> on an active filter reopens it to change or clear.</td>
+			</tr>
+			<tr>
+					<td><code>P</code></td>
+					<td>Straight to the project value list.</td>
+			</tr>
+			<tr>
+					<td><code>s</code></td>
+					<td>Cycle the sort through status, project, leverage and priority.</td>
+			</tr>
+			<tr>
+					<td><code>/</code></td>
+					<td>Search as you type, a case-insensitive substring over the identifier, title, status and project on the row, with matches marked.</td>
+			</tr>
+			<tr>
+					<td><code>]</code> <code>[</code></td>
+					<td>Slice to one status, in board order, and back to all.</td>
+			</tr>
+	</tbody>
+</table>
 <figure class="cast">
   
   <video class="cast-dark" controls muted loop playsinline preload="metadata" width="1200" height="640" aria-label="Narrowing the list: sorting, filtering by project, searching, and cycling status slices">
@@ -269,51 +286,34 @@ which tickets are fetched.</p>
 </figure>
 
 <h2 id="order">Order</h2>
-<p>Rows are grouped by status by default, in the pipeline&rsquo;s own order, so the
-run to retriage and the review to read are the top rows rather than two of
-sixteen.</p>
-<p>Within a group, rows fall through to <strong>leverage</strong> — how many other listed
-tickets promoting this one would transitively unblock — then priority,
-then identifier. The promote worth making is the top row of its group.</p>
-<p><code>s</code> cycles the order to project, leverage or priority. The two grouping
-modes draw a header per boundary; the two flat ones order the whole list.</p>
-<h2 id="filter">Filter</h2>
-<p><code>F</code> opens a two-step modal: pick a field (project, status, or priority),
-then pick a value. The value list shows row counts and takes type-ahead.
-<code>enter</code> applies; <code>esc</code> backs out a level. <code>F</code> on an active filter reopens
-it for changing or clearing (the <code>all &lt;field&gt;</code> option at the top).</p>
-<p><code>P</code> is a shortcut straight to the project value list.</p>
-<p>Picking a value under <strong>status</strong> sets the <a href="#status-slices">status slice</a>
-rather than a separate filter, so <code>F</code> and <code>]</code>/<code>[</code> are two ways to reach
-one control and can never narrow the panel to two different statuses at
-once. Project and priority compose on top of whichever slice is showing.</p>
-<h2 id="search">Search</h2>
-<p><code>/</code> opens a prompt (<code>filter the list</code>) and narrows the panel as you type — a case-insensitive
-substring over the identifier, title, status and project already on the
-row, with matches marked.</p>
-<p><code>enter</code> keeps the filter and hands the keys back to the list, so you can
-<a href="../../docs/promoting/">promote</a> what you found; <code>esc</code> cancels the prompt, and
-<code>esc</code> again clears a filter the prompt already closed on. While the prompt
-is open it has the keyboard — a <code>p</code> or a <code>q</code> typed into it is text — and
+<p>Rows group by status, in the pipeline&rsquo;s own order. Within a group they
+fall through to <strong>leverage</strong>, how many other listed tickets promoting
+this one would transitively unblock, then priority, then identifier.
+Status and project group with a header at each boundary, while leverage
+and priority order the whole list flat.</p>
+<h2 id="how-they-combine">How they combine</h2>
+<p>Project and priority compose on top of whichever status slice is showing.
+Picking a value under status sets that slice rather than a second filter,
+so <code>F</code> and <code>]</code>/<code>[</code> can never narrow the panel to two statuses at once.
+Slices are display over the list the pass fetched, so only the unstarted
+and active statuses present appear.</p>
+<h2 id="the-search-prompt">The search prompt</h2>
+<p><code>enter</code> keeps the filter and hands the keys back, so you can
+<a href="../../docs/promoting/">promote</a> what you found. <code>esc</code> cancels the prompt, and
+<code>esc</code> again clears a filter the prompt already closed on. While the
+prompt is open it owns the keyboard, so a <code>p</code> typed into it is text, and
 <code>ctrl+c</code> still quits.</p>
-<h2 id="status-slices">Status slices</h2>
-<p><code>]</code> and <code>[</code> cycle the panel through Linear status slices in board order —
-all, then each status present, and back. The active tab is highlighted in
-the slice tab row. Slices are display over the fetched list, so only
-unstarted and active statuses present appear.</p>
-<p><code>F</code> → status is the same control with the options on screen: every status
-with its row count, so picking one is a choice rather than a guess at
-where the cycle stops.</p>
-<h2 id="what-the-title-and-tabs-say">What the title and tabs say</h2>
-<p>The slice tab row and panel title carry all of it: the active tab shows a
-fraction (<code>4/17</code>, for example) when narrowed by search or project filter,
-and the title shows any active search (<code>· /goreleaser</code>), non-default sort
-(<code>· by priority</code>), or project filter. The status bar&rsquo;s <code>● n on you</code> is the
-other question — what is blocked on you — and does not move when a slice
-is active.</p>
+<h2 id="what-the-screen-says">What the screen says</h2>
+<p>The active tab shows a fraction like <code>4/17</code> when a search or a project
+filter narrows it. The title shows an active search (<code>· /goreleaser</code>), a
+non-default sort (<code>· by priority</code>), or a project filter. The status bar&rsquo;s
+<code>● n on you</code> does not move when a slice is active, since it answers the
+other question, what is blocked on you.</p>
 
 </div>
 
+      
+      <img class="mark-signoff" src="../../mark.svg" alt="" width="120" height="120">
     </main>
     
     
@@ -323,10 +323,9 @@ is active.</p>
       <nav id="TableOfContents">
   <ul>
     <li><a href="#order">Order</a></li>
-    <li><a href="#filter">Filter</a></li>
-    <li><a href="#search">Search</a></li>
-    <li><a href="#status-slices">Status slices</a></li>
-    <li><a href="#what-the-title-and-tabs-say">What the title and tabs say</a></li>
+    <li><a href="#how-they-combine">How they combine</a></li>
+    <li><a href="#the-search-prompt">The search prompt</a></li>
+    <li><a href="#what-the-screen-says">What the screen says</a></li>
   </ul>
 </nav>
     </nav>
@@ -391,7 +390,11 @@ is active.</p>
           ["latest"].concat(versions).forEach(function (v) {
             var option = document.createElement("option");
             option.value = v;
-            option.textContent = v;
+            
+            
+            
+            option.textContent = v === "latest" && versions.length
+              ? versions[0] + " · latest" : v;
             option.selected = v === "latest";
             picker.appendChild(option);
           });

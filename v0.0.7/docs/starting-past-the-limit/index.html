@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+  <script>
+    
+    
+    
+    (function () {
+      try {
+        var t = localStorage.getItem("lerp-theme");
+        if (t === "light" || t === "dark") {
+          document.documentElement.dataset.theme = t;
+        }
+      } catch (e) {}
+    })();
+  </script>
+  
+  
+  
+  
+  <title>Starting past the limit · lerp</title>
+  
+  
+  
+  
+  
+  <meta name="description" content="`S` runs a queued ticket now, overriding the lane count and nothing else.">
+  
+  <link rel="canonical" href="https://lerp.sh/latest/docs/starting-past-the-limit/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="lerp">
+  <meta property="og:title" content="Starting past the limit · lerp">
+  <meta property="og:description" content="`S` runs a queued ticket now, overriding the lane count and nothing else.">
+  <meta property="og:url" content="https://lerp.sh/latest/docs/starting-past-the-limit/">
+  <meta property="og:image" content="https://lerp.sh/og.png">
+  <meta property="og:image:alt" content="The lerp board: tickets waiting on a human in the On you panel, a work panel of queues and three lanes running coding agents">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="640">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Starting past the limit · lerp">
+  <meta name="twitter:description" content="`S` runs a queued ticket now, overriding the lane count and nothing else.">
+  <meta name="twitter:image" content="https://lerp.sh/og.png">
+  <meta name="twitter:image:alt" content="The lerp board: tickets waiting on a human in the On you panel, a work panel of queues and three lanes running coding agents">
+  <link rel="stylesheet" href="../../style.css">
+</head>
+<body>
+  
+  
+  
+  
+  
+  
+  
+  <header>
+    
+    <a class="brand" href="../../"><img class="brand-mark" src="../../favicon.svg" alt="">lerp</a>
+    <span class="spacer"></span>
+    
+    <a class="nav here" href="../../docs/">Docs</a>
+    
+    <a class="nav" href="../../why/">Why</a>
+    
+    
+    <button type="button" id="theme-picker" class="theme" aria-label="Theme">◐ system</button>
+    <a class="nav github" href="https://github.com/mattwalters/lerp" target="_blank" rel="noopener" aria-label="GitHub"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg></a>
+    
+    
+    <span class="version">
+      
+      <span class="version-label">v0.0.7</span>
+      <select id="version-picker" hidden aria-label="Documentation version"></select>
+    </span>
+    
+  </header>
+  <div class="wrap">
+    
+    
+    <nav class="sidenav" aria-label="Docs">
+      
+      
+      
+      <h5>Start</h5>
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/">Documentation</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/install/">Install</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/quickstart/">Quickstart</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/how-lerp-works/">How lerp works</a>
+      
+      <h5>The interface</h5>
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/reading-the-board/">Reading the board</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/finding-tickets/">Finding tickets</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/watching-a-run/">Watching a run</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/ejecting/">Ejecting</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/promoting/">Promoting</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/starting-past-the-limit/" class="active" aria-current="page">Starting past the limit</a>
+      
+      <h5>Reference</h5>
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/lerp-toml/" class="mono">lerp.toml</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/telemetry/">Telemetry</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/cli/">The command line</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../docs/troubleshooting/">Troubleshooting</a>
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      <a href="../../scope/">SCOPE</a>
+      
+    </nav>
+    
+    <main>
+      
+
+<div class="prose">
+  <h1 id="starting-past-the-limit">Starting past the limit</h1>
+<p>Select a queued ticket in the <a href="../../docs/reading-the-board/#the-work-panel">Work
+panel</a> and press <code>S</code>. It starts now,
+past the lane limit.</p>
+<figure class="cast">
+  
+  <video class="cast-dark" controls muted loop playsinline preload="metadata" width="1200" height="640" aria-label="Force-starting a queued ticket past the lane limit with S">
+    <source src="../../casts/force-start.webm" type="video/webm">
+    <source src="../../casts/force-start.mp4" type="video/mp4">
+  </video>
+  <video class="cast-light" controls muted loop playsinline preload="metadata" width="1200" height="640" aria-label="Force-starting a queued ticket past the lane limit with S">
+    <source src="../../casts/force-start-light.webm" type="video/webm">
+    <source src="../../casts/force-start-light.mp4" type="video/mp4">
+  </video>
+  <figcaption class="keys"><kbd>S</kbd></figcaption>
+</figure>
+
+<h2 id="what-it-overrides">What it overrides</h2>
+<p>The lane count and nothing else. The claim protocol still runs, so a
+blocked ticket, or one somebody else has claimed, is refused with the
+reason. <code>S</code> is a way around capacity, not around
+<a href="../../docs/how-lerp-works/#the-claim">eligibility</a>.</p>
+<p>Your own claim is the exception it takes over. That is how you re-run a
+ticket whose claim outlived its run, whether a human assigned it or a run
+died where no lerp was watching, and how you re-run a failed stage whose
+queue has no <code>on_failure</code> route, since such a run keeps its claim and
+waits on you.</p>
+<p>Every live run counts against the capacity in the panel title, so a
+force-start reads as <code>· +1 over</code> until one finishes.</p>
+<h2 id="not-an-ordering-key">Not an ordering key</h2>
+<p><code>S</code> runs this ticket now and does not reorder the queue. To change what
+runs next, move tickets in Linear.</p>
+
+</div>
+
+      
+      <img class="mark-signoff" src="../../mark.svg" alt="" width="120" height="120">
+    </main>
+    
+    
+    
+    <nav class="toc" aria-label="On this page">
+      <h5>On this page</h5>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#what-it-overrides">What it overrides</a></li>
+    <li><a href="#not-an-ordering-key">Not an ordering key</a></li>
+  </ul>
+</nav>
+    </nav>
+    
+  </div>
+  <script>
+    
+    
+    
+    
+    (function () {
+      var modes = ["system", "light", "dark"];
+      var glyphs = { system: "◐", light: "○", dark: "●" };
+      var picker = document.getElementById("theme-picker");
+      var current = "system";
+      try {
+        var stored = localStorage.getItem("lerp-theme");
+        if (stored === "light" || stored === "dark") { current = stored; }
+      } catch (e) {}
+      function paint() {
+        picker.textContent = glyphs[current] + " " + current;
+        picker.setAttribute("aria-label", "Theme: " + current);
+        if (current === "system") {
+          delete document.documentElement.dataset.theme;
+        } else {
+          document.documentElement.dataset.theme = current;
+        }
+      }
+      paint();
+      picker.addEventListener("click", function () {
+        current = modes[(modes.indexOf(current) + 1) % modes.length];
+        try {
+          if (current === "system") {
+            localStorage.removeItem("lerp-theme");
+          } else {
+            localStorage.setItem("lerp-theme", current);
+          }
+        } catch (e) {}
+        paint();
+      });
+    })();
+  </script>
+  
+  <script>
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    (function () {
+      var here = new URL(".", document.querySelector('link[rel="stylesheet"]').href);
+      var root = new URL(".." + "/", here);
+      fetch(new URL("versions.json", root))
+        .then(function (r) { if (!r.ok) { throw r; } return r.json(); })
+        .then(function (versions) {
+          var picker = document.getElementById("version-picker");
+          ["latest"].concat(versions).forEach(function (v) {
+            var option = document.createElement("option");
+            option.value = v;
+            
+            
+            
+            option.textContent = v === "latest" && versions.length
+              ? versions[0] + " · latest" : v;
+            option.selected = v === "v0.0.7";
+            picker.appendChild(option);
+          });
+          
+          
+          
+          
+          
+          
+          picker.addEventListener("change", function () {
+            window.location.href = new URL(picker.value + "/docs/", root);
+          });
+          picker.hidden = false;
+        })
+        .catch(function () {});
+    })();
+  </script>
+  
+</body>
+</html>

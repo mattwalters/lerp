@@ -61,7 +61,7 @@
     
     <a class="nav here" href="../docs/">Docs</a>
     
-    <a class="nav" href="../why/">Why lerp</a>
+    <a class="nav" href="../why/">Why</a>
     
     
     <button type="button" id="theme-picker" class="theme" aria-label="Theme">◐ system</button>
@@ -69,7 +69,8 @@
     
     
     <span class="version">
-      <span class="version-label">latest</span>
+      
+      <span class="version-label">v0.0.7</span>
       <select id="version-picker" hidden aria-label="Documentation version"></select>
     </span>
     
@@ -77,7 +78,7 @@
   <div class="wrap">
     
     
-    <nav class="sidenav" aria-label="Manual">
+    <nav class="sidenav" aria-label="Docs">
       
       
       
@@ -99,16 +100,6 @@
       
       
       
-      <a href="../docs/overview/">Overview</a>
-      
-      
-      
-      
-      
-      
-      
-      
-      
       <a href="../docs/install/">Install</a>
       
       
@@ -121,7 +112,6 @@
       
       <a href="../docs/quickstart/">Quickstart</a>
       
-      <h5>Concepts</h5>
       
       
       
@@ -129,7 +119,8 @@
       
       
       
-      <a href="../docs/the-board/">The board</a>
+      
+      <a href="../docs/how-lerp-works/">How lerp works</a>
       
       <h5>The interface</h5>
       
@@ -159,7 +150,7 @@
       
       
       
-      <a href="../docs/promoting/">Promoting</a>
+      <a href="../docs/watching-a-run/">Watching a run</a>
       
       
       
@@ -179,7 +170,7 @@
       
       
       
-      <a href="../docs/watching-a-run/">Watching a run</a>
+      <a href="../docs/promoting/">Promoting</a>
       
       
       
@@ -241,8 +232,6 @@
       
       <a href="../scope/" class="active" aria-current="page">SCOPE</a>
       
-      
-      <img class="sidenav-mark" src="../favicon.svg" alt="">
     </nav>
     
     <main>
@@ -593,6 +582,8 @@ for now; <code>jq</code> is the dashboard. Wait until it hurts.</li>
 
 </div>
 
+      
+      <img class="mark-signoff" src="../mark.svg" alt="" width="120" height="120">
     </main>
     
     
@@ -673,7 +664,11 @@ for now; <code>jq</code> is the dashboard. Wait until it hurts.</li>
           ["latest"].concat(versions).forEach(function (v) {
             var option = document.createElement("option");
             option.value = v;
-            option.textContent = v;
+            
+            
+            
+            option.textContent = v === "latest" && versions.length
+              ? versions[0] + " · latest" : v;
             option.selected = v === "latest";
             picker.appendChild(option);
           });

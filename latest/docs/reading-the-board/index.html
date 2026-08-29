@@ -61,7 +61,7 @@
     
     <a class="nav here" href="../../docs/">Docs</a>
     
-    <a class="nav" href="../../why/">Why lerp</a>
+    <a class="nav" href="../../why/">Why</a>
     
     
     <button type="button" id="theme-picker" class="theme" aria-label="Theme">◐ system</button>
@@ -69,7 +69,8 @@
     
     
     <span class="version">
-      <span class="version-label">latest</span>
+      
+      <span class="version-label">v0.0.7</span>
       <select id="version-picker" hidden aria-label="Documentation version"></select>
     </span>
     
@@ -77,7 +78,7 @@
   <div class="wrap">
     
     
-    <nav class="sidenav" aria-label="Manual">
+    <nav class="sidenav" aria-label="Docs">
       
       
       
@@ -99,16 +100,6 @@
       
       
       
-      <a href="../../docs/overview/">Overview</a>
-      
-      
-      
-      
-      
-      
-      
-      
-      
       <a href="../../docs/install/">Install</a>
       
       
@@ -121,7 +112,6 @@
       
       <a href="../../docs/quickstart/">Quickstart</a>
       
-      <h5>Concepts</h5>
       
       
       
@@ -129,7 +119,8 @@
       
       
       
-      <a href="../../docs/the-board/">The board</a>
+      
+      <a href="../../docs/how-lerp-works/">How lerp works</a>
       
       <h5>The interface</h5>
       
@@ -159,7 +150,7 @@
       
       
       
-      <a href="../../docs/promoting/">Promoting</a>
+      <a href="../../docs/watching-a-run/">Watching a run</a>
       
       
       
@@ -179,7 +170,7 @@
       
       
       
-      <a href="../../docs/watching-a-run/">Watching a run</a>
+      <a href="../../docs/promoting/">Promoting</a>
       
       
       
@@ -241,8 +232,6 @@
       
       <a href="../../scope/">SCOPE</a>
       
-      
-      <img class="sidenav-mark" src="../../favicon.svg" alt="">
     </nav>
     
     <main>
@@ -251,14 +240,12 @@
 <div class="prose">
   <h1 id="reading-the-board">Reading the board</h1>
 <div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sh" data-lang="sh"><span class="line"><span class="cl">lerp
-</span></span></code></pre></div><p><code>lerp</code> opens the TUI, and the TUI is the engine: the loop runs while it is
-open, and there is no daemon.</p>
-<p>Two panels share the screen, and lerp opens focused on <strong>On you</strong>: the
-loop runs the board on its own, so the first look belongs to what needs
-<em>you</em>. Both panels start with their pane closed and their table at full
-width.</p>
-<p><code>1</code> and <code>2</code> choose a panel and <code>tab</code> cycles between them; <code>↑</code>/<code>↓</code> pick a
-row. <code>?</code> opens the full key list at any time, and <code>q</code> quits.</p>
+</span></span></code></pre></div><p>The TUI is the engine. The loop runs while the screen is open, and there
+is no daemon.</p>
+<p>Two panels share it. <strong>On you</strong> lists what waits on a human, <strong>Work</strong>
+lists what the machine is doing, and lerp opens focused on On you.</p>
+<p><code>1</code> and <code>2</code> choose a panel, <code>tab</code> cycles, <code>↑</code>/<code>↓</code> pick a row, <code>?</code> lists
+every key, and <code>q</code> quits.</p>
 <figure class="cast">
   
   <video class="cast-dark" controls muted loop playsinline preload="metadata" width="1200" height="640" aria-label="The board opening on the On you panel, switching to the work panel, and opening a lane&#39;s log">
@@ -273,76 +260,44 @@ row. <code>?</code> opens the full key list at any time, and <code>q</code> quit
 </figure>
 
 <h2 id="the-work-panel">The Work panel</h2>
-<p>The Work view is one list of what the machine is doing with the board,
-grouped by queue: every ticket in each queue&rsquo;s status, in the loop&rsquo;s own
-pickup order, the ones running now at the top of their group.</p>
-<p>A running row carries its state — provisioning or running — the run&rsquo;s
-elapsed time, and the tokens it has spent as its own log reports them,
-plus a dollar figure where the runner&rsquo;s stream states one; no lerp price
-table stands in for a runner silent on cost. Where the runner&rsquo;s log
-distinguishes subagents and its <code>[runners.*]</code> block names a <code>context</code>
-window (see <a href="../../docs/lerp-toml/">lerp.toml</a>), the row adds a percentage — how
-full the fullest agent in the run is — faint until 80%, then <code>⚠</code>; no
-configured window, tokens only, never a guessed figure. A run inherited
-from a previous <code>lerp</code> reads as <code>running</code> like any other, with the run&rsquo;s
-own age and total read back from its log, not the stretch since adoption.
-Under it, once the run has a log, a second line reads how the run is
-going — see <a href="../../docs/watching-a-run/">watching a run</a>.</p>
-<p>Claude settles cost only on the line that closes its log — as the row
-disappears — so that figure shows up on the status bar&rsquo;s exit note, where
-it survives the row.</p>
-<p>A waiting row is faint, with the reason it waits: blocked or claimed.
-<code>enter</code> on one shows where it sits in pickup order and what gates it.</p>
-<p>The panel title and the status bar carry the capacity, <code>2/3 running</code> —
-what says whether anything can start. Every live run counts against it,
-whichever lane it landed on, with <code>· +1 over</code> beside it while more runs
-are live than the limit allows.</p>
-<p>Ordering is not a keystroke. To change what runs <em>next</em>, move tickets in
-Linear; to run one now regardless, see
-<a href="../../docs/starting-past-the-limit/">starting past the limit</a>.</p>
+<p>One list, grouped by queue, in the loop&rsquo;s pickup order, with the running
+tickets at the top of each group.</p>
+<p>A running row carries its state and <a href="../../docs/watching-a-run/">what the run is
+doing</a>. A waiting row is faint and says why it waits,
+blocked or claimed. <code>enter</code> on one shows where it sits in pickup order
+and what gates it.</p>
+<p>The panel title and the status bar carry capacity, <code>2/3 running</code>, with
+<code>· +1 over</code> while more runs are live than the limit allows.</p>
+<p>Ordering is not a keystroke. To change what runs next, move tickets in
+Linear, or <a href="../../docs/starting-past-the-limit/">start one past the limit</a>.</p>
 <h2 id="the-on-you-panel">The On you panel</h2>
-<p>The On you panel lists what waits on a human: unclaimed tickets, and the
-operator&rsquo;s own claimed tickets, sitting in a status no queue serves.</p>
-<p>Above the column header sits the pinned slice tab row: <code>all</code> followed by
-each Linear status present on the board, each with its ticket count. The
-active tab is highlighted with the focus accent, while inactive tabs remain
-faint. Slicing with <code>]</code> or <code>[</code> moves the focus across tabs to show only that
-status; <code>all</code> returns to showing all active tickets (with the backlog folded).</p>
-<p>Under the tab row sits the header naming the columns — identifier, leverage,
-the real Linear status, project, priority, and the title, which takes
-whatever width is left. The vocabulary is Linear&rsquo;s own, never a category
-invented by lerp.</p>
-<p>A status the pipeline never names — no queue&rsquo;s status, no <code>on_success</code> or
-<code>on_failure</code> target — is marked, but only where Linear files it as
-started: a ticket in a backlog, triage or Todo column has not entered the
-pipeline, while one in a working status the pipeline knows nothing about
-is the fingerprint of a ticket that left it. <code>?</code> spells out that mark and
-the other two the table draws.</p>
-<p>The panel opens on what is blocked on you — failed runs, finished runs,
-tickets in statuses the pipeline never named — with the intake it never
-left folded to one line at the foot: <code>28 waiting to enter the pipeline — ] to browse</code>. Being blocked-on is an interrupt; pulling from the backlog
-is a sit-down motion; <a href="../../docs/finding-tickets/">finding tickets</a> is that one,
-with the sorting, scoping, slicing and searching. A ticket you have
-claimed is never folded, wherever Linear files it: no pass can pick it up
-while the claim stands, so it is blocked on you.</p>
+<p>Unclaimed tickets, and your own claimed tickets, sitting in a status no
+queue serves. The columns are identifier, leverage, the Linear status,
+project, priority and title, in Linear&rsquo;s own vocabulary.</p>
+<p>A tab row above the columns slices the list to one status, each tab with
+its count. <code>]</code> and <code>[</code> move across it, and <code>all</code> comes back.</p>
+<p>It opens on what is blocked on you, with the tickets that never entered
+the pipeline folded into one line at the foot. <a href="../../docs/finding-tickets/">Finding
+tickets</a> covers browsing those. A claimed ticket is
+never folded, since no pass can pick it up while the claim stands.</p>
+<p>A ticket in a working status your pipeline never names is marked, the
+fingerprint of a ticket that left the pipeline. <code>?</code> spells out that mark
+and the other two.</p>
 <h2 id="the-main-pane">The main pane</h2>
-<p>The list owns the screen until you ask for a ticket. <code>enter</code> on a row
-reads it into a main pane beside the table — the body, where the plan
-lives, and the comments, where a run&rsquo;s verdict lands — so a parked ticket
-can be decided from one screen. <code>esc</code> closes it, and each panel remembers
-whether its pane is open.</p>
-<p>It is a read and stays one: nothing composes, replies, or navigates to
-another ticket. <code>o</code> opens the ticket in Linear for everything else.</p>
-<p>An open main pane is a surface in the <code>tab</code> cycle; while it holds the keys
-its border says so, and <code>↑</code>/<code>↓</code> scroll it a line at a time.</p>
+<p><code>enter</code> reads the selected ticket into a pane beside the table, the body
+where the plan lives and the comments where a run&rsquo;s verdict lands. <code>esc</code>
+closes it. The pane is a read and stays one, so <code>o</code> opens the ticket in
+Linear for anything else. <code>↑</code>/<code>↓</code> scroll it while it holds the keys.</p>
 <h2 id="colour">Colour</h2>
-<p>Colour marks state and never carries it alone: every state also has a
-shape or a word, so what the screen says survives a 16-colour terminal and
-a colour-blind operator. Which half of the palette you get, and how to
-turn colour off, are <a href="../../docs/cli/#environment">environment variables</a>.</p>
+<p>Colour marks state and never carries it alone. Every state has a shape or
+a word too, so the screen survives a 16-colour terminal and a
+colour-blind operator. <a href="../../docs/cli/#environment">Environment variables</a> pick the
+palette or turn it off.</p>
 
 </div>
 
+      
+      <img class="mark-signoff" src="../../mark.svg" alt="" width="120" height="120">
     </main>
     
     
@@ -419,7 +374,11 @@ turn colour off, are <a href="../../docs/cli/#environment">environment variables
           ["latest"].concat(versions).forEach(function (v) {
             var option = document.createElement("option");
             option.value = v;
-            option.textContent = v;
+            
+            
+            
+            option.textContent = v === "latest" && versions.length
+              ? versions[0] + " · latest" : v;
             option.selected = v === "latest";
             picker.appendChild(option);
           });

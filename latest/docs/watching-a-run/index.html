@@ -61,7 +61,7 @@
     
     <a class="nav here" href="../../docs/">Docs</a>
     
-    <a class="nav" href="../../why/">Why lerp</a>
+    <a class="nav" href="../../why/">Why</a>
     
     
     <button type="button" id="theme-picker" class="theme" aria-label="Theme">◐ system</button>
@@ -69,7 +69,8 @@
     
     
     <span class="version">
-      <span class="version-label">latest</span>
+      
+      <span class="version-label">v0.0.7</span>
       <select id="version-picker" hidden aria-label="Documentation version"></select>
     </span>
     
@@ -77,7 +78,7 @@
   <div class="wrap">
     
     
-    <nav class="sidenav" aria-label="Manual">
+    <nav class="sidenav" aria-label="Docs">
       
       
       
@@ -99,16 +100,6 @@
       
       
       
-      <a href="../../docs/overview/">Overview</a>
-      
-      
-      
-      
-      
-      
-      
-      
-      
       <a href="../../docs/install/">Install</a>
       
       
@@ -121,7 +112,6 @@
       
       <a href="../../docs/quickstart/">Quickstart</a>
       
-      <h5>Concepts</h5>
       
       
       
@@ -129,7 +119,8 @@
       
       
       
-      <a href="../../docs/the-board/">The board</a>
+      
+      <a href="../../docs/how-lerp-works/">How lerp works</a>
       
       <h5>The interface</h5>
       
@@ -159,7 +150,7 @@
       
       
       
-      <a href="../../docs/promoting/">Promoting</a>
+      <a href="../../docs/watching-a-run/" class="active" aria-current="page">Watching a run</a>
       
       
       
@@ -179,7 +170,7 @@
       
       
       
-      <a href="../../docs/watching-a-run/" class="active" aria-current="page">Watching a run</a>
+      <a href="../../docs/promoting/">Promoting</a>
       
       
       
@@ -241,8 +232,6 @@
       
       <a href="../../scope/">SCOPE</a>
       
-      
-      <img class="sidenav-mark" src="../../favicon.svg" alt="">
     </nav>
     
     <main>
@@ -250,8 +239,7 @@
 
 <div class="prose">
   <h1 id="watching-a-run">Watching a run</h1>
-<p>A run says how it is going twice: once on its row, in a line you get
-without asking, and once in full when you open its log.</p>
+<p>A run reports twice, on its row and in its log.</p>
 <figure class="cast">
   
   <video class="cast-dark" controls muted loop playsinline preload="metadata" width="1200" height="640" aria-label="A live log tail in the main pane: scrollback, raw output, and following">
@@ -265,40 +253,39 @@ without asking, and once in full when you open its log.</p>
   <figcaption class="keys"><kbd>enter</kbd> <span class="sep" aria-hidden="true">·</span> <kbd>pgup</kbd> <span class="sep" aria-hidden="true">·</span> <kbd>r</kbd> <span class="sep" aria-hidden="true">·</span> <kbd>end</kbd> <span class="sep" aria-hidden="true">·</span> <kbd>esc</kbd></figcaption>
 </figure>
 
+<h2 id="the-row">The row</h2>
+<p>A running row carries its state, elapsed time, tokens spent, and a dollar
+figure when the runner&rsquo;s own stream reports one.</p>
+<p>A run adopted from a previous <code>lerp</code> reads like any other, with its age
+and totals read back from its log rather than the stretch since adoption.</p>
 <h2 id="the-activity-line">The activity line</h2>
-<p>Under a running row, once the run has a log, a second line reads how the
-run is going: the last call the agent made — a shell command as <code>$ go test ./...</code>, anything else by tool and target — and a sparkline of recent
-activity, so a run that has fallen quiet reads as a flat line.</p>
-<p>A run adopted from a previous <code>lerp</code> gets the same line, not a fresh one:
-its log&rsquo;s timestamps are read back into the history, so a run that went
-quiet twenty minutes ago draws the long flat line it earned. A log that
-dates nothing draws the short line of a fresh run.</p>
-<p>The line takes the width the row is given: a wide terminal&rsquo;s full-width
-list draws back about a quarter of an hour; beside an open main pane it
-shows the recent end of the same history. A cell is fifteen seconds
-wherever it is drawn, so a narrow row reaches less far back rather than
-reading more coarsely.</p>
-<p>These are numbers to read, not a timeout. Lerp sets no threshold and never
-acts on one; <a href="../../docs/ejecting/">ejecting</a> a run that has stopped making
-progress stays the operator&rsquo;s call.</p>
+<p>Under a running row, once the run has a log, a second line reads the last
+call the agent made, a shell command as <code>$ go test ./...</code> and anything
+else by tool and target, then a sparkline of recent activity. A run that
+has fallen quiet reads as a flat line, and an adopted run draws the flat
+line it earned rather than a fresh one.</p>
+<p>These are numbers to read, not a timeout. Lerp sets no threshold and
+never acts on one, and <a href="../../docs/ejecting/">ejecting</a> a stalled run stays your
+call.</p>
 <h2 id="the-log">The log</h2>
-<p><code>enter</code> on a running ticket opens a live tail of its log in the main pane,
-with scrollback that survives the run&rsquo;s exit; <code>esc</code> gives the screen back.</p>
-<p>The tail reads as agent activity rather than bytes: tool calls one line
-each, prose as prose, thinking collapsed to a single line with its token
-count. A runner whose output lerp does not recognize is shown exactly as
-written, with no configuration.</p>
-<p><code>pgup</code>/<code>pgdn</code> scroll, <code>end</code> resumes following, and <code>r</code> toggles the pane to
-the runner&rsquo;s raw output and back. The log on disk is untouched either way —
-the raw view is the same file, undecorated.</p>
-<h2 id="what-the-loop-itself-is-doing">What the loop itself is doing</h2>
-<p>Agent output goes to each run&rsquo;s own log, which is what the pane tails. The
-loop&rsquo;s diagnostics — provision, dispose, adopt, reap — go to
-<code>.lerp/loop.log</code>, appended to across sessions. Look there when a run never
+<p><code>enter</code> on a running ticket opens a live tail in the main pane, with
+scrollback that survives the run&rsquo;s exit, and <code>esc</code> gives the screen back.
+<code>pgup</code> and <code>pgdn</code> scroll, <code>end</code> resumes following, and <code>r</code> toggles the
+raw output the runner wrote.</p>
+<p>The tail reads as activity rather than bytes, one line per tool call,
+prose as prose, thinking collapsed to a line with its token count. Output
+lerp does not recognize is shown exactly as written. The log on disk is
+untouched either way.</p>
+<h2 id="the-loops-own-log">The loop&rsquo;s own log</h2>
+<p>Agent output goes to each run&rsquo;s log, which is what the pane tails. The
+loop&rsquo;s diagnostics, provision, dispose, adopt and reap, go to
+<code>.lerp/loop.log</code>, appended across sessions. Look there when a run never
 started, rather than when a run is going badly.</p>
 
 </div>
 
+      
+      <img class="mark-signoff" src="../../mark.svg" alt="" width="120" height="120">
     </main>
     
     
@@ -307,9 +294,10 @@ started, rather than when a run is going badly.</p>
       <h5>On this page</h5>
       <nav id="TableOfContents">
   <ul>
+    <li><a href="#the-row">The row</a></li>
     <li><a href="#the-activity-line">The activity line</a></li>
     <li><a href="#the-log">The log</a></li>
-    <li><a href="#what-the-loop-itself-is-doing">What the loop itself is doing</a></li>
+    <li><a href="#the-loops-own-log">The loop&rsquo;s own log</a></li>
   </ul>
 </nav>
     </nav>
@@ -374,7 +362,11 @@ started, rather than when a run is going badly.</p>
           ["latest"].concat(versions).forEach(function (v) {
             var option = document.createElement("option");
             option.value = v;
-            option.textContent = v;
+            
+            
+            
+            option.textContent = v === "latest" && versions.length
+              ? versions[0] + " · latest" : v;
             option.selected = v === "latest";
             picker.appendChild(option);
           });

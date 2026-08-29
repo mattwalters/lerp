@@ -61,7 +61,7 @@
     
     <a class="nav here" href="../../docs/">Docs</a>
     
-    <a class="nav" href="../../why/">Why lerp</a>
+    <a class="nav" href="../../why/">Why</a>
     
     
     <button type="button" id="theme-picker" class="theme" aria-label="Theme">◐ system</button>
@@ -69,7 +69,8 @@
     
     
     <span class="version">
-      <span class="version-label">latest</span>
+      
+      <span class="version-label">v0.0.7</span>
       <select id="version-picker" hidden aria-label="Documentation version"></select>
     </span>
     
@@ -77,7 +78,7 @@
   <div class="wrap">
     
     
-    <nav class="sidenav" aria-label="Manual">
+    <nav class="sidenav" aria-label="Docs">
       
       
       
@@ -99,16 +100,6 @@
       
       
       
-      <a href="../../docs/overview/">Overview</a>
-      
-      
-      
-      
-      
-      
-      
-      
-      
       <a href="../../docs/install/">Install</a>
       
       
@@ -121,7 +112,6 @@
       
       <a href="../../docs/quickstart/">Quickstart</a>
       
-      <h5>Concepts</h5>
       
       
       
@@ -129,7 +119,8 @@
       
       
       
-      <a href="../../docs/the-board/">The board</a>
+      
+      <a href="../../docs/how-lerp-works/">How lerp works</a>
       
       <h5>The interface</h5>
       
@@ -159,7 +150,7 @@
       
       
       
-      <a href="../../docs/promoting/">Promoting</a>
+      <a href="../../docs/watching-a-run/">Watching a run</a>
       
       
       
@@ -179,7 +170,7 @@
       
       
       
-      <a href="../../docs/watching-a-run/">Watching a run</a>
+      <a href="../../docs/promoting/">Promoting</a>
       
       
       
@@ -241,8 +232,6 @@
       
       <a href="../../scope/">SCOPE</a>
       
-      
-      <img class="sidenav-mark" src="../../favicon.svg" alt="">
     </nav>
     
     <main>
@@ -250,11 +239,11 @@
 
 <div class="prose">
   <h1 id="ejecting">Ejecting</h1>
-<p><code>e</code> on a running row in the
-<a href="../../docs/reading-the-board/#the-work-panel">Work panel</a> stops that agent, frees
-the lane, and hands back the runner&rsquo;s own <code>resume</code> command — the headless
-run becomes your interactive session, in the workspace lerp leaves
-standing.</p>
+<p><code>e</code> on a running row in the <a href="../../docs/reading-the-board/#the-work-panel">Work
+panel</a> stops that agent, frees the
+lane, and hands back the runner&rsquo;s own <code>resume</code> command. The headless run
+becomes your interactive session, in the workspace lerp leaves standing.
+Lerp never ejects anything on its own, so a stalled run waits for you.</p>
 <figure class="cast">
   
   <video class="cast-dark" controls muted loop playsinline preload="metadata" width="1200" height="640" aria-label="Ejecting a running agent, showing the resume command and freeing the lane">
@@ -268,29 +257,23 @@ standing.</p>
   <figcaption class="keys"><kbd>e</kbd> <span class="sep" aria-hidden="true">·</span> <span>the resume command</span> <span class="sep" aria-hidden="true">·</span> <kbd>esc</kbd></figcaption>
 </figure>
 
-<h2 id="what-ejecting-does-not-do">What ejecting does not do</h2>
-<p>Nothing is written to Linear. The ticket keeps its claim and its status:
-ejecting is taking the work over, not abandoning it, and the standing
-claim is what keeps the next pass from starting the stage again underneath
-you.</p>
-<p>Nothing is disposed either. The workspace, git worktree included, is yours
-to finish in and yours to remove.</p>
+<h2 id="what-stays">What stays</h2>
+<p>Nothing is written to Linear. The ticket keeps its claim and its status,
+so the next pass will not start the stage again underneath you. Nothing
+is disposed either. The workspace, git worktree included, is yours to
+finish in and yours to remove.</p>
 <h2 id="the-resume-command">The resume command</h2>
-<p>The command is shown until you dismiss it, and it also lands in
-<code>.lerp/loop.log</code>, so it survives the dismissal and the session.</p>
+<p>The command shows until you dismiss it, and it also lands in
+<code>.lerp/loop.log</code>, so it survives both the dismissal and the session.</p>
 <p>It comes from the runner&rsquo;s <code>resume</code> line in <a href="../../docs/lerp-toml/"><code>lerp.toml</code></a>,
 built from the session ID lerp generated before the run started and the
 workspace it provisioned. A runner with no <code>resume</code> cannot be ejected, so
-<code>e</code> is not offered on its runs rather than failing when pressed.</p>
-<h2 id="when-to-reach-for-it">When to reach for it</h2>
-<p>Ejecting is the operator&rsquo;s call and nothing else&rsquo;s. A run&rsquo;s activity line
-and sparkline say whether an agent is still working (see
-<a href="../../docs/watching-a-run/">watching a run</a>), but lerp sets no threshold on them
-and never acts on one: there is no timeout that ejects a stalled run for
-you.</p>
+<code>e</code> is not offered on its runs.</p>
 
 </div>
 
+      
+      <img class="mark-signoff" src="../../mark.svg" alt="" width="120" height="120">
     </main>
     
     
@@ -299,9 +282,8 @@ you.</p>
       <h5>On this page</h5>
       <nav id="TableOfContents">
   <ul>
-    <li><a href="#what-ejecting-does-not-do">What ejecting does not do</a></li>
+    <li><a href="#what-stays">What stays</a></li>
     <li><a href="#the-resume-command">The resume command</a></li>
-    <li><a href="#when-to-reach-for-it">When to reach for it</a></li>
   </ul>
 </nav>
     </nav>
@@ -366,7 +348,11 @@ you.</p>
           ["latest"].concat(versions).forEach(function (v) {
             var option = document.createElement("option");
             option.value = v;
-            option.textContent = v;
+            
+            
+            
+            option.textContent = v === "latest" && versions.length
+              ? versions[0] + " · latest" : v;
             option.selected = v === "latest";
             picker.appendChild(option);
           });
