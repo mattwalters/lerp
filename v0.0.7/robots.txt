@@ -1,8 +1,0 @@
-# Allow all crawling. Frozen version directories (/vX.Y.Z/) are deliberately
-# not disallowed: search engines need to crawl them to discover their
-# rel="canonical" tags pointing to /latest/, which resolves version duplication.
-User-agent: *
-Allow: /
-
-Sitemap: https://lerp.sh/sitemap.xml
-Sitemap: https://lerp.sh/latest/sitemap.xml
