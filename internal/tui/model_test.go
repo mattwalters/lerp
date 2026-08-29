@@ -2785,9 +2785,9 @@ func TestVisualAllGrabsEveryShownRow(t *testing.T) {
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: threeWaiting()})
 
-	m = update(t, m, keyMsg("V"))
+	m = update(t, m, keyMsg("A"))
 	if !m.visual {
-		t.Fatal("V did not start visual mode")
+		t.Fatal("A did not start visual mode")
 	}
 	if m.visualAnchor != "LERP-1" {
 		t.Fatalf("visualAnchor = %q, want LERP-1 (first shown row)", m.visualAnchor)
@@ -2821,7 +2821,7 @@ func TestVisualAllGrabsEveryShownRow(t *testing.T) {
 	}
 }
 
-// Done-when: V selects only the rows left visible under an active project filter.
+// Done-when: A selects only the rows left visible under an active project filter.
 func TestVisualAllScopedToProjectFilter(t *testing.T) {
 	m, _, _, promoter := newPromoteTestModel(t, 1, defaultTestStatuses)
 	m = pastTheSplash(t, m)
@@ -2842,9 +2842,9 @@ func TestVisualAllScopedToProjectFilter(t *testing.T) {
 		t.Fatalf("test setup: expected 2 shown rows under Alpha, got %d", len(m.shown))
 	}
 
-	m = update(t, m, keyMsg("V"))
+	m = update(t, m, keyMsg("A"))
 	if !m.visual {
-		t.Fatal("V did not start visual mode")
+		t.Fatal("A did not start visual mode")
 	}
 	if count := m.visualSelectionCount(); count != 2 {
 		t.Fatalf("visualSelectionCount = %d, want 2", count)
@@ -2865,7 +2865,7 @@ func TestVisualAllScopedToProjectFilter(t *testing.T) {
 	}
 }
 
-// Done-when: V selects only the rows left visible under an active search filter.
+// Done-when: A selects only the rows left visible under an active search filter.
 func TestVisualAllScopedToSearchFilter(t *testing.T) {
 	m, _, _, promoter := newPromoteTestModel(t, 1, defaultTestStatuses)
 	m = pastTheSplash(t, m)
@@ -2885,9 +2885,9 @@ func TestVisualAllScopedToSearchFilter(t *testing.T) {
 		t.Fatalf("test setup: search not set or wrong shown count: search=%q shown=%d", m.search, len(m.shown))
 	}
 
-	m = update(t, m, keyMsg("V"))
+	m = update(t, m, keyMsg("A"))
 	if !m.visual {
-		t.Fatal("V did not start visual mode")
+		t.Fatal("A did not start visual mode")
 	}
 	if count := m.visualSelectionCount(); count != 2 {
 		t.Fatalf("visualSelectionCount = %d, want 2", count)
@@ -2908,17 +2908,17 @@ func TestVisualAllScopedToSearchFilter(t *testing.T) {
 	}
 }
 
-// Done-when: esc drops a selection started with V back to a single-ticket promote
-// standing on the last row (where V left the cursor).
+// Done-when: esc drops a selection started with A back to a single-ticket promote
+// standing on the last row (where A left the cursor).
 func TestVisualAllEscDegradesToSingleTicket(t *testing.T) {
 	m, _, _, promoter := newPromoteTestModel(t, 1, defaultTestStatuses)
 	m = pastTheSplash(t, m)
 	m = update(t, m, keyMsg("1"))
 	m = update(t, m, eventMsg{ev: threeWaiting()})
 
-	m = update(t, m, keyMsg("V"))
+	m = update(t, m, keyMsg("A"))
 	if !m.visual {
-		t.Fatal("V did not start visual mode")
+		t.Fatal("A did not start visual mode")
 	}
 	m = update(t, m, keyMsg("esc"))
 	if m.visual {
@@ -2943,7 +2943,7 @@ func TestVisualAllEscDegradesToSingleTicket(t *testing.T) {
 	}
 }
 
-// Done-when: pressing V while already in a visual selection expands the selection
+// Done-when: pressing A while already in a visual selection expands the selection
 // to all currently shown rows.
 func TestVisualAllExpandsExistingVisualRange(t *testing.T) {
 	m, _, _, _ := newPromoteTestModel(t, 1, defaultTestStatuses)
@@ -2964,8 +2964,8 @@ func TestVisualAllExpandsExistingVisualRange(t *testing.T) {
 		t.Fatalf("test setup: visualSelectionCount = %d, want 2", count)
 	}
 
-	// Press V: expands to all 4 rows
-	m = update(t, m, keyMsg("V"))
+	// Press A: expands to all 4 rows
+	m = update(t, m, keyMsg("A"))
 	if !m.visual {
 		t.Fatal("visual mode ended unexpectedly")
 	}
@@ -4095,13 +4095,13 @@ func TestFocusedPanelCarriesItsKeys(t *testing.T) {
 		TicketID: "id-9", Ticket: "LERP-9", Queue: "implement", LogPath: "/dev/null"}})
 
 	view := m.View()
-	for _, want := range []string{"p promote", "v select", "V select all"} {
+	for _, want := range []string{"p promote", "v select", "A select all"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("the needs-you panel does not offer %q:\n%s", want, view)
 		}
 	}
 	// In the 45-column panel a 100-column terminal leaves, the list is two
-	// keys over budget now v and V are in the mix: nothing here is in a
+	// keys over budget now v and A are in the mix: nothing here is in a
 	// project, so P was already dead weight, and s — a display cycle, the
 	// tier project is in — is what gives an action key the room.
 	if strings.Contains(view, "P project") {
@@ -4142,12 +4142,12 @@ func TestTheKeyLineKeepsTheKeysThatAct(t *testing.T) {
 	m = update(t, m, keyMsg("enter"))
 
 	line := lineWith(t, m.View(), "p promote")
-	for _, want := range []string{"p promote", "v select", "V select all"} {
+	for _, want := range []string{"p promote", "v select", "A select all"} {
 		if !strings.Contains(line, want) {
 			t.Fatalf("the key line dropped %q, which acts on the row:\n%s", want, line)
 		}
 	}
-	// Three keys short of the room now v and V are in the mix: search and
+	// Three keys short of the room now v and A are in the mix: search and
 	// both display cycles — sort and filter — with the ellipsis to say the
 	// ? overlay has the rest.
 	if strings.Contains(line, "s sort") || strings.Contains(line, "F filter") {
@@ -8610,10 +8610,10 @@ func TestProjectFilterVisualAllPromoteInBacklogSlice(t *testing.T) {
 		t.Fatalf("shown = %v, want the two OSS backlog tickets", got)
 	}
 
-	// Select all rows with 'V':
-	m = update(t, m, keyMsg("V"))
+	// Select all rows with 'A':
+	m = update(t, m, keyMsg("A"))
 	if !m.visual {
-		t.Fatal("V did not enter visual mode")
+		t.Fatal("A did not enter visual mode")
 	}
 	if got := m.visualSelectionCount(); got != 2 {
 		t.Fatalf("visual selected count = %d, want 2", got)

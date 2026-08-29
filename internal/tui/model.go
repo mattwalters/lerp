@@ -1038,7 +1038,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case key.Matches(msg, m.keys.VisualAll):
-		// V selects the full shown range in one keystroke — whatever the
+		// A selects the full shown range in one keystroke — whatever the
 		// active project filter, search, and fold state have left visible.
 		if m.focus == panelAttention && len(m.shown) > 0 && len(m.o.Statuses) > 0 {
 			m.visual, m.visualAnchor = true, m.shown[0].Ticket

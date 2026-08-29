@@ -37,12 +37,14 @@ backs out without writing.
 ## Several at once
 
 `v` on a row starts a visual-mode range, and the movement keys extend it.
-`esc` drops it, and so does anything that reorders or narrows the rows it
-is drawn over, sorting, scoping to a project, slicing or searching. `p`
-then opens the picker once, for one target, and every selected ticket
-goes through the same promote. One failing never stops the rest. The note
-says how many made it, and a row that did not carries a `✗` until it
-promotes cleanly or leaves the board.
+`A` selects every shown row in one keystroke, scoped to whatever the
+active project filter, search, or status slice has left visible. `esc` drops
+the selection, and so does anything that reorders or narrows the rows it is
+drawn over, sorting, scoping to a project, slicing or searching. `p` then
+opens the picker once, for one target, and every selected ticket goes
+through the same promote. One failing never stops the rest. The note says
+how many made it, and a row that did not carries a `✗` until it promotes
+cleanly or leaves the board.
 
 ## After the promote
 
