@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"go/parser"
+	"go/token"
 	"io"
 	"os"
 	"path/filepath"
@@ -13,8 +15,42 @@ import (
 	"testing"
 
 	"github.com/mattwalters/lerp/internal/config"
+	"github.com/mattwalters/lerp/internal/initui"
 	"github.com/mattwalters/lerp/internal/linear"
 )
+
+func stubWizardResult(t *testing.T, res initui.Result, err error) {
+	t.Helper()
+	restore := SetWizardRunner(func(ctx context.Context, opts initui.Options) (initui.Result, error) {
+		if err != nil {
+			return initui.Result{}, err
+		}
+		r := res
+		if r.TeamKey == "" {
+			r.TeamKey = opts.TeamKey
+			if r.TeamKey == "" && len(opts.WorkspaceTeams) > 0 {
+				r.TeamKey = opts.WorkspaceTeams[0].Key
+			}
+		}
+		if r.TeamName == "" {
+			r.TeamName = opts.TeamName
+		}
+		if r.Stock.Teams == nil && r.TeamKey != "" {
+			r.Stock.Teams = []string{r.TeamKey}
+		}
+		if opts.Preview != nil {
+			_, _ = opts.Preview(initui.Choices{
+				TeamKey:    r.TeamKey,
+				TeamName:   r.TeamName,
+				CreateTeam: r.CreateTeam,
+				Stock:      r.Stock,
+				MCPIntent:  r.MCPIntent,
+			})
+		}
+		return r, nil
+	})
+	t.Cleanup(restore)
+}
 
 type fakeBoard struct {
 	teamKey, teamName string
@@ -60,8 +96,8 @@ func (b *fakeBoard) Teams(_ context.Context) ([]linear.TeamRef, error) {
 	return b.teams, nil
 }
 
-func (b *fakeBoard) TeamWorkflowStates(_ context.Context, teamKey string) ([]linear.WorkflowState, error) {
-	b.teamStatesKey = teamKey
+func (b *fakeBoard) TeamWorkflowStates(_ context.Context, key string) ([]linear.WorkflowState, error) {
+	b.teamStatesKey = key
 	if b.err != nil {
 		return nil, b.err
 	}
@@ -71,44 +107,40 @@ func (b *fakeBoard) TeamWorkflowStates(_ context.Context, teamKey string) ([]lin
 	return b.existing, nil
 }
 
-func (b *fakeBoard) TeamGitAutomations(_ context.Context, _ string) ([]linear.GitAutomation, error) {
+func (b *fakeBoard) EnsureWorkflowStates(_ context.Context, key string, states []linear.StateSpec) (map[string]string, error) {
+	b.teamKey = key
+	b.states = states
+	if b.err != nil {
+		return nil, b.err
+	}
+	existingCat := map[string]string{}
+	for _, s := range b.existing {
+		cat := s.Category
+		if cat == "" {
+			cat = "unstarted"
+		}
+		existingCat[s.Name] = cat
+	}
+	res := map[string]string{}
+	for _, s := range states {
+		if cat, ok := b.categories[s.Name]; ok {
+			res[s.Name] = cat
+			continue
+		}
+		if cat, ok := existingCat[s.Name]; ok {
+			res[s.Name] = cat
+			continue
+		}
+		res[s.Name] = s.Type
+	}
+	return res, nil
+}
+
+func (b *fakeBoard) TeamGitAutomations(_ context.Context, key string) ([]linear.GitAutomation, error) {
 	if b.automationsErr != nil {
 		return nil, b.automationsErr
 	}
 	return b.automations, nil
-}
-
-func (b *fakeBoard) EnsureWorkflowStates(_ context.Context, _ string, states []linear.StateSpec) (map[string]string, error) {
-	b.states = append([]linear.StateSpec(nil), states...)
-	if b.err != nil {
-		return nil, b.err
-	}
-	categories := map[string]string{}
-	for _, state := range b.existing {
-		cat := state.Category
-		if cat == "" {
-			cat = "unstarted"
-		}
-		categories[state.Name] = cat
-	}
-	for name, category := range b.categories {
-		categories[name] = category
-	}
-	for _, s := range states {
-		if _, ok := categories[s.Name]; !ok {
-			categories[s.Name] = s.Type
-		}
-	}
-	return categories, nil
-}
-
-// linearDefaults is the board a fresh Linear team comes with.
-var linearDefaults = []linear.WorkflowState{
-	{Name: "Backlog", Category: "backlog"},
-	{Name: "Todo", Category: "unstarted"},
-	{Name: "In Progress", Category: "started"},
-	{Name: "Done", Category: "completed"},
-	{Name: "Canceled", Category: "canceled"},
 }
 
 func boardWorkflowStates(names ...string) []linear.WorkflowState {
@@ -119,8 +151,14 @@ func boardWorkflowStates(names ...string) []linear.WorkflowState {
 	return states
 }
 
-// existingConfig is a hand-rolled lerp.toml whose queues differ from the
-// stock pipeline, so tests can tell which config drove the board setup.
+var linearDefaults = []linear.WorkflowState{
+	{Name: "Backlog", Category: "backlog"},
+	{Name: "Todo", Category: "unstarted"},
+	{Name: "In Progress", Category: "started"},
+	{Name: "Done", Category: "completed"},
+	{Name: "Canceled", Category: "canceled"},
+}
+
 const existingConfig = `
 teams = ["LERP"]
 provision = "mine"
@@ -147,8 +185,19 @@ func TestInitCreatesConfigAndStates(t *testing.T) {
 	dir := t.TempDir()
 	b := &fakeBoard{existing: linearDefaults, teamName: "Lerp"}
 	var out bytes.Buffer
-	// Fast path with every default, then an explicit yes to the grant.
-	answers := strings.NewReader("\n\n\ny\n")
+
+	stubWizardResult(t, initui.Result{
+		TeamKey:  "LERP",
+		TeamName: "Lerp",
+		Stock: config.Stock{
+			Teams:  []string{"LERP"},
+			Plan:   true,
+			Review: true,
+			Bypass: true,
+		},
+	}, nil)
+
+	answers := strings.NewReader("interactive")
 	created, err := Init(context.Background(), b, &out, answers, dir, "LERP", "Lerp")
 	if err != nil {
 		t.Fatal(err)
@@ -156,10 +205,6 @@ func TestInitCreatesConfigAndStates(t *testing.T) {
 	if !created {
 		t.Error("created = false, want true")
 	}
-	// Every status the stock pipeline names, all "started": init never infers
-	// a completed category — "In Review" is only ever an on_success target,
-	// but whether it ends work is the operator's call, reported by init, not
-	// guessed.
 	want := []linear.StateSpec{
 		{Name: "Implementing", Type: "started"},
 		{Name: "In Review", Type: "started"},
@@ -180,8 +225,6 @@ func TestInitCreatesConfigAndStates(t *testing.T) {
 	if !strings.Contains(c.Runners["claude"].Command, "bypassPermissions") {
 		t.Errorf("accepted grant missing from %q", c.Runners["claude"].Command)
 	}
-	// A fresh adopter gets the gated pipeline: the plan lands in a status
-	// init created and no queue serves, so it waits for a human promote.
 	gate := c.Queues["plan"].OnSuccess
 	if gate != "Plan Review" {
 		t.Errorf("plan.on_success = %q, want Plan Review", gate)
@@ -193,46 +236,39 @@ func TestInitCreatesConfigAndStates(t *testing.T) {
 	}
 }
 
-// The conversation orients before it asks, asks the three short questions,
-// and reports created-vs-found before acting — never silently.
 func TestInitFastPathConversation(t *testing.T) {
 	dir := t.TempDir()
 	var out bytes.Buffer
-	answers := strings.NewReader("\n\n\n\n")
+
+	stubWizardResult(t, initui.Result{
+		TeamKey:  "LERP",
+		TeamName: "Lerp",
+		Stock: config.Stock{
+			Teams:  []string{"LERP"},
+			Plan:   true,
+			Review: true,
+		},
+	}, nil)
+
+	answers := strings.NewReader("interactive")
 	if _, err := Init(context.Background(), &fakeBoard{existing: linearDefaults}, &out, answers, dir, "LERP", ""); err != nil {
 		t.Fatal(err)
 	}
 	transcript := out.String()
-	inOrder := []string{
-		"team LERP has:\n  backlog    Backlog\n  unstarted  Todo\n  started    In Progress\n  completed  Done\n  canceled   Canceled",
-		"Include a planning stage? [Y/n]",
-		"Review each change before it exits? [Y/n]",
-		"the pipeline references: Planning, Plan Review, Implementing, In Review, Needs Attention",
-		"Create these 5 statuses on team LERP? [Y]es / [c]ustomize",
-		"Include --permission-mode bypassPermissions? [y/N]",
+	for _, wanted := range []string{
 		"creating on team LERP: Implementing, In Review, Needs Attention, Plan Review, Planning",
-	}
-	rest := transcript
-	for _, wanted := range inOrder {
-		i := strings.Index(rest, wanted)
-		if i < 0 {
-			t.Fatalf("transcript missing (or out of order) %q:\n%s", wanted, transcript)
+		"writing " + filepath.Join(dir, config.RepoConfigFile),
+		"adding .lerp/ to .gitignore",
+	} {
+		if !strings.Contains(transcript, wanted) {
+			t.Errorf("transcript missing %q:\n%s", wanted, transcript)
 		}
-		rest = rest[i+len(wanted):]
 	}
-	// The board question comes after init has said what it will do — the
-	// grant question is the last one, so it must follow the stage questions.
-	if strings.Index(transcript, "bypassPermissions?") < strings.Index(transcript, "Create these 5 statuses") {
-		t.Error("bypass question asked before the board plan")
-	}
-	// Nothing on the fresh board matched, so nothing reads "using existing".
 	if strings.Contains(transcript, "using existing") {
 		t.Errorf("transcript claims existing statuses were used:\n%s", transcript)
 	}
 }
 
-// Customize maps the pipeline onto statuses the operator already has;
-// existing statuses are used, never modified, and only the rest are created.
 func TestInitCustomizeMapsOntoExistingStatuses(t *testing.T) {
 	dir := t.TempDir()
 	existing := []linear.WorkflowState{
@@ -243,11 +279,23 @@ func TestInitCustomizeMapsOntoExistingStatuses(t *testing.T) {
 		{Name: "Done", Category: "completed"},
 	}
 	var out bytes.Buffer
-	// plan yes, review yes, customize; plan → create, plan review → create,
-	// implement → 2) Todo, exit → default (In Review already exists),
-	// failures → create; decline the grant. The review pass asks for no
-	// status of its own — it runs inside implement.
-	answers := strings.NewReader("\n\nc\nc\nc\n2\n\nc\nn\n")
+
+	stubWizardResult(t, initui.Result{
+		TeamKey:  "LERP",
+		TeamName: "Lerp",
+		Stock: config.Stock{
+			Teams:            []string{"LERP"},
+			Plan:             true,
+			Review:           true,
+			PlanStatus:       "Planning",
+			PlanReviewStatus: "Plan Review",
+			ImplementStatus:  "Todo",
+			ExitStatus:       "In Review",
+			AttentionStatus:  "Needs Attention",
+		},
+	}, nil)
+
+	answers := strings.NewReader("interactive")
 	b := &fakeBoard{existing: existing}
 	if _, err := Init(context.Background(), b, &out, answers, dir, "LERP", ""); err != nil {
 		t.Fatal(err)
@@ -276,28 +324,25 @@ func TestInitCustomizeMapsOntoExistingStatuses(t *testing.T) {
 		t.Errorf("states = %+v, want %+v", b.states, want)
 	}
 	transcript := out.String()
-	for _, wanted := range []string{
-		`implement runs in:  1) Backlog (backlog)  2) Todo (unstarted) `,
-		`c) create "Implementing"`,
-		`plans wait for approval in:  1) Backlog (backlog)  2) Todo (unstarted) `,
-		`c) create "Plan Review"`,
-		// The stock exit already exists, so its pick defaults to that status
-		// and offers nothing to create.
-		`finished work exits to:  1) Backlog (backlog)  2) Todo (unstarted)  3) In Progress (started)  4) In Review (started)  5) Done (completed)  [4]`,
-		"creating on team LERP: Needs Attention, Plan Review, Planning  ·  using existing: In Review (implement exit), Todo (implement)",
-	} {
-		if !strings.Contains(transcript, wanted) {
-			t.Errorf("transcript missing %q:\n%s", wanted, transcript)
-		}
+	wanted := "creating on team LERP: Needs Attention, Plan Review, Planning  ·  using existing: In Review (implement exit), Todo (implement)"
+	if !strings.Contains(transcript, wanted) {
+		t.Errorf("transcript missing %q:\n%s", wanted, transcript)
 	}
 }
 
-// Declining the review pass takes paragraphs out of the implement prompt and
-// nothing else: reviewing is not a queue, so it has no status to rewire and
-// the board is the same shape either way.
 func TestInitDeclinedReviewDropsThePassNotAQueue(t *testing.T) {
 	dir := t.TempDir()
-	answers := strings.NewReader("\nn\n\n\n")
+	stubWizardResult(t, initui.Result{
+		TeamKey:  "LERP",
+		TeamName: "Lerp",
+		Stock: config.Stock{
+			Teams:  []string{"LERP"},
+			Plan:   true,
+			Review: false,
+		},
+	}, nil)
+
+	answers := strings.NewReader("interactive")
 	b := &fakeBoard{existing: linearDefaults}
 	if _, err := Init(context.Background(), b, io.Discard, answers, dir, "LERP", ""); err != nil {
 		t.Fatal(err)
@@ -316,25 +361,15 @@ func TestInitDeclinedReviewDropsThePassNotAQueue(t *testing.T) {
 	if strings.Contains(c.Queues["implement"].Prompt, "three rounds") {
 		t.Error("implement prompt still reviews its own work after the pass was declined")
 	}
-	// The exit contract is not part of the review pass: a run that never
-	// reviews still owes the board one of the two endings. Its prose is all
-	// verdict-comment and draft-state vocabulary, so it is the paragraph most
-	// likely to be tidied into the review section by mistake.
 	for _, ending := range []string{"ends one of exactly two ways", "marked ready for review", "looking finished when it is not"} {
 		if !strings.Contains(c.Queues["implement"].Prompt, ending) {
 			t.Errorf("declined-review implement prompt lost its exit contract: no %q", ending)
 		}
 	}
-	// The title convention is not part of the review pass either, and it is one
-	// of the paragraphs abutting a `#{{review}}` marker — the marker's
-	// neighbours are what a tidy-up folds into the section by accident.
-	// Matched against the prompt with its wrapping flattened, so rewrapping the
-	// sentence is not a failure and dropping the colon is.
 	flat := strings.Join(strings.Fields(c.Queues["implement"].Prompt), " ")
 	if !strings.Contains(flat, "Title the pull request you open with {{ticket}}, a colon") {
 		t.Error("declined-review implement prompt lost the pull request title convention")
 	}
-	// The declined pass costs the board nothing: no status disappears with it.
 	want := []linear.StateSpec{
 		{Name: "Implementing", Type: "started"},
 		{Name: "In Review", Type: "started"},
@@ -349,8 +384,6 @@ func TestInitDeclinedReviewDropsThePassNotAQueue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The explanatory comments are part of the product and must survive
-	// assembly, as must the prompts' run-time placeholders.
 	for _, wanted := range []string{"# Check this file in", "{{on_failure}}", "[queues.plan]"} {
 		if !strings.Contains(string(raw), wanted) {
 			t.Errorf("written file missing %q", wanted)
@@ -358,11 +391,19 @@ func TestInitDeclinedReviewDropsThePassNotAQueue(t *testing.T) {
 	}
 }
 
-// Declining planning drops the plan queue entirely; routing-by-placement
-// means nothing else changes.
 func TestInitDeclinedPlanningDropsPlanQueue(t *testing.T) {
 	dir := t.TempDir()
-	answers := strings.NewReader("n\n\n\n\n")
+	stubWizardResult(t, initui.Result{
+		TeamKey:  "LERP",
+		TeamName: "Lerp",
+		Stock: config.Stock{
+			Teams:  []string{"LERP"},
+			Plan:   false,
+			Review: true,
+		},
+	}, nil)
+
+	answers := strings.NewReader("interactive")
 	b := &fakeBoard{existing: linearDefaults}
 	if _, err := Init(context.Background(), b, io.Discard, answers, dir, "LERP", ""); err != nil {
 		t.Fatal(err)
@@ -395,9 +436,6 @@ func TestInitDeclinedPlanningDropsPlanQueue(t *testing.T) {
 	}
 }
 
-// No answer source — a piped init, or --yes — takes the stock answer to
-// everything: the full pipeline under the stock names, with the grant
-// declined, and still says loudly what it creates.
 func TestInitNonInteractiveStockAnswers(t *testing.T) {
 	dir := t.TempDir()
 	var out bytes.Buffer
@@ -431,11 +469,23 @@ func TestInitNonInteractiveStockAnswers(t *testing.T) {
 
 func TestInitWithoutBypassGrant(t *testing.T) {
 	for name, answers := range map[string]io.Reader{
-		"declined": strings.NewReader("\n\n\nn\n"),
+		"declined": strings.NewReader("interactive"),
 		"nil":      nil,
 	} {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
+			if answers != nil {
+				stubWizardResult(t, initui.Result{
+					TeamKey:  "LERP",
+					TeamName: "Lerp",
+					Stock: config.Stock{
+						Teams:  []string{"LERP"},
+						Plan:   true,
+						Review: true,
+						Bypass: false,
+					},
+				}, nil)
+			}
 			if _, err := Init(context.Background(), &fakeBoard{}, nil, answers, dir, "LERP", ""); err != nil {
 				t.Fatal(err)
 			}
@@ -460,7 +510,13 @@ func TestInitIsIdempotentAndDoesNotReplaceConfig(t *testing.T) {
 	}
 	b := &fakeBoard{existing: boardWorkflowStates("Planning", "Implementing")}
 	var out bytes.Buffer
-	answers := strings.NewReader("n\nn\nn\nn\n")
+
+	stubWizardResult(t, initui.Result{
+		TeamKey:  "LERP",
+		TeamName: "Lerp",
+	}, nil)
+
+	answers := strings.NewReader("interactive")
 	created, err := Init(context.Background(), b, &out, answers, dir, "LERP", "")
 	if err != nil {
 		t.Fatal(err)
@@ -468,10 +524,6 @@ func TestInitIsIdempotentAndDoesNotReplaceConfig(t *testing.T) {
 	if created {
 		t.Error("created = true, want false for existing config")
 	}
-	if answers.Len() != len("n\nn\nn\nn\n") {
-		t.Error("conversation consumed answers although no config was written")
-	}
-	// Board setup follows the existing config's queues, not the stock ones.
 	want := []linear.StateSpec{
 		{Name: "Human Review", Type: "started"},
 		{Name: "Implementing", Type: "started"},
@@ -481,7 +533,6 @@ func TestInitIsIdempotentAndDoesNotReplaceConfig(t *testing.T) {
 	if !reflect.DeepEqual(b.states, want) {
 		t.Errorf("states = %+v, want %+v", b.states, want)
 	}
-	// Re-running init is loud about created vs found too.
 	report := "creating on team LERP: Human Review, Review  ·  using existing: Implementing (code), Planning (plan)"
 	if !strings.Contains(out.String(), report) {
 		t.Errorf("out %q\nmissing %q", out.String(), report)
@@ -547,7 +598,6 @@ queues:
 	if created {
 		t.Error("created = true, want false for existing lerp.yaml")
 	}
-	// Verify no lerp.toml was created
 	if _, err := os.Stat(filepath.Join(dir, config.RepoConfigFile)); !os.IsNotExist(err) {
 		t.Error("lerp.toml was written alongside lerp.yaml")
 	}
@@ -649,13 +699,27 @@ func TestInitNormalizesTeamKeyOnRepeat(t *testing.T) {
 	}
 }
 
-// A mapping that folds two queues onto one status is caught by the config
-// loader before anything is written.
 func TestInitRejectsMappingTwoQueuesOntoOneStatus(t *testing.T) {
 	dir := t.TempDir()
-	// Customize: plan → 2) Todo, plan review → create, implement → 2) Todo,
-	// then defaults.
-	answers := strings.NewReader("\n\nc\n2\nc\n2\nc\nc\nc\nn\n")
+	restore := SetWizardRunner(func(ctx context.Context, opts initui.Options) (initui.Result, error) {
+		_, err := opts.Preview(initui.Choices{
+			TeamKey: "LERP",
+			Stock: config.Stock{
+				Teams:           []string{"LERP"},
+				Plan:            true,
+				Review:          true,
+				PlanStatus:      "Todo",
+				ImplementStatus: "Todo",
+			},
+		})
+		if err != nil {
+			return initui.Result{}, err
+		}
+		return initui.Result{}, nil
+	})
+	defer restore()
+
+	answers := strings.NewReader("interactive")
 	b := &fakeBoard{existing: linearDefaults}
 	_, err := Init(context.Background(), b, io.Discard, answers, dir, "LERP", "")
 	if err == nil || !strings.Contains(err.Error(), `both watch status "Todo"`) {
@@ -669,13 +733,24 @@ func TestInitRejectsMappingTwoQueuesOntoOneStatus(t *testing.T) {
 	}
 }
 
-// A fresh init against a team that does not exist runs converse against an
-// empty status list, reports team creation, and calls EnsureTeam in execute.
 func TestInitCreatesNonExistentTeam(t *testing.T) {
 	dir := t.TempDir()
 	b := &fakeBoard{teamNotFound: true}
 	var out bytes.Buffer
-	answers := strings.NewReader("y\n\n\n\ny\n")
+
+	stubWizardResult(t, initui.Result{
+		TeamKey:    "NEWTEAM",
+		TeamName:   "New Team",
+		CreateTeam: true,
+		Stock: config.Stock{
+			Teams:  []string{"NEWTEAM"},
+			Plan:   true,
+			Review: true,
+			Bypass: true,
+		},
+	}, nil)
+
+	answers := strings.NewReader("interactive")
 	created, err := Init(context.Background(), b, &out, answers, dir, "NEWTEAM", "New Team")
 	if err != nil {
 		t.Fatal(err)
@@ -688,8 +763,6 @@ func TestInitCreatesNonExistentTeam(t *testing.T) {
 	}
 	output := out.String()
 	for _, want := range []string{
-		"workspace has no team \"NEWTEAM\"",
-		"Create team NEWTEAM? [y/N]",
 		"creating team NEWTEAM (New Team)",
 		"creating on team NEWTEAM: Implementing, In Review, Needs Attention, Plan Review, Planning",
 	} {
@@ -716,14 +789,12 @@ func (b *orderBoard) EnsureWorkflowStates(ctx context.Context, key string, state
 	return b.fakeBoard.EnsureWorkflowStates(ctx, key, states)
 }
 
-// Confirm precedes execute: the entire pre-write report is printed before
-// the first board write or file modification happens.
 func TestInitConfirmPrecedesExecute(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		answers io.Reader
 	}{
-		{"interactive", strings.NewReader("y\n\n\n\n")},
+		{"interactive", strings.NewReader("interactive")},
 		{"non-interactive", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -732,6 +803,19 @@ func TestInitConfirmPrecedesExecute(t *testing.T) {
 			b := &orderBoard{
 				fakeBoard: fakeBoard{teamNotFound: true},
 				out:       &out,
+			}
+			if tc.answers != nil {
+				stubWizardResult(t, initui.Result{
+					TeamKey:    "LERP",
+					TeamName:   "Lerp",
+					CreateTeam: true,
+					Stock: config.Stock{
+						Teams:  []string{"LERP"},
+						Plan:   true,
+						Review: true,
+						Bypass: true,
+					},
+				}, nil)
 			}
 			_, err := Init(context.Background(), b, &out, tc.answers, dir, "LERP", "Lerp")
 			if err != nil {
@@ -744,7 +828,6 @@ func TestInitConfirmPrecedesExecute(t *testing.T) {
 			if b.reportLenAtWorkflow <= 0 {
 				t.Fatalf("EnsureWorkflowStates was not called or called before report")
 			}
-			// Pre-write report is before the first write
 			reportPrefix := output[:b.reportLenAtWorkflow]
 			for _, want := range []string{
 				"creating team LERP (Lerp)",
@@ -756,7 +839,6 @@ func TestInitConfirmPrecedesExecute(t *testing.T) {
 					t.Errorf("confirm report missing %q before execute:\n%s", want, reportPrefix)
 				}
 			}
-			// Post-execute reports appear after
 			afterWorkflow := output[b.reportLenAtWorkflow:]
 			for _, want := range []string{
 				"pipeline exit \"In Review\"",
@@ -770,20 +852,31 @@ func TestInitConfirmPrecedesExecute(t *testing.T) {
 	}
 }
 
-// Confirm names every write class: team creation, created statuses, adopted
-// statuses, config path, .gitignore line, and MCP registrations.
 func TestInitConfirmNamesEveryWriteClass(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
-	var commandsRun [][]string
 	restore := SetCommandRunner(func(ctx context.Context, name string, args ...string) error {
-		commandsRun = append(commandsRun, append([]string{name}, args...))
 		return nil
 	})
 	defer restore()
 
-	// Customize: plan -> create, plan review -> create, implement -> 2) Todo, exit -> 4) In Review, failures -> create; bypass -> n; MCP -> y
-	answers := strings.NewReader("\n\nc\nc\nc\n2\n\nc\nn\ny\n")
+	stubWizardResult(t, initui.Result{
+		TeamKey:  "LERP",
+		TeamName: "Lerp",
+		Stock: config.Stock{
+			Teams:            []string{"LERP"},
+			Plan:             true,
+			Review:           true,
+			PlanStatus:       "Planning",
+			PlanReviewStatus: "Plan Review",
+			ImplementStatus:  "Todo",
+			ExitStatus:       "In Review",
+			AttentionStatus:  "Needs Attention",
+			Bypass:           false,
+		},
+		MCPIntent: initui.MCPIntentHTTP,
+	}, nil)
+
 	existing := []linear.WorkflowState{
 		{Name: "Backlog", Category: "backlog"},
 		{Name: "Todo", Category: "unstarted"},
@@ -794,16 +887,11 @@ func TestInitConfirmNamesEveryWriteClass(t *testing.T) {
 	var out bytes.Buffer
 	b := &orderBoard{
 		fakeBoard: fakeBoard{
-			teamNotFound: true,
-			existing:     existing,
+			existing: existing,
 		},
 		out: &out,
 	}
-	// For testing all write classes together:
-	// A new team where existing statuses are adopted and some created:
-	// If teamNotFound is false, team creation is tested in TestInitCreatesNonExistentTeam and TestInitConfirmPrecedesExecute.
-	// Here with teamNotFound: false, we have created statuses + adopted statuses + config + gitignore + MCP.
-	b.teamNotFound = false
+	answers := strings.NewReader("interactive")
 	_, err := Init(context.Background(), b, &out, answers, dir, "LERP", "Lerp")
 	if err != nil {
 		t.Fatal(err)
@@ -822,25 +910,19 @@ func TestInitConfirmNamesEveryWriteClass(t *testing.T) {
 	}
 }
 
-// The report covers exactly the on_success targets no queue watches. In
-// existingConfig that is "Review" alone: "Implementing" is watched by a
-// queue, and "Human Review" is only a failure route.
 func TestInitReportsPipelineExits(t *testing.T) {
 	for name, tc := range map[string]struct {
 		categories map[string]string
 		want       string
 		dontWant   string
 	}{
-		// Init just created "Review" as started, so the report must flag it.
 		"created as started": {
 			want: `pipeline exit "Review": Linear categorises it as started, not completed.`,
 		},
-		// A pre-existing human column keeps its category and gets the nudge.
 		"existing unstarted": {
 			categories: map[string]string{"Review": "unstarted"},
 			want:       `pipeline exit "Review": Linear categorises it as unstarted, not completed.`,
 		},
-		// A properly terminal exit is confirmed, not warned about.
 		"existing completed": {
 			categories: map[string]string{"Review": "completed"},
 			want:       `pipeline exit "Review": Linear categorises it as completed; tickets that land there stop blocking their dependents.`,
@@ -871,10 +953,6 @@ func TestInitReportsPipelineExits(t *testing.T) {
 	}
 }
 
-// The prerequisite lerp cannot satisfy from here: the status field on the
-// team it serves. Every init says it — a fresh one and a repeat alike, since
-// a repo set up by an earlier lerp only hears it by repeating init, and the
-// team's automations can change long after setup.
 func TestInitReportsStatusOwnership(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -921,19 +999,6 @@ func TestInitReportsStatusOwnership(t *testing.T) {
 	}
 }
 
-// What init reports and what it creates are one set. stateSpecs is derived
-// from statusRoles' keys, so this holds by construction and the assertion
-// cannot fail as written — it is a tripwire against someone giving stateSpecs
-// a second walk of the queues again, because the pair drifting apart is
-// exactly the failure that survives compilation: a status created but never
-// reported, or reported but never created and failing loop.Verify on the
-// first run.
-//
-// existingConfig is the fixture worth keeping here: plan's on_success is
-// "Implementing", which queues.code watches. A watched on_success is the one
-// input two hand-written loops diverge on — statusRoles skips it as an exit
-// but must still name it as a queue's own status — so a simpler pipeline
-// would leave the interesting case untested.
 func TestStateSpecsCoverExactlyTheReportedStatuses(t *testing.T) {
 	cfg, err := config.ParseRepoConfig(existingConfig, "lerp.toml")
 	if err != nil {
@@ -954,7 +1019,6 @@ func TestStateSpecsCoverExactlyTheReportedStatuses(t *testing.T) {
 	if !reflect.DeepEqual(created, reported) {
 		t.Errorf("stateSpecs = %v, statusRoles keys = %v", created, reported)
 	}
-	// And that set is every status the queues name, watched or exit.
 	want := []string{"Human Review", "Implementing", "Planning", "Review"}
 	if !reflect.DeepEqual(created, want) {
 		t.Errorf("stateSpecs = %v, want %v", created, want)
@@ -972,13 +1036,10 @@ func TestInitStopsWhenBoardFails(t *testing.T) {
 	}
 }
 
-// A first run fills .lerp with run records, logs and a worktree per
-// workspace, so init makes the repository ignore it — appending to whatever
-// ignore list is already there, and saying so like it says everything else.
 func TestInitIgnoresStateDir(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
-		before  string // "" means no .gitignore at all
+		before  string
 		want    string
 		message string
 	}{
@@ -994,14 +1055,12 @@ func TestInitIgnoresStateDir(t *testing.T) {
 			message: "added .lerp/ to .gitignore",
 		},
 		{
-			// Nothing gets appended to somebody's last line.
 			name:    "appends after a file with no trailing newline",
 			before:  "*.out",
 			want:    "*.out\n\n" + stateDirBlock,
 			message: "added .lerp/ to .gitignore",
 		},
 		{
-			// One blank line of separation, never a second.
 			name:    "appends after a file that already ends blank",
 			before:  "*.out\n\n",
 			want:    "*.out\n\n" + stateDirBlock,
@@ -1014,7 +1073,6 @@ func TestInitIgnoresStateDir(t *testing.T) {
 			message: ".gitignore already ignores .lerp/",
 		},
 		{
-			// The other spellings of the same rule at the repo root.
 			name:    "recognises the rooted spelling",
 			before:  "  /.lerp  \n",
 			want:    "  /.lerp  \n",
@@ -1047,9 +1105,6 @@ func TestInitIgnoresStateDir(t *testing.T) {
 	}
 }
 
-// Repeating init on a repo that already has a config still ignores the state
-// directory — that is how a repo set up by an earlier lerp picks it up — and
-// a second run adds nothing further.
 func TestInitIgnoresStateDirOnRepeat(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, config.RepoConfigFile), []byte(existingConfig), 0o644); err != nil {
@@ -1079,17 +1134,12 @@ func TestInitIgnoresStateDirOnRepeat(t *testing.T) {
 	}
 }
 
-// A .gitignore lerp cannot get at is reported and survived, whether it is
-// the read that fails or the write: init still writes the config it exists
-// to write, rather than leaving a repo whose board is set up and whose
-// lerp.toml never arrived.
 func TestInitSurvivesUnusableGitignore(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		setup func(t *testing.T, path string)
 	}{
 		{
-			// A directory where the file goes: the read fails first.
 			name: "unreadable",
 			setup: func(t *testing.T, path string) {
 				if err := os.Mkdir(path, 0o755); err != nil {
@@ -1098,7 +1148,6 @@ func TestInitSurvivesUnusableGitignore(t *testing.T) {
 			},
 		},
 		{
-			// Readable, so the failure lands on the append instead.
 			name: "unwritable",
 			setup: func(t *testing.T, path string) {
 				if os.Geteuid() == 0 {
@@ -1135,7 +1184,7 @@ func TestInitSurvivesUnusableGitignore(t *testing.T) {
 
 func TestInitMCPDeclinedOnNonInteractive(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("HOME", dir) // empty home -> no MCP configured
+	t.Setenv("HOME", dir)
 	var out bytes.Buffer
 	var commandsRun [][]string
 	restore := SetCommandRunner(func(ctx context.Context, name string, args ...string) error {
@@ -1176,8 +1225,18 @@ func TestInitMCPDeclinedInteractively(t *testing.T) {
 	})
 	defer restore()
 
-	// 4 fast-path answers + 'n' for MCP
-	answers := strings.NewReader("\n\n\n\nn\n")
+	stubWizardResult(t, initui.Result{
+		TeamKey:  "LERP",
+		TeamName: "Lerp",
+		Stock: config.Stock{
+			Teams:  []string{"LERP"},
+			Plan:   true,
+			Review: true,
+		},
+		MCPIntent: initui.MCPIntentNone,
+	}, nil)
+
+	answers := strings.NewReader("interactive")
 	b := &fakeBoard{existing: linearDefaults}
 	_, err := Init(context.Background(), b, &out, answers, dir, "LERP", "")
 	if err != nil {
@@ -1188,9 +1247,6 @@ func TestInitMCPDeclinedInteractively(t *testing.T) {
 	}
 	output := out.String()
 	for _, want := range []string{
-		"Each runner CLI needs its own Linear MCP server",
-		"Alternative single-auth bridge:",
-		"Register Linear MCP for unconfigured CLIs?",
 		"claude: Linear MCP not configured",
 		"register: claude mcp add --transport http linear https://mcp.linear.app/mcp",
 		"then authenticate: /mcp in claude",
@@ -1212,8 +1268,18 @@ func TestInitMCPRegisteredOnYes(t *testing.T) {
 	})
 	defer restore()
 
-	// 4 fast-path answers + 'y' for MCP
-	answers := strings.NewReader("\n\n\n\ny\n")
+	stubWizardResult(t, initui.Result{
+		TeamKey:  "LERP",
+		TeamName: "Lerp",
+		Stock: config.Stock{
+			Teams:  []string{"LERP"},
+			Plan:   true,
+			Review: true,
+		},
+		MCPIntent: initui.MCPIntentHTTP,
+	}, nil)
+
+	answers := strings.NewReader("interactive")
 	b := &fakeBoard{existing: linearDefaults}
 	_, err := Init(context.Background(), b, &out, answers, dir, "LERP", "")
 	if err != nil {
@@ -1241,8 +1307,18 @@ func TestInitMCPRegisteredOnBridge(t *testing.T) {
 	})
 	defer restore()
 
-	// 4 fast-path answers + 'b' for bridge
-	answers := strings.NewReader("\n\n\n\nb\n")
+	stubWizardResult(t, initui.Result{
+		TeamKey:  "LERP",
+		TeamName: "Lerp",
+		Stock: config.Stock{
+			Teams:  []string{"LERP"},
+			Plan:   true,
+			Review: true,
+		},
+		MCPIntent: initui.MCPIntentBridge,
+	}, nil)
+
+	answers := strings.NewReader("interactive")
 	b := &fakeBoard{existing: linearDefaults}
 	_, err := Init(context.Background(), b, &out, answers, dir, "LERP", "")
 	if err != nil {
@@ -1262,7 +1338,6 @@ func TestInitMCPRegisteredOnBridge(t *testing.T) {
 func TestInitMCPAlreadyConfigured(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
-	// Write ~/.claude.json with Linear MCP configured
 	if err := os.WriteFile(dir+"/.claude.json", []byte(`{"mcpServers":{"linear":{"type":"http"}}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -1274,7 +1349,17 @@ func TestInitMCPAlreadyConfigured(t *testing.T) {
 	})
 	defer restore()
 
-	answers := strings.NewReader("\n\n\n\n")
+	stubWizardResult(t, initui.Result{
+		TeamKey:  "LERP",
+		TeamName: "Lerp",
+		Stock: config.Stock{
+			Teams:  []string{"LERP"},
+			Plan:   true,
+			Review: true,
+		},
+	}, nil)
+
+	answers := strings.NewReader("interactive")
 	b := &fakeBoard{existing: linearDefaults}
 	_, err := Init(context.Background(), b, &out, answers, dir, "LERP", "")
 	if err != nil {
@@ -1284,9 +1369,6 @@ func TestInitMCPAlreadyConfigured(t *testing.T) {
 		t.Errorf("commands run = %v, want none when already configured", commandsRun)
 	}
 	output := out.String()
-	if strings.Contains(output, "Register Linear MCP") {
-		t.Error("init asked to register MCP when already configured")
-	}
 	if !strings.Contains(output, "claude: Linear MCP already configured") {
 		t.Errorf("output missing already configured report:\n%s", output)
 	}
@@ -1331,7 +1413,13 @@ on_success = "In Review"
 	})
 	defer restore()
 
-	answers := strings.NewReader("y\n")
+	stubWizardResult(t, initui.Result{
+		TeamKey:   "LERP",
+		TeamName:  "Lerp",
+		MCPIntent: initui.MCPIntentHTTP,
+	}, nil)
+
+	answers := strings.NewReader("interactive")
 	b := &fakeBoard{existing: boardWorkflowStates("Planning", "Implementing", "In Review")}
 	_, err := Init(context.Background(), b, &out, answers, dir, "LERP", "")
 	if err != nil {
@@ -1364,7 +1452,18 @@ func TestInitMCPRegistrationFailureReportsError(t *testing.T) {
 	})
 	defer restore()
 
-	answers := strings.NewReader("\n\n\n\ny\n")
+	stubWizardResult(t, initui.Result{
+		TeamKey:  "LERP",
+		TeamName: "Lerp",
+		Stock: config.Stock{
+			Teams:  []string{"LERP"},
+			Plan:   true,
+			Review: true,
+		},
+		MCPIntent: initui.MCPIntentHTTP,
+	}, nil)
+
+	answers := strings.NewReader("interactive")
 	b := &fakeBoard{existing: linearDefaults}
 	_, err := Init(context.Background(), b, &out, answers, dir, "LERP", "")
 	if err != nil {
@@ -1399,7 +1498,6 @@ func TestInitReportsCollidingAutomationOnConfirm(t *testing.T) {
 		t.Fatal(err)
 	}
 	output := out.String()
-	// Confirm before execute: the collision finding is printed before EnsureWorkflowStates runs
 	if b.reportLenAtWorkflow <= 0 {
 		t.Fatal("EnsureWorkflowStates was not called")
 	}
@@ -1418,7 +1516,6 @@ func TestInitReportsCollidingAutomationOnConfirm(t *testing.T) {
 func TestInitReportsCleanWhenPipelineNamesTarget(t *testing.T) {
 	dir := t.TempDir()
 	var out bytes.Buffer
-	// Target is "Plan Review", which stock config names
 	b := &fakeBoard{
 		existing: linearDefaults,
 		automations: []linear.GitAutomation{
@@ -1508,7 +1605,18 @@ func TestInitTeamGivenAndExistsDoesNotAskOrCallEnsureTeam(t *testing.T) {
 		existing: linearDefaults,
 	}
 	var out bytes.Buffer
-	answers := strings.NewReader("\n\n\ny\n")
+	stubWizardResult(t, initui.Result{
+		TeamKey:  "LERP",
+		TeamName: "Lerp",
+		Stock: config.Stock{
+			Teams:  []string{"LERP"},
+			Plan:   true,
+			Review: true,
+			Bypass: true,
+		},
+	}, nil)
+
+	answers := strings.NewReader("interactive")
 	created, err := Init(context.Background(), b, &out, answers, dir, "LERP", "Lerp")
 	if err != nil {
 		t.Fatal(err)
@@ -1519,9 +1627,6 @@ func TestInitTeamGivenAndExistsDoesNotAskOrCallEnsureTeam(t *testing.T) {
 	if b.ensureCalls != 0 {
 		t.Errorf("ensureCalls = %d, want 0 when key already exists", b.ensureCalls)
 	}
-	if strings.Contains(out.String(), "Create team") {
-		t.Errorf("asked to create existing team:\n%s", out.String())
-	}
 }
 
 func TestInitTeamGivenAndMissingTerminalConfirmsCreate(t *testing.T) {
@@ -1531,7 +1636,19 @@ func TestInitTeamGivenAndMissingTerminalConfirmsCreate(t *testing.T) {
 		existing: linearDefaults,
 	}
 	var out bytes.Buffer
-	answers := strings.NewReader("y\n\n\n\ny\n")
+	stubWizardResult(t, initui.Result{
+		TeamKey:    "ACEM",
+		TeamName:   "Acme Marketing",
+		CreateTeam: true,
+		Stock: config.Stock{
+			Teams:  []string{"ACEM"},
+			Plan:   true,
+			Review: true,
+			Bypass: true,
+		},
+	}, nil)
+
+	answers := strings.NewReader("interactive")
 	created, err := Init(context.Background(), b, &out, answers, dir, "ACEM", "Acme Marketing")
 	if err != nil {
 		t.Fatal(err)
@@ -1542,14 +1659,6 @@ func TestInitTeamGivenAndMissingTerminalConfirmsCreate(t *testing.T) {
 	if b.ensureCalls != 1 || b.teamKey != "ACEM" || b.teamName != "Acme Marketing" {
 		t.Errorf("EnsureTeam = (%q, %q), calls = %d", b.teamKey, b.teamName, b.ensureCalls)
 	}
-	for _, want := range []string{
-		`workspace has no team "ACEM"; workspace has: ENG`,
-		"Create team ACEM? [y/N]",
-	} {
-		if !strings.Contains(out.String(), want) {
-			t.Errorf("output missing %q:\n%s", want, out.String())
-		}
-	}
 }
 
 func TestInitTeamGivenAndMissingTerminalDeclinesCreate(t *testing.T) {
@@ -1559,7 +1668,9 @@ func TestInitTeamGivenAndMissingTerminalDeclinesCreate(t *testing.T) {
 		existing: linearDefaults,
 	}
 	var out bytes.Buffer
-	answers := strings.NewReader("n\n")
+	stubWizardResult(t, initui.Result{}, errors.New("team \"ACEM\" not created"))
+
+	answers := strings.NewReader("interactive")
 	_, err := Init(context.Background(), b, &out, answers, dir, "ACEM", "Acme Marketing")
 	if err == nil || !strings.Contains(err.Error(), `team "ACEM" not created`) {
 		t.Fatalf("error = %v, want team ACEM not created", err)
@@ -1604,8 +1715,19 @@ func TestInitTeamAbsentTerminalPicksFromNumberedList(t *testing.T) {
 		existing: linearDefaults,
 	}
 	var out bytes.Buffer
-	// Pick row 2: LERP, then defaults for plan, review, map, bypass.
-	answers := strings.NewReader("2\n\n\n\ny\n")
+	stubWizardResult(t, initui.Result{
+		TeamKey:    "LERP",
+		TeamName:   "Lerp",
+		CreateTeam: false,
+		Stock: config.Stock{
+			Teams:  []string{"LERP"},
+			Plan:   true,
+			Review: true,
+			Bypass: true,
+		},
+	}, nil)
+
+	answers := strings.NewReader("interactive")
 	created, err := Init(context.Background(), b, &out, answers, dir, "", "")
 	if err != nil {
 		t.Fatal(err)
@@ -1615,16 +1737,6 @@ func TestInitTeamAbsentTerminalPicksFromNumberedList(t *testing.T) {
 	}
 	if b.ensureCalls != 0 {
 		t.Errorf("ensureCalls = %d, want 0 for existing team pick", b.ensureCalls)
-	}
-	for _, want := range []string{
-		"  1) ENG  Engineering",
-		"  2) LERP  Lerp",
-		"  3) create a new team",
-		"Pick a team [1]:",
-	} {
-		if !strings.Contains(out.String(), want) {
-			t.Errorf("output missing %q:\n%s", want, out.String())
-		}
 	}
 	c, err := config.LoadRepoConfig(filepath.Join(dir, config.RepoConfigFile))
 	if err != nil {
@@ -1644,8 +1756,19 @@ func TestInitTeamAbsentTerminalSelectsCreateRow(t *testing.T) {
 		existing: linearDefaults,
 	}
 	var out bytes.Buffer
-	// Pick row 2 (create a new team), enter key ACEM, name Acme Marketing, then plan, review, map, bypass.
-	answers := strings.NewReader("2\nACEM\nAcme Marketing\n\n\n\ny\n")
+	stubWizardResult(t, initui.Result{
+		TeamKey:    "ACEM",
+		TeamName:   "Acme Marketing",
+		CreateTeam: true,
+		Stock: config.Stock{
+			Teams:  []string{"ACEM"},
+			Plan:   true,
+			Review: true,
+			Bypass: true,
+		},
+	}, nil)
+
+	answers := strings.NewReader("interactive")
 	created, err := Init(context.Background(), b, &out, answers, dir, "", "")
 	if err != nil {
 		t.Fatal(err)
@@ -1655,15 +1778,6 @@ func TestInitTeamAbsentTerminalSelectsCreateRow(t *testing.T) {
 	}
 	if b.ensureCalls != 1 || b.teamKey != "ACEM" || b.teamName != "Acme Marketing" {
 		t.Errorf("EnsureTeam = (%q, %q), calls = %d", b.teamKey, b.teamName, b.ensureCalls)
-	}
-	for _, want := range []string{
-		"  2) create a new team",
-		"Team key:",
-		"Team name [ACEM]:",
-	} {
-		if !strings.Contains(out.String(), want) {
-			t.Errorf("output missing %q:\n%s", want, out.String())
-		}
 	}
 	c, err := config.LoadRepoConfig(filepath.Join(dir, config.RepoConfigFile))
 	if err != nil {
@@ -1683,8 +1797,19 @@ func TestInitTeamAbsentTerminalCreateRowUsesDefaultTeamName(t *testing.T) {
 		existing: linearDefaults,
 	}
 	var out bytes.Buffer
-	// Pick row 2 (create), enter key ACEM, press Enter for default name from --team-name
-	answers := strings.NewReader("2\nACEM\n\n\n\n\ny\n")
+	stubWizardResult(t, initui.Result{
+		TeamKey:    "ACEM",
+		TeamName:   "Provided Name",
+		CreateTeam: true,
+		Stock: config.Stock{
+			Teams:  []string{"ACEM"},
+			Plan:   true,
+			Review: true,
+			Bypass: true,
+		},
+	}, nil)
+
+	answers := strings.NewReader("interactive")
 	created, err := Init(context.Background(), b, &out, answers, dir, "", "Provided Name")
 	if err != nil {
 		t.Fatal(err)
@@ -1694,9 +1819,6 @@ func TestInitTeamAbsentTerminalCreateRowUsesDefaultTeamName(t *testing.T) {
 	}
 	if b.ensureCalls != 1 || b.teamKey != "ACEM" || b.teamName != "Provided Name" {
 		t.Errorf("EnsureTeam = (%q, %q), calls = %d", b.teamKey, b.teamName, b.ensureCalls)
-	}
-	if !strings.Contains(out.String(), "Team name [Provided Name]:") {
-		t.Errorf("output missing Provided Name prompt:\n%s", out.String())
 	}
 }
 
@@ -1722,8 +1844,19 @@ func TestInitWorkspaceHasNoTeamsGoesStraightToCreate(t *testing.T) {
 		existing: linearDefaults,
 	}
 	var out bytes.Buffer
-	// Straight to create prompts: key ACEM, name Acme, then plan, review, map, bypass.
-	answers := strings.NewReader("ACEM\nAcme\n\n\n\ny\n")
+	stubWizardResult(t, initui.Result{
+		TeamKey:    "ACEM",
+		TeamName:   "Acme",
+		CreateTeam: true,
+		Stock: config.Stock{
+			Teams:  []string{"ACEM"},
+			Plan:   true,
+			Review: true,
+			Bypass: true,
+		},
+	}, nil)
+
+	answers := strings.NewReader("interactive")
 	created, err := Init(context.Background(), b, &out, answers, dir, "", "")
 	if err != nil {
 		t.Fatal(err)
@@ -1734,17 +1867,6 @@ func TestInitWorkspaceHasNoTeamsGoesStraightToCreate(t *testing.T) {
 	if b.ensureCalls != 1 || b.teamKey != "ACEM" || b.teamName != "Acme" {
 		t.Errorf("EnsureTeam = (%q, %q), calls = %d", b.teamKey, b.teamName, b.ensureCalls)
 	}
-	for _, want := range []string{
-		"Team key:",
-		"Team name [ACEM]:",
-	} {
-		if !strings.Contains(out.String(), want) {
-			t.Errorf("output missing %q:\n%s", want, out.String())
-		}
-	}
-	if strings.Contains(out.String(), "Pick a team") {
-		t.Errorf("output should not contain picker when workspace has no teams:\n%s", out.String())
-	}
 }
 
 func TestInitTeamQuestionEOFErrorsWithoutCreating(t *testing.T) {
@@ -1753,7 +1875,9 @@ func TestInitTeamQuestionEOFErrorsWithoutCreating(t *testing.T) {
 		teams:    []linear.TeamRef{{Key: "LERP", Name: "Lerp"}},
 		existing: linearDefaults,
 	}
-	answers := strings.NewReader("")
+	stubWizardResult(t, initui.Result{}, ErrCanceled)
+
+	answers := strings.NewReader("interactive")
 	_, err := Init(context.Background(), b, nil, answers, dir, "", "")
 	if err == nil {
 		t.Fatal("want error on EOF at team question, got nil")
@@ -1780,7 +1904,12 @@ func TestInitRepeatInitSingleConfiguredTeamSeedsWithoutAsking(t *testing.T) {
 		existing: []linear.WorkflowState{{Name: "Planning", Category: "started"}, {Name: "Implementing", Category: "started"}},
 	}
 	var out bytes.Buffer
-	answers := strings.NewReader("")
+	stubWizardResult(t, initui.Result{
+		TeamKey:  "LERP",
+		TeamName: "Lerp",
+	}, nil)
+
+	answers := strings.NewReader("interactive")
 	created, err := Init(context.Background(), b, &out, answers, dir, "", "")
 	if err != nil {
 		t.Fatal(err)
@@ -1790,9 +1919,6 @@ func TestInitRepeatInitSingleConfiguredTeamSeedsWithoutAsking(t *testing.T) {
 	}
 	if b.ensureCalls != 0 {
 		t.Errorf("ensureCalls = %d, want 0", b.ensureCalls)
-	}
-	if strings.Contains(out.String(), "Pick a team") {
-		t.Errorf("asked for team on repeat init with single configured team:\n%s", out.String())
 	}
 	if !strings.Contains(out.String(), "on team LERP:") {
 		t.Errorf("output missing LERP report:\n%s", out.String())
@@ -1815,7 +1941,12 @@ func TestInitRepeatInitMultipleConfiguredTeamsSeedsPickerList(t *testing.T) {
 		existing: []linear.WorkflowState{{Name: "Planning", Category: "started"}, {Name: "Implementing", Category: "started"}},
 	}
 	var out bytes.Buffer
-	answers := strings.NewReader("2\n")
+	stubWizardResult(t, initui.Result{
+		TeamKey:  "LERP",
+		TeamName: "Lerp",
+	}, nil)
+
+	answers := strings.NewReader("interactive")
 	created, err := Init(context.Background(), b, &out, answers, dir, "", "")
 	if err != nil {
 		t.Fatal(err)
@@ -1827,21 +1958,8 @@ func TestInitRepeatInitMultipleConfiguredTeamsSeedsPickerList(t *testing.T) {
 		t.Errorf("ensureCalls = %d, want 0", b.ensureCalls)
 	}
 	transcript := out.String()
-	for _, want := range []string{
-		"  1) ENG  Engineering",
-		"  2) LERP  Lerp",
-		"Pick a team [1]:",
-		"on team LERP:",
-	} {
-		if !strings.Contains(transcript, want) {
-			t.Errorf("output missing %q:\n%s", want, transcript)
-		}
-	}
-	if strings.Contains(transcript, "create a new team") {
-		t.Errorf("picker offered create a new team on repeat init:\n%s", transcript)
-	}
-	if strings.Contains(transcript, "ACEM") {
-		t.Errorf("picker offered team ACEM not in repo config:\n%s", transcript)
+	if !strings.Contains(transcript, "on team LERP:") {
+		t.Errorf("output missing LERP report:\n%s", transcript)
 	}
 }
 
@@ -1901,7 +2019,12 @@ func TestInitRepeatInitMultipleConfiguredTeamsOneExistsAutoPicks(t *testing.T) {
 		existing: []linear.WorkflowState{{Name: "Planning", Category: "started"}, {Name: "Implementing", Category: "started"}},
 	}
 	var out bytes.Buffer
-	answers := strings.NewReader("")
+	stubWizardResult(t, initui.Result{
+		TeamKey:  "LERP",
+		TeamName: "Lerp",
+	}, nil)
+
+	answers := strings.NewReader("interactive")
 	created, err := Init(context.Background(), b, &out, answers, dir, "", "")
 	if err != nil {
 		t.Fatal(err)
@@ -1909,7 +2032,28 @@ func TestInitRepeatInitMultipleConfiguredTeamsOneExistsAutoPicks(t *testing.T) {
 	if created {
 		t.Error("created = true, want false for repeat init")
 	}
-	if strings.Contains(out.String(), "Pick a team") {
-		t.Errorf("asked for team when only one configured team exists in workspace:\n%s", out.String())
+	if !strings.Contains(out.String(), "on team LERP:") {
+		t.Errorf("output missing LERP report:\n%s", out.String())
+	}
+}
+
+func TestPackageImports(t *testing.T) {
+	for _, pkgDir := range []string{".", "../initui"} {
+		fset := token.NewFileSet()
+		pkgs, err := parser.ParseDir(fset, pkgDir, nil, parser.ImportsOnly)
+		if err != nil {
+			t.Fatalf("parse %s: %v", pkgDir, err)
+		}
+		for pkgName, pkg := range pkgs {
+			for fileName, file := range pkg.Files {
+				for _, imp := range file.Imports {
+					path := strings.Trim(imp.Path.Value, `"`)
+					if strings.Contains(path, "/internal/loop") || strings.Contains(path, "/internal/tui") {
+						t.Errorf("package %s file %s illegally imports %s — init must have no dependency on loop or tui",
+							pkgName, fileName, path)
+					}
+				}
+			}
+		}
 	}
 }

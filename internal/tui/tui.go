@@ -11,6 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/mattwalters/lerp/internal/loop"
+	"github.com/mattwalters/lerp/internal/theme"
 )
 
 // quitWait bounds how long quitting waits for an in-flight reconciliation
@@ -31,7 +32,7 @@ func Run(ctx context.Context, o Options) error {
 	// Before anything renders: the palette's light and dark variants are
 	// chosen per render from what lipgloss believes the background is, and
 	// this is the operator's say in that belief (see theme.go).
-	if err := UseBackground(); err != nil {
+	if err := theme.UseBackground(); err != nil {
 		return err
 	}
 	if err := o.Validate(); err != nil {
