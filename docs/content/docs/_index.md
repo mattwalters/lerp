@@ -1,36 +1,20 @@
 ---
 title: Documentation
-description: Lerp's docs — what lerp is, install to a first promoted ticket, the concepts, the interface, and reference.
+description: What lerp is, where the boundary with Linear sits, and the path from install to a first promoted ticket.
 ---
 
 # Documentation
 
-Lerp is one binary and one screen. You put tickets on a Linear board; lerp
-runs coding agents to move them across it. `lerp init` wires a repository
-to a Linear team, and running `lerp` opens the board that moves the work.
-There is no server, no scheduler, and no store of lerp's own.
+Lerp runs coding agents against a Linear board.
 
-## What is in the box
+You write tickets in Linear. Your `lerp.toml` names the statuses lerp
+watches. When a ticket reaches one, lerp picks it up, runs a coding
+agent on it, and moves it when the run finishes. Lerp leaves the rest
+of the board alone. You watch it all from one screen.
 
-The board plus four commands. Bare `lerp` opens the TUI, and the
-reconciling loop runs while it is open — N lanes, adopting live runs,
-reaping dead ones, repairing drift. The board's only two write actions are
-the On you panel's [promote](promoting.md) and the work panel's
-[force-start](starting-past-the-limit.md). `lerp login`, `lerp logout`,
-`lerp init` and `lerp version` complete [the command line](cli.md).
+{{< loop-diagram >}}
 
-Everything else about a ticket happens in Linear. Lerp reads the board,
-runs agents, and moves tickets between statuses; it does not compose
-comments, invent work items, or keep a queue of its own.
-
-## Where to start
-
-**Start** is [Install](install.md) — the binary and the two prerequisites
-lerp cannot satisfy for you — then [Quickstart](quickstart.md), `lerp init`
-to a first promoted ticket. **Concepts** is [The board](the-board.md), the
-model both of those sit on. **The interface** is one page per motion
-through the screen. **Reference** is [the config file](lerp-toml.md),
-telemetry, the command line, and what to do when something looks stuck.
-[SCOPE.md](SCOPE.md) is published beside them, as it is written rather
-than rewritten — the fence around the project; read it before proposing a
-change.
+Linear stays the source of truth. Lerp reads the board, starts agents,
+and moves tickets. It never writes comments, never invents work, and
+keeps no queue of its own. There is no server, no scheduler, and no
+store. Just one binary and the board.

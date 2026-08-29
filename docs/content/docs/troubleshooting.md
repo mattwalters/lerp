@@ -25,10 +25,26 @@ stage.
 A run whose ticket left its queue status before it finished keeps that
 move, and says on the status bar which hop it therefore skipped.
 
-Something moved the ticket mid-stage: an agent escalating (a status your
-pipeline names), or an automation (usually one it does not) — see
-[Lerp needs the status field](install.md#lerp-needs-the-status-field),
-which is also what lerp warns about at startup.
+Something moved the ticket mid-stage. An agent escalating moves it to a
+status your pipeline names. An automation usually moves it to one it
+does not, and lerp names those automations at startup.
+
+The usual culprit is Linear's GitHub integration. Its automations are
+per team, in the team's workflow settings, as pull request triggers. On
+the teams lerp serves, set the four open-PR triggers (draft opened,
+opened, review activity, ready for merge) to No action. A run that opens
+a pull request trips them mid-stage. Leave On PR merge on. It fires
+after the stock pipeline is done with the ticket, and moving merged work
+to Done is the one move you want an automation to make. The startup
+check cannot see this trigger, so the settings screen is worth a look.
+
+If your pipeline has a stage that runs after the merge, the merge
+trigger is mid-stage for you too. Either set it to No action, or point
+the previous stage's `on_success` at the status the automation moves to,
+which turns the automation into the trigger for the next stage. Lerp
+stays quiet about that setup on purpose. It couples your pipeline to
+settings in Linear, and it kills the queue's `on_failure` route, since
+the ticket has already moved by the time a failing run ends.
 
 ## What happens on crash or kill?
 

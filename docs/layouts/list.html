@@ -1,29 +1,15 @@
 {{ define "main" }}
-{{/* Section indexes. The entries are the section's own children rather than
-     a curated list: a hand-kept index of pages that already exist is a
-     second list to forget to update, and unlike the sidebar this one carries
-     no editorial grouping. Order is each child's weight, which is where the
-     curation lives, and the line under each name is its `summary` front
-     matter. A child that has none lists as a bare name.
+{{/* Section indexes are their content alone. The sidebar is the map — a
+     curated menu, always in view — and a child listing here mirrored it
+     entry for entry, which added a second copy of the navigation rather
+     than information. The one job the listing did that the sidebar does
+     not: a published page left out of the sidebar still appeared here.
+     Leaving a page out of both now orphans it (reachable only by URL) —
+     check hugo.toml's menu when adding a page.
 
-     No <h1> here: the heading is the first line of _index.md, the way it is
-     on every other page the site serves. */}}
+     No <h1> here: the heading is the first line of _index.md, the way it
+     is on every other page the site serves. */}}
 <div class="prose">
   {{ .Content }}
-  {{ with .Pages.ByWeight }}
-  <dl class="pagelist">
-    {{ range . }}
-    {{/* Plain titles, including a page the sidebar sets in monospace: mono
-         is a property of a menu entry (see hugo.toml), and reading a second
-         mono off the page's front matter would be two spellings of one fact
-         to keep in sync by hand — with nothing to catch them disagreeing. */}}
-    <dt><a href="{{ .RelPermalink }}">{{ .Title }}</a></dt>
-    {{/* Always a <dd>, empty or not: a <dt> with nothing after it is not a
-         definition list, and a child with no summary is a missing line, not
-         a reason to emit invalid markup. */}}
-    <dd>{{ .Params.summary }}</dd>
-    {{ end }}
-  </dl>
-  {{ end }}
 </div>
 {{ end }}

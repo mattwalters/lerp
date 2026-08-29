@@ -35,8 +35,9 @@ Before the first pass, lerp refuses to start unless every status the
 config names exists on its team — a misspelled queue status would
 otherwise poll as a permanently empty queue, and a missing `on_success`
 target would fail only after a whole agent run. A team automation that
-would move a ticket mid-stage is shown at the same moment but only warns;
-see [Lerp needs the status field](install.md#lerp-needs-the-status-field).
+would move a ticket mid-stage is shown at the same moment but only
+warns. See
+[Why did my ticket skip a stage?](troubleshooting.md#why-did-my-ticket-skip-a-stage).
 
 An advisory lock at `.lerp/lock` keeps it to one loop per clone: a second
 `lerp` on the same clone fails on the lock rather than racing the first.
