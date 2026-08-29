@@ -36,9 +36,11 @@ The usual culprit is Linear's GitHub integration, whose automations sit
 per team in workflow settings as pull request triggers. On the teams lerp
 serves, set the four open-PR triggers (On draft PR open, On PR open, On PR
 review request or activity, On PR ready for merge) to No action, since a run
-that opens a pull request trips them mid-stage. Leave On PR merge on, because
-it fires after the stock pipeline is done with the ticket. The startup check
-cannot see that one, so the settings screen is worth a look.
+that opens a pull request trips them mid-stage. `lerp init` sets them to No
+action automatically on a team it creates, and reports any collisions on a
+team you adopt. Leave On PR merge on, because it fires after the stock
+pipeline is done with the ticket. The startup check cannot see that one, so
+the settings screen is worth a look.
 
 If your pipeline has a stage that runs after the merge, the merge trigger
 is mid-stage for you too. Either set it to No action, or point the

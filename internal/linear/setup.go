@@ -269,3 +269,25 @@ func (c *HTTP) EnsureWorkflowStates(ctx context.Context, teamKey string, states 
 	}
 	return categories, nil
 }
+
+const gitAutomationDisableMutation = `
+mutation GitAutomationDisable($id: String!) {
+  gitAutomationStateUpdate(id: $id, input: { stateId: null }) { success }
+}`
+
+// DisableGitAutomation sets the automation to take no action (stateId: null).
+// The loop never calls this method (SCOPE invariant 6).
+func (c *HTTP) DisableGitAutomation(ctx context.Context, id string) error {
+	var upd struct {
+		GitAutomationStateUpdate struct {
+			Success bool `json:"success"`
+		} `json:"gitAutomationStateUpdate"`
+	}
+	if err := c.do(ctx, gitAutomationDisableMutation, map[string]any{"id": id}, &upd); err != nil {
+		return fmt.Errorf("disable git automation: %w", err)
+	}
+	if !upd.GitAutomationStateUpdate.Success {
+		return fmt.Errorf("linear reported failure disabling git automation %s", id)
+	}
+	return nil
+}

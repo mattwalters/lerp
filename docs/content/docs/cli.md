@@ -83,9 +83,12 @@ lerp init --team LERP --team-name "Lerp"
 
 Init creates the Linear team if it is missing, fits the stock pipeline
 onto the board through a short conversation, writes `lerp.toml`, and
-appends `.lerp/` to the repository's `.gitignore`. When there is no
-session and it is running at a terminal, init offers to sign you in
-first. [Quickstart](quickstart.md) walks the whole of it.
+appends `.lerp/` to the repository's `.gitignore`. When creating a new team,
+init automatically sets colliding mid-stage pull-request automations to No
+action; when adopting an existing team, it reports any collisions for you to
+update in Linear. When there is no session and it is running at a terminal,
+init offers to sign you in first. [Quickstart](quickstart.md) walks the whole
+of it.
 
 It is safe to repeat. It creates only missing Linear structure, adds
 nothing to `.gitignore` twice, and never replaces an existing

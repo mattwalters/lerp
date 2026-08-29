@@ -70,6 +70,9 @@ const (
 // the ticket linked to a pull request when a git event fires. Linear
 // configures these per team, under the team's workflow settings.
 type GitAutomation struct {
+	// ID is Linear's internal UUID for the automation. Empty from any caller
+	// that did not read it.
+	ID string
 	// Event is the git event that fires the rule, as Linear's own enum
 	// spells it — one of the GitEvent constants, or a name lerp has never
 	// heard of if Linear adds one.
