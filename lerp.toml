@@ -100,7 +100,7 @@ args = "--permission-mode bypassPermissions"
 # read it back yourself" — so a run here reviews its own diff instead of
 # handing it up to a pinned reviewer. If that proves too little, moving this
 # queue back to claude (with the roster back in its args) is the fix.
-[runners.antigravity-implement]
+[runners.antigravity]
 vendor = "antigravity"
 model = "gemini-3.7-flash-high"
 args = "--dangerously-skip-permissions"
@@ -159,7 +159,7 @@ guessing.
 
 [queues.implement]
 status = "Implementing"
-runner = "antigravity-implement"
+runner = "antigravity"
 on_success = "In Review"
 on_failure = "Needs Attention"
 prompt = """
