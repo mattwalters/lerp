@@ -9046,3 +9046,225 @@ func TestMainBandHeightLadder(t *testing.T) {
 		}
 	}
 }
+
+// attentionDetail renders both directions of blocking: "blocked" with a ⊘ glyph,
+// and "blocks" with an optional faint (frees n) when transitive unblocks exceeds
+// the direct list. When either relation is empty, its line is omitted.
+func TestAttentionDetailRelations(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
+	m = update(t, m, keyMsg("1"))
+
+	// 1. Both relations present, Unblocks outrunning len(Blocks)
+	evBoth := loop.Event{
+		Type: loop.EventAttention,
+		Attention: []loop.AttentionItem{{
+			Ticket:    "LERP-238",
+			TicketID:  "id-238",
+			Title:     "Both directions of blocking",
+			Status:    "In Review",
+			Project:   "Terminal User Interface",
+			Reason:    "waiting for review",
+			URL:       "https://linear.app/acme/issue/LERP-238",
+			BlockedBy: []string{"LERP-236", "LERP-237"},
+			Blocks:    []string{"LERP-234", "LERP-240"},
+			Unblocks:  5,
+		}},
+	}
+	mBoth := update(t, m, eventMsg{ev: evBoth})
+	text, owner, _ := mBoth.attentionDetail(80)
+	plain := ansi.Strip(text)
+	lines := strings.Split(plain, "\n")
+
+	// Verify line count matches owner length
+	if len(lines) != len(owner) {
+		t.Fatalf("rendered lines count %d != owner length %d", len(lines), len(owner))
+	}
+	for i, o := range owner {
+		if o != -1 {
+			t.Errorf("header line %d has fold owner %d, want -1", i, o)
+		}
+	}
+
+	// Verify the lines and order: status, project, blocked, blocks, why, linear
+	wantSubstrings := []string{
+		"LERP-238 Both directions of blocking",
+		"status  In Review",
+		"project Terminal User Interface",
+		"blocked ⊘ LERP-236 · LERP-237",
+		"blocks  LERP-234 · LERP-240 (frees 5)",
+		"why     waiting for review",
+		"linear  https://linear.app/acme/issue/LERP-238",
+	}
+	lastIdx := -1
+	for _, want := range wantSubstrings {
+		idx := strings.Index(plain, want)
+		if idx == -1 {
+			t.Fatalf("plain text missing %q:\n%s", want, plain)
+		}
+		if idx <= lastIdx {
+			t.Fatalf("%q appeared out of order in:\n%s", want, plain)
+		}
+		lastIdx = idx
+	}
+
+	// Verify styled text contains the glyph and styles
+	if !strings.Contains(text, styleAttention.Render("⊘")) {
+		t.Errorf("styled text missing styleAttention ⊘")
+	}
+	if !strings.Contains(text, styleTicket.Render("LERP-236")) {
+		t.Errorf("styled text missing styled LERP-236")
+	}
+	if !strings.Contains(text, styleTicket.Render("LERP-234")) {
+		t.Errorf("styled text missing styled LERP-234")
+	}
+	if !strings.Contains(text, styleFaint.Render("(frees 5)")) {
+		t.Errorf("styled text missing styleFaint (frees 5)")
+	}
+
+	// 2. Unblocks equal to or less than len(Blocks) -> no (frees n)
+	evNoFrees := loop.Event{
+		Type: loop.EventAttention,
+		Attention: []loop.AttentionItem{{
+			Ticket:   "LERP-1",
+			TicketID: "id-1",
+			Title:    "Ticket",
+			Status:   "In Review",
+			Blocks:   []string{"LERP-2", "LERP-3"},
+			Unblocks: 2,
+			URL:      "https://linear.app/acme/issue/LERP-1",
+		}},
+	}
+	mNoFrees := update(t, m, eventMsg{ev: evNoFrees})
+	textNoFrees, _, _ := mNoFrees.attentionDetail(80)
+	plainNoFrees := ansi.Strip(textNoFrees)
+	if strings.Contains(plainNoFrees, "(frees") {
+		t.Errorf("plain text should not contain (frees n) when Unblocks <= len(Blocks):\n%s", plainNoFrees)
+	}
+	if !strings.Contains(plainNoFrees, "blocks  LERP-2 · LERP-3") {
+		t.Errorf("plain text missing blocks line:\n%s", plainNoFrees)
+	}
+
+	// 3. Neither relation present -> neither line drawn, header byte-identical to base
+	evNeither := loop.Event{
+		Type: loop.EventAttention,
+		Attention: []loop.AttentionItem{{
+			Ticket:   "LERP-1",
+			TicketID: "id-1",
+			Title:    "Ticket",
+			Status:   "Backlog",
+			Project:  "Project",
+			Reason:   "unclaimed",
+			URL:      "https://linear.app/acme/issue/LERP-1",
+		}},
+	}
+	mNeither := update(t, m, eventMsg{ev: evNeither})
+	textNeither, _, _ := mNeither.attentionDetail(80)
+	plainNeither := ansi.Strip(textNeither)
+	if strings.Contains(plainNeither, "blocked") || strings.Contains(plainNeither, "blocks") {
+		t.Errorf("neither relation was present, but line was drawn:\n%s", plainNeither)
+	}
+
+	// 4. Blocked only -> blocked present, blocks absent
+	evBlockedOnly := loop.Event{
+		Type: loop.EventAttention,
+		Attention: []loop.AttentionItem{{
+			Ticket:    "LERP-1",
+			TicketID:  "id-1",
+			Title:     "Ticket",
+			Status:    "Backlog",
+			BlockedBy: []string{"LERP-99"},
+			URL:       "https://linear.app/acme/issue/LERP-1",
+		}},
+	}
+	mBlockedOnly := update(t, m, eventMsg{ev: evBlockedOnly})
+	textBlockedOnly, _, _ := mBlockedOnly.attentionDetail(80)
+	plainBlockedOnly := ansi.Strip(textBlockedOnly)
+	if !strings.Contains(plainBlockedOnly, "blocked ⊘ LERP-99") {
+		t.Errorf("missing blocked line:\n%s", plainBlockedOnly)
+	}
+	if strings.Contains(plainBlockedOnly, "blocks") {
+		t.Errorf("blocks line should not be present:\n%s", plainBlockedOnly)
+	}
+
+	// 5. Blocks only -> blocks present, blocked absent
+	evBlocksOnly := loop.Event{
+		Type: loop.EventAttention,
+		Attention: []loop.AttentionItem{{
+			Ticket:   "LERP-1",
+			TicketID: "id-1",
+			Title:    "Ticket",
+			Status:   "Backlog",
+			Blocks:   []string{"LERP-99"},
+			URL:      "https://linear.app/acme/issue/LERP-1",
+		}},
+	}
+	mBlocksOnly := update(t, m, eventMsg{ev: evBlocksOnly})
+	textBlocksOnly, _, _ := mBlocksOnly.attentionDetail(80)
+	plainBlocksOnly := ansi.Strip(textBlocksOnly)
+	if !strings.Contains(plainBlocksOnly, "blocks  LERP-99") {
+		t.Errorf("missing blocks line:\n%s", plainBlocksOnly)
+	}
+	if strings.Contains(plainBlocksOnly, "blocked") {
+		t.Errorf("blocked line should not be present:\n%s", plainBlocksOnly)
+	}
+}
+
+// A narrow pane wraps a long relation list under the gutter without splitting
+// any ticket identifier across lines or losing lines to truncation.
+func TestAttentionDetailNarrowWrapKeepsIdentifiersWhole(t *testing.T) {
+	m, _, _ := newTestModel(t, 1)
+	m = pastTheSplash(t, m)
+	m = update(t, m, keyMsg("1"))
+
+	blockers := []string{
+		"LERP-201", "LERP-202", "LERP-203", "LERP-204",
+		"LERP-205", "LERP-206", "LERP-207", "LERP-208",
+	}
+	ev := loop.Event{
+		Type: loop.EventAttention,
+		Attention: []loop.AttentionItem{{
+			Ticket:    "LERP-238",
+			TicketID:  "id-238",
+			Title:     "Ticket",
+			Status:    "In Review",
+			BlockedBy: blockers,
+			URL:       "https://linear.app/acme/issue/LERP-238",
+		}},
+	}
+	m = update(t, m, eventMsg{ev: ev})
+
+	// Wrap at narrow width 32 (wrap inner width = 32 - 8 = 24)
+	text, owner, _ := m.attentionDetail(32)
+	plain := ansi.Strip(text)
+	lines := strings.Split(plain, "\n")
+
+	if len(lines) != len(owner) {
+		t.Fatalf("lines count %d != owner count %d", len(lines), len(owner))
+	}
+
+	// Verify all blockers are present and unhyphenated
+	for _, b := range blockers {
+		if !strings.Contains(plain, b) {
+			t.Errorf("blocker %q missing from wrapped text:\n%s", b, plain)
+		}
+	}
+
+	// Verify no identifier was split across lines with hyphen
+	for _, line := range lines {
+		if strings.HasSuffix(line, "LERP-") || strings.HasPrefix(line, "20") {
+			t.Errorf("line contains split identifier: %q", line)
+		}
+	}
+
+	// Verify continuation lines use labelGutter (8 spaces) as hanging indent
+	foundContinuation := false
+	for _, line := range lines {
+		if strings.HasPrefix(line, labelGutter) && strings.Contains(line, "LERP-") {
+			foundContinuation = true
+		}
+	}
+	if !foundContinuation {
+		t.Errorf("expected wrapped continuation lines starting with labelGutter in:\n%s", plain)
+	}
+}
