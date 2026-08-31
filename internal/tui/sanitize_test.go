@@ -200,6 +200,8 @@ func TestCleanEventScrubsEveryLinearString(t *testing.T) {
 		Attention: []loop.AttentionItem{{
 			Ticket: hostile, TicketID: hostile, Title: hostile, Status: hostile,
 			Project: hostile, Reason: hostile, URL: hostile,
+			BlockedBy: []string{hostile},
+			Blocks:    []string{hostile},
 		}},
 	})
 
@@ -209,11 +211,16 @@ func TestCleanEventScrubsEveryLinearString(t *testing.T) {
 		"Queues.Team": q.Team, "Queues.Name": q.Name, "Queues.Status": q.Status,
 		"Tickets.ID": tk.ID, "Tickets.Identifier": tk.Identifier,
 		"Tickets.Title": tk.Title, "Tickets.URL": tk.URL,
-		"Tickets.BlockedBy": tk.BlockedBy[0],
-		"Attention.Ticket":  it.Ticket, "Attention.TicketID": it.TicketID,
-		"Attention.Title": it.Title, "Attention.Status": it.Status,
-		"Attention.Project": it.Project, "Attention.Reason": it.Reason,
-		"Attention.URL": it.URL,
+		"Tickets.BlockedBy":   tk.BlockedBy[0],
+		"Attention.Ticket":    it.Ticket,
+		"Attention.TicketID":  it.TicketID,
+		"Attention.Title":     it.Title,
+		"Attention.Status":    it.Status,
+		"Attention.Project":   it.Project,
+		"Attention.Reason":    it.Reason,
+		"Attention.URL":       it.URL,
+		"Attention.BlockedBy": it.BlockedBy[0],
+		"Attention.Blocks":    it.Blocks[0],
 	} {
 		if got != "gotcha " {
 			t.Errorf("%s = %q, want the cleaned string", name, got)
@@ -227,7 +234,11 @@ func TestCleanEventDoesNotWriteBackIntoTheEvent(t *testing.T) {
 	ev := loop.Event{
 		Queues: []loop.QueueSnapshot{{Name: "q\rx", Tickets: []loop.QueueTicket{
 			{Title: "t\rx", BlockedBy: []string{"b\rx"}}}}},
-		Attention: []loop.AttentionItem{{Title: "a\rx"}},
+		Attention: []loop.AttentionItem{{
+			Title:     "a\rx",
+			BlockedBy: []string{"ab\rx"},
+			Blocks:    []string{"ak\rx"},
+		}},
 	}
 	cleanEvent(ev)
 	if got := ev.Queues[0].Name; got != "q\rx" {
@@ -241,6 +252,12 @@ func TestCleanEventDoesNotWriteBackIntoTheEvent(t *testing.T) {
 	}
 	if got := ev.Attention[0].Title; got != "a\rx" {
 		t.Errorf("attention title was mutated in place: %q", got)
+	}
+	if got := ev.Attention[0].BlockedBy[0]; got != "ab\rx" {
+		t.Errorf("attention blocker was mutated in place: %q", got)
+	}
+	if got := ev.Attention[0].Blocks[0]; got != "ak\rx" {
+		t.Errorf("attention blocks was mutated in place: %q", got)
 	}
 }
 

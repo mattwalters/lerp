@@ -258,6 +258,14 @@ func cleanEvent(ev loop.Event) loop.Event {
 		it.Title, it.Status = clean(it.Title), clean(it.Status)
 		it.Project = clean(it.Project)
 		it.Reason, it.URL = clean(it.Reason), clean(it.URL)
+		it.BlockedBy = slices.Clone(it.BlockedBy)
+		for k, id := range it.BlockedBy {
+			it.BlockedBy[k] = clean(id)
+		}
+		it.Blocks = slices.Clone(it.Blocks)
+		for k, id := range it.Blocks {
+			it.Blocks[k] = clean(id)
+		}
 	}
 	return ev
 }

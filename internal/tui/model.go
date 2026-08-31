@@ -4354,6 +4354,16 @@ func (m model) attentionDetail(width int) (string, []int, int) {
 		styleFaint.Render("status  ") + statusText(*it),
 		styleFaint.Render("project ") + projectName(it.Project),
 	}
+	if len(it.BlockedBy) > 0 {
+		lines = append(lines, relationLines("blocked", styleAttention.Render("⊘"), it.BlockedBy, "", width)...)
+	}
+	if len(it.Blocks) > 0 {
+		var suffix string
+		if it.Unblocks > 0 && it.Unblocks > len(it.Blocks) {
+			suffix = styleFaint.Render(fmt.Sprintf("(frees %d)", it.Unblocks))
+		}
+		lines = append(lines, relationLines("blocks", "", it.Blocks, suffix, width)...)
+	}
 	// The reason is a sentence, not a cell. panelBox truncates its rows, and
 	// the pane's padding costs two columns, so a long "why" would lose the
 	// tail — the part that says what is actually holding the ticket up.
@@ -4453,6 +4463,36 @@ func age(t time.Time) string {
 	default:
 		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
 	}
+}
+
+// relationLines renders one blocking relation header row — "blocked" or "blocks"
+// — with its identifiers wrapped under labelGutter. Identifiers stay whole on
+// word boundaries (spaces only, no hyphen breaks), and each carries styleTicket.
+func relationLines(label, glyph string, ids []string, suffix string, width int) []string {
+	if len(ids) == 0 {
+		return nil
+	}
+	styled := make([]string, len(ids))
+	for i, id := range ids {
+		styled[i] = styleTicket.Render(id)
+	}
+	body := strings.Join(styled, " · ")
+	if glyph != "" {
+		body = glyph + " " + body
+	}
+	if suffix != "" {
+		body = body + " " + suffix
+	}
+	wrapped := strings.Split(ansi.Wrap(body, max(8, width-len(labelGutter)), ""), "\n")
+	lines := make([]string, 0, len(wrapped))
+	for i, l := range wrapped {
+		if i == 0 {
+			lines = append(lines, styleFaint.Render(padTo(label, len(labelGutter)))+l)
+			continue
+		}
+		lines = append(lines, labelGutter+l)
+	}
+	return lines
 }
 
 // wrapText word-wraps prose to the pane's inner width. panelBox truncates
