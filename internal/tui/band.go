@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/NimbleMarkets/ntcharts/linechart"
 	"github.com/NimbleMarkets/ntcharts/linechart/timeserieslinechart"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -142,54 +141,76 @@ func yCeiling(maxVal float64) float64 {
 	return 10.0 * p10
 }
 
-// relativeTimeFormatter formats unix seconds as relative time from right
-// ("now", "-5m", "-90s"), rounding to the nearest tick step based on the
-// horizon.
-func relativeTimeFormatter(right time.Time, horizon time.Duration) linechart.LabelFormatter {
-	rightSec := float64(right.Unix())
-	var step float64
-	var formatMins bool
-	if horizon >= 2*time.Minute {
-		formatMins = true
-		if horizon >= 10*time.Minute {
-			step = (5 * time.Minute).Seconds()
-		} else {
-			step = (1 * time.Minute).Seconds()
-		}
-	} else {
-		formatMins = false
-		if horizon <= 45*time.Second {
-			step = 10
-		} else {
-			step = 30
-		}
+// relativeTimeLabel formats an exact age from right ("now", "-30s", "-1m", "-5m")
+// based on the horizon rung.
+func relativeTimeLabel(age, horizon time.Duration) string {
+	if age <= 0 {
+		return "now"
 	}
-
-	return func(i int, v float64) string {
-		ageSec := rightSec - v
-		if ageSec < 0 {
-			ageSec = 0
-		}
-		roundedAge := math.Round(ageSec/step) * step
-		if roundedAge <= 0 {
-			return "now"
-		}
-		if formatMins {
-			mins := int(math.Round(roundedAge / 60))
-			return fmt.Sprintf("-%dm", mins)
-		}
-		secs := int(math.Round(roundedAge))
+	if horizon <= time.Minute {
+		secs := int(math.Round(age.Seconds()))
 		return fmt.Sprintf("-%ds", secs)
 	}
+	mins := int(math.Round(age.Minutes()))
+	return fmt.Sprintf("-%dm", mins)
+}
+
+// laneChartXLabelRow constructs the bottom X label row for laneChart.
+// Geometry comes from the chart's origin and graph width. "now" is right-aligned
+// to the graph's last column, and earlier ticks step back by the rung step.
+// Ticks that would collide with or touch a label to their right are dropped.
+func laneChartXLabelRow(width, originX, graphWidth int, left, right time.Time, horizon, step time.Duration) string {
+	if width <= 0 {
+		return ""
+	}
+	row := make([]rune, width)
+	for i := range row {
+		row[i] = ' '
+	}
+
+	// If the plot is narrower than "now" itself, the row stays blank.
+	if graphWidth < len("now") {
+		return padTo(styleFaint.Render(string(row)), width)
+	}
+
+	plotStart := originX + 1
+	plotEnd := originX + graphWidth
+
+	nowStr := "now"
+	nowStart := plotEnd - len(nowStr) + 1
+	copy(row[nowStart:], []rune(nowStr))
+	leftmostOccupied := nowStart
+
+	for t := right.Add(-step); !t.Before(left); t = t.Add(-step) {
+		age := right.Sub(t)
+		label := relativeTimeLabel(age, horizon)
+		labelRunes := []rune(label)
+		labelLen := len(labelRunes)
+
+		tOffset := t.Sub(left)
+		colOffset := int(math.Round(float64(tOffset) / float64(horizon) * float64(graphWidth-1)))
+		tickCol := plotStart + colOffset
+
+		if tickCol < plotStart {
+			continue
+		}
+		if tickCol+labelLen >= leftmostOccupied {
+			continue
+		}
+
+		copy(row[tickCol:tickCol+labelLen], labelRunes)
+		leftmostOccupied = tickCol
+	}
+
+	return padTo(styleFaint.Render(string(row)), width)
 }
 
 // laneChart renders a braille time series line chart of recent activity
 // across the lane pane's width at the given height, with a relative time X axis,
 // a numbered events/min Y axis, and a legend row under it.
 //
-// It is drawn from the dated buckets in r.chart. The horizon is the duration
-// the window actually holds, so a run younger than fifteen minutes draws only
-// the history it has.
+// It is drawn from the dated buckets in r.chart. The horizon snaps up a ladder
+// (1m, 5m, 15m) to the smallest rung holding the ring's history.
 func laneChart(r workRow, width, height int) []string {
 	if width <= 0 || height <= 0 || len(r.chart) == 0 {
 		return nil
@@ -197,13 +218,28 @@ func laneChart(r workRow, width, height int) []string {
 
 	n := len(r.chart)
 	right := r.chart[n-1].at
-	left := right.Add(-time.Duration(n-1) * pulseBucket)
-	if left.Equal(right) {
-		left = right.Add(-pulseBucket)
+	span := time.Duration(n-1) * pulseBucket
+
+	var horizon time.Duration
+	var step time.Duration
+	switch {
+	case span <= time.Minute:
+		horizon = time.Minute
+		step = 30 * time.Second
+	case span <= 5*time.Minute:
+		horizon = 5 * time.Minute
+		step = time.Minute
+	default:
+		horizon = 15 * time.Minute
+		step = 5 * time.Minute
 	}
+	left := right.Add(-horizon)
 
 	maxVal := 0.0
 	for _, b := range r.chart {
+		if b.at.Before(left) || b.at.After(right) {
+			continue
+		}
 		v := float64(b.count) * 60.0 / pulseBucket.Seconds()
 		if v > maxVal {
 			maxVal = v
@@ -211,8 +247,9 @@ func laneChart(r workRow, width, height int) []string {
 	}
 	hi := yCeiling(maxVal)
 
-	horizon := right.Sub(left)
-	xFormatter := relativeTimeFormatter(right, horizon)
+	xFormatter := func(i int, v float64) string {
+		return ""
+	}
 	yFormatter := func(i int, v float64) string {
 		return strconv.Itoa(int(math.Round(v)))
 	}
@@ -231,6 +268,9 @@ func laneChart(r workRow, width, height int) []string {
 	chart.SetViewTimeAndYRange(left, right, 0, hi)
 
 	for _, b := range r.chart {
+		if b.at.Before(left) || b.at.After(right) {
+			continue
+		}
 		val := float64(b.count) * 60.0 / pulseBucket.Seconds()
 		chart.PushDataSet("main", timeserieslinechart.TimePoint{
 			Time:  b.at,
@@ -243,6 +283,9 @@ func laneChart(r workRow, width, height int) []string {
 	lines := strings.Split(chart.View(), "\n")
 	if len(lines) > height {
 		lines = lines[:height]
+	}
+	if len(lines) == height {
+		lines[height-1] = laneChartXLabelRow(width, chart.Origin().X, chart.GraphWidth(), left, right, horizon, step)
 	}
 
 	// Legend row: events/min · ▇ main
