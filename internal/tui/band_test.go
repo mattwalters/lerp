@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/NimbleMarkets/ntcharts/canvas/runes"
+	"github.com/NimbleMarkets/ntcharts/linechart/timeserieslinechart"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/mattwalters/lerp/internal/config"
@@ -312,5 +313,229 @@ func TestLaneChartAllZerosReadsFlat(t *testing.T) {
 	chartArea := strings.Join(lines[:height], "\n")
 	if !strings.ContainsFunc(chartArea, runes.IsBraillePattern) {
 		t.Fatalf("all-zero chart has no braille runes:\n%s", chartArea)
+	}
+}
+
+// Build a chart with the empty formatter and assert the last line of View() is
+// all spaces — the assumption the rewrite rests on.
+func TestLaneChartLibraryXLabelRowEmpty(t *testing.T) {
+	now := time.Now()
+	chart := timeserieslinechart.New(
+		80,
+		12,
+		timeserieslinechart.WithTimeRange(now.Add(-time.Minute), now),
+		timeserieslinechart.WithYRange(0, 10),
+		timeserieslinechart.WithXYSteps(1, 2),
+		timeserieslinechart.WithXLabelFormatter(func(i int, v float64) string { return "" }),
+		timeserieslinechart.WithYLabelFormatter(func(i int, v float64) string { return "0" }),
+	)
+	chart.DrawBrailleAll()
+	lines := strings.Split(chart.View(), "\n")
+	if len(lines) < 12 {
+		t.Fatalf("chart.View() had %d lines, want >= 12", len(lines))
+	}
+	lastLine := lines[11]
+	if strings.TrimSpace(ansi.Strip(lastLine)) != "" {
+		t.Fatalf("expected last line of library chart to be all spaces, got %q", lastLine)
+	}
+}
+
+// At widths 40, 60, 80 and 120 and at each rung, the stripped label row ends
+// with "now" and no trailing space.
+func TestLaneChartNowRightAligned(t *testing.T) {
+	now := time.Now()
+	rungs := []struct {
+		name    string
+		buckets int
+	}{
+		{"1m", 15},
+		{"5m", 80},
+		{"15m", 300},
+	}
+	widths := []int{40, 60, 80, 120}
+
+	for _, rung := range rungs {
+		chart := make([]timedBucket, rung.buckets)
+		for i := range chart {
+			chart[i] = timedBucket{
+				at:    now.Add(-time.Duration(rung.buckets-1-i) * pulseBucket),
+				count: 1,
+			}
+		}
+		r := workRow{lane: 1, chart: chart}
+		for _, w := range widths {
+			lines := laneChart(r, w, 12)
+			if len(lines) != 13 {
+				t.Fatalf("rung %s width %d: laneChart returned %d lines, want 13", rung.name, w, len(lines))
+			}
+			xRow := ansi.Strip(lines[11])
+			if !strings.HasSuffix(xRow, "now") {
+				t.Errorf("rung %s width %d: X label row %q does not end with 'now'", rung.name, w, xRow)
+			}
+			if lipgloss.Width(xRow) != w {
+				t.Errorf("rung %s width %d: X label row width = %d, want %d", rung.name, w, lipgloss.Width(xRow), w)
+			}
+		}
+	}
+}
+
+// Scan the row for label runs; assert at least one space between adjacent
+// labels and that no label runs past width.
+func TestLaneChartNoOverlap(t *testing.T) {
+	now := time.Now()
+	bucketCounts := []int{1, 5, 20, 50, 100, 200, 300}
+	widths := []int{20, 25, 30, 40, 50, 60, 80, 120}
+
+	for _, n := range bucketCounts {
+		chart := make([]timedBucket, n)
+		for i := range chart {
+			chart[i] = timedBucket{
+				at:    now.Add(-time.Duration(n-1-i) * pulseBucket),
+				count: 1,
+			}
+		}
+		r := workRow{lane: 1, chart: chart}
+		for _, w := range widths {
+			lines := laneChart(r, w, 12)
+			if len(lines) == 0 {
+				continue
+			}
+			xRow := ansi.Strip(lines[11])
+			if lipgloss.Width(xRow) > w {
+				t.Errorf("n=%d w=%d: row width %d > %d", n, w, lipgloss.Width(xRow), w)
+			}
+
+			// Scan for label tokens and their index ranges
+			type token struct {
+				text  string
+				start int
+				end   int
+			}
+			var tokens []token
+			inToken := false
+			curStart := 0
+			for i, r := range []rune(xRow) {
+				if r != ' ' {
+					if !inToken {
+						inToken = true
+						curStart = i
+					}
+				} else {
+					if inToken {
+						tokens = append(tokens, token{text: string([]rune(xRow)[curStart:i]), start: curStart, end: i})
+						inToken = false
+					}
+				}
+			}
+			if inToken {
+				tokens = append(tokens, token{text: string([]rune(xRow)[curStart:]), start: curStart, end: len([]rune(xRow))})
+			}
+
+			for i := 0; i < len(tokens)-1; i++ {
+				gap := tokens[i+1].start - tokens[i].end
+				if gap < 1 {
+					t.Errorf("n=%d w=%d: tokens %q (end %d) and %q (start %d) overlap or touch (gap %d)",
+						n, w, tokens[i].text, tokens[i].end, tokens[i+1].text, tokens[i+1].start, gap)
+				}
+			}
+		}
+	}
+}
+
+// Windows of 1, 20, 100 and 300 buckets give 1m, 1m, 5m and 15m — asserted
+// through the labels the row carries (-30s at 1m, -1m-family at 5m, -5m-family at 15m).
+func TestLaneChartRungLadder(t *testing.T) {
+	now := time.Now()
+	tests := []struct {
+		buckets int
+		want    string // expected label family
+		unwant  []string
+	}{
+		{
+			buckets: 1,
+			want:    "-30s",
+			unwant:  []string{"-1m", "-5m", "-10m", "-15m"},
+		},
+		{
+			buckets: 20,
+			want:    "-30s",
+			unwant:  []string{"-1m", "-5m", "-10m", "-15m"},
+		},
+		{
+			buckets: 100,
+			want:    "-1m",
+			unwant:  []string{"-30s", "-10m", "-15m"},
+		},
+		{
+			buckets: 300,
+			want:    "-5m",
+			unwant:  []string{"-30s", "-1m"},
+		},
+	}
+
+	for _, tc := range tests {
+		chart := make([]timedBucket, tc.buckets)
+		for i := range chart {
+			chart[i] = timedBucket{
+				at:    now.Add(-time.Duration(tc.buckets-1-i) * pulseBucket),
+				count: 1,
+			}
+		}
+		r := workRow{lane: 1, chart: chart}
+		lines := laneChart(r, 100, 12)
+		if len(lines) != 13 {
+			t.Fatalf("buckets %d: laneChart returned %d lines, want 13", tc.buckets, len(lines))
+		}
+		xRow := ansi.Strip(lines[11])
+		if !strings.Contains(xRow, "now") {
+			t.Errorf("buckets %d: X label row = %q, want it to contain 'now'", tc.buckets, xRow)
+		}
+		if !strings.Contains(xRow, tc.want) {
+			t.Errorf("buckets %d: X label row = %q, want it to contain %q", tc.buckets, xRow, tc.want)
+		}
+		for _, uw := range tc.unwant {
+			if strings.Contains(xRow, uw) {
+				t.Errorf("buckets %d: X label row = %q, want it NOT to contain %q", tc.buckets, xRow, uw)
+			}
+		}
+	}
+}
+
+// A chart whose oldest bucket is twelve minutes old but whose rest fits five
+// minutes renders the same row as the same chart with that bucket removed, and
+// the same Y labels — one assertion for the view range, one for the ceiling.
+func TestLaneChartOutOfWindowBucketIgnored(t *testing.T) {
+	now := time.Now()
+	// 100 buckets spanning ~5 minutes
+	baseChart := make([]timedBucket, 100)
+	for i := range baseChart {
+		baseChart[i] = timedBucket{
+			at:    now.Add(-time.Duration(100-1-i) * pulseBucket),
+			count: 2,
+		}
+	}
+
+	// Chart with an out-of-window bucket 12 minutes ago with a huge count
+	extraChart := append([]timedBucket{
+		{
+			at:    now.Add(-12 * time.Minute),
+			count: 10000,
+		},
+	}, baseChart...)
+
+	rBase := workRow{lane: 1, chart: baseChart}
+	rExtra := workRow{lane: 1, chart: extraChart}
+
+	linesBase := laneChart(rBase, 80, 12)
+	linesExtra := laneChart(rExtra, 80, 12)
+
+	if len(linesBase) != len(linesExtra) {
+		t.Fatalf("line count mismatch: base=%d, extra=%d", len(linesBase), len(linesExtra))
+	}
+
+	for i := range linesBase {
+		if linesBase[i] != linesExtra[i] {
+			t.Errorf("line %d differs:\nbase:  %q\nextra: %q", i, linesBase[i], linesExtra[i])
+		}
 	}
 }
